@@ -21,6 +21,18 @@ operation.
   debug installations update to it by themselves.
 - The bundled OpenAI `tunnel-client` is now v0.0.15, pinned by the SHA-256 of all six platform archives.
 
+### Fixed
+
+- Compact & Resume commits again when ChatGPT's fresh-chat composer sends the typed brief as escaped Markdown
+  (`\` hard breaks, `\-`, `` \` ``, `&#x20;`). The replacement chat now recognises its own `[[CLF-RESUME:…]]`
+  bootstrap, so the session, its history and the Eve identity move to the new chat instead of the new chat
+  being recorded as an unrelated session.
+- When the chat review heartbeat waits because the saved Eve/Eva identity names a chat that has ended, the log
+  says so and names that chat, as a warning.
+- The publish workflow no longer fails when GNOME's GitLab refuses the GitHub runner: the 24 KB `gvdb` source
+  archive ships as a reviewed in-repo copy with the same pinned size and SHA-256, and other native source
+  downloads retry.
+
 ## [2.2.6] — Compact & Resume on ChatGPT's current layout
 
 ### Added

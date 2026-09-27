@@ -11833,6 +11833,36 @@ describe('the fresh chat the app opened', () => {
     ]);
   });
 
+  it('recognises a resume bootstrap that the fresh-chat composer sent as escaped Markdown', async () => {
+    // Live 2026-09-27: the typed brief arrived as `]]\` + newline, `\-`, `` \` `` and `&#x20;`, and the
+    // replacement chat never matched it to what it sent, so the continuation was never committed.
+    const typed = '[[CLF-RESUME:0123456789abcdef0123456789abcdef]]\n\nContinue the previous ChatGPT session.\n\nTASK\n\n- Publish `main`,\n  - then tag';
+    const rendered = '[[CLF-RESUME:0123456789abcdef0123456789abcdef]]\\\n\\\nContinue the previous ChatGPT session.\\\n\\\nTASK\\\n\\\n\\- Publish \\`main\\`,\\\n&#x20; \\- then tag';
+    live = await harness(
+      'https://chatgpt.com/?clf=cmd-escaped#clf=cmd-escaped',
+      {
+        redeem: () => ({ ok: true, command: { id: 'cmd-escaped', type: 'resume', text: typed, agent: null } }),
+        ack: () => ({ ok: true })
+      },
+      (document, dom) => {
+        document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+          dom.reconfigure({ url: 'https://chatgpt.com/c/21111111-2222-3333-4444-555555555555' });
+          userTurn(document, 'accepted-escaped-resume', rendered, { sent: false });
+        });
+      }
+    );
+
+    await settle(400);
+    expect(live.sent.filter((message) => message.type === 'ack')).toEqual([
+      expect.objectContaining({
+        type: 'ack',
+        id: 'cmd-escaped',
+        status: 'sent',
+        conversationId: '21111111-2222-3333-4444-555555555555'
+      })
+    ]);
+  });
+
   it('replays the reported 2.1.7 successor URL pair once while the final ACK is slow', async () => {
     const commandId = '90daf7181b53733f';
     const destination = '6a000002-0000-83ed-8000-000000000002';

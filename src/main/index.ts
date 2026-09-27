@@ -923,6 +923,13 @@ void app.whenReady().then(async () => {
               : 'no exact Eve/Eva coordinator is currently available';
           if (result.reason === 'no-fresh-coordinator') {
             logWarn(`chat review heartbeat paused: ${reason}; review state was not advanced`);
+          } else if (result.staleIdentity) {
+            // The heartbeat never guesses a chat. When the saved identity is what it cannot use,
+            // say so plainly: that is the one thing a person can repair.
+            logWarn(
+              `chat review heartbeat waiting: ${reason}; the saved Eve/Eva identity names chat ${result.staleIdentity}, ` +
+                'which has ended or is no longer an ordinary current chat. Durable review state was preserved'
+            );
           } else {
             logInfo(`chat review heartbeat waiting: ${reason}; durable review state was preserved`);
           }

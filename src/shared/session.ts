@@ -396,8 +396,11 @@ export type SessionEventKind = SessionEvent['kind'];
  * 2 is the continuation token that ties the pair together. Mirrors `CONTINUATION_MARKER` in
  * `extension/content.js`, which cannot import; the renderer uses this one to fold a
  * compaction's three rows into one.
+ *
+ * ChatGPT's fresh-chat composer can send the typed bootstrap as escaped Markdown, so the marker
+ * may be followed by a `\` hard line break instead of a plain newline (live 2026-09-27).
  */
-export const CONTINUATION_MARKER = /^\s*\[\[CLF-(HANDOFF|RESUME):([A-Za-z0-9_-]{16,64})\]\](?:\s|$)/;
+export const CONTINUATION_MARKER = /^\s*\[\[CLF-(HANDOFF|RESUME):([A-Za-z0-9_-]{16,64})\]\](?:\\?\s|$)/;
 
 /**
  * An event before the store assigns its sequence number.

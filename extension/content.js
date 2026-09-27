@@ -803,7 +803,15 @@
   const USER_SEND_RECEIPT_MS = 30_000;
   let userSendReceipt = null;
   const pageViewChecks = new Set(); // Existing readiness waits also observe accepted MAIN-world snapshots.
-  const sendText = (value) => String(value || '').replace(/\s+/g, '');
+  // ChatGPT's fresh-chat composer can send typed plain text as escaped Markdown: `\` before
+  // punctuation and before line breaks, `&#x20;` for leading spaces (live 2026-09-27: a Compact &
+  // Resume bootstrap arrived that way and was never recognised as the text this page sent).
+  // Compare the text, not that encoding; both sides are normalised the same way.
+  const sendText = (value) => String(value || '')
+    .replace(/&#x20;/gi, ' ')
+    .replace(/\\([\\`*_{}[\]()#+\-.!|>~<])/g, '$1')
+    .replace(/\\(?=\s)/g, '')
+    .replace(/\s+/g, '');
   /** Receipt, transcript and presentation share the same exact native user source. */
   function userMessageSource(message) {
     if (!message || message.role !== 'user' || !message.id || !message.node?.isConnected ||
@@ -8770,7 +8778,8 @@
     }
   }
 
-  const CONTINUATION_MARKER = /^\s*\[\[CLF-(HANDOFF|RESUME):([A-Za-z0-9_-]{16,64})\]\](?:\s|$)/;
+  // Mirrors src/shared/session.ts: a fresh-chat composer may send a `\` hard break after the marker.
+  const CONTINUATION_MARKER = /^\s*\[\[CLF-(HANDOFF|RESUME):([A-Za-z0-9_-]{16,64})\]\](?:\\?\s|$)/;
   const continuationReconciliations = new Map();
   /**
    * Proof key → how the app answered the marker: `committed` is ownership proof for the

@@ -541,6 +541,40 @@ describe('chat review heartbeat', () => {
     });
   });
 
+  it('names the saved identity it could not use when its owner ended and no successor exists', async () => {
+    // Live 2026-09-26/27: the identity still named the owner's own ended chat, so the heartbeat
+    // waited silently for hours. It must still wait, and say which saved identity is the problem.
+    const pending = debt({ key: 'heartbeat:stale-identity' });
+    let state: ChatReviewHeartbeatState | null = { debt: pending };
+    const endedOwner = session({
+      id: pending.sessionId,
+      conversationId: pending.conversationId,
+      lastToolCallAt: 900,
+      endedAt: 950
+    });
+    const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+    const enqueue = vi.fn(async () => undefined);
+    const result = await runChatReviewHeartbeat(10_000, {
+      readState: async () => state,
+      writeState,
+      sessions: async () => [endedOwner],
+      uniqueSession: async (id) => id === pending.conversationId ? endedOwner : null,
+      blocked: () => false,
+      enqueue,
+      agentConversation: () => pending.conversationId
+    });
+
+    expect(result).toEqual({
+      status: 'no-coordinator',
+      reason: 'no-successor',
+      nextAt: 10_000 + CHAT_REVIEW_RETRY_MS,
+      staleIdentity: pending.conversationId
+    });
+    expect(state).toEqual({ debt: pending });
+    expect(writeState).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it('moves stale debt to a newly proven installation-agent identity even when the legacy owner still appears active', async () => {
     const pending = debt({ key: 'heartbeat:installation-rebound' });
     let state: ChatReviewHeartbeatState | null = { debt: pending };

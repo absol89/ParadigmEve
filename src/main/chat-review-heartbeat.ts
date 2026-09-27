@@ -102,6 +102,11 @@ export type ChatReviewHeartbeatResult = {
   sessionId?: string;
   conversationId?: string;
   reason?: 'debt-owner-unavailable' | 'no-successor' | 'no-fresh-coordinator';
+  /**
+   * With `no-successor`: the saved Eve/Eva identity that could not be used as the successor, or
+   * absent when there is none. Diagnostic only — it names why the heartbeat waits, never a target.
+   */
+  staleIdentity?: string;
 };
 
 type Dependencies = {
@@ -829,7 +834,8 @@ export function runChatReviewHeartbeat(
         if (!successor) return {
           status: 'no-coordinator',
           reason: 'no-successor',
-          nextAt: now + CHAT_REVIEW_RETRY_MS
+          nextAt: now + CHAT_REVIEW_RETRY_MS,
+          ...(identityConversationId ? { staleIdentity: identityConversationId } : {})
         };
         debt = { ...debt, sessionId: successor.id, conversationId: successor.conversationId };
         coordinator = successor;

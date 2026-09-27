@@ -35,17 +35,17 @@ if (process.argv.includes('--check')) {
 
 const output = path.join(root, 'release', 'native-sources');
 const archives = path.join(output, 'archives');
-await fs.mkdir(archives, { recursive: true });
-let index = 0;
-let completed = 0;
-await Promise.all(Array.from({ length: 8 }, async () => {
-  while (index < inventory.sources.length) {
-    const source = inventory.sources[index++];
-    const destination = path.join(archives, source.file);
-    let bytes;
-    try { bytes = await fs.readFile(destination); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (!bytes) {
+const vendored = path.join(noticeDirectory, 'vendored');
+
+async function readIfPresent(file) {
+  try { return await fs.readFile(file); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; return undefined; }
+}
+
+async function download(source) {
+  let failure;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
       const response = await fetch(source.url, { signal: AbortSignal.timeout(180_000) });
       if (!response.ok) throw new Error(`Native source download failed: ${source.file}: HTTP ${response.status}`);
       const chunks = [];
@@ -55,8 +55,26 @@ await Promise.all(Array.from({ length: 8 }, async () => {
         if (size > source.bytes) throw new Error(`Native source exceeds reviewed size: ${source.file}`);
         chunks.push(chunk);
       }
-      bytes = Buffer.concat(chunks);
+      return Buffer.concat(chunks);
+    } catch (error) {
+      failure = error;
+      if (/exceeds reviewed size/.test(error.message)) throw error;
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
     }
+  }
+  throw failure;
+}
+await fs.mkdir(archives, { recursive: true });
+let index = 0;
+let completed = 0;
+await Promise.all(Array.from({ length: 8 }, async () => {
+  while (index < inventory.sources.length) {
+    const source = inventory.sources[index++];
+    const destination = path.join(archives, source.file);
+    // A previous run's copy, then a reviewed copy kept in the repository for hosts that refuse
+    // CI runners (gitlab.gnome.org answers them 406), then the pinned URL. All pass the same
+    // size and SHA-256 check below.
+    const bytes = await readIfPresent(destination) ?? await readIfPresent(path.join(vendored, source.file)) ?? await download(source);
     if (bytes.length !== source.bytes || createHash('sha256').update(bytes).digest('hex') !== source.sha256) {
       throw new Error(`Native source checksum mismatch: ${source.file}`);
     }
