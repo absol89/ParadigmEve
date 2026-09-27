@@ -701,6 +701,8 @@ describe('model-facing surfaces', () => {
     }
     // find is absent because exec_command is present — they are mutually exclusive.
     expect(names).not.toContain('find');
+    // Computer use joins Core only where desktop control ships (Windows and macOS).
+    if (!IS_WINDOWS && process.platform !== 'darwin') return;
     const legacyDesktopNames = toolNames(await desktop('tools/list')).filter(name => name !== 'exec');
     for (const name of legacyDesktopNames) expect(names, name).toContain(name);
   });
