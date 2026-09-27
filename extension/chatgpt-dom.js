@@ -2537,6 +2537,17 @@ var CLF_DOM = (() => {
     return /^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\/project\/?$/i.exec(pathname)?.[1]?.toLowerCase() || null;
   }
 
+  /**
+   * How long the source chat may take to finish loading before the one native click. A large
+   * Project chat is exactly the one Compact & Resume moves, and it hydrates slowly: upstream #212
+   * measured handoffs failing at ~600k tokens with "could not open the source Project", and a
+   * reproduction fails when the source is ready at 13 s against the old shared 12 s budget.
+   * User input still cancels at once; only the native transition keeps the short deadline.
+   * (Ported from chat-on-steroids #457.)
+   */
+  const PROJECT_SOURCE_READY_MS = 60_000;
+  const PROJECT_TRANSITION_MS = 12_000;
+
   /** Enter a Project through its source chat's native link. Cold /project loads can error. */
   async function enterProject(entry, stillCurrent = () => true) {
     if (!entry || !/^g-p-[0-9a-f]{32}$/.test(entry.id) || conversationId() !== entry.sourceConversationId) return false;
@@ -2576,13 +2587,13 @@ var CLF_DOM = (() => {
         // Reuse the same deadline timer; source loading must not consume the budget
         // for observing the replacement editor after the one permitted click.
         clearTimeout(timer);
-        timer = setTimeout(() => finish(false), 12_000);
+        timer = setTimeout(() => finish(false), PROJECT_TRANSITION_MS);
         links[0].click();
         check();
       };
       const observer = new MutationObserver(check);
       observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
-      let timer = setTimeout(() => finish(false), 12_000);
+      let timer = setTimeout(() => finish(false), PROJECT_SOURCE_READY_MS);
       document.addEventListener('pointerdown', interrupt, true);
       document.addEventListener('keydown', interrupt, true);
       check();

@@ -10060,7 +10060,8 @@
   // change, second tab or weaker ownership check.
   const FRESH_COMPOSER_TIMEOUT_MS = 45_000;
 
-  function waitForComposer(timeoutMs = FRESH_COMPOSER_TIMEOUT_MS) {
+  function waitForComposer(timeoutMs = FRESH_COMPOSER_TIMEOUT_MS, stillCurrent = () => true) {
+    if (!stillCurrent()) return Promise.resolve(null);
     const current = CLF_DOM.composer();
     if (current && current.isConnected) return Promise.resolve(current);
     return new Promise((resolve) => {
@@ -10072,6 +10073,7 @@
         resolve(value);
       };
       const check = () => {
+        if (!stillCurrent()) return finish(null);
         const composer = CLF_DOM.composer();
         if (composer && composer.isConnected) finish(composer);
       };
@@ -10313,6 +10315,15 @@
     if ((boot.model || boot.reasoningEffort) && !(await CLF_DOM.selectModelSettings(boot.model, boot.reasoningEffort, stillOnTarget))) {
       const reason = CLF_DOM.modelSelectionFailureReason?.();
       return void (await fail(`The requested model or reasoning is unavailable or could not be confirmed in ChatGPT${reason ? ` (${reason})` : ''}`));
+    }
+    // ChatGPT's Chat/Work/model transition can replace the entire home composer after the
+    // picker has already confirmed the requested selection. Do not treat that transient unmount
+    // as a failed bootstrap: reacquire the editing host under the same route/command fence before
+    // inserting authored text. Deliberately after selection, because the pre-selection composer
+    // is no longer authoritative. (Ported from chat-on-steroids #470.)
+    if ((boot.model || boot.reasoningEffort) && !(await waitForComposer(12_000, stillOnTarget))) {
+      if (await failIfRetargeted()) return;
+      return void (await fail('ChatGPT never re-exposed a usable composer after model selection'));
     }
     const selectionConfirmedAt = Date.now();
     const publishBootstrapSelection = (id) => {
