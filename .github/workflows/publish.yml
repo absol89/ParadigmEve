@@ -1,13 +1,18 @@
 name: Publish release
 
 # Dispatch this at the tag you want released:
-#   gh workflow run publish.yml --ref v2.0.2
+#   gh workflow run publish.yml --ref v2.0.2 [-f prerelease=true]
 #
 # It builds the candidate itself rather than adopting one from an earlier run, so the
 # installers attached to a release are provably the ones produced from that tag by the
 # pipeline in that tag's own tree.
 on:
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -193,5 +198,5 @@ jobs:
             publish/ParadigmEve-Native-Sources.tar.gz \
             publish/SHA256SUMS.txt \
             --title "$(sed -n 's/^## //p' "docs/release-notes/$TAG.md" | head -n 1)" \
-            --notes-file "docs/release-notes/$TAG.md"
+            --notes-file "docs/release-notes/$TAG.md"             ${{ inputs.prerelease && '--prerelease' || '' }}
           gh release view "$TAG" --json url --jq .url
