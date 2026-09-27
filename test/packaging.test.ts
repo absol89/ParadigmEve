@@ -608,10 +608,11 @@ describe('cross-platform packaging targets', () => {
     );
     expect(appImageSection.replace(/^\s*#.*$/gm, '')).not.toContain('ELECTRON_RUN_AS_NODE');
 
-    const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
+    // The user-facing platform notes live in the setup guide; the README is the product front page.
+    const setup = readFileSync(path.join(root, 'docs', 'setup.md'), 'utf8');
     const security = readFileSync(path.join(root, 'SECURITY.md'), 'utf8');
     const notes = currentReleaseNotes();
-    for (const document of [readme, security, notes]) {
+    for (const document of [setup, security, notes]) {
       expect(document).toContain('--no-sandbox');
       expect(document).toMatch(/unprivileged user namespaces/i);
     }
@@ -686,9 +687,9 @@ describe('cross-platform packaging targets', () => {
     expect(packagedRuntime).toContain("required('desktop/libcos-desktop.dylib')");
     expect(packagedRuntime).toContain("addon.handle('{\"op\":\"warm\"}')");
 
-    const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
+    const setup = readFileSync(path.join(root, 'docs', 'setup.md'), 'utf8');
     const notes = currentReleaseNotes();
-    expect(readme).toContain('macOS 13 Ventura or newer');
+    expect(setup).toContain('macOS 13 Ventura or newer');
     expect(notes).toContain('macOS 13');
     expect(notes).toContain('Ventura or newer');
   });

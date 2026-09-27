@@ -17598,16 +17598,19 @@ describe('assistant capture through the shipped fiber.js on the render-item rend
       </div>
     </div></div>`;
 
-  it('records the finished reply as one final assistant_message with its provider id', async () => {
+  /** Mounts one probed render-item exchange and runs the shipped fiber.js + content.js over it. */
+  async function mountExchange(userText: string, replyText: string, replies: Record<string, (message: Record<string, any>) => unknown> = {}) {
     const fiberSource = await fs.readFile(path.join(process.cwd(), 'extension', 'fiber.js'), 'utf8');
-    live = await harness(`https://chatgpt.com/c/${CHAT}`, {}, (document) => {
+    live = await harness(`https://chatgpt.com/c/${CHAT}`, replies, (document) => {
       document.getElementById('thread')!.innerHTML = EXCHANGE_HTML;
       type Fiber = { memoizedProps: Record<string, unknown>; child?: Fiber; sibling?: Fiber; return?: Fiber };
       const exchange: Fiber = { memoizedProps: {}, return: { memoizedProps: { conversationId: CHAT } } };
-      const user: Fiber = { memoizedProps: { item: { type: 'user-message', messageId: USER_ID, message: {} } }, return: exchange };
+      // Probed live 2026-09-27: the user text is a plain string and every id names the exchange.
+      const user: Fiber = { memoizedProps: { item: { type: 'user-message', messageId: USER_ID, serverMessageId: USER_ID,
+        message: userText, renderMarkdown: false } }, return: exchange };
       const assistant: Fiber = { memoizedProps: { item: {
         type: 'assistant-message', phase: 'final_answer', completed: true, messageId: REPLY_ID, latestMessageId: REPLY_ID,
-        sourceMessageIds: [REPLY_ID], turnExchangeId: 'b0000003-0000-4000-8000-000000000003', sentAtMs: null, content: '2'
+        sourceMessageIds: [REPLY_ID], turnExchangeId: 'b0000003-0000-4000-8000-000000000003', sentAtMs: null, content: replyText
       } }, return: exchange };
       assistant.child = { memoizedProps: { value: { messageId: REPLY_ID, turnId: 'fallback-turn-6', conversationId: CHAT,
         isStreaming: false, isLatestActorMessage: true, sourceMessageIds: [REPLY_ID] } }, return: assistant };
@@ -17624,16 +17627,40 @@ describe('assistant capture through the shipped fiber.js on the render-item rend
     const instant = window.setTimeout;
     window.setTimeout = (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms);
     try {
-      live.hook.observe();
-      await live.hook.refreshFiber();
-      await live.hook.flush();
-      await settle();
+      for (let pass = 0; pass < 2; pass++) {
+        live.hook.observe();
+        await live.hook.refreshFiber();
+        await live.hook.flush();
+        await settle();
+      }
     } finally {
       window.setTimeout = instant;
     }
-    const replies = emitted(live.sent, 'assistant_message').map(entry => entry.event);
+  }
+
+  it('records the finished reply as one final assistant_message with its provider id', async () => {
+    await mountExchange('1+1', '2');
+    const replies = emitted(live!.sent, 'assistant_message').map(entry => entry.event);
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ providerMessageId: REPLY_ID, messageId: REPLY_ID, text: '2', state: 'final', final: true });
     expect(replies[0].renderedHtml).toContain('<p>2</p>');
+  });
+
+  /**
+   * Dogfood 2026-09-27: every automatic compaction on this renderer sent its handoff and ChatGPT
+   * wrote a full brief, but the ticket never saw either — the marker lives in the user item, which
+   * was not read — so the ticket stayed dispatched-unresolved until it was cancelled.
+   */
+  it('binds a handoff marker to its exact message and delivers the final brief as the summary', async () => {
+    const token = 'b3kK9kF0aaaaaaaaaaaaaa';
+    const compact: Array<Record<string, any>> = [];
+    await mountExchange(`[[CLF-HANDOFF:${token}]]
+
+ParadigmEve is compacting this conversation.`, 'TASK\n\n- Continue.', {
+      compact: (message) => { compact.push(message); return { ok: true, data: {} }; },
+      activity: () => ({ ok: true, data: { pendingTools: 0 } })
+    });
+    expect(compact).toContainEqual(expect.objectContaining({ type: 'compact', conversationId: CHAT, token, sourceMessageId: USER_ID }));
+    expect(compact).toContainEqual(expect.objectContaining({ type: 'compact', conversationId: CHAT, token, summary: 'TASK\n\n- Continue.' }));
   });
 });

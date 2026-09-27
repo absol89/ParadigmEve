@@ -266,8 +266,29 @@
       status: item.completed === true ? 'finished_successfully' : 'in_progress',
       end_turn: final,
       content: { content_type: 'text', parts: [item.content] },
-      metadata: turnExchangeId ? { turn_exchange_id: turnExchangeId } : {}
+      metadata: turnExchangeId ? { turn_exchange_id: turnExchangeId } : {},
+      // A finished item's provider id is the server's final message id: durable without a creation
+      // time, which render items do not carry. See authoredAssistantMessages.
+      renderItemFinal: final
     };
+  }
+
+  /**
+   * One rendered user item as a page-model message, or null.
+   *
+   * The same renderer renders the user side as `props.item = { type: 'user-message', messageId,
+   * serverMessageId, message: '<exact authored text>' }` (live 2026-09-27). Compact & Resume finds its
+   * `[[CLF-HANDOFF:…]]` / `[[CLF-RESUME:…]]` markers in exactly these messages, so without them every
+   * handoff was sent, answered with a full brief, and never collected. Identity must be unanimous:
+   * `serverMessageId` agrees, and the item is the user message its exchange is keyed by.
+   */
+  function renderUserItemMessage(item, exchangeKey) {
+    if (!item || typeof item !== 'object' || item.type !== 'user-message') return null;
+    const id = str(item.messageId);
+    if (!id || !/^[a-zA-Z0-9._:-]{1,256}$/.test(id) || id !== exchangeKey) return null;
+    if (item.serverMessageId !== undefined && item.serverMessageId !== null && item.serverMessageId !== id) return null;
+    if (typeof item.message !== 'string' || !item.message) return null;
+    return { id, author: { role: 'user' }, recipient: 'all', content: { content_type: 'text', parts: [item.message] }, metadata: {} };
   }
 
   /** The conversation this page shows, from its own address. */
@@ -313,7 +334,8 @@
     const read = (at) => {
       const props = at.memoizedProps;
       if (!props || typeof props !== 'object') return;
-      if (props.item && typeof props.item === 'object' && props.item.type === 'assistant-message') items.add(props.item);
+      if (props.item && typeof props.item === 'object' &&
+          (props.item.type === 'assistant-message' || props.item.type === 'user-message')) items.add(props.item);
       const value = props.value;
       if (value && typeof value === 'object' && typeof value.messageId === 'string' && typeof value.isStreaming === 'boolean' &&
           !contexts.includes(value)) contexts.push(value);
@@ -368,7 +390,10 @@
     }
     // Rendered items come after every model message, so a page still carrying the model wins.
     const conversationId = pageConversationId();
-    for (const item of items) add(renderItemMessage(item, contexts, conversationId));
+    // The exchange is keyed by its own user message; that item comes first, as on the page.
+    const exchangeKey = section && section.getAttribute ? str(section.getAttribute('data-turn-key')) : null;
+    for (const item of items) if (item.type === 'user-message') add(renderUserItemMessage(item, exchangeKey));
+    for (const item of items) if (item.type === 'assistant-message') add(renderItemMessage(item, contexts, conversationId));
     if (whole &&[...byId.keys()].every(id => whole.some(message => message.id === id))) return whole.slice();
     if (byId.size === 0) return null;
     const time = entry => {
@@ -650,6 +675,7 @@
       let logicalId = collides ? assistantLogicalId(id, parentId, workingTurnId, turnExchangeId, null) : authoredId;
       // The reload-durable identity needs no thought parent to be trustworthy.
       let stable = !collides && Boolean(createTime) && logicalId !== id && logicalId !== parentId;
+      if (!collides && message.renderItemFinal === true) stable = true;
 
       // Live streaming can replace the raw text-message UUID while the same commentary block
       // keeps growing. The page already supplies a stronger relation: public commentary is a

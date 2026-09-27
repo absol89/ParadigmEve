@@ -18,6 +18,19 @@ updates, reload the matching unpacked Companion only if Chrome is still running 
 runtime. Refresh ChatGPT apps/connectors separately only when prompted or when their tool declarations
 changed.
 
+## Requirements and platform notes
+
+Windows 10/11, **macOS 13 Ventura or newer**, or a current desktop Linux. Chrome 116+ or a current
+Edge/Brave, plus a ChatGPT account/workspace with Developer mode and custom MCP apps.
+
+- **Unsigned beta:** Windows builds are not publisher-signed; macOS builds are unsigned and
+  unnotarized. Verify each package against the release checksums.
+- **Linux:** a Secret Service keyring is required. Prefer the DEB on Debian/Ubuntu; when
+  unprivileged user namespaces are disabled, the AppImage launcher can fall back to `--no-sandbox`.
+- **Permissions:** approve your folders and review capabilities before connecting. Filesystem roots
+  and Computer Use screen/control/clipboard access remain explicit opt-ins, and shell commands run with
+  your normal user privileges.
+
 ## Tunnel setup
 
 For voice-assisted or accessibility-focused setup, and for the rules governing creation of credentials for other user-authorized applications, see [Accessibility, browser identity, and credential stewardship](accessibility-and-credential-stewardship.md).

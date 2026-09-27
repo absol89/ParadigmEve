@@ -257,7 +257,9 @@ describe('fiber evidence on the render-item renderer', () => {
   type Fiber = { memoizedProps: Record<string, unknown>; child?: Fiber; sibling?: Fiber; return?: Fiber; stateNode?: unknown };
   const REPLY_ID = 'b0000001-0000-4000-8000-000000000001';
   const USER_ID = 'b0000002-0000-4000-8000-000000000002';
-  const userItem = () => ({ type: 'user-message', messageId: USER_ID, message: {}, attachments: [], sentAtMs: null });
+  // Probed live 2026-09-27: the user text is a plain string and every id names the exchange.
+  const userItem = (overrides: Record<string, unknown> = {}) => ({ type: 'user-message', messageId: USER_ID, serverMessageId: USER_ID,
+    message: '1+1', renderMarkdown: false, attachments: [], sentAtMs: null, ...overrides });
   const assistantItem = (overrides: Record<string, unknown> = {}) => ({
     type: 'assistant-message', phase: 'final_answer', completed: true, reasoningStatus: undefined,
     messageId: REPLY_ID, latestMessageId: REPLY_ID, sourceMessageIds: [REPLY_ID],
@@ -270,21 +272,22 @@ describe('fiber evidence on the render-item renderer', () => {
   });
 
   /** exchange -> [user c3 item, assistant c3 item -> provider(value) -> selection holder]. */
-  function renderItemExchange(item: Record<string, unknown>, value: Record<string, unknown> | null): Fiber {
+  function renderItemExchange(item: Record<string, unknown>, value: Record<string, unknown> | null,
+    user = userItem()): Fiber {
     const conversation: Fiber = { memoizedProps: { conversationId: THREAD } };
     const turnFiber: Fiber = { memoizedProps: {}, return: conversation };
-    const user: Fiber = { memoizedProps: { item: userItem() }, return: turnFiber };
+    const userFiber: Fiber = { memoizedProps: { item: user }, return: turnFiber };
     const assistant: Fiber = { memoizedProps: { item }, return: turnFiber };
-    turnFiber.child = user;
-    user.sibling = assistant;
+    turnFiber.child = userFiber;
+    userFiber.sibling = assistant;
     if (value) assistant.child = { memoizedProps: { value, children: {} }, return: assistant };
     return turnFiber;
   }
 
-  async function scan(item: Record<string, unknown>, value: Record<string, unknown> | null) {
+  async function scan(item: Record<string, unknown>, value: Record<string, unknown> | null, user = userItem()) {
     const body = exchange(6, USER_ID, '1+1', REPLY_ID, '<strong>2</strong>');
     const window = page(body).window as unknown as Window & typeof globalThis & Record<string, any>;
-    (window.document.querySelector(`[data-turn-key="${USER_ID}"]`) as any)['__reactFiber$live'] = renderItemExchange(item, value);
+    (window.document.querySelector(`[data-turn-key="${USER_ID}"]`) as any)['__reactFiber$live'] = renderItemExchange(item, value, user);
     window.eval(fiberSource);
     const reply = new Promise<Record<string, any>>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('the helper never answered')), 2000);
@@ -302,8 +305,10 @@ describe('fiber evidence on the render-item renderer', () => {
     const data = await scan(assistantItem(), context());
     expect(data.turns).toHaveLength(1);
     expect(data.turns[0]).toMatchObject({ turnId: USER_ID, conversationId: THREAD, conversationConflict: false, endMessageId: REPLY_ID });
-    const [reply] = data.turns[0].messages;
-    expect(reply).toMatchObject({ role: 'assistant', rawMessageId: REPLY_ID, messageId: REPLY_ID, rawText: '**2**' });
+    const [ask, reply] = data.turns[0].messages;
+    expect(ask).toMatchObject({ role: 'user', rawMessageId: USER_ID, stable: true, rawText: '1+1' });
+    // Final: durable by its provider id, which is what Compact & Resume requires of a brief.
+    expect(reply).toMatchObject({ role: 'assistant', rawMessageId: REPLY_ID, messageId: REPLY_ID, rawText: '**2**', stable: true });
     // Joined through the selection holder's provider id, not by position or text.
     expect(reply.renderedHtml).toContain('<strong>2</strong>');
   });
@@ -316,7 +321,8 @@ describe('fiber evidence on the render-item renderer', () => {
       [assistantItem(), null]
     ] as Array<[Record<string, unknown>, Record<string, unknown> | null]>) {
       const data = await scan(item, value);
-      expect(data.turns[0].messages.map((message: any) => message.rawMessageId)).toEqual([REPLY_ID]);
+      const replies = data.turns[0].messages.filter((message: any) => message.role === 'assistant');
+      expect(replies.map((message: any) => [message.rawMessageId, message.stable])).toEqual([[REPLY_ID, false]]);
       expect(data.turns[0].endMessageId).toBeNull();
     }
   });
@@ -330,7 +336,29 @@ describe('fiber evidence on the render-item renderer', () => {
       [assistantItem({ content: '' }), context()]
     ] as Array<[Record<string, unknown>, Record<string, unknown>]>) {
       const data = await scan(item, value);
-      expect(data.turns.flatMap((turn: any) => turn.messages)).toEqual([]);
+      expect(data.turns.flatMap((turn: any) => turn.messages).filter((message: any) => message.role === 'assistant')).toEqual([]);
+    }
+  });
+
+  it('reads a handoff marker from the user item exactly, so Compact & Resume can find its brief', async () => {
+    const marked = '[[CLF-HANDOFF:b3kK9kF0aaaaaaaaaaaaaa]]\n\nParadigmEve is compacting this conversation.';
+    const brief = 'TASK\n\n- Continue.';
+    const data = await scan(assistantItem({ content: brief }), context(), userItem({ message: marked }));
+    expect(data.turns[0].endMessageId).toBe(REPLY_ID);
+    expect(data.turns[0].messages.map((message: any) => [message.role, message.stable, message.rawText])).toEqual([
+      ['user', true, marked], ['assistant', true, brief]
+    ]);
+  });
+
+  it('fails closed on a user item that is not its own exchange or disagrees about its id', async () => {
+    for (const user of [
+      userItem({ messageId: 'another-user-message', serverMessageId: 'another-user-message' }),
+      userItem({ serverMessageId: 'another-user-message' }),
+      userItem({ message: { text: '1+1' } }),
+      userItem({ message: '' })
+    ]) {
+      const data = await scan(assistantItem(), context(), user);
+      expect(data.turns[0].messages.filter((message: any) => message.role === 'user')).toEqual([]);
     }
   });
 });

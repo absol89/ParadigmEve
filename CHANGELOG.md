@@ -13,6 +13,17 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.2.6] — Compact & Resume on ChatGPT's current layout
+
+### Fixed
+
+- Compact & Resume completes again on ChatGPT's render-item layout. The Companion now reads user messages from
+  their `user-message` render items, so the `[[CLF-HANDOFF:…]]` / `[[CLF-RESUME:…]]` markers are found, and a
+  finished reply counts as a stable brief. Previously every automatic compaction sent its handoff, ChatGPT wrote
+  the brief, and the ticket stayed `dispatched-unresolved` until cancelled.
+- The platform notes (macOS floor, Linux sandbox fallback, unsigned builds) now live in `docs/setup.md`, so the
+  README can stay a product front page.
+
 ## [2.2.5] — ChatGPT stream attribution
 
 ### Fixed
