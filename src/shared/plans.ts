@@ -75,10 +75,17 @@ export const planRecordSchema = z.object({
   provenance: planProvenanceSchema.optional(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
-  archivedAt: timestampSchema.nullable()
+  archivedAt: timestampSchema.nullable(),
+  /**
+   * Set, together with archivedAt, when the user cancels a Plan that is no longer relevant. Its
+   * checklist is kept exactly as it was, so an archived Plan is complete unless it was cancelled.
+   */
+  cancelledAt: timestampSchema.optional()
 }).strict().refine(plan => plan.updatedAt >= plan.createdAt, 'Plan update time is invalid')
   .refine(plan => plan.archivedAt === null || plan.archivedAt >= plan.createdAt, 'Plan archive time is invalid')
-  .refine(plan => plan.archivedAt === null || plan.items.every(item => item.status === 'done'), 'Archived Plans must be complete');
+  .refine(plan => plan.cancelledAt === undefined || plan.cancelledAt === plan.archivedAt, 'Plan cancel time is invalid')
+  .refine(plan => plan.archivedAt === null || plan.cancelledAt !== undefined || plan.items.every(item => item.status === 'done'),
+    'Archived Plans must be complete unless cancelled');
 
 /**
  * Most Plans the catalog holds, live and archived together. Every reader and writer of the catalog

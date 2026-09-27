@@ -199,6 +199,7 @@ const api = {
   updatePlan: (id: string, patch: PlanPatch, expectedUpdatedAt: number) =>
     call<PlanView>('plans:update', { id, patch, expectedUpdatedAt }),
   archivePlan: (id: string) => call<PlanView>('plans:archive', { id }),
+  cancelPlan: (id: string) => call<PlanView>('plans:cancel', { id }),
   onPlansChanged: (listener: () => void): (() => void) => {
     const wrapped = (): void => listener();
     ipcRenderer.on('plans:changed', wrapped);

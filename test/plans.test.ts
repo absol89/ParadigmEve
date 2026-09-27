@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
-import { archivePlan, backfillSessionPlans, createPlan, listPlans, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
+import { archivePlan, backfillSessionPlans, cancelPlan, createPlan, listPlans, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
 import { appendEvent, createSession, initSessionStore, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
 
 let directory: string;
@@ -698,4 +698,48 @@ it('refuses a new Plan only at the 5,000-Plan bound and removes nothing', async 
   await expect(createPlan({ title: 'No room', items: [{ text: 'Go', status: 'todo' }] })).rejects.toThrow('Plan catalog limit reached');
   const library = await listPlans();
   expect(library.live.length + library.done.length).toBe(5_000);
+});
+
+it('cancels a Live Plan into Done without ticking its items, and keeps it immutable', async () => {
+  const plan = await createPlan({
+    title: 'Superseded idea',
+    items: [{ text: 'Started', status: 'done' }, { text: 'Never needed', status: 'todo' }]
+  });
+
+  const cancelled = await cancelPlan(plan.id);
+  expect(cancelled).toMatchObject({ id: plan.id, section: 'done', readyToArchive: false });
+  expect(cancelled.cancelledAt).toBe(cancelled.archivedAt);
+  expect(cancelled.items.map(item => item.status)).toEqual(['done', 'todo']);
+
+  const library = await listPlans();
+  expect(library.live.some(row => row.id === plan.id)).toBe(false);
+  expect(library.done.find(row => row.id === plan.id)).toMatchObject({ cancelledAt: cancelled.cancelledAt });
+  // Repeating the cancel is the same answer; editing a cancelled Plan is refused like any archive.
+  expect((await cancelPlan(plan.id)).cancelledAt).toBe(cancelled.cancelledAt);
+  await expect(updatePlan(plan.id, { title: 'Revived' }, cancelled.updatedAt)).rejects.toThrow('Archived Plans cannot be edited');
+  await expect(cancelPlan('00000000-0000-4000-8000-00000000ffff')).rejects.toThrow('Plan not found');
+});
+
+it('refuses to relabel a Plan archived as finished as cancelled', async () => {
+  const plan = await createPlan({ title: 'Really done', items: [{ text: 'All of it', status: 'done' }] });
+  await archivePlan(plan.id);
+  await expect(cancelPlan(plan.id)).rejects.toThrow('already archived as finished');
+});
+
+it('accepts an incomplete archived Plan only when it was cancelled at its archive time', async () => {
+  const record = (extra: Record<string, unknown>) => ({
+    version: 1,
+    plans: [{
+      id: '00000000-0000-4000-8000-00000000aaaa',
+      title: 'Half done',
+      items: [{ id: '00000000-0000-4000-8000-00000000aaab', text: 'Todo', status: 'todo' }],
+      createdAt: 1, updatedAt: 5, archivedAt: 5, ...extra
+    }]
+  });
+  await writeDurableNow('plans', record({ cancelledAt: 5 }));
+  expect((await listPlans()).done).toHaveLength(1);
+  await writeDurableNow('plans', record({ cancelledAt: 4 }));
+  await expect(listPlans()).rejects.toThrow('Plan catalog is invalid');
+  await writeDurableNow('plans', record({}));
+  await expect(listPlans()).rejects.toThrow('Plan catalog is invalid');
 });

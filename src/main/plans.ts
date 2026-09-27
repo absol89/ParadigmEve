@@ -627,6 +627,35 @@ export function withPlanReviewValidationFence<T>(
   });
 }
 
+/**
+ * Archives a Live Plan the user no longer wants, without pretending its work was done.
+ *
+ * Archive-as-finished needs every item checked; ticking items only to clear a Plan away would
+ * misstate what happened. Cancel keeps the checklist exactly as it is, marks the Plan cancelled and
+ * moves it to Done, where it is as immutable as any other archived Plan.
+ */
+export async function cancelPlan(id: string): Promise<PlanView> {
+  const sessions = await indexedSessions();
+  const bySession = new Map(sessions.map(session => [session.id, session]));
+  return queueMutation(async () => {
+    const parsedId = planUpdateId(id);
+    const plans = await readRecords();
+    const index = plans.findIndex(plan => plan.id === parsedId);
+    if (index < 0) throw new Error('Plan not found');
+    const current = plans[index]!;
+    if (current.archivedAt !== null) {
+      if (current.cancelledAt !== undefined) return projectPlan(current, planAudience(current, bySession));
+      throw new Error('Plan is already archived as finished');
+    }
+    const at = nextTimestamp(current.updatedAt);
+    const cancelled: PlanRecord = { ...current, archivedAt: at, cancelledAt: at, updatedAt: at };
+    const next = [...plans];
+    next[index] = cancelled;
+    await writeRecords(next);
+    return projectPlan(cancelled, planAudience(current, bySession));
+  });
+}
+
 export async function archivePlan(id: string): Promise<PlanView> {
   const sessions = await indexedSessions();
   const bySession = new Map(sessions.map(session => [session.id, session]));

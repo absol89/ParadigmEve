@@ -31,6 +31,8 @@ operation.
 - `pins` MCP actions for Thread prompts (`create_thread` with `prompt`, `set_thread_prompt`) and Pin Hearts
   (`set_pin_sticky`).
 - A shipped `%claude` starter Hotlink for Eve ↔ Claude coordination.
+- **Cancel plan:** a Live Plan that is no longer relevant can be cancelled (two clicks). It moves to Done as
+  Cancelled with its checklist exactly as it was, instead of ticking items only to archive it.
 
 ## [2.2.7] — First GitHub-published debug pre-release
 

@@ -305,3 +305,53 @@ it('keeps Live card order stable while card state changes', () => {
   ]);
   expect(host.querySelector('.plans-item-relation.is-current')).toBeNull();
 });
+
+it('cancels a Live Plan only on a confirming second click, then shows it as Cancelled with its real progress', () => {
+  vi.useFakeTimers();
+  try {
+    const host = document.getElementById('host')!;
+    const onCancel = vi.fn();
+    const live: PlanViewModel = {
+      id: 'plan-live',
+      title: 'No longer relevant',
+      lifecycle: 'live',
+      items: [
+        { id: 'a', title: 'Done part', status: 'done' },
+        { id: 'b', title: 'Never started', status: 'todo' }
+      ]
+    };
+    const controller = createPlansLibrary({ host, plans: [live], onCancel });
+
+    const cancel = () => host.querySelector<HTMLButtonElement>('.plans-cancel')!;
+    expect(cancel().textContent).toBe('Cancel plan');
+    cancel().click();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(cancel().textContent).toBe('Click again to cancel');
+    // An armed button that is left alone disarms itself.
+    vi.advanceTimersByTime(5_000);
+    expect(cancel().textContent).toBe('Cancel plan');
+    cancel().click();
+    cancel().click();
+    expect(onCancel).toHaveBeenCalledExactlyOnceWith('plan-live');
+
+    controller.update([{ ...live, lifecycle: 'done', cancelled: true, completedLabel: 'Cancelled today' }]);
+    expect(host.querySelector('.plans-finished')?.textContent).toBe('Cancelled');
+    expect(host.querySelector('.plans-finished')?.classList.contains('is-cancelled')).toBe(true);
+    expect(host.querySelector('.plans-progress-label')?.textContent).toBe('1 / 2');
+    expect(host.querySelector('.plans-cancel')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('offers Cancel beside Archive as finished on a ready-to-archive Plan, and never on a finished one', () => {
+  const host = document.getElementById('host')!;
+  const plan = (lifecycle: PlanViewModel['lifecycle']): PlanViewModel => ({
+    id: `plan-${lifecycle}`, title: lifecycle, lifecycle, items: [{ id: 'a', title: 'Step', status: 'done' }]
+  });
+  createPlansLibrary({ host, plans: [plan('ready-to-archive'), plan('done')], onCancel: vi.fn(), onArchive: vi.fn() });
+  const ready = host.querySelector('[data-lifecycle="ready-to-archive"]')!;
+  expect(ready.querySelector('.plans-archive')).not.toBeNull();
+  expect(ready.querySelector('.plans-cancel')).not.toBeNull();
+  expect(host.querySelector('[data-lifecycle="done"] .plans-cancel')).toBeNull();
+});

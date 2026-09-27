@@ -50,6 +50,8 @@ export interface PlanViewModel {
   provenance?: PlanProvenance | null;
   /** Optional display text such as "Finished today" for an archived plan. */
   completedLabel?: string;
+  /** An archived Plan the user cancelled; its checklist shows the progress it really reached. */
+  cancelled?: boolean;
   /** Durable Pins-library projection for this Plan; the presentational card never infers it. */
   pinned?: boolean;
   /** User-facing Pin/Unpin label supplied by the Pins owner, including its Quilt when useful. */
@@ -62,6 +64,8 @@ export interface PlansLibraryCallbacks {
   /** The owner decides whether an unchecked item returns to todo or another valid state. */
   onToggleItemDone?: (planId: string, itemId: string, done: boolean) => void;
   onArchive?: (planId: string) => void;
+  /** Archives a Live Plan as cancelled, keeping its checklist as it is. */
+  onCancel?: (planId: string) => void;
   onPin?: (planId: string) => void;
   onOpenSource?: (planId: string, provenance: PlanProvenance) => void;
   /** Starts the 2.2.3 conversational Plan-create flow; durable Plan mutation remains Eve/tool-owned. */
@@ -200,6 +204,44 @@ function provenanceRow(plan: PlanViewModel, callbacks: PlansLibraryCallbacks): H
   return row;
 }
 
+/** How long the armed "Click again to cancel" state waits for its confirming second click. */
+const CANCEL_CONFIRM_MS = 5_000;
+
+/**
+ * Two clicks cancel a Plan: the first arms the button, the second within a few seconds commits.
+ * Cancelling moves the Plan to Done, so one stray click must not do it.
+ */
+function cancelButton(plan: PlanViewModel, callbacks: PlansLibraryCallbacks): HTMLElement | null {
+  if (!callbacks.onCancel) return null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'plans-cancel';
+  button.disabled = plan.pending === true;
+  const label = el('span', '', () => t('Cancel plan'));
+  button.append(icon('i-x'), label);
+  button.setAttribute('aria-label', `${t('Cancel plan')} · ${plan.title}`);
+  let disarm: ReturnType<typeof setTimeout> | null = null;
+  const reset = (): void => {
+    if (disarm) clearTimeout(disarm);
+    disarm = null;
+    button.classList.remove('is-armed');
+    ui(label, 'textContent', () => t('Cancel plan'));
+    button.setAttribute('aria-label', `${t('Cancel plan')} · ${plan.title}`);
+  };
+  button.addEventListener('click', () => {
+    if (!button.classList.contains('is-armed')) {
+      button.classList.add('is-armed');
+      ui(label, 'textContent', () => t('Click again to cancel'));
+      button.setAttribute('aria-label', `${t('Click again to cancel')} · ${plan.title}`);
+      disarm = setTimeout(reset, CANCEL_CONFIRM_MS);
+      return;
+    }
+    reset();
+    callbacks.onCancel?.(plan.id);
+  });
+  return button;
+}
+
 function planCard(plan: PlanViewModel, callbacks: PlansLibraryCallbacks): HTMLElement {
   const card = el('article', 'plans-card');
   card.setAttribute('aria-label', plan.title);
@@ -235,7 +277,9 @@ function planCard(plan: PlanViewModel, callbacks: PlansLibraryCallbacks): HTMLEl
   if (plan.lifecycle === 'ready-to-archive') {
     headActions.append(el('span', 'plans-ready', () => t('Ready to archive')));
   } else if (plan.lifecycle === 'done') {
-    headActions.append(el('span', 'plans-finished', () => t('Finished')));
+    headActions.append(plan.cancelled
+      ? el('span', 'plans-finished is-cancelled', () => t('Cancelled'))
+      : el('span', 'plans-finished', () => t('Finished')));
   }
   if (headActions.childElementCount) head.append(headActions);
   card.append(head);
@@ -289,7 +333,16 @@ function planCard(plan: PlanViewModel, callbacks: PlansLibraryCallbacks): HTMLEl
     archive.append(icon('i-check'), el('span', '', () => t(plan.pending ? 'Archiving…' : 'Archive as finished')));
     archive.addEventListener('click', () => callbacks.onArchive?.(plan.id));
     actions.append(status, archive);
+    const cancel = cancelButton(plan, callbacks);
+    if (cancel) actions.append(cancel);
     card.append(actions);
+  } else if (plan.lifecycle === 'live') {
+    const cancel = cancelButton(plan, callbacks);
+    if (cancel) {
+      const actions = el('div', 'plans-card-actions is-quiet');
+      actions.append(cancel);
+      card.append(actions);
+    }
   } else if (plan.lifecycle === 'done' && plan.completedLabel) {
     card.append(el('div', 'plans-completed-label', plan.completedLabel));
   }
@@ -379,6 +432,7 @@ export function createPlansLibrary(options: PlansLibraryOptions): PlansLibraryCo
   const callbacks: PlansLibraryCallbacks = {
     onToggleItemDone: options.onToggleItemDone,
     onArchive: options.onArchive,
+    onCancel: options.onCancel,
     onPin: options.onPin,
     onOpenSource: options.onOpenSource,
     onCreatePlanChat: options.onCreatePlanChat,

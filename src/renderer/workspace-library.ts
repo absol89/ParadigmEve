@@ -740,7 +740,9 @@ function planCard(plan: PlanView): PlanViewModel {
       sourceState: sourceThread || source.sessionId ? 'linked' : 'saved-only'
     } : null,
     ...(pinState ? { pinLabel: `Unpin · ${pinState.quiltTitle}`, pinned: true } : {}),
-    ...(plan.archivedAt ? { completedLabel: `Finished ${relativeTime(plan.archivedAt)}` } : {})
+    ...(plan.cancelledAt !== undefined
+      ? { cancelled: true, completedLabel: `Cancelled ${relativeTime(plan.cancelledAt)}` }
+      : plan.archivedAt ? { completedLabel: `Finished ${relativeTime(plan.archivedAt)}` } : {})
   };
 }
 
@@ -759,6 +761,9 @@ function paintPlans(): void {
       },
       onArchive(planId) {
         void archivePlan(planId);
+      },
+      onCancel(planId) {
+        void cancelPlan(planId);
       },
       onPin(planId) {
         const plan = allPlans().find(row => row.id === planId);
@@ -798,6 +803,12 @@ async function togglePlanItem(planId: string, itemId: string, done: boolean): Pr
     : item);
   if (await run(window.api.updatePlan(planId, { items }, plan.updatedAt)) === null) return;
   await refreshPlansSurface();
+}
+
+async function cancelPlan(planId: string): Promise<void> {
+  if (await run(window.api.cancelPlan(planId)) === null) return;
+  await refreshPlansSurface();
+  toast(t('Plan cancelled'));
 }
 
 async function archivePlan(planId: string): Promise<void> {

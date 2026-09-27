@@ -814,6 +814,54 @@
   background: linear-gradient(90deg, var(--plans-ready-wash), color-mix(in srgb, var(--plans-ready-wash) 26%, transparent));
 }
 
+/* A Live Plan's only action is Cancel: quiet, right-aligned, no ready-to-archive wash. */
+.plans-card-actions.is-quiet {
+  justify-content: flex-end;
+  padding: 6px 14px 10px;
+  border-top: 0;
+  background: none;
+}
+
+.plans-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--plans-faint);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.plans-cancel:hover:not(:disabled) {
+  color: var(--plans-ink);
+}
+
+.plans-cancel.is-armed {
+  color: var(--plans-gold);
+  font-weight: 600;
+}
+
+.plans-cancel:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.plans-cancel:focus-visible {
+  outline: 2px solid var(--plans-focus);
+  outline-offset: 2px;
+}
+
+.plans-finished.is-cancelled {
+  border-color: var(--plans-line);
+  background: transparent;
+  color: var(--plans-faint);
+}
+
 .plans-archive-note {
   flex: 1;
   min-width: 0;

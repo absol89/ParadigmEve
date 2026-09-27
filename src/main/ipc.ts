@@ -80,7 +80,7 @@ import { formatLogAsJson, formatLogForClipboard, getLog, logInfo, logWarn, onLog
 import { RESERVED_ROOT_NAMES, uniqueRootName, validateNewRoot, SandboxError, resolvePath } from './sandbox.js';
 import { addProject, linkNativeProject, listProjects, removeProject } from './projects.js';
 import { resolveExpensesDataProject, resolveExpensesProject, startExpensesProject } from './expenses-project.js';
-import { archivePlan, backfillSessionPlans, createPlan, ensureSessionPlan, listPlans, onPlansChange, updatePlan } from './plans.js';
+import { archivePlan, backfillSessionPlans, cancelPlan, createPlan, ensureSessionPlan, listPlans, onPlansChange, updatePlan } from './plans.js';
 import { reconcileAllRequestPlanThreadSources, reconcileRequestPlanThreadSource } from './plan-source.js';
 import { onRequestTrailChange } from './request-trail.js';
 import { planArchiveRequestSchema, planCreateSchema, planUpdateRequestSchema } from '../shared/plans.js';
@@ -957,6 +957,10 @@ export function registerIpc(
   handle('plans:archive', (payload) => {
     const { id } = planArchiveRequestSchema.parse(payload);
     return archivePlan(id);
+  });
+  handle('plans:cancel', (payload) => {
+    const { id } = planArchiveRequestSchema.parse(payload);
+    return cancelPlan(id);
   });
 
   handle('pins:snapshot', () => pinsLibrary());
