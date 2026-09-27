@@ -14,7 +14,7 @@
 
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -1308,6 +1308,14 @@ describe('2025-era clients', () => {
     expect(instructions).not.toMatch(/functions\.|SKILL\.md|request_user_input|approval auto-review/);
     // The requested upstream collaboration prose replaces the old minimal tool preamble.
     expect(instructions).toContain('User authorization and preferences persist across turns.');
+    // Always-on safe-change habits, with the longer checklists read from the packaged Vault on demand.
+    expect(instructions).toContain('# Changing code safely');
+    expect(instructions).toContain('find every copy (schemas, validators, tests, docs)');
+    expect(instructions).toContain('`/paradigmeve-manual/14-coding-skills.md`');
+    const vaultPage = readFileSync(path.join(process.cwd(), 'docs', 'vault', '14-coding-skills.md'), 'utf8');
+    for (const heading of ['## Code review', '## Debug systematically', '## Refactor safely', '## Security review']) {
+      expect(vaultPage).toContain(heading);
+    }
     expect(instructions.length).toBeLessThan(18_000);
   });
 
@@ -1538,6 +1546,9 @@ describe('capability gating', () => {
     const instructions: string = initialized.body.result.instructions ?? '';
     expect(instructions).toMatch(/Reuse\s+a sleeping worker for related follow-up work before spawning a replacement/);
     expect(instructions).toContain('Only terminal workers whose context is full need replacing');
+    expect(instructions).toContain('likely to keep you busy for more than about a minute');
+    expect(instructions).toContain('check worker status near the start');
+    expect(instructions).toContain('Prime remains the owner');
 
     const tools = await core('tools/list');
     const agentsDescription = (tools.body.result.tools as Array<{ name: string; description?: string }>).find(

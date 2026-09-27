@@ -23,6 +23,12 @@ operation.
   available, preparing 2.3.0 to switch the public Windows filename without breaking updates.
 - Public macOS release assets now use DMGs only; ZIPs remain CI/test artifacts rather than duplicate user downloads,
   and the public `SHA256SUMS.txt` lists only attached assets.
+- Eve's coding instructions gain a short always-on "Changing code safely" section (find every copy of a rule, prove
+  fixes with a failing test, separate refactors, treat test time as a range, never change user data as a side
+  effect), with fuller checklists in the packaged Vault page `14-coding-skills.md` read only when needed.
+- Eve delegates sooner: a task likely to take more than about a minute, or with two or more independent
+  workstreams, starts by checking workers and parallelising suitable bounded work, while Prime keeps synthesis,
+  decisions and user communication.
 
 ## [2.2.8] — Steadier recovery, Pins prompts from Eve
 
