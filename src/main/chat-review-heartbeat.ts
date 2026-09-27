@@ -8,7 +8,7 @@
  * model while exact browser/session ownership and delivery remain in the existing durable outbox.
  */
 import { randomUUID } from 'node:crypto';
-import { planIdSchema, type PlanLibrary, type PlanView } from '../shared/plans.js';
+import { PLAN_CATALOG_MAX, planIdSchema, type PlanLibrary, type PlanView } from '../shared/plans.js';
 import type { SessionSummary } from '../shared/session.js';
 import { currentAgentConversationId } from './agent-identity.js';
 import { readDurable, writeDurableNow } from './durable.js';
@@ -29,7 +29,7 @@ export const CHAT_REVIEW_HEARTBEAT_MS = 22 * 60 * 1000;
 export const CHAT_REVIEW_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const CHAT_REVIEW_RETRY_MS = 60 * 1000;
 export const CHAT_REVIEW_PLAN_BATCH_SIZE = 4;
-const CHAT_REVIEW_PLAN_CATALOG_MAX = 500;
+const CHAT_REVIEW_PLAN_CATALOG_MAX = PLAN_CATALOG_MAX;
 const STATE = 'chat-review-heartbeat';
 
 export interface ChatReviewPlanTarget {
@@ -719,18 +719,6 @@ export function onChatReviewHeartbeatPublicStatus(
 export async function readChatReviewHeartbeatPublicStatus(): Promise<ChatReviewHeartbeatPublicStatus> {
   const state = await defaults.readState();
   return publicStatusFromState(state);
-}
-
-/**
- * Every Plan id the heartbeat still points at: its current review batch and the sweep still to
- * review. A missing batch Plan stops the heartbeat, so the Plans catalog never rotates these out.
- */
-export async function chatReviewReferencedPlanIds(): Promise<Set<string>> {
-  const state = await defaults.readState();
-  return new Set([
-    ...(state?.debt?.planBatch ?? []).map(target => target.planId),
-    ...(state?.planSweep?.remainingPlanIds ?? [])
-  ]);
 }
 
 /**

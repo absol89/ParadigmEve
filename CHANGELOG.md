@@ -23,26 +23,7 @@ operation.
   focus, so the queued wake posts.
 - The browser journal keeps only the newest unsent snapshot of a streaming message, so an outage cannot evict
   real messages.
-- A full Plans catalog rotates out its oldest unreferenced archived Plans instead of refusing new ones.
-- The heartbeat's closed-identity warning describes a closed tab rather than an ended chat.
-
-### Added
-
-- `pins` MCP actions for Thread prompts (`create_thread` with `prompt`, `set_thread_prompt`) and Pin Hearts
-  (`set_pin_sticky`).
-- A shipped `%claude` starter Hotlink for Eve ↔ Claude coordination.
-
-## [2.2.8] — Steadier recovery, Pins prompts from Eve
-
-### Fixed
-
-- Messages no longer overlap or hide behind the composer: the Companion's activity stream mounts inside the
-  exchange ChatGPT measures.
-- Restart recovery opens Eve's exact chat through the running Eve Browser profile when Windows refuses window
-  focus, so the queued wake posts.
-- The browser journal keeps only the newest unsent snapshot of a streaming message, so an outage cannot evict
-  real messages.
-- A full Plans catalog rotates out its oldest unreferenced archived Plans instead of refusing new ones.
+- The Plans catalog holds 5,000 Plans instead of 500, and never removes archived Plans automatically.
 - The heartbeat's closed-identity warning describes a closed tab rather than an ended chat.
 
 ### Added

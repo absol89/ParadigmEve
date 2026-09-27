@@ -84,7 +84,6 @@ import { createRequestCheckInOwner } from './request-checkins.js';
 import { createRequestTrailCheckInSource, requestTrailSourceTarget } from './request-trail-checkins.js';
 import { startScheduleMaintenance } from './schedule-maintenance.js';
 import {
-  chatReviewReferencedPlanIds,
   onChatReviewHeartbeatPublicStatus,
   readChatReviewHeartbeatPublicStatus,
   startChatReviewHeartbeatMaintenance,
@@ -94,8 +93,7 @@ import { configureLanPeerRuntime, publishLanPeerRuntime, stopLanPeerRuntime } fr
 import { runShutdownSequence } from './shutdown.js';
 import { applyStagedUpdate, startUpdateChecks } from './update.js';
 import { UI_BASE_ZOOM, windowLayoutForWorkArea, titleBarOverlayForTheme } from './window-layout.js';
-import { initializeDefaultThreads, pinsLibrary } from './pins.js';
-import { setPlanReferenceGuard } from './plans.js';
+import { initializeDefaultThreads } from './pins.js';
 import { initializeExpensesProjects } from './expenses-project.js';
 import { syncVaultManualMirror } from './vault-path.js';
 import {
@@ -635,13 +633,6 @@ void app.whenReady().then(async () => {
   initDurableStore(userData);
   try { await syncVaultManualMirror(userData); }
   catch (error) { logWarn(`could not synchronize AppData Vault manual: ${error instanceof Error ? error.message : String(error)}`); }
-  // A full Plans catalog rolls its oldest archived Plans off, but never one a Thread pins or the
-  // chat review heartbeat is still reviewing. Unreadable state protects everything (no rotation).
-  setPlanReferenceGuard(async () => {
-    const [library, reviewing] = await Promise.all([pinsLibrary(), chatReviewReferencedPlanIds()]);
-    for (const pin of library.pins) if (pin.kind === 'plan') reviewing.add(pin.provenance.planId);
-    return reviewing;
-  });
   try { await initializeDefaultThreads(); }
   catch (error) { logWarn(`could not initialize default Threads: ${error instanceof Error ? error.message : String(error)}`); }
   let previousRunUnclean = false;

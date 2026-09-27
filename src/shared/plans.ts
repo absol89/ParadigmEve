@@ -80,9 +80,15 @@ export const planRecordSchema = z.object({
   .refine(plan => plan.archivedAt === null || plan.archivedAt >= plan.createdAt, 'Plan archive time is invalid')
   .refine(plan => plan.archivedAt === null || plan.items.every(item => item.status === 'done'), 'Archived Plans must be complete');
 
+/**
+ * Most Plans the catalog holds, live and archived together. Every reader and writer of the catalog
+ * (including the chat review heartbeat) uses this one bound; see MAX_PLANS in main/plans.ts.
+ */
+export const PLAN_CATALOG_MAX = 5_000;
+
 export const planCatalogSchema = z.object({
   version: z.literal(1),
-  plans: z.array(planRecordSchema).max(500)
+  plans: z.array(planRecordSchema).max(PLAN_CATALOG_MAX)
 }).strict().refine(value => new Set(value.plans.map(plan => plan.id)).size === value.plans.length, 'Plan ids must be unique');
 
 export type PlanPriority = z.infer<typeof planPrioritySchema>;
