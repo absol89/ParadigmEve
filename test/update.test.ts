@@ -482,17 +482,21 @@ describe('local polling', () => {
       return { unref };
     }) as unknown as typeof setInterval);
     try {
-      startUpdateChecks();
-      await checkForUpdates();
-      expect(updateStatus().checkedAt).toBeGreaterThan(0);
-      expect(unref).toHaveBeenCalledOnce();
-      expect(publicFetch).not.toHaveBeenCalled();
+      // This is about the timer, so pin a platform that stages installers. A Linux package install
+      // deliberately never stages (see "never stages it for a Linux package install").
+      await asPlatform('win32', undefined, async () => {
+        startUpdateChecks();
+        await checkForUpdates();
+        expect(updateStatus().checkedAt).toBeGreaterThan(0);
+        expect(unref).toHaveBeenCalledOnce();
+        expect(publicFetch).not.toHaveBeenCalled();
 
-      privateBuild();
-      repeat!();
-      await checkForUpdates();
-      expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready' });
-      expect(publicFetch).not.toHaveBeenCalled();
+        privateBuild();
+        repeat!();
+        await checkForUpdates();
+        expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready' });
+        expect(publicFetch).not.toHaveBeenCalled();
+      });
     } finally {
       interval.mockRestore();
     }

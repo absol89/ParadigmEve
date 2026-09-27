@@ -1413,8 +1413,16 @@ describe('capability gating', () => {
 
     const names = toolNames(await core('tools/list'));
     for (const name of ['exec', 'find', 'read', 'view_image', 'expenses_read']) expect(names).toContain(name);
-    for (const name of ['apply_patch', 'exec_command', 'write_stdin', 'write_clipboard', 'click', 'computer', 'expenses']) {
+    for (const name of ['apply_patch', 'exec_command', 'write_stdin', 'write_clipboard', 'click', 'expenses']) {
       expect(names, name).not.toContain(name);
+    }
+    if (IS_WINDOWS) {
+      expect(names).not.toContain('computer');
+    } else if (names.includes('computer')) {
+      // Outside Windows, clipboard reading lives inside `computer`, so the tool stays listed for it;
+      // every pointer/keyboard step must still be refused in read-only mode.
+      const refused = await core('tools/call', { name: 'computer', arguments: { actions: [{ type: 'click_ref', ref: 'r1' }] } });
+      expect(textOf(refused)).toContain('TOOL_DISABLED');
     }
     if (IS_WINDOWS) {
       for (const name of WINDOWS_COMPUTER_READ_METHODS) expect(names, name).toContain(name);

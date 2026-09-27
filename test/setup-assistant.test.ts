@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { JSDOM } from 'jsdom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => ({ spawn: vi.fn(), listWindows: vi.fn(), findUi: vi.fn(), act: vi.fn(), extensionDir: vi.fn() }));
 
@@ -45,6 +45,13 @@ class FakeChromeProcess extends EventEmitter {
 }
 
 const modulePromise = import('../src/main/setup-assistant.js');
+
+// These fixtures model the Windows setup flow: UI Automation refs, Windows window identities and Chrome paths. Pin the platform so macOS/Linux runners exercise the same Windows branch the fixtures describe;
+// the modules under test read process.platform at call time, never at import.
+const hostPlatform = process.platform;
+beforeAll(() => { Object.defineProperty(process, 'platform', { value: 'win32', configurable: true }); });
+afterAll(() => { Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true }); });
+
 const validTunnel = `tunnel_${'a'.repeat(32)}`;
 const validKey = `sk-${'b'.repeat(32)}`;
 const baseOptions = {

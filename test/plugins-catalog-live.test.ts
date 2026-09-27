@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { installSource, runInstaller } from '../src/main/plugins/installer.js';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { pluginCatalog } from '../src/main/plugins/catalog.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
@@ -18,7 +19,10 @@ for (const id of ['blender', 'unity', 'playwright']) {
       const recipe = pluginCatalog.find(entry => entry.id === id)!;
       const launch = await installSource(recipe.source, directory);
       if (id === 'playwright') {
-        await runInstaller(launch.command, [path.join(directory, 'node_modules/playwright/cli.js'), 'install', 'chromium'], directory);
+        // Playwright ships inside the app, so its browser CLI sits beside the bundled MCP entry
+        // rather than in the per-plugin directory.
+        const playwrightRoot = path.dirname(createRequire(launch.args[0]!).resolve('playwright/package.json'));
+        await runInstaller(launch.command, [path.join(playwrightRoot, 'cli.js'), 'install', 'chromium'], directory);
         launch.args.push('--headless', '--browser', 'chromium', '--isolated');
       }
       await client.connect(new StdioClientTransport({ command: launch.command, args: launch.args, cwd: directory, stderr: 'ignore' }), { timeout: 20000 });

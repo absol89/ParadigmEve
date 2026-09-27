@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 const browser = vi.hoisted(() => ({ connected: false, present: false, lastSeenAt: null as number | null }));
 const config = vi.hoisted(() => ({ ui: { chatBrowser: 'chrome' } }));
 vi.mock('../src/main/config.js', () => ({ getConfig: () => config }));
@@ -15,6 +15,13 @@ vi.mock('../src/main/setup-assistant.js', () => ({
 }));
 vi.mock('../src/main/connection.js', () => ({ connect: vi.fn(), getStatus: vi.fn(), onStatusChange: vi.fn() }));
 import { resetBrowserStartupForTests, wakeBrowserUrl } from '../src/main/browser-startup.js';
+
+// Restore-first cold-start recovery is the Windows dedicated-profile path. Pin the platform so macOS/Linux runners exercise the same Windows branch the fixtures describe;
+// the modules under test read process.platform at call time, never at import.
+const hostPlatform = process.platform;
+beforeAll(() => { Object.defineProperty(process, 'platform', { value: 'win32', configurable: true }); });
+afterAll(() => { Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true }); });
+
 beforeEach(() => { resetBrowserStartupForTests(); config.ui.chatBrowser = 'chrome'; browser.connected = false; browser.present = false; browser.lastSeenAt = null; conversationOpen.mockReset().mockReturnValue(false); open.mockReset().mockResolvedValue('chrome'); dedicated.mockReset().mockResolvedValue(undefined); running.mockReset().mockResolvedValue(false); restore.mockReset().mockResolvedValue({ id: 77, restoredPages: true }); });
 
 it('starts the newly selected family without reusing the old attempt or overriding a connected companion', async () => {

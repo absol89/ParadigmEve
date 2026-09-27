@@ -444,6 +444,10 @@ describe('explicit settings replace the published tool contract', () => {
     const { getStatus } = await import('../src/main/connection.js');
     const desktop = await import('../src/main/mcp/tools-desktop-windows.js');
     const retire = vi.spyOn(desktop, 'retireWindowsComputerContexts');
+    // The Window2 retirement is a Windows-only settings transition; pin the platform it runs on.
+    const hostPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
 
     const enable = { ...getConfig(), capabilities: { ...getConfig().capabilities, screen: true, control: true } };
     expect((await save(enable)).ok).toBe(true);
@@ -456,7 +460,10 @@ describe('explicit settings replace the published tool contract', () => {
     expect((await save(on)).ok).toBe(true);
     expect(getStatus().state).toBe('disconnected');
     expect(retire).toHaveBeenCalledTimes(2);
-    retire.mockRestore();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true });
+      retire.mockRestore();
+    }
   });
 
   it.each(['finish', 'command', 'session'] as const)('withdraws %s from real endpoint publication after its setting is disabled', async kind => {
