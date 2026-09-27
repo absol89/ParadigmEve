@@ -34,7 +34,8 @@ jobs:
   package:
     name: Package ${{ matrix.name }}
     env:
-      PARADIGMEVE_BUILD_FLAVOR: shipping
+      # Every published build is debug for now, so the GPT Chat agent lane ships with it.
+      PARADIGMEVE_BUILD_FLAVOR: debug
     strategy:
       fail-fast: false
       matrix:
@@ -45,14 +46,14 @@ jobs:
             runner: windows-2025
             script: dist:x64
             artifact: package-windows-x64
-            files: release/ParadigmEve-Setup-x64.exe
+            files: release/ParadigmEve-Setup-x64-debug.exe
           - name: Windows arm64
             platform: win32
             arch: arm64
             runner: windows-11-arm
             script: dist:arm64
             artifact: package-windows-arm64
-            files: release/ParadigmEve-Setup-arm64.exe
+            files: release/ParadigmEve-Setup-arm64-debug.exe
           - name: macOS x64
             platform: darwin
             arch: x64
@@ -60,8 +61,8 @@ jobs:
             script: dist:mac:x64
             artifact: package-macos-x64
             files: |
-              release/ParadigmEve-macOS-x64.dmg
-              release/ParadigmEve-macOS-x64.zip
+              release/ParadigmEve-macOS-x64-debug.dmg
+              release/ParadigmEve-macOS-x64-debug.zip
           - name: macOS arm64
             platform: darwin
             arch: arm64
@@ -69,8 +70,8 @@ jobs:
             script: dist:mac:arm64
             artifact: package-macos-arm64
             files: |
-              release/ParadigmEve-macOS-arm64.dmg
-              release/ParadigmEve-macOS-arm64.zip
+              release/ParadigmEve-macOS-arm64-debug.dmg
+              release/ParadigmEve-macOS-arm64-debug.zip
           - name: Linux x64
             platform: linux
             arch: x64
@@ -78,8 +79,8 @@ jobs:
             script: dist:linux:x64
             artifact: package-linux-x64
             files: |
-              release/ParadigmEve-Linux-x64.AppImage
-              release/ParadigmEve-Linux-x64.deb
+              release/ParadigmEve-Linux-x64-debug.AppImage
+              release/ParadigmEve-Linux-x64-debug.deb
           - name: Linux arm64
             platform: linux
             arch: arm64
@@ -87,8 +88,8 @@ jobs:
             script: dist:linux:arm64
             artifact: package-linux-arm64
             files: |
-              release/ParadigmEve-Linux-arm64.AppImage
-              release/ParadigmEve-Linux-arm64.deb
+              release/ParadigmEve-Linux-arm64-debug.AppImage
+              release/ParadigmEve-Linux-arm64-debug.deb
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
 
@@ -129,8 +130,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dmg="$PWD/release/ParadigmEve-macOS-${{ matrix.arch }}.dmg"
-          zip="$PWD/release/ParadigmEve-macOS-${{ matrix.arch }}.zip"
+          dmg="$PWD/release/ParadigmEve-macOS-${{ matrix.arch }}-debug.dmg"
+          zip="$PWD/release/ParadigmEve-macOS-${{ matrix.arch }}-debug.zip"
           test -f "$dmg"
           test -f "$zip"
           hdiutil verify "$dmg"
@@ -184,7 +185,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          deb="$PWD/release/ParadigmEve-Linux-${{ matrix.arch }}.deb"
+          deb="$PWD/release/ParadigmEve-Linux-${{ matrix.arch }}-debug.deb"
           test -f "$deb"
           echo "Generated control metadata:"
           dpkg-deb --field "$deb" Package Version Architecture Depends
@@ -269,7 +270,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          appimage="$PWD/release/ParadigmEve-Linux-${{ matrix.arch }}.AppImage"
+          appimage="$PWD/release/ParadigmEve-Linux-${{ matrix.arch }}-debug.AppImage"
           test -x "$appimage"
           # Exercise the actual static-runtime artifact through Chromium/Electron startup and
           # require renderer-state proof rather than accepting a process that merely hangs.
@@ -363,31 +364,31 @@ jobs:
         run: |
           set -euo pipefail
           files=(
-            release/ParadigmEve-Setup-x64.exe
-            release/ParadigmEve-Setup-arm64.exe
-            release/ParadigmEve-macOS-x64.dmg
-            release/ParadigmEve-macOS-x64.zip
-            release/ParadigmEve-macOS-arm64.dmg
-            release/ParadigmEve-macOS-arm64.zip
-            release/ParadigmEve-Linux-x64.AppImage
-            release/ParadigmEve-Linux-x64.deb
-            release/ParadigmEve-Linux-arm64.AppImage
-            release/ParadigmEve-Linux-arm64.deb
+            release/ParadigmEve-Setup-x64-debug.exe
+            release/ParadigmEve-Setup-arm64-debug.exe
+            release/ParadigmEve-macOS-x64-debug.dmg
+            release/ParadigmEve-macOS-x64-debug.zip
+            release/ParadigmEve-macOS-arm64-debug.dmg
+            release/ParadigmEve-macOS-arm64-debug.zip
+            release/ParadigmEve-Linux-x64-debug.AppImage
+            release/ParadigmEve-Linux-x64-debug.deb
+            release/ParadigmEve-Linux-arm64-debug.AppImage
+            release/ParadigmEve-Linux-arm64-debug.deb
             release/ParadigmEve-Extension.zip
             release/ParadigmEve-Native-Sources.tar.gz
           )
           for file in "${files[@]}"; do test -f "$file" || { echo "Missing $file" >&2; exit 1; }; done
           (cd release && sha256sum \
-            ParadigmEve-Setup-x64.exe \
-            ParadigmEve-Setup-arm64.exe \
-            ParadigmEve-macOS-x64.dmg \
-            ParadigmEve-macOS-x64.zip \
-            ParadigmEve-macOS-arm64.dmg \
-            ParadigmEve-macOS-arm64.zip \
-            ParadigmEve-Linux-x64.AppImage \
-            ParadigmEve-Linux-x64.deb \
-            ParadigmEve-Linux-arm64.AppImage \
-            ParadigmEve-Linux-arm64.deb \
+            ParadigmEve-Setup-x64-debug.exe \
+            ParadigmEve-Setup-arm64-debug.exe \
+            ParadigmEve-macOS-x64-debug.dmg \
+            ParadigmEve-macOS-x64-debug.zip \
+            ParadigmEve-macOS-arm64-debug.dmg \
+            ParadigmEve-macOS-arm64-debug.zip \
+            ParadigmEve-Linux-x64-debug.AppImage \
+            ParadigmEve-Linux-x64-debug.deb \
+            ParadigmEve-Linux-arm64-debug.AppImage \
+            ParadigmEve-Linux-arm64-debug.deb \
             ParadigmEve-Extension.zip \
             ParadigmEve-Native-Sources.tar.gz > SHA256SUMS.txt)
           cat release/SHA256SUMS.txt
@@ -399,16 +400,16 @@ jobs:
           # fail after all six package jobs. A run id is filesystem-safe and caller-stable.
           name: paradigmeve-candidate-${{ github.run_id }}
           path: |
-            release/ParadigmEve-Setup-x64.exe
-            release/ParadigmEve-Setup-arm64.exe
-            release/ParadigmEve-macOS-x64.dmg
-            release/ParadigmEve-macOS-x64.zip
-            release/ParadigmEve-macOS-arm64.dmg
-            release/ParadigmEve-macOS-arm64.zip
-            release/ParadigmEve-Linux-x64.AppImage
-            release/ParadigmEve-Linux-x64.deb
-            release/ParadigmEve-Linux-arm64.AppImage
-            release/ParadigmEve-Linux-arm64.deb
+            release/ParadigmEve-Setup-x64-debug.exe
+            release/ParadigmEve-Setup-arm64-debug.exe
+            release/ParadigmEve-macOS-x64-debug.dmg
+            release/ParadigmEve-macOS-x64-debug.zip
+            release/ParadigmEve-macOS-arm64-debug.dmg
+            release/ParadigmEve-macOS-arm64-debug.zip
+            release/ParadigmEve-Linux-x64-debug.AppImage
+            release/ParadigmEve-Linux-x64-debug.deb
+            release/ParadigmEve-Linux-arm64-debug.AppImage
+            release/ParadigmEve-Linux-arm64-debug.deb
             release/ParadigmEve-Extension.zip
             release/ParadigmEve-Native-Sources.tar.gz
             release/SHA256SUMS.txt

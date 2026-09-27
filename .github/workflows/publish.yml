@@ -1,18 +1,16 @@
 name: Publish release
 
 # Dispatch this at the tag you want released:
-#   gh workflow run publish.yml --ref v2.0.2 [-f prerelease=true]
+#   gh workflow run publish.yml --ref v2.0.2
+#
+# Every release is created as a pre-release. Promoting one to Latest is a manual step on GitHub,
+# and it is what the in-app updater follows (see src/main/update.ts).
 #
 # It builds the candidate itself rather than adopting one from an earlier run, so the
 # installers attached to a release are provably the ones produced from that tag by the
 # pipeline in that tag's own tree.
 on:
   workflow_dispatch:
-    inputs:
-      prerelease:
-        description: Mark the release as a pre-release
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -80,16 +78,16 @@ jobs:
             throw new Error(`${notesPath} must disclose unsigned and unnotarized macOS artifacts`);
           }
           for (const artifact of [
-            'ParadigmEve-Setup-x64.exe',
-            'ParadigmEve-Setup-arm64.exe',
-            'ParadigmEve-macOS-x64.dmg',
-            'ParadigmEve-macOS-x64.zip',
-            'ParadigmEve-macOS-arm64.dmg',
-            'ParadigmEve-macOS-arm64.zip',
-            'ParadigmEve-Linux-x64.AppImage',
-            'ParadigmEve-Linux-x64.deb',
-            'ParadigmEve-Linux-arm64.AppImage',
-            'ParadigmEve-Linux-arm64.deb',
+            'ParadigmEve-Setup-x64-debug.exe',
+            'ParadigmEve-Setup-arm64-debug.exe',
+            'ParadigmEve-macOS-x64-debug.dmg',
+            'ParadigmEve-macOS-x64-debug.zip',
+            'ParadigmEve-macOS-arm64-debug.dmg',
+            'ParadigmEve-macOS-arm64-debug.zip',
+            'ParadigmEve-Linux-x64-debug.AppImage',
+            'ParadigmEve-Linux-x64-debug.deb',
+            'ParadigmEve-Linux-arm64-debug.AppImage',
+            'ParadigmEve-Linux-arm64-debug.deb',
             'ParadigmEve-Extension.zip',
             'ParadigmEve-Native-Sources.tar.gz',
             'SHA256SUMS.txt'
@@ -184,19 +182,20 @@ jobs:
           npm run verify:tunnel-current
           node scripts/check-release-absent.mjs
           gh release create "$TAG" \
-            publish/ParadigmEve-Setup-x64.exe \
-            publish/ParadigmEve-Setup-arm64.exe \
-            publish/ParadigmEve-macOS-x64.dmg \
-            publish/ParadigmEve-macOS-x64.zip \
-            publish/ParadigmEve-macOS-arm64.dmg \
-            publish/ParadigmEve-macOS-arm64.zip \
-            publish/ParadigmEve-Linux-x64.AppImage \
-            publish/ParadigmEve-Linux-x64.deb \
-            publish/ParadigmEve-Linux-arm64.AppImage \
-            publish/ParadigmEve-Linux-arm64.deb \
+            publish/ParadigmEve-Setup-x64-debug.exe \
+            publish/ParadigmEve-Setup-arm64-debug.exe \
+            publish/ParadigmEve-macOS-x64-debug.dmg \
+            publish/ParadigmEve-macOS-x64-debug.zip \
+            publish/ParadigmEve-macOS-arm64-debug.dmg \
+            publish/ParadigmEve-macOS-arm64-debug.zip \
+            publish/ParadigmEve-Linux-x64-debug.AppImage \
+            publish/ParadigmEve-Linux-x64-debug.deb \
+            publish/ParadigmEve-Linux-arm64-debug.AppImage \
+            publish/ParadigmEve-Linux-arm64-debug.deb \
             publish/ParadigmEve-Extension.zip \
             publish/ParadigmEve-Native-Sources.tar.gz \
             publish/SHA256SUMS.txt \
             --title "$(sed -n 's/^## //p' "docs/release-notes/$TAG.md" | head -n 1)" \
-            --notes-file "docs/release-notes/$TAG.md"             ${{ inputs.prerelease && '--prerelease' || '' }}
+            --notes-file "docs/release-notes/$TAG.md" \
+            --prerelease
           gh release view "$TAG" --json url --jq .url

@@ -1813,7 +1813,9 @@ Build flavor is compile-time product authority, not a runtime preference. Local 
 `npm run build` and `scripts/package.mjs` default to **debug**. A **dev** build is admitted only
 after the build wrapper proves that at least one configured GitHub remote resolves anonymously to
 a public repository; inherited proof is discarded and re-established for each invocation. Release
-CI sets **shipping** explicitly. Vite compiles the resulting flavor literal into main, preload and
+CI currently sets **debug** explicitly, so every published artifact carries the `-debug` suffix, and
+`publish.yml` always creates the GitHub release as a **pre-release**; promoting one to Latest is a
+manual maintainer step. Vite compiles the resulting flavor literal into main, preload and
 renderer, so changing a runtime environment variable cannot unlock a driver excluded from an
 installed build. Non-shipping packages append `-debug` or `-dev` to their artifact name; shipping
 keeps the canonical public filenames used by release/update flows.

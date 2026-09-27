@@ -135,7 +135,7 @@ describe('cross-platform packaging targets', () => {
     ]) expect(pkg.scripts[script]).toBeTypeOf('string');
   });
 
-  it('defaults local entrypoints to debug while release packaging selects shipping explicitly', () => {
+  it('defaults local entrypoints to debug and release packaging selects debug explicitly', () => {
     const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
     const vite = readFileSync(path.join(root, 'electron.vite.config.ts'), 'utf8');
     const packageScript = readFileSync(path.join(root, 'scripts', 'package.mjs'), 'utf8');
@@ -150,7 +150,7 @@ describe('cross-platform packaging targets', () => {
     expect(packageScript).toContain("normalizeBuildFlavor(value('flavor', process.env[BUILD_FLAVOR_ENV]))");
     expect(vite).toContain('__PARADIGMEVE_BUILD_FLAVOR__');
     expect(vite.match(/define: compileTimeFlavor/g)).toHaveLength(3);
-    expect(release.jobs.package.env.PARADIGMEVE_BUILD_FLAVOR).toBe('shipping');
+    expect(release.jobs.package.env.PARADIGMEVE_BUILD_FLAVOR).toBe('debug');
     expect(builder.nsis.artifactName).toBe('ParadigmEve-Setup-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
     expect(builder.mac.artifactName).toBe('ParadigmEve-macOS-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
     expect(builder.linux.artifactName).toBe('ParadigmEve-Linux-${env.COS_PACKAGE_ARCH}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
@@ -356,31 +356,31 @@ describe('cross-platform packaging targets', () => {
     expect(matrix).toEqual([
       {
         name: 'Windows x64', platform: 'win32', arch: 'x64', runner: 'windows-2025',
-        script: 'dist:x64', artifact: 'package-windows-x64', files: 'release/ParadigmEve-Setup-x64.exe'
+        script: 'dist:x64', artifact: 'package-windows-x64', files: 'release/ParadigmEve-Setup-x64-debug.exe'
       },
       {
         name: 'Windows arm64', platform: 'win32', arch: 'arm64', runner: 'windows-11-arm',
-        script: 'dist:arm64', artifact: 'package-windows-arm64', files: 'release/ParadigmEve-Setup-arm64.exe'
+        script: 'dist:arm64', artifact: 'package-windows-arm64', files: 'release/ParadigmEve-Setup-arm64-debug.exe'
       },
       {
         name: 'macOS x64', platform: 'darwin', arch: 'x64', runner: 'macos-15-intel',
         script: 'dist:mac:x64', artifact: 'package-macos-x64',
-        files: 'release/ParadigmEve-macOS-x64.dmg\nrelease/ParadigmEve-macOS-x64.zip\n'
+        files: 'release/ParadigmEve-macOS-x64-debug.dmg\nrelease/ParadigmEve-macOS-x64-debug.zip\n'
       },
       {
         name: 'macOS arm64', platform: 'darwin', arch: 'arm64', runner: 'macos-15',
         script: 'dist:mac:arm64', artifact: 'package-macos-arm64',
-        files: 'release/ParadigmEve-macOS-arm64.dmg\nrelease/ParadigmEve-macOS-arm64.zip\n'
+        files: 'release/ParadigmEve-macOS-arm64-debug.dmg\nrelease/ParadigmEve-macOS-arm64-debug.zip\n'
       },
       {
         name: 'Linux x64', platform: 'linux', arch: 'x64', runner: 'ubuntu-24.04',
         script: 'dist:linux:x64', artifact: 'package-linux-x64',
-        files: 'release/ParadigmEve-Linux-x64.AppImage\nrelease/ParadigmEve-Linux-x64.deb\n'
+        files: 'release/ParadigmEve-Linux-x64-debug.AppImage\nrelease/ParadigmEve-Linux-x64-debug.deb\n'
       },
       {
         name: 'Linux arm64', platform: 'linux', arch: 'arm64', runner: 'ubuntu-24.04-arm',
         script: 'dist:linux:arm64', artifact: 'package-linux-arm64',
-        files: 'release/ParadigmEve-Linux-arm64.AppImage\nrelease/ParadigmEve-Linux-arm64.deb\n'
+        files: 'release/ParadigmEve-Linux-arm64-debug.AppImage\nrelease/ParadigmEve-Linux-arm64-debug.deb\n'
       }
     ]);
     expect(parsed.jobs.package['runs-on']).toBe('${{ matrix.runner }}');
@@ -869,16 +869,16 @@ Load command 11
     expect(notes).toMatch(/unnotarized/i);
 
     const artifacts = [
-      'ParadigmEve-Setup-x64.exe',
-      'ParadigmEve-Setup-arm64.exe',
-      'ParadigmEve-macOS-x64.dmg',
-      'ParadigmEve-macOS-x64.zip',
-      'ParadigmEve-macOS-arm64.dmg',
-      'ParadigmEve-macOS-arm64.zip',
-      'ParadigmEve-Linux-x64.AppImage',
-      'ParadigmEve-Linux-x64.deb',
-      'ParadigmEve-Linux-arm64.AppImage',
-      'ParadigmEve-Linux-arm64.deb',
+      'ParadigmEve-Setup-x64-debug.exe',
+      'ParadigmEve-Setup-arm64-debug.exe',
+      'ParadigmEve-macOS-x64-debug.dmg',
+      'ParadigmEve-macOS-x64-debug.zip',
+      'ParadigmEve-macOS-arm64-debug.dmg',
+      'ParadigmEve-macOS-arm64-debug.zip',
+      'ParadigmEve-Linux-x64-debug.AppImage',
+      'ParadigmEve-Linux-x64-debug.deb',
+      'ParadigmEve-Linux-arm64-debug.AppImage',
+      'ParadigmEve-Linux-arm64-debug.deb',
       'ParadigmEve-Extension.zip',
       'ParadigmEve-Native-Sources.tar.gz',
       'SHA256SUMS.txt'
@@ -897,5 +897,7 @@ Load command 11
     for (const artifact of artifacts.filter((artifact) => artifact !== 'SHA256SUMS.txt')) {
       expect(checksumStep).toContain(artifact);
     }
+    // Every published release starts as a pre-release; only a manual promotion makes it Latest.
+    expect(publishStep).toMatch(/--notes-file "docs\/release-notes\/\$TAG\.md" \\\n\s+--prerelease\n/);
   });
 });
