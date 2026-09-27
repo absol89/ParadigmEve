@@ -125,8 +125,10 @@ async function recording(conversationId: string, text: string): Promise<string> 
   }
   return session.id;
 }
+// Slow CI runners (Windows arm64) can take well over vi.waitFor's 1 s default to settle a restart.
+const SETTLE = { timeout: 10_000 };
 async function settled(id: string) {
-  await vi.waitFor(() => expect(goal.goalViewFor(id)?.stage).not.toMatch(/^(sending|answering)$/));
+  await vi.waitFor(() => expect(goal.goalViewFor(id)?.stage).not.toMatch(/^(sending|answering)$/), SETTLE);
   return goal.goalViewFor(id)!;
 }
 describe('Goal decision backends', () => {
@@ -316,7 +318,7 @@ describe('Goal decision backends', () => {
     browser.request.mockImplementationOnce(() => new Promise<string>(resolve => { release = resolve; }));
     browser.request.mockResolvedValueOnce('{"action":"continue","reply":"newest work"}');
     goal.startGoalDraft({ conversationId: id, sessionId, turnId: 'old' });
-    await vi.waitFor(() => expect(browser.request).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(browser.request).toHaveBeenCalledTimes(1), SETTLE);
     const oldSignal = browser.request.mock.calls[0]?.[1] as AbortSignal;
     goal.startGoalDraft({ conversationId: id, sessionId, turnId: 'new' });
     expect(oldSignal.aborted).toBe(true);
