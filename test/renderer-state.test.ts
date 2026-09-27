@@ -2222,7 +2222,7 @@ it('says nothing about being current until the check has actually answered', asy
   // Green, both versions, and the same sentence as the one notification this window shows.
   expect(line.hidden).toBe(false);
   expect(line.className).toBe('upline is-ok');
-  expect(line.textContent).toBe('Private build current: ParadigmEve 2.0.2 · extension 2.0.2');
+  expect(line.textContent).toBe('Up to date: ParadigmEve 2.0.2 · extension 2.0.2');
   expect(doc.querySelector('.toast')!.textContent).toBe(line.textContent);
   // Nothing to act on, so the header bar stays out of the way.
   expect(doc.getElementById('updateNotice')!.hidden).toBe(true);
@@ -2231,7 +2231,7 @@ it('says nothing about being current until the check has actually answered', asy
   doc.querySelector('.toast')!.remove();
   mounted.push(structuredClone(checked) as any);
   expect(doc.querySelector('.toast')).toBeNull();
-  expect(line.textContent).toBe('Private build current: ParadigmEve 2.0.2 · extension 2.0.2');
+  expect(line.textContent).toBe('Up to date: ParadigmEve 2.0.2 · extension 2.0.2');
 });
 
 /**
@@ -2246,7 +2246,7 @@ it('reports a staged update in the Activity line and the header bar', async () =
   const doc = mounted.window.document;
   const line = doc.getElementById('updateLine')!;
   expect(line.className).toBe('upline');
-  expect(line.textContent).toContain('Private ParadigmEve build 2.0.3 is verified and ready');
+  expect(line.textContent).toContain('ParadigmEve 2.0.3 is verified and ready');
   expect(doc.getElementById('updateNotice')!.hidden).toBe(false);
   // ...and this is the one state in which there is something to install. Both buttons show,
   // because a tray app closed to the tray may not see the header for days.
@@ -2256,7 +2256,7 @@ it('reports a staged update in the Activity line and the header bar', async () =
   const checking = structuredClone(staged) as any;
   checking.update.stage = 'checking';
   mounted.push(checking);
-  expect(line.textContent).toContain('Checking for a private build');
+  expect(line.textContent).toContain('Checking for updates');
   expect((doc.getElementById('updateInstall') as HTMLButtonElement).hidden).toBe(true);
   // Still downloading is not yet installable: there is no verified file to hand over.
   const downloading = structuredClone(staged) as any;
@@ -2273,6 +2273,38 @@ it('reports a staged update in the Activity line and the header bar', async () =
   // A malformed/unreadable private inbox is a diagnostic, not something the user can act on.
   expect(doc.getElementById('updateNotice')!.hidden).toBe(true);
   expect((doc.getElementById('installUpdate') as HTMLButtonElement).hidden).toBe(true);
+});
+
+/**
+ * A GitHub Latest release this installation cannot apply by itself is offered as its release
+ * page, and only the URL the main process built is ever opened.
+ */
+it('offers the release page for a newer GitHub release this installation cannot apply', async () => {
+  const openLink = vi.fn(async () => ({ ok: true, data: true }));
+  const mounted = await mountChat({}, [], { openLink });
+  const doc = mounted.window.document;
+  const manual = structuredClone(mounted.state) as any;
+  const releaseUrl = 'https://github.com/absol89/ParadigmEve/releases/tag/v2.0.3';
+  manual.update = { current: '2.0.2', latest: '2.0.3', stage: 'idle', error: null, checkedAt: Date.now(), releaseUrl };
+  mounted.push(manual);
+
+  const view = doc.getElementById('updateRelease') as HTMLButtonElement;
+  expect(doc.getElementById('updateLine')!.textContent).toContain('ParadigmEve 2.0.3 is available');
+  expect(doc.getElementById('updateNotice')!.hidden).toBe(false);
+  expect(view.hidden).toBe(false);
+  expect((doc.getElementById('updateInstall') as HTMLButtonElement).hidden).toBe(true);
+  view.click();
+  expect(openLink).toHaveBeenCalledWith(releaseUrl);
+
+  const staged = structuredClone(manual) as any;
+  staged.update.stage = 'ready';
+  mounted.push(staged);
+  expect(view.hidden).toBe(true);
+
+  const local = structuredClone(manual) as any;
+  local.update.releaseUrl = null;
+  mounted.push(local);
+  expect(view.hidden).toBe(true);
 });
 
 /**

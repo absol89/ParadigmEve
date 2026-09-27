@@ -48,7 +48,7 @@ describe('companion extension setup contract', () => {
 });
 
 describe('private runtime update provenance', () => {
-  it('contains no public GitHub runtime update authority', async () => {
+  it('names no update authority but the local feed and absol89/ParadigmEve', async () => {
     const files = await Promise.all([
       'src/main/update.ts',
       'src/main/version.ts',
@@ -60,6 +60,12 @@ describe('private runtime update provenance', () => {
     expect(source).not.toContain('api.github.com/repos/totec448-spec/chat-on-steroids');
     expect(source).not.toContain('github.com/totec448-spec/chat-on-steroids/releases');
     expect(source).not.toContain('RELEASES_PAGE');
-    expect(files[0]).not.toMatch(/\bfetch\s*\(/);
+    // The one repository is a single constant, and every GitHub URL is built from it.
+    const update = files[0]!;
+    expect(update.match(/UPDATE_REPOSITORY = '([^']+)'/g)).toEqual(["UPDATE_REPOSITORY = 'absol89/ParadigmEve'"]);
+    expect(update.match(/\bfetch\s*\(/g)).toHaveLength(1);
+    for (const literal of update.match(/https:\/\/[^`'"\s]*github[^`'"\s]*/g) ?? []) {
+      expect(literal).toMatch(/^https:\/\/(api\.)?github\.com\/(repos\/)?\$\{UPDATE_REPOSITORY\}\//);
+    }
   });
 });

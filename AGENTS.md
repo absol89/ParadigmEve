@@ -1877,9 +1877,17 @@ hand-editing staged binaries. Native and editor dependencies need actual runtime
 package, and verify that runtime's relevant flow. An installer exit code or version label is
 insufficient. A dirty-tree snapshot request does not authorize exposing all local Git history.
 
-`update.ts` checks immediately and every six hours with one in-flight pass. Download to a
-partial file, verify SHA-256 before staging/adoption, and rehash at ordinary quit before handing
-off. Windows NSIS/Linux AppImage can apply automatically; macOS/DEB present the supported manual
+`update.ts` checks immediately and every minute with one in-flight pass. It has two sources and
+takes the higher version (the local feed keeps a tie): the private local feed
+(`<userData>/private-updates` or an absolute `PARADIGMEVE_PRIVATE_UPDATE_DIR`), and the release
+GitHub marks **Latest** in `absol89/ParadigmEve`, asked at most every six hours. That repository
+is a compiled constant; never make it configurable or take it from a response. Pre-releases and
+drafts are never offered, so a published release reaches installations only when the
+maintainer promotes it to Latest. Asset URLs are built from the repository, a validated tag and
+the artifact name of this build's own flavor (`-debug` builds take `-debug` artifacts), and a
+redirect may land only on GitHub hosts. A Latest release without this flavor's artifact is
+offered as its release page. Download to a partial file, verify SHA-256 against the release's
+`SHA256SUMS.txt` before staging/adoption, and rehash at ordinary quit before handing off. Windows NSIS/Linux AppImage can apply automatically; macOS/DEB present the supported manual
 path, development does not stage. Explicit install may relaunch; ordinary quit does not force
 relaunch. Failed checks never replace a verified staged candidate with unverified bytes.
 

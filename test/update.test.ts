@@ -1,10 +1,10 @@
 /**
- * Private updater contract.
+ * Updater contract.
  *
- * Executable update authority is local-only: a direct version directory under the private feed,
- * its SHA256SUMS.txt, and the fixed platform artifact named by this process. Nothing in this suite
- * supplies a working network fixture; `fetch` is a tripwire so a future public fallback fails the
- * tests immediately.
+ * Two sources may authorize an update: a direct version directory under the private local feed,
+ * and the release marked Latest in absol89/ParadigmEve. `fetch` is a fake GitHub that answers
+ * only that repository's URLs; by default it has no Latest release, and any other URL throws, so
+ * a request anywhere else fails the tests immediately.
  */
 
 import { createHash } from 'node:crypto';
@@ -61,8 +61,11 @@ const {
 
 const NEXT = '99.0.0';
 const REPLACEMENT = '99.0.1';
-const WINDOWS_ASSET = `ParadigmEve-Setup-${process.arch}.exe`;
-const APPIMAGE_ASSET = `ParadigmEve-Linux-${process.arch}.AppImage`;
+// Tests run as the local default flavor, debug, so they take `-debug` artifacts.
+const WINDOWS_ASSET = `ParadigmEve-Setup-${process.arch}-debug.exe`;
+const APPIMAGE_ASSET = `ParadigmEve-Linux-${process.arch}-debug.AppImage`;
+const LATEST_API = 'https://api.github.com/repos/absol89/ParadigmEve/releases/latest';
+const DOWNLOADS = 'https://github.com/absol89/ParadigmEve/releases/download/';
 const originalPrivateUpdateDir = process.env.PARADIGMEVE_PRIVATE_UPDATE_DIR;
 
 const sha256 = (body: string): string => createHash('sha256').update(body).digest('hex');
@@ -113,7 +116,52 @@ async function asPlatform(platform: string, appImage: string | undefined, run: (
   }
 }
 
+interface FakeRelease {
+  tag: string;
+  body?: string;
+  sums?: string;
+  omit?: string[];
+  draft?: boolean;
+  prerelease?: boolean;
+  /** Where the asset redirect lands; GitHub's own content host unless a test says otherwise. */
+  landsOn?: string;
+}
+
+/** What the fake GitHub has marked Latest; null means nothing has been promoted yet. */
+let latest: FakeRelease | Error | null = null;
 let publicFetch: ReturnType<typeof vi.fn>;
+
+function answer(body: BodyInit | null, status: number, url: string): Response {
+  const response = new Response(body, { status });
+  Object.defineProperty(response, 'url', { value: url });
+  return response;
+}
+
+async function fakeGithub(input: string | URL): Promise<Response> {
+  const url = String(input);
+  if (url === LATEST_API) {
+    if (latest instanceof Error) throw latest;
+    if (!latest) return answer(JSON.stringify({ message: 'Not Found' }), 404, url);
+    return answer(JSON.stringify({ tag_name: latest.tag, draft: latest.draft ?? false, prerelease: latest.prerelease ?? false }), 200, url);
+  }
+  if (latest && !(latest instanceof Error) && url.startsWith(`${DOWNLOADS}${latest.tag}/`)) {
+    const name = decodeURIComponent(url.slice(`${DOWNLOADS}${latest.tag}/`.length));
+    const body = latest.body ?? `github build ${latest.tag}`;
+    const landed = `${latest.landsOn ?? 'https://release-assets.githubusercontent.com/assets/'}${name}`;
+    if (name === 'SHA256SUMS.txt') {
+      const release = latest;
+      const sums = release.sums ?? [WINDOWS_ASSET, APPIMAGE_ASSET].filter((asset) => !release.omit?.includes(asset))
+        .map((asset) => `${sha256(body)}  ${asset}`).join('\n') + '\n';
+      return answer(sums, 200, landed);
+    }
+    if (latest.omit?.includes(name)) return answer('Not Found', 404, landed);
+    return answer(body, 200, landed);
+  }
+  throw new Error(`the updater fetched a URL outside absol89/ParadigmEve: ${url}`);
+}
+
+/** Every request other than the Latest-release question itself. */
+const assetFetches = (): string[] => publicFetch.mock.calls.map(([url]) => String(url)).filter((url) => url !== LATEST_API);
 
 beforeEach(() => {
   userData = mkdtempSync(path.join(tmpdir(), 'cos-private-update-'));
@@ -122,9 +170,8 @@ beforeEach(() => {
   relaunched.length = 0;
   delete process.env.PARADIGMEVE_PRIVATE_UPDATE_DIR;
   resetUpdateForTests();
-  publicFetch = vi.fn(async () => {
-    throw new Error('the private updater must never use public/network fetch');
-  });
+  latest = null;
+  publicFetch = vi.fn(fakeGithub);
   vi.stubGlobal('fetch', publicFetch);
 });
 
@@ -137,7 +184,7 @@ afterEach(() => {
 });
 
 describe('private update authority', () => {
-  it('uses the user-data private feed by default, and no feed means idle with no network fallback', async () => {
+  it('uses the user-data private feed by default, and no feed and no GitHub Latest means idle', async () => {
     expect(privateUpdateRoot()).toBe(defaultFeedRoot());
     expect(updateStatus().checkedAt).toBeNull();
 
@@ -145,15 +192,15 @@ describe('private update authority', () => {
 
     expect(updateStatus()).toMatchObject({ current: APP_VERSION, latest: null, stage: 'idle', error: null });
     expect(updateStatus().checkedAt).toBeGreaterThan(0);
-    expect(publicFetch).not.toHaveBeenCalled();
+    expect(publicFetch.mock.calls.map(([url]) => String(url))).toEqual([LATEST_API]);
     expect(spawned).toEqual([]);
   });
 
-  it('never calls a public fake fetch even while staging a valid newer private build', async () => {
+  it('stages a valid newer private build without downloading anything', async () => {
     privateBuild();
     await asPlatform('win32', undefined, () => checkForUpdates());
     expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
-    expect(publicFetch).not.toHaveBeenCalled();
+    expect(assetFetches()).toEqual([]);
   });
 
   it('honors one explicit absolute private feed and never falls back to the default feed', async () => {
@@ -168,7 +215,7 @@ describe('private update authority', () => {
     expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready' });
     expect(existsSync(stagedPath(NEXT))).toBe(true);
     expect(existsSync(stagedPath(REPLACEMENT))).toBe(false);
-    expect(publicFetch).not.toHaveBeenCalled();
+    expect(assetFetches()).toEqual([]);
   });
 
   it('rejects a relative PARADIGMEVE_PRIVATE_UPDATE_DIR instead of resolving it against cwd', async () => {
@@ -177,7 +224,7 @@ describe('private update authority', () => {
     expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
     expect(updateStatus().error).toMatch(/PARADIGMEVE_PRIVATE_UPDATE_DIR.*absolute local path/i);
     expect(markInstallOnQuit()).toBe(false);
-    expect(publicFetch).not.toHaveBeenCalled();
+    expect(assetFetches()).toEqual([]);
   });
 
   it('ignores a symlinked/junction release directory so it cannot escape the selected root', async () => {
@@ -197,7 +244,7 @@ describe('private update authority', () => {
     await asPlatform('win32', undefined, () => checkForUpdates());
     expect(updateStatus()).toMatchObject({ latest: null, stage: 'idle', error: null });
     expect(markInstallOnQuit()).toBe(false);
-    expect(publicFetch).not.toHaveBeenCalled();
+    expect(assetFetches()).toEqual([]);
   });
 
   it('fails closed when the checksum file tries to authorize a path outside its release directory', async () => {
@@ -207,15 +254,17 @@ describe('private update authority', () => {
     expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
     expect(updateStatus().error).toMatch(/checksum file contains a path/i);
     expect(markInstallOnQuit()).toBe(false);
-    expect(publicFetch).not.toHaveBeenCalled();
+    expect(assetFetches()).toEqual([]);
   });
 });
 
 describe('which installations can apply a private build', () => {
-  it('takes the Windows installer and Linux AppImage, and nothing else', () => {
-    expect(stagedArtifact('win32', 'x64')).toMatchObject({ name: 'ParadigmEve-Setup-x64.exe', kind: 'installer' });
+  it('takes the Windows installer and Linux AppImage of its own flavor, and nothing else', () => {
+    expect(stagedArtifact('win32', 'x64')).toMatchObject({ name: 'ParadigmEve-Setup-x64-debug.exe', kind: 'installer' });
+    expect(stagedArtifact('win32', 'x64', undefined, true, 'shipping')).toMatchObject({ name: 'ParadigmEve-Setup-x64.exe' });
+    expect(stagedArtifact('win32', 'arm64', undefined, true, 'dev')).toMatchObject({ name: 'ParadigmEve-Setup-arm64-dev.exe' });
     expect(stagedArtifact('linux', 'arm64', '/opt/cos.AppImage')).toMatchObject({
-      name: 'ParadigmEve-Linux-arm64.AppImage',
+      name: 'ParadigmEve-Linux-arm64-debug.AppImage',
       kind: 'appimage',
       target: '/opt/cos.AppImage'
     });
@@ -489,16 +538,159 @@ describe('local polling', () => {
         await checkForUpdates();
         expect(updateStatus().checkedAt).toBeGreaterThan(0);
         expect(unref).toHaveBeenCalledOnce();
-        expect(publicFetch).not.toHaveBeenCalled();
+        expect(assetFetches()).toEqual([]);
 
         privateBuild();
         repeat!();
         await checkForUpdates();
         expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready' });
-        expect(publicFetch).not.toHaveBeenCalled();
+        expect(assetFetches()).toEqual([]);
+        // The minute timer is for the local feed; GitHub was asked once and is not asked again.
+        expect(publicFetch.mock.calls.filter(([url]) => String(url) === LATEST_API)).toHaveLength(1);
       });
     } finally {
       interval.mockRestore();
     }
+  });
+});
+
+describe('the GitHub Latest release of absol89/ParadigmEve', () => {
+  it('stages this flavor of the Windows installer from the Latest release and installs exactly those bytes', async () => {
+    latest = { tag: `v${NEXT}`, body: 'published installer' };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+
+    expect(updateStatus()).toMatchObject({
+      latest: NEXT,
+      stage: 'ready',
+      error: null,
+      releaseUrl: `https://github.com/absol89/ParadigmEve/releases/tag/v${NEXT}`
+    });
+    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${WINDOWS_ASSET}`]);
+    expect(readFileSync(stagedPath(), 'utf8')).toBe('published installer');
+    expect(markInstallOnQuit()).toBe(true);
+    await applyStagedUpdate();
+    expect(spawned).toEqual([{ file: stagedPath(), args: ['/S', '--updated', '--force-run'] }]);
+  });
+
+  it('asks only the fixed repository, whatever the release says about itself', async () => {
+    latest = { tag: `v${NEXT}` };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    for (const [url] of publicFetch.mock.calls) {
+      expect(String(url)).toMatch(/^https:\/\/(api\.github\.com\/repos|github\.com)\/absol89\/ParadigmEve\/releases\//);
+    }
+  });
+
+  it('never offers a draft or a pre-release, even if the Latest endpoint returned one', async () => {
+    for (const flags of [{ prerelease: true }, { draft: true }]) {
+      resetUpdateForTests();
+      publicFetch.mockClear();
+      latest = { tag: `v${NEXT}`, ...flags };
+      await asPlatform('win32', undefined, () => checkForUpdates());
+      expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
+      expect(updateStatus().error).toMatch(/not a published full release/);
+      expect(assetFetches()).toEqual([]);
+      expect(markInstallOnQuit()).toBe(false);
+    }
+  });
+
+  it('refuses a tag that is not a plain release version', async () => {
+    latest = { tag: 'v99.0.0-rc.1' };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
+    expect(updateStatus().error).toMatch(/no usable version tag/);
+    expect(assetFetches()).toEqual([]);
+  });
+
+  it('fails closed and keeps nothing when the downloaded bytes are not the published digest', async () => {
+    latest = { tag: `v${NEXT}`, sums: `${sha256('something else')}  ${WINDOWS_ASSET}\n` };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
+    expect(updateStatus().error).toMatch(/is not the published file/);
+    expect(existsSync(stagedPath())).toBe(false);
+    expect(existsSync(`${stagedPath()}.part`)).toBe(false);
+    expect(markInstallOnQuit()).toBe(false);
+  });
+
+  it('refuses an asset redirect that lands off GitHub', async () => {
+    latest = { tag: `v${NEXT}`, landsOn: 'https://mirror.example.com/' };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
+    expect(updateStatus().error).toMatch(/redirected off GitHub/);
+    expect(markInstallOnQuit()).toBe(false);
+  });
+
+  it('offers the release page when the Latest release has no artifact of this build flavor', async () => {
+    latest = { tag: `v${NEXT}`, omit: [WINDOWS_ASSET] };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({
+      latest: NEXT,
+      stage: 'idle',
+      error: null,
+      releaseUrl: `https://github.com/absol89/ParadigmEve/releases/tag/v${NEXT}`
+    });
+    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`]);
+    expect(markInstallOnQuit()).toBe(false);
+  });
+
+  it('reports a newer release to macOS with its page and downloads nothing', async () => {
+    latest = { tag: `v${NEXT}` };
+    await asPlatform('darwin', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'idle', releaseUrl: expect.stringContaining('/releases/tag/v') });
+    expect(assetFetches()).toEqual([]);
+  });
+
+  it('ignores a Latest release that is not newer than this app', async () => {
+    latest = { tag: `v${APP_VERSION}` };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: null, stage: 'idle', error: null, releaseUrl: null });
+    expect(assetFetches()).toEqual([]);
+  });
+
+  it('takes the higher of the local feed and GitHub, and keeps the local build on a tie', async () => {
+    privateBuild({ version: NEXT, body: 'local bytes' });
+    latest = { tag: `v${REPLACEMENT}`, body: 'github bytes' };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: REPLACEMENT, stage: 'ready' });
+    expect(readFileSync(stagedPath(REPLACEMENT), 'utf8')).toBe('github bytes');
+
+    resetUpdateForTests();
+    publicFetch.mockClear();
+    rmSync(path.join(userData, 'updates'), { recursive: true, force: true });
+    privateBuild({ version: REPLACEMENT, body: 'local bytes' });
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: REPLACEMENT, stage: 'ready', releaseUrl: null });
+    expect(readFileSync(stagedPath(REPLACEMENT), 'utf8')).toBe('local bytes');
+    expect(assetFetches()).toEqual([]);
+  });
+
+  it('never lets a GitHub failure hide a local build, and reports it when there is nothing else', async () => {
+    latest = new Error('network unreachable');
+    privateBuild();
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
+
+    resetUpdateForTests();
+    rmSync(defaultFeedRoot(), { recursive: true, force: true });
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
+    expect(updateStatus().error).toMatch(/could not check GitHub releases: network unreachable/);
+  });
+
+  it('asks GitHub again only after six hours', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const start = Date.UTC(2026, 8, 27);
+    now.mockReturnValue(start);
+    const asked = () => publicFetch.mock.calls.filter(([url]) => String(url) === LATEST_API).length;
+    await asPlatform('win32', undefined, async () => {
+      await checkForUpdates();
+      now.mockReturnValue(start + 6 * 60 * 60_000 - 1);
+      await checkForUpdates();
+      expect(asked()).toBe(1);
+      latest = { tag: `v${NEXT}` };
+      now.mockReturnValue(start + 6 * 60 * 60_000);
+      await checkForUpdates();
+      expect(asked()).toBe(2);
+      expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready' });
+    });
   });
 });

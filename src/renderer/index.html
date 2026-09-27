@@ -198,7 +198,7 @@
           <span id="headerSub">Not set up yet</span>
         </span>
         <span class="state">
-          <!-- Only ever visible with a locally staged, digest-checked private build waiting. This app
+          <!-- Only ever visible with a staged, digest-checked update waiting. This app
                lives in the tray and is closed to it, so "installs the next time you start it"
                can mean days. This is the press that means now. -->
           <button class="btn btn-install" id="installUpdate" type="button" hidden>
@@ -225,6 +225,7 @@
         <svg class="ico" viewBox="0 0 24 24"><use href="#i-bolt" /></svg>
         <span id="updateText"></span>
         <button class="btn btn-quiet" id="updateInstall" type="button" hidden>Install now</button>
+        <button class="btn btn-quiet" id="updateRelease" type="button" hidden>View release</button>
         <button class="btn btn-quiet" id="updateExtension" type="button" hidden>Update extension</button>
       </div>
       <div class="notice" id="pluginRefreshReminder" role="status" hidden>

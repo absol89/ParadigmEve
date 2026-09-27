@@ -615,14 +615,16 @@ export interface EveReadiness {
  *
  * `stage` says what this installation is doing about it, and the pair reads as:
  * - `latest === null` — up to date, or nothing checked yet.
- * - `latest` set, `stage: 'idle'` — a newer private build exists locally but this installation
- *   cannot apply it for itself (a Linux `.deb`, macOS, a development tree, unsupported arch).
- * - `downloading` / `ready` — the private artifact is being staged locally, or is verified and
- *   ready for the orderly install handoff.
+ * - `latest` set, `stage: 'idle'` — a newer build exists (in the local private feed or as the
+ *   GitHub release marked Latest) but this installation cannot apply it for itself (a Linux
+ *   `.deb`, macOS, a development tree, an unsupported arch, or a release without this build's
+ *   flavor of artifact).
+ * - `downloading` / `ready` — the artifact is being staged, or is verified and ready for the
+ *   orderly install handoff.
  * - `failed` — the check or the download stopped; `error` says why, and the next check
  *   tries again. Nothing about the running app is affected either way.
  *
- * `checkedAt` is what separates the two silences: null means the private update inbox has not
+ * `checkedAt` is what separates the two silences: null means the update sources have not
  * been checked yet in this run, and only a timestamp lets the UI say "up to date".
  */
 export interface UpdateStatus {
@@ -630,8 +632,13 @@ export interface UpdateStatus {
   latest: string | null;
   stage: 'idle' | 'checking' | 'downloading' | 'ready' | 'failed';
   error: string | null;
-  /** When the local private update inbox was last checked, as epoch ms. Null until it has. */
+  /** When the update sources were last checked, as epoch ms. Null until they have been. */
   checkedAt: number | null;
+  /**
+   * The GitHub page of the offered release when `latest` came from the maintainer's repository.
+   * Built by the main process from a fixed repository and a validated tag, never from a response.
+   */
+  releaseUrl?: string | null;
 }
 
 /**

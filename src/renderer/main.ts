@@ -1216,7 +1216,7 @@ function paintCompanionBrowser(next: AppState): void {
  * the last extension version observed by the bridge. A protocol mismatch can prevent presence,
  * so an observed older version remains actionable until a current companion reports in.
  *
- * Null is the one silence that is not an answer: the local private-build inbox has not been
+ * Null is the one silence that is not an answer: the update sources have not been
  * checked yet in this run, so "up to date" would be a claim nobody has checked.
  *
  * `notice` is the narrower question of whether the header bar carries the sentence at all. That
@@ -1252,24 +1252,24 @@ function updateSummary({ bridge, update, config, status, companionBrowser }: App
     // is not one the app can update by itself. That is when the button matters.
     lines.push(
       update.stage === 'checking'
-        ? t("Checking for a private build…")
+        ? t("Checking for updates…")
         : update.stage === 'ready'
-        ? t("Private ParadigmEve build {0} is verified and ready. Install it now, or it installs the next time you quit.", [update.latest])
+        ? t("ParadigmEve {0} is verified and ready. Install it now, or it installs the next time you quit.", [update.latest])
         : update.stage === 'downloading'
-          ? t("Private ParadigmEve build {0} is being staged locally. Keep working; you can install it when it is verified.", [update.latest])
+          ? t("ParadigmEve {0} is being downloaded. Keep working; you can install it when it is verified.", [update.latest])
           : update.stage === 'failed'
-            ? t("Private ParadigmEve build {0} could not be staged: {1}.", [update.latest, update.error ?? t("the local staging stopped")])
-            : t("Private ParadigmEve build {0} is available locally, but this installation cannot apply it automatically.", [update.latest])
+            ? t("ParadigmEve {0} could not be prepared: {1}.", [update.latest, update.error ?? t("the download stopped")])
+            : t("ParadigmEve {0} is available, but this installation cannot apply it automatically.", [update.latest])
     );
     if (update.stage === 'failed') tone = 'bad';
   } else if (update.stage === 'failed') {
-    lines.push(t("Could not check the private build inbox: {0}.", [update.error ?? t("the check stopped")]));
+    lines.push(t("Could not check for updates: {0}.", [update.error ?? t("the check stopped")]));
     tone = 'bad';
   } else if (update.stage === 'checking') {
-    lines.push(t("Checking for a private build…"));
+    lines.push(t("Checking for updates…"));
   } else if (!stale && !missing) {
     const extension = bridge.present && bridge.extensionVersion ? t(" · extension {0}", [bridge.extensionVersion]) : '';
-    lines.push(t("Private build current: ParadigmEve {0}{1}", [update.current, extension]));
+    lines.push(t("Up to date: ParadigmEve {0}{1}", [update.current, extension]));
     tone = 'ok';
   }
   if (stale) {
@@ -1322,6 +1322,9 @@ function paintUpdate(next: AppState): void {
   const installable = update.stage === 'ready';
   $<HTMLButtonElement>('updateInstall').hidden = !installable;
   $<HTMLButtonElement>('installUpdate').hidden = !installable;
+  // A newer GitHub release this installation cannot apply by itself is fetched by hand from its
+  // release page. The URL is built by the main process from the one fixed repository.
+  $<HTMLButtonElement>('updateRelease').hidden = !(update.latest && update.releaseUrl && update.stage !== 'ready' && update.stage !== 'downloading');
   notice.hidden = !summary.notice;
   ui(line, 'textContent', () => updateSummary(next)?.text ?? '');
   line.className = `upline${summary.tone === 'ok' ? ' is-ok' : summary.tone === 'bad' ? ' is-bad' : ''}`;
@@ -2369,6 +2372,10 @@ function paintGuidedSetup(next: SetupAssistantSnapshot | null): void {
 }
 
 $('updateInstall').addEventListener('click', installUpdate);
+$('updateRelease').addEventListener('click', () => {
+  const url = state?.update.releaseUrl;
+  if (url) void window.api.openLink(url).catch((err: Error) => toast(err.message));
+});
 $('installUpdate').addEventListener('click', installUpdate);
 $<HTMLButtonElement>('eveBrowserTab').addEventListener('click', async () => {
   const button = $<HTMLButtonElement>('eveBrowserTab');
