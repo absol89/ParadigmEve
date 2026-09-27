@@ -13,7 +13,8 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-open-'));
+  // The archive refuses a non-canonical parent; CI temp dirs are not canonical (RUNNER~1, /var -> /private/var).
+  const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-open-')));
   roots.push(parent);
   const archiveRoot = path.join(parent, 'archive');
   const siteRoot = path.join(archiveRoot, 'site');

@@ -54,7 +54,8 @@ const documents = (): ArchiveIndexDocument[] => [
 ];
 
 async function tempArchiveRoot(): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'paradigmeve-archive-index-'));
+  // The archive refuses a non-canonical parent; CI temp dirs are not canonical (RUNNER~1, /var -> /private/var).
+  return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'paradigmeve-archive-index-')));
 }
 
 function comparableStats(index: ArchiveIndexProjection): Omit<ReturnType<ArchiveIndexProjection['stats']>, 'backend'> {

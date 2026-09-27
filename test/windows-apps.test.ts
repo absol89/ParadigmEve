@@ -21,7 +21,9 @@ async function run(script: string): Promise<string> {
 }
 
 describe.runIf(process.platform === 'win32')('Windows installed apps', () => {
-  it('returns a bounded real catalog and includes empty windows when none were observed', async () => {
+  // Reads the live Start-menu catalog through shell:AppsFolder, which a headless CI runner session
+  // cannot provide. It still runs on every real desktop.
+  it.skipIf(process.env.CI === 'true')('returns a bounded real catalog and includes empty windows when none were observed', async () => {
     const result = JSON.parse(await run(`
 $result=Get-WindowsApps @{limit=2}
 @{count=$result.apps.Count;total=$result.total;truncated=$result.truncated;valid=(@($result.apps | Where-Object { !$_.id -or !$_.displayName -or !$_.ContainsKey('windows') -or $_.windows.Count -ne 0 -or $_.isRunning }).Count -eq 0)} | ConvertTo-Json -Compress

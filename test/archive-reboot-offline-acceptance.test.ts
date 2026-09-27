@@ -58,7 +58,8 @@ async function generatedChunk(indexPath: string): Promise<{ html: string; search
 
 describe('archive reboot/offline acceptance', () => {
   it('rebuilds retained and provider-only native images after runtime recreation without provider access', async () => {
-    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-reboot-offline-'));
+    // The archive refuses a non-canonical parent; CI temp dirs are not canonical (RUNNER~1, /var -> /private/var).
+    const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-reboot-offline-')));
     tempRoots.push(parent);
     const archiveRoot = path.join(parent, 'archive');
     const sessionId = 'session-reboot-offline-native';

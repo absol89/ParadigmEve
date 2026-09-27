@@ -17,7 +17,8 @@ afterEach(async () => {
 });
 
 async function tempArchiveRoot(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-runtime-'));
+  // The archive refuses a non-canonical parent; CI temp dirs are not canonical (RUNNER~1, /var -> /private/var).
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-runtime-')));
   tempDirs.push(directory);
   return path.join(directory, 'archive');
 }
