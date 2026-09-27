@@ -3566,9 +3566,14 @@ const HANDLERS = {
     if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
     const calls = Array.isArray(message.calls) ? message.calls : [];
     if (calls.length === 0) return { ok: false, error: 'bad_request_evidence' };
+    // A fresh worker page proves its exact leased slot so the app can bind it before recording.
+    const agent = typeof message.agent === 'string' && /^[a-z0-9-]{1,40}$/i.test(message.agent) ? message.agent : null;
+    const agentCommandId = agent && typeof message.agentCommandId === 'string' && message.agentCommandId.length <= 200
+      ? message.agentCommandId
+      : null;
     const result = await call('/correlations', {
       method: 'POST',
-      body: JSON.stringify({ conversationId, calls })
+      body: JSON.stringify({ conversationId, calls, ...(agent && agentCommandId ? { agent, agentCommandId } : {}) })
     });
     return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
   },

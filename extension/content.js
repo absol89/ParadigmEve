@@ -3656,7 +3656,14 @@
     // session the gate exists to prevent when the resumed model calls a connector before the
     // browser has ACKed the new /c/<id>. Keep the request id page-local for now; refreshFiber()
     // retries it after the exact bootstrap boundary releases the gate.
-    if (commandJournalGate) return false;
+    //
+    // One exception (upstream #474): a fresh *worker* page past its Send click may correlate while
+    // the gate is still up, carrying the exact leased (agent, command id). The app binds that slot
+    // and its worker origin before it records anything, which is the same order the ACK gives, so
+    // no shadow session can appear and the worker's first tool calls are attributed at once.
+    // Resume pages stay fully gated: their A->B session move is a different transaction.
+    const pendingWorker = pendingWorkerCorrelation();
+    if (commandJournalGate && !pendingWorker) return false;
     const byRequest = new Map();
     let complete = true;
     const waiting = [];
@@ -3685,7 +3692,8 @@
           const reply = await ask({
             type: 'correlate',
             conversationId: ownerConversation,
-            calls: batch
+            calls: batch,
+            ...(pendingWorker ? { agent: pendingWorker.agent, agentCommandId: pendingWorker.commandId } : {})
           }, current);
           if (current && !current()) return false;
           const data = reply && reply.ok === true && reply.data && typeof reply.data === 'object' ? reply.data : null;
@@ -10040,6 +10048,18 @@
   let commandJournalGate = false;
 
   /**
+   * The exact leased worker slot a fresh worker page may prove while the gate is still up: set
+   * only after that page claimed a worker command and reached its Send click. The app binds this
+   * (agent, command id) and its worker origin before recording, so early correlation cannot
+   * create a shadow session. (Ported from chat-on-steroids #474.)
+   */
+  function pendingWorkerCorrelation() {
+    return commandAttempt?.phase === 'dispatching' && commandAttempt.agent && commandAttempt.id
+      ? { agent: commandAttempt.agent, commandId: commandAttempt.id }
+      : null;
+  }
+
+  /**
    * Waits for ChatGPT to expose a connected composer without putting bootstrap delivery
    * behind a chain of timer samples.
    *
@@ -10222,6 +10242,11 @@
     // attempt was started. If the fallback got there first, `boot` is null and the false path
     // above leaves that winning tab alive.
     if (attempt) attempt.phase = 'claimed';
+    // A fresh worker page may prove its first MCP calls before its ACK lands; the exact leased
+    // (agent, command id) pair lets the app bind the slot first. (Ported from chat-on-steroids #474.)
+    if (attempt && boot.type === 'worker' && typeof boot.agent === 'string' && boot.agent && typeof boot.id === 'string') {
+      attempt.agent = boot.agent;
+    }
     reportClaim(true);
 
     const fail = (why) => {
@@ -10434,7 +10459,12 @@
     // Record it before send() clicks so reportMessages can open B's turn immediately instead
     // of waiting until Fiber eventually exposes the first connector request.
     rememberUserSend();
-    if (!(await sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false))) {
+    // The instant before the native click: from here a fresh worker's model may call tools.
+    const authorizeBootstrapSend = () => {
+      if (attempt && boot.type === 'worker') attempt.phase = 'dispatching';
+      return true;
+    };
+    if (!(await sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false, authorizeBootstrapSend))) {
       // Once send() was invoked, a missing/cleared draft cannot prove that no click
       // happened. Only the exact pre-click check above may release the dispatch.
       if (boot.type === 'resume') {
@@ -10665,7 +10695,8 @@
       // This stream-origin sighting is one-shot, unlike Fiber evidence. Keep it pending while a
       // fresh bootstrap owns the no-shadow gate so releaseContinuationJournal() can retry it
       // instead of deleting the only exact request-id evidence before the Resume/worker binds.
-      if (commandJournalGate) continue;
+      // A fresh worker past its Send click is the one exception, as in confirmLiveRequestOwners.
+      if (commandJournalGate && !pendingWorkerCorrelation()) continue;
       pendingStreamOrigins.delete(requestId);
       // Stale once this document moves on from the conversation it is confirming now.
       const current = () => alive && epoch === flushEpoch && CLF_DOM.conversationId() === route;

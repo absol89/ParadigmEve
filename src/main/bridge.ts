@@ -589,6 +589,57 @@ let chatTabCountSeenAt: number | null = null;
 let openConversationIds: Set<string> | null = null;
 let openConversationIdsSeenAt: number | null = null;
 let commands: Command[] = [];
+
+/**
+ * Binds the exact fresh worker page that redeemed one still-live bootstrap command.
+ *
+ * The friendly worker id (`worker-1`) is reused by every later swarm, so it is not authority on
+ * its own. The random command id is the browser-held proof of which invited slot opened this
+ * document. The `/events` lost-ACK recovery and the earlier `/correlations` handshake use this one
+ * boundary, so a worker cannot start MCP work in a gap where attribution knows its conversation but
+ * the agent dispatcher still sees a stranger. Old extension builds omit the command id and safely
+ * lose this path rather than guess. (Shared with chat-on-steroids #474.)
+ */
+function bindLeasedWorkerCommand(agent: unknown, commandId: unknown, conversation: string): boolean {
+  if (typeof agent !== 'string' || !/^[a-z0-9-]{1,40}$/i.test(agent) || typeof commandId !== 'string') return false;
+  const pending = commands.find(
+    (command) =>
+      command.id === commandId &&
+      command.spec.type === 'worker' &&
+      command.spec.agent === agent &&
+      swarmRunning(command.spec.runId) &&
+      command.claimedAt !== null
+  );
+  if (pending?.spec.type !== 'worker' || !bindConversation(agent, conversation, pending.spec.runId)) return false;
+  clearAutomaticCompactionDeadline(conversation);
+  return true;
+}
+
+/**
+ * Reconstitutes a bound worker's chat origin before the recorder creates its session.
+ *
+ * The command acknowledgement normally supplies this origin before the worker's first
+ * observation. Its pending copy lives in recorder memory until a session exists, so an app restart
+ * in that gap, or a worker whose first proof is a tool call, would otherwise create an origin-less
+ * session although the broker durably holds the exact binding and task. Returns the conversation's
+ * owning agent id, or null.
+ */
+async function restoreBoundWorkerOrigin(conversation: string): Promise<string | null> {
+  const agent = agentForOwnedConversation(conversation);
+  if (agent && agent !== 'prime') {
+    const worker = agentInfoForOwnedConversation(conversation);
+    if (worker?.role === 'worker') {
+      const prime = primeForOwnedConversation(conversation);
+      await noteChatOrigin(conversation, {
+        kind: 'worker',
+        fromSessionId: prime ? (await findSessionByConversation(prime, { requireUnique: true }))?.id ?? null : null,
+        agentId: worker.id,
+        task: worker.task
+      });
+    }
+  }
+  return agent;
+}
 let commandReceipts: CommandReceipt[] = [];
 /**
  * Worker/revival transports already removed from live delivery but still kept in durable
@@ -2167,6 +2218,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (!id) return json(res, 400, { error: 'bad_conversation_id' }, origin);
     const calls = parseCallEvidence(body['calls'], true).filter((call) => call.requestId !== null);
     if (calls.length === 0) return json(res, 400, { error: 'bad_request_evidence' }, origin);
+    // A fresh worker page can prove its first MCP calls before its command ACK lands. With the
+    // exact leased (agent, command id) it redeemed, bind that slot and its worker origin first,
+    // the same order the ACK gives, so the session recorded below is the worker's and the calls
+    // are attributed at once. (Ported from chat-on-steroids #474.)
+    if (bindLeasedWorkerCommand(body['agent'], body['agentCommandId'], id)) await restoreBoundWorkerOrigin(id);
 
     // This is the live-turn ownership handshake, deliberately separate from transcript
     // delivery. A fresh ChatGPT conversation can expose metadata.request_id before its
@@ -2241,23 +2297,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     // exact random command id it redeemed; only that exact (agent, command) pair may recover a
     // still-leased worker. Old extension builds omit agentCommandId and safely lose recovery
     // rather than guess from the friendly worker label.
-    const reportedAgent = typeof body['agent'] === 'string' && /^[a-z0-9-]{1,40}$/i.test(body['agent'])
-      ? body['agent']
-      : null;
-    const reportedCommandId = typeof body['agentCommandId'] === 'string' ? body['agentCommandId'] : null;
-    if (reportedAgent && reportedCommandId) {
-      const pending = commands.find(
-        (command) =>
-          command.id === reportedCommandId &&
-          command.spec.type === 'worker' &&
-          command.spec.agent === reportedAgent &&
-          swarmRunning(command.spec.runId) &&
-          command.claimedAt !== null
-      );
-      if (pending?.spec.type === 'worker' && bindConversation(reportedAgent, id, pending.spec.runId)) {
-        clearAutomaticCompactionDeadline(id);
-      }
-    }
+    bindLeasedWorkerCommand(body['agent'], body['agentCommandId'], id);
     // The page reporting for a conversation is the other half of first-hand liveness, and
     // the reason a worker whose tab is open is never on the silence clock at all. It also
     // takes back a worker this app gave up on while its tab was gone but its turn was not.
@@ -2283,24 +2323,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     observationWritesInFlight += 1;
     try {
-      const agent = agentForOwnedConversation(id);
-      // The command acknowledgement normally supplies this origin before the worker's first
-      // observation. Its pending copy lives in recorder memory until a session exists, though,
-      // so an app restart in that narrow gap used to create an origin-less worker session even
-      // though the broker had durably restored the exact worker binding and task. Reconstitute
-      // the same origin from that authoritative binding before the recorder creates the session.
-      if (agent && agent !== 'prime') {
-        const worker = agentInfoForOwnedConversation(id);
-        if (worker?.role === 'worker') {
-          const prime = primeForOwnedConversation(id);
-          await noteChatOrigin(id, {
-            kind: 'worker',
-            fromSessionId: prime ? (await findSessionByConversation(prime, { requireUnique: true }))?.id ?? null : null,
-            agentId: worker.id,
-            task: worker.task
-          });
-        }
-      }
+      const agent = await restoreBoundWorkerOrigin(id);
       const result = await recordChatObservations(id, observations, agent);
       const superseded = await conversationWasSuperseded(id);
       // The page's native ChatGPT Project, read by the service worker from the tab URL when it
