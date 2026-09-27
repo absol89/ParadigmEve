@@ -2523,10 +2523,11 @@ describe('automatic compaction', () => {
 
   /**
    * Before the prompt has reached ChatGPT the pickup is a two-minute clock with five raised
-   * reloads, and a ticket that still has not been sent after them is abandoned: nothing was
-   * fenced, and the next working turn opens a fresh one. Every pickup asks for the tab in front.
+   * reloads. Exhausting that first budget is not terminal for an automatic ticket: the source may
+   * have spent the whole interval draining work. The exact token survives and retries after a
+   * ten-minute pause (upstream #391). Every pickup asks for the tab in front.
    */
-  it('reloads an unsent automatic ticket in front every 2 minutes, then gives it up after five', async () => {
+  it('reloads an unsent automatic ticket in front every 2 minutes, then retains it and retries after a pause', async () => {
     vi.useFakeTimers();
     try {
       await pair();
@@ -2559,8 +2560,59 @@ describe('automatic compaction', () => {
 
       await vi.advanceTimersByTimeAsync(2 * 60_000);
       expect(await takeRepair()).toBeNull();
+      expect(continuationByToken(token)).toMatchObject({ automatic: true, state: 'awaiting-summary' });
+      expect(continuationForSession(filed.body.sessionId as string)?.token).toBe(token);
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000 - 2 * 60_000 - 1);
+      expect(await takeRepair()).toBeNull();
+      await vi.advanceTimersByTimeAsync(2 * 60_000 + 1);
+      expect(await takeRepair()).toMatchObject({ conversationId, reason: 'compaction', focus: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The retry is bounded. Each pickup reloads the source page, and a chat that can never reach
+   * Send (upstream #419: a turn that died mid-tool-call) would otherwise be reloaded every two
+   * minutes for as long as it exists. After the first burst and two slowed bursts the ticket is
+   * abandoned, as a manual one is, and the next working turn opens a fresh one.
+   */
+  it('abandons an automatic ticket that never reaches Send after its bounded retry bursts (upstream #391)', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac07';
+      await request('POST', '/events', {
+        body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'a chat that cannot send', messageId: 'm-auto-bound' }] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+      const token = filed.body.token as string;
+      const takeRepair = async (): Promise<{ token: string; reason: string } | null> => {
+        await sweepStaleSwarm(Date.now());
+        return (await request('GET', '/status')).body.repairs?.[0] ?? null;
+      };
+      let reloads = 0;
+      // Three bursts of five pickups; each later burst starts one ten-minute pause after the check
+      // that found the previous burst exhausted.
+      for (let burst = 0; burst < 3; burst += 1) {
+        await vi.advanceTimersByTimeAsync(burst === 0 ? 2 * 60_000 : 10 * 60_000);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          if (attempt > 0) await vi.advanceTimersByTimeAsync(2 * 60_000);
+          const handout = await takeRepair();
+          expect(handout, `burst ${burst} attempt ${attempt}`).toMatchObject({ reason: 'compaction' });
+          await request('GET', `/status?repaired=${handout!.token}&repairAction=reloaded`);
+          reloads += 1;
+        }
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        expect(await takeRepair()).toBeNull();
+      }
+      expect(reloads).toBe(15);
       expect(continuationByToken(token)).toMatchObject({ state: 'aborted', error: 'handoff_never_sent' });
-      expect(continuationForSession(filed.body.sessionId as string)).toBeNull();
+      expect(continuationForSession(filed.body.sessionId as string)?.token).not.toBe(token);
+      // No further reloads, however long the chat stays open.
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(await takeRepair()).toBeNull();
     } finally {
       vi.useRealTimers();
     }

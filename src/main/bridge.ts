@@ -7018,7 +7018,18 @@ const COMPACTION_PICKUPS: Record<CompactionPhase, { every: number; attempts: num
   writing: { every: 5 * 60_000, attempts: 3 },
   opening: { every: 15 * 60_000, attempts: 3 }
 };
-const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number }>();
+const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number; backoffs?: number }>();
+/** The pause before an automatic pre-Send ticket's next pickup burst. (Ported from chat-on-steroids #391.) */
+const AUTOMATIC_ASKING_RETRY_PAUSE_MS = 10 * 60_000;
+/**
+ * How many slowed extra bursts an automatic pre-Send ticket gets before it is abandoned like a
+ * manual one. The source may spend the first burst draining native/local work without reaching
+ * Send, and dropping the ticket then silently stops auto-compaction while the chat keeps growing.
+ * Each pickup reloads the source page, so this stays bounded: a chat that can never reach Send
+ * (upstream #419: a turn that died mid-tool-call) must not be reloaded forever. After this the
+ * next working turn opens a fresh ticket, as before.
+ */
+const AUTOMATIC_ASKING_RETRY_BURSTS = 2;
 
 function compactionPhaseOf(entry: ContinuationView): CompactionPhase {
   if (entry.state !== 'awaiting-summary') return 'opening';
@@ -7205,6 +7216,19 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
     if (now < watch.since + schedule.every) continue;
     if (watch.attempts >= schedule.attempts) {
       if (phase !== 'asking') continue;
+      if (entry.automatic && (watch.backoffs ?? 0) < AUTOMATIC_ASKING_RETRY_BURSTS) {
+        // A threshold-created ticket is durable work, not a ten-minute liveness verdict. Keep the
+        // exact pre-Send token and slow the cadence; Auto Off, explicit Cancel or a page-proven
+        // pre-Send refusal remain the terminal owners. `since` is set so the next burst starts
+        // one pause from now.
+        watch.attempts = 0;
+        watch.backoffs = (watch.backoffs ?? 0) + 1;
+        watch.since = now + AUTOMATIC_ASKING_RETRY_PAUSE_MS - schedule.every;
+        logInfo(
+          `bridge: compaction ticket ${entry.token.slice(0, 8)} still has no source Send after ${schedule.attempts} pickups — retaining automatic ticket and backing off`
+        );
+        continue;
+      }
       // Ten minutes and five raised reloads without the prompt ever reaching ChatGPT. The
       // chat's tools were never fenced (that starts at the send), so nothing is stranded by
       // letting go; what would be stranded is the chat under a ticket it can never discharge.
