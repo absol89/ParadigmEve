@@ -5,7 +5,7 @@
 <h1 align="center">ParadigmEve</h1>
 
 <p align="center"><strong>A durable AI workspace around ChatGPT.</strong><br />
-Eve can work with your files and terminal, coordinate reusable workers, keep Plans and Pins across chats, and carry useful context forward instead of starting from zero every time.</p>
+Eve can work with your files and terminal, coordinate reusable workers, keep Plans and Pins across chats, and carry useful context forward instead of starting from zero every time.</p> It uses the chat mode for your account tier.
 
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download / Releases</strong></a>
@@ -17,16 +17,20 @@ Eve can work with your files and terminal, coordinate reusable workers, keep Pla
   <a href="docs/product/README.md">Product direction</a>
 </p>
 
-> **Beta software.** ParadigmEve is actively self-tested and changes quickly. The current public line is **2.2.5**. Windows x64 debug builds are the primary qualification target right now.
+> **Beta software.** ParadigmEve is actively self-tested and changes quickly. The current public line is **2.2.8**.
 
 ## What Eve is for
 
 ParadigmEve is an Electron workspace plus a ChatGPT Companion extension. ChatGPT still owns the model and conversation; Eve adds a durable local layer around it.
 
+### Why not use work or codex?
+
+Because codex runs out of limit fast and does not have reliable recovery. With Eve, you get automatic compacted context migrations, plus %claude graceful finish.
+
 - **Work on the real machine.** Read and edit approved files, run commands and tests, keep terminals alive, and use Computer Use when you explicitly enable it.
-- **Delegate without losing the thread.** Eve can send bounded jobs to reusable worker chats, receive their results, and keep the owning conversation in charge.
-- **Keep durable context.** Pins, Threads, Hotlinks, Concepts, Plans, Schedules and the local Archive survive browser churn and long conversations.
-- **Continue across chats.** Compact & Resume and restart recovery preserve local session history while ChatGPT conversations remain replaceable frontends.
+- **Delegate without losing the thread.** Eve can send scoped jobs to reusable worker chats, receive their results, and keep the owning conversation in charge.
+- **Keep durable context.** Pins, Threads, Hotlinks, Concepts, Plans, Schedules and the local Archive survive browser churn and long conversation compactions.
+- **Continue across chats.** Compact & Resume and restart recovery opt-in preserve local session history while ChatGPT conversations can be resumed on the go.
 - **Stay inspectable.** Tool calls, Plans, worker activity and local evidence remain visible instead of being hidden behind a single opaque assistant response.
 
 ## Plans that stay attached to the work
