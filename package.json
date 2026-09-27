@@ -1,6 +1,6 @@
 {
   "name": "paradigmeve",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "Local coding bridge for ChatGPT over MCP, with native desktop control and approved-folder capability limits.",
   "license": "MIT",
   "author": "ParadigmEve private build",

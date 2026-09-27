@@ -13,6 +13,14 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.2.7] — First GitHub-published debug pre-release
+
+### Changed
+
+- Built and published by the GitHub workflow as a debug pre-release; once promoted to Latest, 2.2.6 Windows x64
+  debug installations update to it by themselves.
+- The bundled OpenAI `tunnel-client` is now v0.0.15, pinned by the SHA-256 of all six platform archives.
+
 ## [2.2.6] — Compact & Resume on ChatGPT's current layout
 
 ### Added

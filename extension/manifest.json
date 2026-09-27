@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ParadigmEve Companion",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "Connects ChatGPT to your local ParadigmEve workspace, records session activity, and labels MCP tool calls with what they actually did.",
   "minimum_chrome_version": "116",
   "permissions": [

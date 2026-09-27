@@ -305,7 +305,7 @@ async function runPass(): Promise<void> {
 
 interface GithubRelease {
   version: string;
-  /** The exact tag, `v2.2.6` or `2.2.6`, validated before it is ever put in a URL. */
+  /** The exact tag, `v2.2.7` or `2.2.7`, validated before it is ever put in a URL. */
   tag: string;
 }
 
