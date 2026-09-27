@@ -1130,7 +1130,9 @@ function parseCallEvidence(input: unknown, untooled = false): PageCallEvidence[]
     const bare = untooled && requestId !== null;
     if ((!tool && !bare) || !messageId) continue;
     if (seen.has(messageId)) {
-      duplicated.add(messageId);
+      // Re-observing the same exact stream request is one fact. A reused provider message id is
+      // ambiguous and still drops both sides. (Ported from chat-on-steroids #464.)
+      if (messageId !== `request:${requestId}`) duplicated.add(messageId);
       continue;
     }
     seen.add(messageId);

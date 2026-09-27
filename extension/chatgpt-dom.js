@@ -2646,6 +2646,12 @@ var CLF_DOM = (() => {
     selectNativeMode,
     temporaryChatReady: () => safe(() => [...document.querySelectorAll('button')].some(button => {
       if (button.closest(`${OWN_SURFACES}, ${CONTENT}`) || !button.getClientRects().length) return false;
+      // The current toolbar stopped using the checked sprite. The same 20x20 icon is three
+      // paths while Temporary Chat is off and gains this exact fourth path when it is on.
+      // A measured rendered fallback, independent of language. (Ported from chat-on-steroids #472.)
+      const paths = [...button.querySelectorAll('svg path')];
+      if (paths.length === 4 && /^\s*M16\.8525 7\.06128/.test(paths[0].getAttribute('d') || '') &&
+          /^\s*M9\.99902 2\.25171/.test(paths[3].getAttribute('d') || '')) return true;
       // The provider renders both icons at once. Only the visible checked glyph proves
       // the mode; translated labels and the requested URL are not activation receipts.
       return [...button.querySelectorAll('svg use')].some(use => {
@@ -2660,8 +2666,9 @@ var CLF_DOM = (() => {
     }), false),
     confirmTemporaryChatIntroduction: () => {
       const dialog = [...document.querySelectorAll('[role="dialog"]')].find(node =>
-        [...node.querySelectorAll('h1,h2,[role="heading"]')].some(heading => text(heading, 100) === 'Temporary Chat') && /Not in history/.test(text(node, 2000)));
-      const button = dialog && [...dialog.querySelectorAll('button')].find(node => text(node, 100) === 'Continue');
+        [...node.querySelectorAll('h1,h2,[role="heading"]')].some(heading => /^Temporary chat$/i.test(text(heading, 100))) &&
+        /(?:Not in history|won['’]t appear in history)/i.test(text(node, 2000)));
+      const button = dialog && [...dialog.querySelectorAll('button')].find(node => /^Continue$/i.test(text(node, 100)));
       if (button) button.click();
     },
     conversationId,

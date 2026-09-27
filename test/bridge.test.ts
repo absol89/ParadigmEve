@@ -1337,6 +1337,36 @@ describe('activity feed', () => {
     expect(liveConversations().some((entry) => entry.conversationId === conversationId)).toBe(true);
   });
 
+  it('restores a stream origin with no native message id after an app restart (upstream #464)', async () => {
+    await pair();
+    const conversationId = '19191919-4141-6363-8585-979797979797';
+    const requestId = '41111111-2222-4333-8444-555555555555';
+    noteInboundToolRequest(requestId);
+    const mapped = await request('POST', '/correlations', {
+      body: { conversationId, calls: [{ messageId: null, requestId, createTime: Date.now() / 1000 }] }
+    });
+    expect(mapped.status).toBe(200);
+    expect(mapped.body.confirmed).toContain(requestId);
+    await flushDurable();
+
+    const correlation = await import('../src/main/session/correlation.js');
+    correlation.resetCorrelationRegistryForTests();
+    expect(correlation.requestCorrelation(requestId)).toBeNull();
+    await correlation.restoreRequestCorrelations();
+    expect(correlation.requestCorrelation(requestId)).toMatchObject({ conversationId });
+  });
+
+  it('keeps a stream origin the page reported twice in one batch instead of dropping it as a duplicate (upstream #464)', async () => {
+    await pair();
+    const conversationId = '19191919-4141-6363-8585-979797979798';
+    const requestId = '41111111-2222-4333-8444-555555555556';
+    noteInboundToolRequest(requestId);
+    const sighting = { messageId: null, requestId, createTime: Date.now() / 1000 };
+    const mapped = await request('POST', '/correlations', { body: { conversationId, calls: [sighting, sighting] } });
+    expect(mapped.status).toBe(200);
+    expect(mapped.body.confirmed).toContain(requestId);
+  });
+
   it('atomically registers and verifies a live request id against its chat before the MCP call is filed', async () => {
     await pair();
     const conversationId = '13131313-3535-5757-7979-919191919191';
