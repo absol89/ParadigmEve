@@ -15,6 +15,15 @@ operation.
 
 ## [2.2.6] — Compact & Resume on ChatGPT's current layout
 
+### Added
+
+- The app offers the GitHub release marked **Latest** in `absol89/ParadigmEve` as an update, checked at most
+  every six hours next to the local private feed. Drafts and pre-releases are never offered, a build only takes
+  artifacts of its own flavor, and the download must match the release's `SHA256SUMS.txt`. Windows and Linux
+  AppImage installs stage and install it; other installs get a **View release** button.
+- Release CI builds the debug flavor (`-debug` artifacts), and `publish.yml` creates every release as a
+  pre-release. Promoting a vetted release to Latest is what makes installations update to it.
+
 ### Fixed
 
 - Compact & Resume completes again on ChatGPT's render-item layout. The Companion now reads user messages from
