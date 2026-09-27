@@ -253,6 +253,10 @@ it('fails overlap closed when a busy duration crosses the repeated wall-clock po
 });
 
 it('prefers persisted occurrence state over a recurrence preview while keeping the renderer projection authority-free', async () => {
+  // Without a user schedule the projection days follow the machine's zone. NOW is Friday morning
+  // in Stockholm but still Thursday on a US Pacific runner (the arm64 release runner), so give the
+  // projection its zone the way the product does: from the user's schedule.
+  await replaceUserSchedule({ baseline: { timeZone: 'Europe/Stockholm', days: {} }, changes: [] }, null, NOW);
   await createEveCronEntry({
     title: 'Friday review',
     state: 'enabled',

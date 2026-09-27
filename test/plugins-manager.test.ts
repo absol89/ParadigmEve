@@ -24,6 +24,10 @@ import * as pluginInstaller from '../src/main/plugins/installer.js';
 import * as exposureModule from '../src/main/plugins/exposure.js';
 import * as durableModule from '../src/main/durable.js';
 
+// Real plugin servers start and stop as child processes; slow CI runners (arm64) need more than
+// vi.waitFor's one-second default. Still bounded by the 30 s test timeout.
+const PROCESS_WAIT = { timeout: 15_000, interval: 50 };
+
 const fixture = `const readline=require('node:readline');
 const tools=[{name:'Echo.Mixed',description:'Echo fixture',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false},annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},outputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']}}];
 readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;let result;if(m.method==='initialize')result={protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'CoS test fixture',version:'1'}};else if(m.method==='tools/list')result={tools};else if(m.method==='tools/call')result={content:[{type:'text',text:process.env.TEST_SECRET||m.params.arguments.value}],structuredContent:{value:m.params.arguments.value},isError:m.params.arguments.value==='error'};else result={};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`;
@@ -406,7 +410,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     await manager.close();
     manager = new PluginManager();
     await manager.initialize(dir);
-    await vi.waitFor(() => expect(manager.tools()).toHaveLength(1));
+    await vi.waitFor(() => expect(manager.tools()).toHaveLength(1), PROCESS_WAIT);
     expect((await manager.call('Echo.Mixed', { value: 'probe' })).content).toEqual([{ type: 'text', text: 'none' }]);
     await manager.configure(row.id, { config: { PLAYWRIGHT_MCP_CODEGEN: 'typescript' } });
     expect((await manager.call('Echo.Mixed', { value: 'probe' })).content).toEqual([{ type: 'text', text: 'typescript' }]);
@@ -523,7 +527,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     await manager.close();
     manager = new PluginManager();
     await manager.initialize(dir);
-    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'));
+    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'), PROCESS_WAIT);
     expect(manager.snapshot().plugins[0]!.tools[0]!.exposedName).toBe('Echo.Mixed');
     expect(manager.tools()[0]!.name).toBe('Echo.Mixed');
     expect(manager.snapshot().plugins[0]!.id).toBe(row.id);
@@ -597,7 +601,7 @@ describe('enabled plugin process ownership', () => {
     vi.mocked(getSecret).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     manager = new PluginManager(); await manager.initialize(dir);
     try {
-      await vi.waitFor(() => expect(manager.snapshot().plugins.find(row => row.id === h.row.id)!.status).toBe('ready'));
+      await vi.waitFor(() => expect(manager.snapshot().plugins.find(row => row.id === h.row.id)!.status).toBe('ready'), PROCESS_WAIT);
       const result = await Promise.race([manager.call('Echo.Mixed', { value: 'ready peer' }), new Promise(resolve => setTimeout(() => resolve('blocked'), 200))]);
       expect(result).not.toBe('blocked');
       const active = (await h.pids()).at(-1)!;
@@ -620,7 +624,7 @@ describe('enabled plugin process ownership', () => {
     expect(manager.tools().map(tool => tool.name)).toEqual(['Echo.Mixed']);
     await vi.waitFor(() => expect(releaseSecret).toBeTypeOf('function'));
     releaseSecret('fixture-value');
-    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'));
+    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'), PROCESS_WAIT);
     await manager.setEnabled(h.row.id, false);
     const before = await h.pids();
     await manager.close(); manager = new PluginManager(); await manager.initialize(dir);
@@ -633,7 +637,7 @@ describe('enabled plugin process ownership', () => {
     expect(alive((await h.pids())[0]!.pid)).toBe(true);
     await manager.close(); manager = new PluginManager(); await manager.initialize(dir);
     expect(manager.tools().map(tool => tool.name)).toEqual(['Echo.Mixed']);
-    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'));
+    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'), PROCESS_WAIT);
     const active = (await h.pids())[1]!;
     vi.useFakeTimers();
     expect((await manager.call('Echo.Mixed', { value: 'first' })).isError).not.toBe(true);
@@ -665,8 +669,8 @@ describe('enabled plugin process ownership', () => {
     if (action === 'disable') await manager.setEnabled(h.row.id, false);
     else if (action === 'uninstall') await manager.uninstall(h.row.id);
     else await manager.close();
-    await vi.waitFor(() => expect(alive(active.pid)).toBe(false));
-    if (active.child) await vi.waitFor(() => expect(alive(active.child!)).toBe(false));
+    await vi.waitFor(() => expect(alive(active.pid)).toBe(false), PROCESS_WAIT);
+    if (active.child) await vi.waitFor(() => expect(alive(active.child!)).toBe(false), PROCESS_WAIT);
     expect((await manager.call('Echo.Mixed', { value: 'must not restart' })).isError).toBe(true);
     expect(await h.pids()).toHaveLength(1);
   });
@@ -680,7 +684,7 @@ describe('enabled plugin process ownership', () => {
     await manager.restart(h.row.id);
     expect((await manager.call('Echo.Mixed', { value: 'one attempt' })).isError).toBe(true);
     const active = (await h.pids())[1]!;
-    await vi.waitFor(() => expect(alive(active.pid)).toBe(false));
+    await vi.waitFor(() => expect(alive(active.pid)).toBe(false), PROCESS_WAIT);
     expect(await h.pids()).toHaveLength(2);
     expect(manager.snapshot().plugins[0]!.status).toBe('error');
   });
@@ -730,7 +734,7 @@ describe('enabled plugin process ownership', () => {
     await fs.writeFile(file, JSON.stringify(stored));
     manager = new PluginManager(); await manager.initialize(dir);
     expect(manager.tools()).toEqual([]);
-    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'));
+    await vi.waitFor(() => expect(manager.snapshot().plugins[0]!.status).toBe('ready'), PROCESS_WAIT);
     expect(manager.tools().map(tool => tool.name)).toEqual(['Echo.Mixed']);
     expect(await h.pids()).toHaveLength(2);
     expect(alive((await h.pids())[1]!.pid)).toBe(true);
