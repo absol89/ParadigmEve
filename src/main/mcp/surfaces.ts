@@ -1,0 +1,212 @@
+/**
+ * The model-facing surfaces this app publishes, and what each one is for.
+ *
+ * ChatGPT connects to one MCP server per connector, and the *whole* of that server's
+ * tool list is one discovery unit: `api_tool.list_resources(paths=["Name"])` with no
+ * query returns every schema the server advertises. A query narrows it, but nothing
+ * guarantees the harness will ask a narrow one, so the honest planning number for a
+ * surface is its complete tools/list — not the subset a lucky query would return.
+ *
+ * That is the entire reason this file exists. Splitting into separate servers is the
+ * only mechanism that actually bounds the worst case, because a separate server is a
+ * separate discovery boundary that no query can cross.
+ *
+ * It is deliberately not a splitting free-for-all. Every extra surface is another
+ * connector the user has to create, name, describe and keep connected, and on the
+ * OpenAI tunnel it is another tunnel id as well (see `docs/tool-surface.md` §6.4).
+ * A surface has to earn that. The test applied here is: a distinct capability boundary
+ * the user already thinks in, plus enough schema weight that folding it into Core
+ * would meaningfully raise Core's no-query cost.
+ *
+ * The primary ParadigmEve surface is intentionally unified for ChatGPT: OpenAI's custom-app
+ * UI binds one app to one tunnel id, so asking a normal user to create a second app merely to
+ * gain Computer use is worse than the discovery savings. The old Desktop surface remains only
+ * as a compatibility endpoint for installs that already have a second tunnel configured.
+ */
+
+import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities } from '../../shared/types.js';
+import { desktopAutomationSupported } from '../platform.js';
+import { WINDOWS_COMPUTER_METHODS, WINDOWS_COMPUTER_READ_METHODS, WINDOWS_COMPUTER_INPUT_METHODS } from '../../shared/windows-computer.js';
+
+export const SURFACE_IDS = ['core', 'desktop', 'plugins'] as const;
+export type SurfaceId = (typeof SURFACE_IDS)[number];
+
+/** Product brand plus the fresh-install default for the independently configurable Core name. */
+export const CONNECTOR_BRAND = 'ParadigmEve';
+export const CORE_CONNECTOR_NAME = DEFAULT_CORE_CONNECTOR_NAME;
+
+export interface SurfaceDefinition {
+  id: SurfaceId;
+  /** MCP server name. Stable; ChatGPT keys its cached metadata off it. */
+  serverName: string;
+  /**
+   * Exactly what the user should type as the connector name in ChatGPT.
+   *
+   * Offered as copyable text rather than described, because the name is also the
+   * retrieval handle: `paths=["…"]` is matched against it, and a user who invents
+   * "my pc" gets a surface the model cannot address by name.
+   */
+  connectorName: string;
+  /**
+   * Exactly what the user should paste as the connector description.
+   *
+   * This is the single most load-bearing string in the whole design. Before any
+   * discovery has happened the model holds the server name and this sentence and
+   * nothing else, and it decides from them alone whether to pull this surface's
+   * schemas at all. So it is written as vocabulary, not as prose: the words a person
+   * would actually use for the work live in here, because a query that misses is
+   * indistinguishable to the model from a capability that does not exist.
+   */
+  description: string;
+  /** Short line for the setup card, in the app's own voice. */
+  cardSummary: string;
+  /**
+   * Whether the app is usable without it. Core is required; Desktop is opt-in and
+   * most sessions never want it.
+   */
+  required: boolean;
+  /**
+   * Every tool this surface can ever advertise, in listing order.
+   *
+   * The authority for tests, for the setup UI's "what you get" list, and for the
+   * cross-surface leakage assertions. A tool that appears here and nowhere else is a
+   * bug in one direction; a tool registered on a server that does not name it here is
+   * a bug in the other.
+   */
+  tools: readonly string[];
+}
+
+/**
+ * Core — the coding loop.
+ *
+ * `session` and `agents` live here rather than on surfaces of their own, and that is a
+ * decision with a concrete reason rather than a tidiness preference:
+ *
+ *  - `session` is how a chat discovers and reads local recordings of past or concurrently
+ *    running work — including exact authored messages and the arguments/result of one call.
+ *    That is part of the coding loop rather than an extra connector.
+ *  - `agents` is one flat tool and is registered only while multi-agent mode is on.
+ *    Fresh installs enable it; an existing config that keeps it off still pays nothing for
+ *    it here. A dedicated connector for one conditional schema is pure setup overhead with
+ *    no discovery benefit.
+ *
+ * Each surface also exposes JavaScript exec, restricted to that surface's own tools.
+ * `find` and the exec pair are mutually exclusive — `find` exists only when command
+ * execution is off — so not all declarations are exposed together.
+ */
+const CORE_TOOLS = ['read', 'view_image', 'find', 'apply_patch', 'exec_command', 'write_stdin', 'download_artifact', 'session', 'update_plan', 'pins', 'chat_review_plan', 'chat_review_complete', 'agents', 'lan', 'self_settings', 'session_finish', 'schedule_complete', 'work_context', 'expenses_read', 'expenses'] as const;
+const COMPUTER_USE_TOOLS = [...WINDOWS_COMPUTER_METHODS, 'read_clipboard', 'write_clipboard', 'observe', 'computer'] as const;
+
+function coreSurface(connectorName: string): SurfaceDefinition {
+  return {
+    id: 'core',
+    // Stable provider/cache identity. The per-install human name belongs in connectorName below;
+    // changing serverName when Eve becomes Eva would manufacture a new MCP server identity.
+    serverName: 'paradigmeve-core',
+    connectorName,
+    description:
+      'Keep using ChatGPT the way you already do — by typing, dictating or talking naturally — and let it take care of more of the work on this PC while it is on. ' +
+      `${connectorName} lets your conversation work across files and projects, create and update documents, notes, data or code, save useful outputs, run longer jobs and pick up earlier work. ` +
+      `By default, ${connectorName} also works from other ChatGPT chats and devices; Settings can restore strict main-chat-only access. ` +
+      `When you enable Computer use in ParadigmEve, the same ${connectorName} app can also see supported app windows, use the mouse and keyboard, and work with the clipboard. ` +
+      'It reduces the need to copy and paste between apps, switch windows repeatedly or translate what you want into technical steps. ' +
+      'This is especially useful when typing or navigating between apps is difficult, or when you simply prefer a conversational, voice-first way of working. ' +
+      'For harder tasks, ChatGPT can also coordinate several helper chats in parallel when that feature is enabled. ' +
+      'When asked to save, document or implement, do the work on the connected computer and verify the saved result instead of only drafting a reply. ' +
+      'Use work_context to check live tools and caller readiness. The computer runs the tools even when the user is away from its keyboard; ChatGPT must supply this app to the current message.',
+    cardSummary: `One ${connectorName} app for files, longer tasks and — when you enable it — Computer use, with fewer copy-pastes and window switches.`,
+    required: true,
+    tools: [...new Set([...CORE_TOOLS, ...COMPUTER_USE_TOOLS, 'exec'])]
+  };
+}
+
+const CORE: SurfaceDefinition = coreSurface(CORE_CONNECTOR_NAME);
+
+/**
+ * Desktop — legacy compatibility for installs that already created a second ChatGPT app.
+ *
+ * This one earns its boundary twice over. It is gated on permissions the user grants
+ * separately and can switch off independently; Windows has the Window2 app/window API,
+ * while macOS retains observe/computer. The majority of coding sessions
+ * never touch the desktop at all. Folding it into Core would put its weight into every
+ * no-query discovery of the coding surface, for a capability most conversations do not
+ * want.
+ */
+const DESKTOP: SurfaceDefinition = {
+  id: 'desktop',
+  serverName: 'paradigmeve-desktop',
+  connectorName: `${CONNECTOR_BRAND} Desktop`,
+  description:
+    'See and control this computer desktop, including its clipboard. ' +
+    'Use for: listing and launching apps, taking background window screenshots, reading what is on screen, listing and finding windows, inspecting buttons, fields and other UI controls, ' +
+    'clicking, typing, pressing keys, scrolling and dragging in native applications, ' +
+    'and reading the clipboard or copying and pasting text between programs.',
+  cardSummary:
+    'Legacy compatibility for an older separate Computer use app. New setup includes these tools in ParadigmEve itself.',
+  required: false,
+  tools: [...WINDOWS_COMPUTER_METHODS, 'read_clipboard', 'write_clipboard', 'observe', 'computer', 'exec']
+};
+
+const PLUGINS: SurfaceDefinition = {
+  id: 'plugins', serverName: 'paradigmeve-plugins',
+  connectorName: `${CONNECTOR_BRAND} Plugins`,
+  description: 'Tools from external MCP integrations installed and enabled in ParadigmEve Settings, including Blender and other connected applications and services.',
+  cardSummary: 'One shared connector for your enabled external MCP plugins.',
+  required: false,
+  // Dynamic declarations are owned and bounded by the plugin manager.
+  tools: ['exec']
+};
+
+export const SURFACES: Record<SurfaceId, SurfaceDefinition> = { core: CORE, desktop: DESKTOP, plugins: PLUGINS };
+
+export const SURFACE_LIST: readonly SurfaceDefinition[] = [CORE, DESKTOP, PLUGINS];
+
+export function surfaceDefinition(id: SurfaceId, coreConnectorName = CORE_CONNECTOR_NAME): SurfaceDefinition {
+  return id === 'core' && coreConnectorName !== CORE_CONNECTOR_NAME
+    ? coreSurface(coreConnectorName)
+    : SURFACES[id];
+}
+
+/** Platform/capability projection used by setup; each registrar enforces the same split. */
+export function desktopToolNames(caps: Capabilities, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'win32') return [...(caps.screen ? ['observe'] : []), ...(caps.control || caps.clipboardRead || caps.clipboardWrite ? ['computer'] : [])];
+  return [
+    ...(caps.screen ? WINDOWS_COMPUTER_READ_METHODS : []),
+    ...(caps.control ? WINDOWS_COMPUTER_INPUT_METHODS : []),
+    ...(caps.clipboardRead ? ['read_clipboard'] : []),
+    ...(caps.clipboardWrite ? ['write_clipboard'] : [])
+  ];
+}
+
+/**
+ * Whether a surface has anything to offer under these capabilities.
+ *
+ * Desktop with neither screen, control nor clipboard access would advertise an empty tool list,
+ * which is worse than not being offered: the user pays the whole setup cost for a
+ * connector that can do nothing, and ChatGPT shows them a working connection. The
+ * setup UI uses this to grey the card out and say why.
+ *
+ * Core remains the required surface even when its live tool list is temporarily empty. Keeping
+ * that identity stable is what lets permissions be enabled again without changing connectors.
+ */
+export function surfaceIsUseful(
+  id: SurfaceId,
+  caps: Capabilities,
+  platform: NodeJS.Platform = process.platform,
+  release?: string
+): boolean {
+  // Clipboard counts: it is reached through `computer`, so granting only the clipboard
+  // still gives this surface something real to advertise.
+  if (id === 'desktop') {
+    return (
+      desktopAutomationSupported(platform, release) &&
+      (caps.screen || caps.control || caps.clipboardRead || caps.clipboardWrite)
+    );
+  }
+  return true;
+}
+
+/** Surfaces worth connecting under these capabilities, in setup order. */
+export function usefulSurfaces(caps: Capabilities): SurfaceDefinition[] {
+  return SURFACE_LIST.filter((surface) => surfaceIsUseful(surface.id, caps));
+}

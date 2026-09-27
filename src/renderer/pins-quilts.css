@@ -1,0 +1,1759 @@
+.pins-library,
+.pin-chooser-dialog {
+  --pins-paper: #f7f1e7;
+  --pins-paper-deep: #eee2d1;
+  --pins-panel: rgb(255 252 247 / 78%);
+  --pins-panel-strong: #fffdf9;
+  --pins-ink: #2b2722;
+  --pins-soft: #74695f;
+  --pins-faint: #9b8f84;
+  --pins-line: rgb(75 59 47 / 13%);
+  --pins-edge: rgb(75 59 47 / 20%);
+  --pins-accent: #7f6554;
+  --pins-accent-soft: #dbc7b5;
+  --pins-blue: #7896a1;
+  --pins-rose: #c99b93;
+  --pins-gold: #c4a064;
+  --pins-hover: rgb(125 101 82 / 8%);
+  --pins-shadow: 0 18px 48px rgb(70 50 34 / 10%);
+  --pins-cover-shadow: 0 14px 30px rgb(78 56 37 / 13%);
+}
+
+:root[data-theme='dark'] .pins-library,
+:root[data-theme='dark'] .pin-chooser-dialog {
+  --pins-paper: #0d1521;
+  --pins-paper-deep: #121e30;
+  --pins-panel: rgb(21 33 52 / 86%);
+  --pins-panel-strong: #17253a;
+  --pins-ink: #f0eadf;
+  --pins-soft: #bcb5a8;
+  --pins-faint: #837f78;
+  --pins-line: rgb(159 184 215 / 14%);
+  --pins-edge: rgb(159 184 215 / 22%);
+  --pins-accent: #9db8d4;
+  --pins-accent-soft: #29405c;
+  --pins-blue: #6f99c4;
+  --pins-rose: #9e7274;
+  --pins-gold: #c6a66b;
+  --pins-hover: rgb(113 151 190 / 11%);
+  --pins-shadow: 0 22px 60px rgb(0 0 0 / 34%);
+  --pins-cover-shadow: 0 18px 38px rgb(0 0 0 / 35%);
+}
+
+.pins-library {
+  position: relative;
+  isolation: isolate;
+  width: min(calc(100% - 44px), 980px);
+  max-width: 980px;
+  margin: 24px auto 48px;
+  padding: 44px 36px 56px;
+  border: 1px solid var(--pins-line);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at 6% 0%, color-mix(in srgb, var(--pins-rose) 18%, transparent), transparent 22rem),
+    radial-gradient(circle at 96% 8%, color-mix(in srgb, var(--pins-blue) 17%, transparent), transparent 26rem),
+    linear-gradient(145deg, color-mix(in srgb, var(--pins-panel-strong) 82%, transparent), color-mix(in srgb, var(--pins-paper) 92%, transparent));
+  box-shadow: var(--pins-shadow);
+  color: var(--pins-ink);
+}
+
+.pins-library::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--pins-gold) 12%, transparent), transparent 24%, transparent 76%, color-mix(in srgb, var(--pins-blue) 10%, transparent));
+  pointer-events: none;
+}
+
+.pins-library-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.pins-library-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.pins-library-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--pins-rose) 38%, var(--pins-line));
+  border-radius: 14px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--pins-rose) 9%, var(--pins-panel-strong)), var(--pins-panel-strong));
+  color: var(--pins-rose);
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pins-library-create {
+  min-height: 38px;
+  padding: 7px 15px;
+  border: 1px solid color-mix(in srgb, var(--pins-gold) 46%, var(--pins-line));
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-gold) 10%, var(--pins-panel-strong));
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pins-library-create:hover {
+  border-color: color-mix(in srgb, var(--pins-gold) 62%, var(--pins-line));
+}
+
+.pins-library-create:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-gold) 72%, var(--pins-accent));
+  outline-offset: 2px;
+}
+
+.pins-library-intro h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 560;
+  letter-spacing: -.04em;
+  color: var(--pins-ink);
+  text-shadow: 0 1px 0 color-mix(in srgb, var(--pins-panel-strong) 70%, transparent);
+}
+
+.pins-library-intro p {
+  max-width: 620px;
+  margin: 8px 0 0;
+  color: var(--pins-soft);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.pins-tabs {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 24px;
+}
+
+.pins-tab,
+.collection-chip,
+.quilt-title-button,
+.quilt-card-action,
+.quilt-back-button,
+.quilt-sort-direction,
+.pin-chooser-cancel,
+.pin-chooser-commit {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pins-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--pins-line);
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-panel) 58%, transparent);
+  color: var(--pins-soft);
+  font-size: 12px;
+}
+
+.pins-tab:hover,
+.pins-tab.is-active {
+  border-color: color-mix(in srgb, var(--pins-gold) 46%, var(--pins-line));
+  background: color-mix(in srgb, var(--pins-gold) 10%, var(--pins-panel-strong));
+  color: var(--pins-ink);
+}
+
+.pins-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-gold) 72%, var(--pins-accent));
+  outline-offset: 2px;
+}
+
+.pins-tab-count {
+  min-width: 19px;
+  padding: 1px 5px;
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-panel) 72%, transparent);
+  color: var(--pins-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.pins-concept-actions {
+  display: flex;
+  margin: -12px 0 18px;
+}
+
+.pins-concept-chat {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid color-mix(in srgb, var(--pins-blue) 38%, var(--pins-line));
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-blue) 8%, var(--pins-panel-strong));
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pins-concept-chat:hover {
+  border-color: color-mix(in srgb, var(--pins-blue) 58%, var(--pins-line));
+  background: color-mix(in srgb, var(--pins-blue) 13%, var(--pins-panel-strong));
+}
+
+.pins-concept-chat:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-blue) 72%, var(--pins-accent));
+  outline-offset: 2px;
+}
+
+.collection-chip-count {
+  color: var(--pins-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.collection-filter,
+.pin-new-quilt-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.collection-filter {
+  margin-bottom: 24px;
+}
+
+.collection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 29px;
+  padding: 4px 10px;
+  border: 1px solid var(--pins-line);
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-panel) 66%, transparent);
+  color: var(--pins-soft);
+  font-size: 11.5px;
+}
+
+.collection-chip:hover,
+.collection-chip.is-active {
+  border-color: var(--pins-edge);
+  background: color-mix(in srgb, var(--pins-accent-soft) 32%, var(--pins-panel-strong));
+  color: var(--pins-ink);
+}
+
+.collection-chip.is-active {
+  border-color: color-mix(in srgb, var(--pins-gold) 56%, var(--pins-edge));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pins-gold) 18%, transparent), 0 5px 14px color-mix(in srgb, var(--pins-accent) 8%, transparent);
+}
+
+.quilt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  align-items: start;
+  gap: 24px 18px;
+}
+
+.quilt-card {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--pins-line);
+  border-radius: 23px;
+  background: color-mix(in srgb, var(--pins-panel) 90%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--pins-accent) 8%, transparent);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.quilt-card:hover,
+.quilt-card:focus-within {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--pins-gold) 32%, var(--pins-edge));
+  box-shadow: 0 18px 36px color-mix(in srgb, var(--pins-accent) 13%, transparent);
+}
+
+.quilt-card.is-hotlink {
+  min-height: 196px;
+  padding: 12px;
+}
+
+.quilt-card.is-hotlink .quilt-card-meta {
+  display: flex;
+  min-height: 170px;
+  flex-direction: column;
+  padding: 3px 3px 0;
+}
+
+.quilt-cover {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--quilt-preview-density, 2), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--quilt-preview-density, 2), minmax(0, 1fr));
+  gap: 1px;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--pins-edge);
+  border-radius: 16px;
+  background: var(--pins-edge);
+  box-shadow: var(--pins-cover-shadow);
+  cursor: pointer;
+}
+
+.quilt-cover::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  z-index: 3;
+  border: 1px dashed color-mix(in srgb, var(--pins-gold) 35%, transparent);
+  border-radius: 11px;
+  pointer-events: none;
+}
+
+.quilt-cover:hover {
+  border-color: color-mix(in srgb, var(--pins-gold) 55%, var(--pins-edge));
+}
+
+.quilt-preview-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 0;
+  padding: 11px;
+  overflow: hidden;
+  background:
+    linear-gradient(155deg, color-mix(in srgb, var(--pins-panel-strong) 96%, transparent), color-mix(in srgb, var(--pins-paper-deep) 76%, var(--pins-panel-strong)));
+  color: var(--pins-soft);
+  text-align: left;
+}
+
+.quilt-preview-tile[data-checker='1'] {
+  background:
+    linear-gradient(155deg, color-mix(in srgb, var(--pins-blue) 10%, var(--pins-panel-strong)), color-mix(in srgb, var(--pins-paper-deep) 82%, var(--pins-panel-strong)));
+}
+
+.quilt-preview-tile[data-kind='prompt'],
+.quilt-preview-tile[data-kind='message'] {
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--pins-rose) 18%, transparent), transparent 65%),
+    var(--pins-panel-strong);
+}
+
+.quilt-preview-tile[data-kind='result'] {
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--pins-blue) 22%, transparent), transparent 65%),
+    var(--pins-panel-strong);
+}
+
+.quilt-preview-tile[data-kind='plan'] {
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--pins-gold) 23%, transparent), transparent 65%),
+    var(--pins-panel-strong);
+}
+
+.quilt-preview-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.quilt-preview-image-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  background: color-mix(in srgb, var(--pins-paper-deep) 72%, var(--pins-panel-strong));
+  color: var(--pins-faint);
+  font-size: 9px;
+  text-align: center;
+}
+
+.quilt-preview-image-fallback[aria-busy='true'] {
+  background:
+    linear-gradient(110deg, transparent 28%, color-mix(in srgb, var(--pins-ink) 7%, transparent) 42%, transparent 56%),
+    color-mix(in srgb, var(--pins-paper-deep) 72%, var(--pins-panel-strong));
+}
+
+.quilt-preview-kind {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-panel-strong) 74%, transparent);
+  color: var(--pins-faint);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.quilt-preview-text {
+  position: relative;
+  z-index: 1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--pins-ink);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.quilt-preview-tile.has-image .quilt-preview-text {
+  padding: 4px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--pins-panel-strong) 86%, transparent);
+}
+
+.quilt-preview-tile.is-image-thumbnail .quilt-preview-kind {
+  background: color-mix(in srgb, var(--pins-panel-strong) 82%, transparent);
+}
+
+.quilt-preview-tile.is-split-preview {
+  padding: 0;
+  background: var(--pins-panel-strong);
+}
+
+.quilt-preview-tile.is-split-preview .quilt-preview-image,
+.quilt-preview-tile.is-split-preview .quilt-preview-image-fallback {
+  inset: 0 0 auto;
+  height: 50%;
+}
+
+.quilt-preview-tile.is-split-preview .quilt-preview-kind {
+  position: absolute;
+  top: 11px;
+  left: 11px;
+}
+
+.quilt-preview-tile.is-split-preview .quilt-preview-text {
+  position: absolute;
+  inset: auto 0 0;
+  height: 50%;
+  padding: 12px 13px;
+  border-radius: 0;
+  background: var(--pins-panel-strong);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-line-clamp: 5;
+}
+
+.quilt-cover[data-preview-density='3'] .quilt-preview-tile {
+  padding: 7px;
+}
+
+.quilt-cover[data-preview-density='3'] .quilt-preview-kind {
+  padding: 1px 4px;
+  font-size: 7px;
+}
+
+.quilt-cover[data-preview-density='3'] .quilt-preview-text {
+  font-size: 8.5px;
+  line-height: 1.25;
+  -webkit-line-clamp: 3;
+}
+
+.quilt-cover[data-preview-density='4'] .quilt-preview-tile {
+  padding: 5px;
+}
+
+.quilt-cover[data-preview-density='4'] .quilt-preview-kind {
+  display: none;
+}
+
+.quilt-cover[data-preview-density='4'] .quilt-preview-text {
+  font-size: 7.5px;
+  line-height: 1.2;
+  -webkit-line-clamp: 3;
+}
+
+.quilt-preview-tile.is-placeholder {
+  align-items: center;
+  justify-content: center;
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--pins-gold) 12%, var(--pins-line)) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--pins-blue) 11%, var(--pins-line)) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--pins-gold) 12%, var(--pins-line)) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--pins-blue) 11%, var(--pins-line)) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.quilt-preview-plus {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--pins-edge);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pins-panel-strong) 88%, transparent);
+  color: var(--pins-gold);
+  font-size: 17px;
+  font-weight: 300;
+}
+
+.quilt-card-meta {
+  padding: 11px 4px 0;
+}
+
+.quilt-card-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.quilt-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.quilt-title-button {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--pins-ink);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.quilt-title-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.quilt-card-action {
+  flex: 0 0 auto;
+  padding: 3px 5px;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--pins-faint);
+  font-size: 10.5px;
+}
+
+.quilt-card-action:hover {
+  background: var(--pins-hover);
+  color: var(--pins-ink);
+}
+
+.quilt-card-preview-privacy {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+}
+
+.quilt-card-preview-privacy:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-blue) 70%, var(--pins-accent));
+  outline-offset: 2px;
+}
+
+.quilt-card-preview-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.quilt-card-delete-action {
+  color: var(--red);
+}
+
+.quilt-chat-button {
+  width: 100%;
+  min-height: 36px;
+  margin-top: 10px;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--pins-gold) 34%, var(--pins-edge));
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--pins-gold) 8%, var(--pins-panel-strong));
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.quilt-chat-button:hover {
+  background: color-mix(in srgb, var(--pins-gold) 13%, var(--pins-panel-strong));
+}
+
+.quilt-detail-chat-button {
+  width: auto;
+  min-width: 190px;
+  margin-top: 0;
+}
+
+.quilt-card-description,
+.quilt-card-description-cta-slot {
+  min-height: 38px;
+  margin: 9px 0 0;
+}
+
+.quilt-card-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--pins-soft);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.quilt-hotlink-summary {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.quilt-hotlink-summary p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  color: var(--pins-soft);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.quilt-hotlink-description-slot {
+  min-height: 1.45em;
+}
+
+.quilt-hotlink-description-slot .quilt-hotlink-description,
+.quilt-concept-description-cta {
+  height: 100%;
+}
+
+.quilt-concept-description-cta {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border: 1px dashed color-mix(in srgb, var(--pins-accent) 38%, var(--pins-line));
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--pins-accent-soft) 16%, var(--pins-panel-strong));
+  color: var(--pins-soft);
+  font: inherit;
+  line-height: 1.25;
+  text-align: center;
+  white-space: pre-line;
+  cursor: pointer;
+}
+
+.quilt-concept-description-cta:hover {
+  border-color: color-mix(in srgb, var(--pins-accent) 58%, var(--pins-edge));
+  color: var(--pins-ink);
+}
+
+.quilt-card-description-cta-slot .quilt-concept-description-cta {
+  min-height: 38px;
+}
+
+.quilt-hotlink-prompt {
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--pins-line) 82%, transparent);
+  color: var(--pins-ink) !important;
+}
+
+.quilt-hotlink-link {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--pins-blue) 34%, var(--pins-line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--pins-blue) 8%, var(--pins-panel-strong));
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 10.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.quilt-hotlink-link:hover {
+  border-color: color-mix(in srgb, var(--pins-blue) 52%, var(--pins-line));
+  background: color-mix(in srgb, var(--pins-blue) 13%, var(--pins-panel-strong));
+}
+
+.quilt-hotlink-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-blue) 70%, var(--pins-accent));
+  outline-offset: 2px;
+}
+
+.quilt-card.is-hotlink .quilt-card-tags {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.quilt-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 18px;
+  margin-top: 9px;
+}
+
+.collection-tag {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 19px;
+  max-width: 100%;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--pins-gold) 22%, var(--pins-line));
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-gold) 7%, transparent);
+  color: var(--pins-faint);
+  font-family: inherit;
+  font-size: 9.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quilt-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 9px;
+  color: var(--pins-faint);
+  font-size: 10.5px;
+}
+
+.pins-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  min-height: 260px;
+  place-content: center;
+  padding: 28px;
+  border: 1px dashed color-mix(in srgb, var(--pins-gold) 34%, var(--pins-edge));
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--pins-panel) 64%, transparent);
+  color: var(--pins-soft);
+  text-align: center;
+}
+
+.pins-empty strong {
+  color: var(--pins-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pins-empty p {
+  max-width: 360px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.quilt-detail {
+  max-width: none;
+}
+
+.quilt-back-button {
+  margin: 0 0 24px;
+  padding: 5px 0;
+  background: transparent;
+  color: var(--pins-soft);
+  font-size: 12px;
+}
+
+.quilt-back-button:hover {
+  color: var(--pins-ink);
+}
+
+.quilt-detail-head {
+  display: block;
+}
+
+.thread-prompt-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+  padding: 17px 18px;
+  border: 1px solid color-mix(in srgb, var(--pins-gold) 30%, var(--pins-line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--pins-gold) 7%, var(--pins-panel));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--pins-accent) 7%, transparent);
+}
+
+.thread-prompt-head,
+.thread-prompt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-prompt-head {
+  justify-content: space-between;
+}
+
+.thread-prompt-help {
+  color: var(--pins-faint);
+  font-size: 10.5px;
+}
+
+.thread-prompt-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 86px;
+  padding: 11px 12px;
+  resize: vertical;
+  border: 1px solid var(--pins-edge);
+  border-radius: var(--r-sm);
+  background: var(--pins-panel-strong);
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.thread-prompt-input:focus {
+  outline: 0;
+  border-color: var(--pins-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pins-accent) 18%, transparent);
+}
+
+.thread-prompt-save {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--pins-edge-strong);
+  border-radius: var(--r-sm);
+  background: var(--pins-panel-strong);
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.thread-prompt-save:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.quilt-detail-intro {
+  min-width: 0;
+}
+
+.quilt-detail-title-block {
+  min-width: 0;
+}
+
+.quilt-detail-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.quilt-detail-title-block h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 560;
+  letter-spacing: -.04em;
+  color: var(--pins-ink);
+}
+
+.quilt-detail-title-block > p {
+  max-width: 620px;
+  margin: 8px 0 0;
+  color: var(--pins-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.quilt-metadata-form {
+  display: grid;
+  grid-template-columns:
+    minmax(190px, .78fr)
+    minmax(210px, .88fr)
+    minmax(100px, .42fr)
+    minmax(150px, .68fr)
+    auto
+    auto;
+  grid-template-areas:
+    "title description description description description description"
+    "save chat collections sort direction state"
+    "link link link link link link";
+  align-items: end;
+  gap: 10px 12px;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.pins-create-form {
+  grid-template-columns: minmax(190px, .78fr) minmax(210px, 1fr) auto;
+  grid-template-areas:
+    "title description description"
+    "save collections collections"
+    "link link link";
+}
+
+.pins-create-prompt-card {
+  max-width: 100%;
+}
+
+.quilt-metadata-field {
+  display: grid;
+  gap: 5px;
+  color: var(--pins-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.quilt-metadata-field > span,
+.quilt-sort-field > span {
+  display: flex;
+  align-items: flex-end;
+  min-height: 14px;
+  line-height: 14px;
+}
+
+.quilt-metadata-title {
+  grid-area: title;
+}
+
+.quilt-metadata-description {
+  grid-area: description;
+}
+
+.quilt-metadata-link {
+  grid-area: link;
+}
+
+.quilt-metadata-collections {
+  grid-area: collections;
+}
+
+.quilt-metadata-field input,
+.quilt-metadata-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  resize: vertical;
+  border: 1px solid var(--pins-edge);
+  border-radius: var(--r-sm);
+  background: var(--pins-panel-strong);
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.quilt-metadata-description textarea {
+  height: 36px;
+  min-height: 36px;
+}
+
+.quilt-metadata-collections textarea {
+  min-height: 36px;
+}
+
+.quilt-metadata-field input:focus,
+.quilt-metadata-field textarea:focus {
+  outline: 0;
+  border-color: var(--pins-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pins-accent) 18%, transparent);
+}
+
+.quilt-metadata-save {
+  grid-area: save;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--pins-edge-strong);
+  border-radius: var(--r-sm);
+  background: var(--pins-panel-strong);
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.quilt-metadata-save.is-dirty {
+  border-color: color-mix(in srgb, var(--green) 72%, var(--pins-edge));
+  background: color-mix(in srgb, var(--green) 22%, var(--pins-panel-strong));
+  color: color-mix(in srgb, var(--green) 68%, var(--pins-ink));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+.quilt-metadata-save.is-dirty:hover {
+  background: color-mix(in srgb, var(--green) 30%, var(--pins-panel-strong));
+}
+
+.pins-create-save:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.quilt-metadata-form .quilt-detail-chat-button {
+  grid-area: chat;
+  width: 100%;
+}
+
+.quilt-metadata-form .quilt-sort-field {
+  grid-area: sort;
+}
+
+.quilt-metadata-form .quilt-sort-direction {
+  grid-area: direction;
+}
+
+.quilt-metadata-form .quilt-archive-button,
+.quilt-metadata-form .quilt-delete-button {
+  grid-area: state;
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.quilt-metadata-save:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.quilt-sort-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.quilt-sort-field {
+  display: grid;
+  gap: 5px;
+  color: var(--pins-faint);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.quilt-sort-select,
+.quilt-sort-direction {
+  min-height: 36px;
+  border: 1px solid var(--pins-edge);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--pins-panel-strong) 92%, transparent);
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.quilt-sort-select {
+  padding: 6px 30px 6px 10px;
+}
+
+.quilt-sort-direction {
+  padding: 6px 10px;
+}
+
+.quilt-sort-direction:hover {
+  background: var(--pins-hover);
+}
+
+.quilt-archive-button,
+.quilt-delete-button {
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.quilt-archive-button {
+  border: 1px solid var(--pins-edge-strong);
+  background: var(--pins-panel-strong);
+  color: var(--pins-ink);
+}
+
+.quilt-archive-button:hover {
+  background: var(--pins-hover);
+}
+
+.quilt-delete-button {
+  border: 1px solid color-mix(in srgb, var(--red) 38%, var(--pins-edge));
+  background: transparent;
+  color: var(--red);
+}
+
+.quilt-delete-button:hover {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.quilt-detail-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--pins-line);
+  color: var(--pins-faint);
+  font-size: 10.5px;
+}
+
+.quilt-detail-summary.is-empty {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.quilt-date-resolution {
+  font-style: italic;
+}
+
+.quilt-pin-list {
+  display: grid;
+}
+
+.quilt-context-band {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 16px 0 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--pins-gold) 26%, var(--pins-edge));
+  background: color-mix(in srgb, var(--pins-paper) 94%, transparent);
+  color: color-mix(in srgb, var(--pins-gold) 72%, var(--pins-soft));
+  backdrop-filter: blur(12px);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.quilt-pin-row {
+  display: grid;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 17px 18px;
+  border: 1px solid var(--pins-line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--pins-panel) 84%, transparent);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--pins-accent) 7%, transparent);
+}
+
+.quilt-pin-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quilt-pin-kind {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--pins-line);
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-panel-strong) 72%, transparent);
+  color: var(--pins-faint);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.quilt-pin-source {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pins-faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quilt-pin-sticky {
+  display: grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pins-faint);
+  font: 16px/1 var(--sans);
+  cursor: pointer;
+}
+
+.quilt-pin-sticky:hover,
+.quilt-pin-sticky[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--pins-rose) 13%, transparent);
+  color: color-mix(in srgb, var(--pins-rose) 74%, var(--pins-ink));
+}
+
+.quilt-pin-sticky:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-accent) 72%, var(--pins-rose));
+  outline-offset: 2px;
+}
+
+.quilt-pin-unpin {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pins-faint);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.quilt-pin-unpin + .quilt-pin-sticky {
+  margin-left: 0;
+}
+
+.quilt-pin-unpin:hover {
+  background: var(--pins-hover);
+  color: var(--pins-ink);
+}
+
+.quilt-pin-media {
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--pins-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pins-paper-deep) 72%, var(--pins-panel-strong));
+}
+
+.quilt-pin-image {
+  display: block;
+  width: auto;
+  max-width: min(100%, 360px);
+  max-height: 240px;
+  object-fit: contain;
+}
+
+.quilt-pin-image-fallback {
+  display: grid;
+  place-items: center;
+  width: min(360px, 100%);
+  min-width: 160px;
+  min-height: 120px;
+  padding: 16px;
+  box-sizing: border-box;
+  color: var(--pins-faint);
+  font-size: 11px;
+  text-align: center;
+}
+
+.quilt-pin-primary,
+.quilt-pin-secondary {
+  margin: 0;
+}
+
+.quilt-pin-primary {
+  max-width: 760px;
+  color: var(--pins-ink);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.quilt-pin-secondary {
+  color: var(--pins-soft);
+  font-size: 11px;
+}
+
+.quilt-pin-plan {
+  display: grid;
+  gap: 7px;
+  max-width: 820px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quilt-pin-plan-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--pins-line) 76%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--pins-panel-strong) 44%, transparent);
+  color: var(--pins-ink);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.quilt-pin-plan-item[data-status='done'] .quilt-pin-plan-title {
+  color: var(--pins-soft);
+}
+
+.quilt-pin-plan-marker {
+  color: var(--pins-faint);
+  text-align: center;
+}
+
+.quilt-pin-plan-item[data-status='in_progress'] .quilt-pin-plan-marker {
+  color: var(--pins-gold);
+}
+
+.quilt-pin-plan-relation,
+.quilt-pin-plan-priority {
+  padding: 1px 5px;
+  border-radius: var(--pill);
+  background: color-mix(in srgb, var(--pins-panel-strong) 72%, transparent);
+  color: var(--pins-faint);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.quilt-pin-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.quilt-pin-date {
+  display: inline-flex;
+  gap: 5px;
+  color: var(--pins-soft);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quilt-pin-date-label {
+  color: var(--pins-faint);
+}
+
+.quilt-card-add-quilt {
+  appearance: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.quilt-card-add-quilt:hover {
+  border-color: color-mix(in srgb, var(--pins-gold) 42%, var(--pins-line));
+  background: color-mix(in srgb, var(--pins-gold) 12%, transparent);
+  color: var(--pins-ink);
+}
+
+.quilt-context-link {
+  margin: -2px -3px;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.quilt-context-link:hover {
+  color: var(--pins-ink);
+  text-decoration-color: currentColor;
+}
+
+.quilt-context-link:focus-visible {
+  outline: 2px solid var(--pins-gold);
+  outline-offset: 2px;
+}
+
+.pin-chooser-dialog {
+  width: min(620px, calc(100vw - 40px));
+  max-height: min(760px, calc(100dvh - 40px));
+  margin: auto;
+  padding: 0;
+  overflow: hidden auto;
+  border: 1px solid var(--pins-edge);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--pins-rose) 13%, transparent), transparent 18rem),
+    radial-gradient(circle at 96% 0%, color-mix(in srgb, var(--pins-blue) 14%, transparent), transparent 20rem),
+    var(--pins-paper);
+  color: var(--pins-ink);
+  box-shadow: var(--pins-shadow), 0 28px 90px rgb(0 0 0 / 32%);
+}
+
+.pin-chooser-dialog::backdrop {
+  background: rgb(13 19 29 / 58%);
+  backdrop-filter: blur(6px);
+}
+
+.pin-chooser-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px 10px;
+}
+
+.pin-chooser-head-text {
+  min-width: 0;
+}
+
+.pin-chooser-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--pins-ink);
+}
+
+.pin-chooser-head p {
+  margin: 4px 0 0;
+  color: var(--pins-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.pin-chooser-source {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  margin: 0 20px 10px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--pins-gold) 26%, var(--pins-line));
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--pins-panel) 82%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--pins-gold) 72%, transparent);
+}
+
+.pin-chooser-source-label,
+.pin-chooser-source-meta {
+  color: var(--pins-faint);
+  font-size: 10.5px;
+}
+
+.pin-chooser-source strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pin-chooser-body {
+  display: grid;
+  gap: 7px;
+  padding: 0 20px 12px;
+}
+
+.pin-chooser-section {
+  overflow: hidden;
+  border: 1px solid var(--pins-line);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--pins-panel) 72%, transparent);
+}
+
+.pin-chooser-section.is-active {
+  border-color: color-mix(in srgb, var(--pins-gold) 52%, var(--pins-edge));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--pins-accent) 9%, transparent);
+}
+
+.pin-chooser-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 5px 8px 5px 11px;
+  background: color-mix(in srgb, var(--pins-paper-deep) 72%, transparent);
+}
+
+.pin-chooser-section-title {
+  color: var(--pins-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pin-chooser-section.is-active .pin-chooser-section-head {
+  background: color-mix(in srgb, var(--pins-accent-soft) 24%, var(--pins-panel-strong));
+  box-shadow: inset 3px 0 0 var(--pins-gold);
+}
+
+.pin-chooser-section.is-active .pin-chooser-section-title {
+  color: var(--pins-ink);
+}
+
+.pin-quilt-list {
+  max-height: 185px;
+  overflow-y: auto;
+}
+
+.pin-quilt-choice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  cursor: pointer;
+}
+
+.pin-quilt-choice + .pin-quilt-choice {
+  border-top: 1px solid var(--pins-line);
+}
+
+.pin-quilt-choice:hover {
+  background: var(--pins-hover);
+}
+
+.pin-quilt-choice input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--pins-accent);
+}
+
+.pin-quilt-choice-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pin-quilt-choice-text > strong {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.pin-quilt-choice-meta {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--pins-faint);
+  font-size: 10.5px;
+}
+
+.pin-chooser-empty {
+  margin: 0;
+  padding: 13px;
+  color: var(--pins-faint);
+  font-size: 11.5px;
+}
+
+.pin-new-quilt-fields {
+  display: grid;
+  gap: 8px;
+  padding: 8px 11px 9px;
+}
+
+.pin-new-quilt-name-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.pin-new-quilt-name,
+.pin-new-quilt-collections {
+  display: grid;
+  gap: 5px;
+}
+
+.pin-new-quilt-name {
+  min-width: 0;
+}
+
+.pin-new-quilt-name > span,
+.pin-new-quilt-collections-label {
+  color: var(--pins-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.pin-new-quilt-name input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--pins-edge);
+  border-radius: var(--r-sm);
+  background: var(--pins-panel-strong);
+  color: var(--pins-ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.pin-new-quilt-name input:focus {
+  outline: 0;
+  border-color: var(--pins-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pins-accent) 18%, transparent);
+}
+
+.pin-chooser-cancel,
+.pin-chooser-commit {
+  padding: 7px 11px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pin-chooser-cancel {
+  background: transparent;
+  color: var(--pins-soft);
+}
+
+.pin-chooser-cancel:hover {
+  background: var(--pins-hover);
+  color: var(--pins-ink);
+}
+
+.pin-chooser-commit {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--pins-gold) 48%, var(--pins-accent));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--pins-accent) 88%, #000), color-mix(in srgb, var(--pins-blue) 66%, var(--pins-accent)));
+  color: #fffaf1;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--pins-accent) 20%, transparent);
+}
+
+.pin-chooser-commit:disabled {
+  opacity: .38;
+  cursor: default;
+}
+
+.pins-library :is(button, input, select):focus-visible,
+.pin-chooser-dialog :is(button, input):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pins-gold) 70%, var(--pins-accent));
+  outline-offset: 3px;
+}
+
+@media (max-width: 720px) {
+  .pins-library {
+    width: calc(100% - 28px);
+    margin-block: 16px 30px;
+    padding: 32px 22px 44px;
+  }
+
+  .quilt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 12px;
+  }
+
+  .quilt-detail-actions {
+    width: 100%;
+  }
+
+  .quilt-detail-chat-button {
+    flex: 1 1 220px;
+    width: auto;
+  }
+
+  .quilt-metadata-form {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "title"
+      "description"
+      "save"
+      "chat"
+      "collections"
+      "sort"
+      "direction"
+      "state";
+  }
+
+  .quilt-metadata-save,
+  .quilt-metadata-form .quilt-detail-chat-button,
+  .quilt-metadata-form .quilt-sort-select,
+  .quilt-metadata-form .quilt-sort-direction,
+  .quilt-metadata-form .quilt-archive-button,
+  .quilt-metadata-form .quilt-delete-button {
+    width: 100%;
+  }
+
+  .quilt-sort-controls {
+    align-items: stretch;
+  }
+
+  .quilt-sort-field {
+    flex: 1;
+  }
+
+  .quilt-sort-select,
+  .quilt-sort-direction {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .pins-library {
+    width: calc(100% - 16px);
+    padding-inline: 16px;
+    border-radius: 22px;
+  }
+
+  .quilt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pin-chooser-head,
+  .pin-chooser-body {
+    padding-inline: 18px;
+  }
+
+  .pin-chooser-source {
+    margin-inline: 18px;
+  }
+
+  .pin-quilt-choice-text {
+    gap: 7px;
+  }
+
+  .pin-quilt-choice-meta {
+    overflow: hidden;
+  }
+}

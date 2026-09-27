@@ -1,0 +1,44 @@
+.archive-surface {
+  width: min(980px, 100%);
+  margin-inline: auto;
+  padding: 42px clamp(20px, 4vw, 46px) 58px;
+  color: var(--ink);
+}
+
+.archive-head { margin-bottom: 22px; }
+.archive-heading { max-width: 720px; }
+.archive-heading h1 { margin: 4px 0 8px; font-size: 30px; font-weight: 580; letter-spacing: -.035em; }
+.archive-heading p { margin: 0; color: var(--soft); font-size: 13.5px; line-height: 1.6; }
+.archive-eyebrow { color: var(--soft); font-size: 11.5px; font-weight: 700; letter-spacing: .08em; }
+
+.archive-status-card,
+.archive-recovery-card {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+}
+
+.archive-status-card h2 { margin: 0 0 15px; font-size: 17px; font-weight: 620; }
+.archive-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.archive-metric { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--sunk); }
+.archive-metric-label { display: block; color: var(--soft); font-size: 11px; line-height: 1.35; }
+.archive-metric-value { display: block; margin-top: 5px; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.archive-error { margin-top: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, #c86464 45%, var(--line)); border-radius: var(--r-sm); color: #c86464; font-size: 12px; overflow-wrap: anywhere; }
+
+.archive-recovery-card { display: grid; gap: 6px; }
+.archive-recovery-copy { font-size: 14px; font-weight: 650; }
+.archive-recovery-card p { margin: 0; color: var(--soft); font-size: 12.5px; line-height: 1.5; }
+.archive-recovery-card p[data-ready='true'] { color: var(--ink); }
+
+.archive-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+.archive-action { min-height: 40px; }
+.archive-action-status { min-height: 20px; margin: 9px 0 0; color: var(--soft); font-size: 12px; }
+.archive-action-status[data-tone='error'] { color: #c86464; }
+.archive-boundary { max-width: 720px; margin: 18px 0 0; color: var(--faint); font-size: 11.5px; line-height: 1.55; }
+
+@media (max-width: 720px) {
+  .archive-surface { padding: 28px 16px 50px; }
+  .archive-metrics { grid-template-columns: 1fr 1fr; }
+}

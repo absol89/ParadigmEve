@@ -1,0 +1,125 @@
+.schedule-editor-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(860px, calc(100vh - 32px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 24px 72px rgb(0 0 0 / 28%);
+}
+
+.schedule-editor-dialog::backdrop { background: rgb(12 13 16 / 52%); }
+
+.schedule-editor-head,
+.schedule-editor-section-head,
+.schedule-editor-entry,
+.schedule-editor-entry-actions,
+.schedule-editor-actions,
+.schedule-editor-window-row {
+  display: flex;
+  align-items: center;
+}
+
+.schedule-editor-head {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.schedule-editor-title { display: grid; gap: 2px; }
+.schedule-editor-title h2 { margin: 0; font-size: 1.35rem; }
+.schedule-editor-description { max-width: 560px; color: var(--soft); font-size: .78rem; line-height: 1.4; }
+
+.schedule-editor-status {
+  min-height: 20px;
+  margin: 0;
+  padding: 10px 22px 0;
+  color: var(--soft);
+}
+.schedule-editor-status.is-error { color: var(--danger, #b33a3a); font-weight: 650; }
+
+.schedule-editor-body {
+  display: grid;
+  gap: 18px;
+  padding: 18px 22px 24px;
+  overflow: auto;
+  max-height: calc(100vh - 150px);
+}
+
+.schedule-editor-section {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.schedule-editor-section h3 { margin: 0; font-size: 1rem; }
+.schedule-editor-section-head { justify-content: space-between; gap: 12px; }
+
+.schedule-editor-field { display: grid; gap: 6px; }
+.schedule-editor-field-label { font-weight: 650; }
+.schedule-editor-hint { color: var(--soft); line-height: 1.35; }
+.schedule-editor-field input,
+.schedule-editor-field select,
+.schedule-editor-field textarea,
+.schedule-editor-timezone-input,
+.schedule-editor-window-row input {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--sunk);
+  color: var(--ink);
+  padding: 8px 10px;
+  font: inherit;
+}
+.schedule-editor-field textarea { resize: vertical; min-height: 72px; }
+
+.schedule-editor-weekdays {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.schedule-editor-weekdays legend { padding: 0 6px; font-weight: 650; }
+.schedule-editor-weekdays label { display: flex; align-items: center; gap: 7px; min-height: 32px; }
+
+.schedule-editor-actions { gap: 8px; flex-wrap: wrap; }
+.schedule-editor-entry { justify-content: space-between; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.schedule-editor-entry:first-of-type { border-top: 0; }
+.schedule-editor-entry.is-paused { opacity: .78; }
+.schedule-editor-entry-copy { display: grid; gap: 3px; min-width: 0; }
+.schedule-editor-entry-copy span,
+.schedule-editor-entry-copy small { color: var(--soft); overflow-wrap: anywhere; }
+.schedule-editor-entry-actions { gap: 8px; flex: 0 0 auto; }
+.schedule-editor-empty { margin: 0; color: var(--soft); }
+
+.schedule-editor-windows { display: grid; gap: 8px; }
+.schedule-editor-window-list { display: grid; gap: 8px; }
+.schedule-editor-window-row { gap: 8px; }
+.schedule-editor-window-row input { max-width: 150px; }
+.schedule-editor-window-separator { color: var(--soft); }
+
+.schedule-editor-week-summary { display: grid; gap: 2px; }
+.schedule-editor-week-summary-row { display: grid; grid-template-columns: minmax(96px, .7fr) 1.3fr; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.schedule-editor-week-summary-row span { color: var(--soft); }
+.schedule-editor-refresh { justify-self: start; }
+
+@media (max-width: 620px) {
+  .schedule-editor-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+  .schedule-editor-head, .schedule-editor-body { padding-left: 14px; padding-right: 14px; }
+  .schedule-editor-entry { align-items: flex-start; flex-direction: column; }
+  .schedule-editor-entry-actions { width: 100%; }
+  .schedule-editor-window-row { align-items: stretch; flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .schedule-editor-dialog * { scroll-behavior: auto !important; transition: none !important; }
+}

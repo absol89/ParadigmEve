@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 760">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f0e4d5"/><stop offset="1" stop-color="#d5dfd7"/></linearGradient><radialGradient id="glow"><stop stop-color="#efc875" stop-opacity=".9"/><stop offset="1" stop-color="#efc875" stop-opacity="0"/></radialGradient></defs>
+  <style>.bg{fill:url(#bg)}.surface{fill:#fffaf1;stroke:#7c6956;stroke-opacity:.22}.line{fill:none;stroke:#79897e;stroke-opacity:.48}.green{fill:#7f9a88}.gold{fill:#cba255}.rose{fill:#d59a8d}@media(prefers-color-scheme:dark){.bg{fill:#071421}.surface{fill:#10273a;stroke:#d7b46b;stroke-opacity:.35}.line{stroke:#7294b1;stroke-opacity:.48}.green{fill:#1f5360}.gold{fill:#d7b46b}.rose{fill:#305a7a}}</style>
+  <rect class="bg" width="1000" height="760" rx="48"/><circle cx="790" cy="166" r="220" fill="url(#glow)"/>
+  <rect class="surface" x="510" y="398" width="380" height="150" rx="34" transform="rotate(-2 700 473)"/>
+  <ellipse class="green" cx="618" cy="414" rx="62" ry="28" transform="rotate(-14 618 414)"/><ellipse class="rose" cx="748" cy="431" rx="54" ry="25" transform="rotate(12 748 431)"/><circle class="gold" cx="826" cy="470" r="36"/>
+  <path class="line" stroke-width="4" stroke-linecap="round" d="M560 265h236M560 302h168M560 339h204"/>
+  <path class="line" stroke-width="2" d="M92 552c140-81 261-61 361-18M130 590c112-51 195-40 274-15"/>
+  <path class="surface" d="M170 251c0-55 44-99 99-99s99 44 99 99v104H170z"/><path class="line" stroke-width="7" d="M202 236h134M214 278h110"/>
+</svg>

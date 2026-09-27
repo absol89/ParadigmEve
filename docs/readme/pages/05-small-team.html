@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eve — Split up a big job</title>
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="guide-05">
+  <header class="topbar"><div class="shell topbar-inner">
+    <a class="brand" href="../index.html"><span class="brand-mark"></span> Eve</a>
+    <nav class="nav" aria-label="Tour"><a href="01-feel-lighter.html">Feel lighter</a><a href="02-keep-the-good-bit.html">Keep the good bit</a><a href="03-come-back-later.html">Come back later</a><a href="04-quiet-help.html">Prep it first</a><a aria-current="page" href="05-small-team.html">Split up a big job</a><a href="06-local.html">Make a small tool</a></nav>
+    <button class="button ghost" type="button" data-coffee-toggle>☕ Coffee mode</button>
+  </div></header>
+  <main class="shell">
+    <section class="page-hero">
+      <div class="eyebrow">When one job has a few different parts</div>
+      <h1>Let Eve split up a bigger job.</h1>
+      <p class="lede">Eve can give focused parts of the job to helpers. They report back to the same coordinating conversation, where Eve can compare their results with the original task and decide what still needs checking.</p>
+    </section>
+
+    <section class="section">
+      <div class="demo">
+        <div class="demo-toolbar"><span class="demo-caption">A pretend “this app keeps crashing” job</span><button class="button" type="button" data-workers-toggle>Split this up</button></div>
+        <div class="worker-stage">
+          <div class="prime-bubble">Eve coordinates the whole job</div>
+          <div class="worker-bubble w1">Find the useful logs</div>
+          <div class="worker-bubble w2">Check versions and dependencies</div>
+          <div class="worker-bubble w3">Research current fixes</div>
+          <div class="worker-bubble w4">Test the most likely fix</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section two-col">
+      <div class="soft-card"><h3>Useful helper context can be kept.</h3><p class="muted">When a helper finishes a piece of work, its conversation can sleep without using a worker slot. Eve can wake that same helper later when its context is still useful.</p></div>
+      <div class="soft-card"><h3>The reports come back to Eve.</h3><p class="muted">The coordinating conversation receives each worker report and can compare it with the original assignment and the evidence available for that job before deciding whether follow-up is needed.</p></div>
+    </section>
+
+    <section class="section narrow">
+      <p class="big-quote">You can keep talking to Eve while the worker conversations stay in the background.</p>
+      <div class="button-row"><a class="button primary" href="06-local.html">Next: make a small tool for one real need →</a><a class="button" href="04-quiet-help.html">← Previous</a></div>
+      <div class="tech-door techy"><details><summary>What are these helpers technically?</summary><p>They are worker ChatGPT conversations attached to the coordinating conversation that started them. Each worker gets a bounded assignment and reports back to that owner; workers cannot create their own workers. When a worker stops, its chat can usually be kept asleep and reused later unless it has reached its context limit. Eve, Eva, or whatever you named this installation remains the assistant you talk to. “Prime” is an internal coordinator role, not a second persona.</p></details></div>
+    </section>
+  </main>
+  <footer class="footer"><div class="shell footer-inner"><span>Eve · Split up a big job</span><span>05 / 06</span></div></footer>
+  <script src="../assets/site.js"></script>
+</body>
+</html>

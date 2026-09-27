@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eve — Under the hood</title>
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="guide-99">
+  <header class="topbar"><div class="shell topbar-inner">
+    <a class="brand" href="../index.html"><span class="brand-mark"></span> Eve</a>
+    <nav class="nav" aria-label="Tour"><a href="01-feel-lighter.html">Feel lighter</a><a href="02-keep-the-good-bit.html">Keep the good bit</a><a href="03-come-back-later.html">Come back later</a><a href="04-quiet-help.html">Prep it first</a><a href="05-small-team.html">Split up a big job</a><a href="06-local.html">Make a small tool</a></nav>
+    <button class="button ghost" type="button" data-coffee-toggle>☕ Coffee mode</button>
+  </div></header>
+  <main class="shell">
+    <section class="page-hero">
+      <div class="eyebrow">Optional technical details</div>
+      <h1>Okay. How does Eve actually do this?</h1>
+      <p class="lede">The short version: ChatGPT still runs the model. ParadigmEve records the local session and its history, can use local tools you authorize, and keeps the project and queued work attached when the browser conversation changes.</p>
+    </section>
+    <section class="section three-col">
+      <div class="soft-card"><h3>Keep the chat habit you already know</h3><p class="muted">The model still runs in ChatGPT. ParadigmEve records the conversation and local tool activity around it so the work has a durable local history.</p></div>
+      <div class="soft-card"><h3>Your computer does local work</h3><p class="muted">Files, shell commands, and desktop actions cross ParadigmEve’s explicit local permission boundaries. Selected plugins keep their own service or operating-system permissions.</p></div>
+      <div class="soft-card"><h3>The Companion keeps browser identity clear</h3><p class="muted">The browser extension carries exact conversation, turn, and request evidence so local work is attributed to the right chat instead of guessed from whichever tab looks active.</p></div>
+    </section>
+    <section class="section two-col">
+      <div class="soft-card"><div class="card-label">Keeping the same work</div><h2>A chat can change while the work stays together.</h2><p class="muted">Eve keeps a durable local session. When a ChatGPT conversation gets too long, Compact & Resume can rebind that same session from conversation A to B while the project, recorded history, Plans, queued work, and worker family stay attached.</p></div>
+      <div class="soft-card"><div class="card-label">Keeping facts clear</div><h2>Saved context and live source links are different facts.</h2><p class="muted">A Pin saves a useful item into a Thread with its recorded source identity and bounded nearby context when available. Whether the original source can still be opened is tracked separately, so a saved copy does not silently become a guessed live link.</p></div>
+    </section>
+    <section class="section narrow">
+      <h2>Want the engineering vault?</h2>
+      <p class="lede">That is where the real subsystem maps, persistence rules, recovery flows, and debugging playbooks live.</p>
+      <div class="button-row"><a class="button primary" href="../../vault/README.md">Open the engineering vault →</a><a class="button" href="../index.html">Back to the human version</a></div>
+    </section>
+  </main>
+  <footer class="footer"><div class="shell footer-inner"><span>Eve · Under the hood</span><span>The technical layer, by choice</span></div></footer>
+  <script src="../assets/site.js"></script>
+</body>
+</html>

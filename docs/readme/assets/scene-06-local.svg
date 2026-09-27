@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 760">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#efe2d5"/><stop offset="1" stop-color="#d3e2de"/></linearGradient><radialGradient id="warm"><stop stop-color="#f0c978" stop-opacity=".82"/><stop offset="1" stop-color="#f0c978" stop-opacity="0"/></radialGradient></defs>
+  <style>.bg{fill:url(#bg)}.house{fill:#fff9f0;stroke:#806a57;stroke-opacity:.24}.line{fill:none;stroke:#72877d;stroke-opacity:.5}.gold{fill:#c9a056}.blue{fill:#8ba7ae}.green{fill:#7f998b}@media(prefers-color-scheme:dark){.bg{fill:#071421}.house{fill:#0d2639;stroke:#d7b46b;stroke-opacity:.38}.line{stroke:#6d91b1;stroke-opacity:.5}.gold{fill:#d7b46b}.blue{fill:#285575}.green{fill:#164451}}</style>
+  <rect class="bg" width="1000" height="760" rx="48"/><circle cx="780" cy="212" r="230" fill="url(#warm)"/>
+  <path class="house" d="M548 330 727 190l179 140v260H548z"/><path class="line" stroke-width="4" d="m514 345 213-169 213 169"/>
+  <rect class="blue" x="604" y="367" width="96" height="88" rx="14"/><rect class="green" x="753" y="367" width="96" height="88" rx="14"/><rect class="gold" x="680" y="482" width="96" height="108" rx="18"/>
+  <g transform="translate(108 183)"><rect class="house" width="282" height="214" rx="30"/><path class="line" stroke-width="7" stroke-linecap="round" d="M42 56h180M42 96h118M42 137h154"/><circle class="gold" cx="239" cy="165" r="18"/></g>
+  <path class="line" stroke-width="2" d="M76 567c144-49 266-31 372 27"/>
+</svg>

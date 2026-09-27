@@ -1,0 +1,2675 @@
+/**
+ * Everything that knows what ChatGPT's page looks like.
+ *
+ * This is the only file that will break when ChatGPT changes, which is why it is the
+ * only file allowed to contain a selector. Every function returns a safe empty value
+ * instead of throwing, so a redesign degrades the companion to "records nothing new"
+ * rather than breaking the page the user is working in.
+ *
+ * Anchors used, in order of how directly the live page exposes them:
+ *   · turn/message data-* attributes when present (data-turn-id, data-message-id,
+ *     data-message-author-role, data-interrupted, data-testid)
+ *   · `.markdown` for assistant prose when the current renderer supplies no assistant
+ *     data-message-id; progress markdown under data-interrupted is excluded
+ *   · the legacy id #prompt-textarea when present, otherwise the unique editable textbox
+ *     inside a form carrying ChatGPT's native send/stop/dictation/trailing controls
+ *   · one structural tool-message class substring, plus a display-contents row shape that
+ *     is confirmed structurally (short header line, no prose) before it is believed
+ *
+ * The 2026-09-24 renderer replaced per-role sections with one `[data-turn-key]` element per
+ * exchange (user message + reply). Inside it, `[data-chatgpt-search-unit-key]` units end in
+ * `:user` / `:assistant` and carry `data-chatgpt-search-message-ids`; assistant prose is
+ * `[data-markdown-text-style]`, and tool activity folds under a "Worked for …" header outside
+ * every unit. Both shapes are read: the user unit is that exchange's user turn, and the exchange
+ * element itself is its assistant turn, so `closest(TURN)` from anywhere in the reply, including
+ * the activity header, lands on the assistant turn while the user bubble still resolves to the user.
+ *
+ * None of these are a public ChatGPT API. In the live 2026-08-15 page one logical
+ * assistant request can also be split into several sections sharing data-turn-id, so
+ * turns are grouped before messages, progress or tool blocks are counted. Hashed
+ * CSS-module class names are never matched because they are intentionally ephemeral.
+ */
+
+var CLF_DOM = (() => {
+  const LEGACY_TURN = 'section[data-testid^="conversation-turn"]';
+  const EXCHANGE = '[data-turn-key]';
+  const USER_UNIT = '[data-turn-key] [data-chatgpt-search-unit-key$=":user"]';
+  const ASSISTANT_UNIT = '[data-chatgpt-search-unit-key$=":assistant"]';
+  const TURN = `${LEGACY_TURN}, ${EXCHANGE}, ${USER_UNIT}`;
+  /** Rendered assistant prose, old class and current attribute. */
+  const PROSE = '.markdown, [data-markdown-text-style]:not([data-markdown-text-style*="user"])';
+  const USER_HOLDER = `[data-message-author-role="user"], ${USER_UNIT}`;
+  /** Anything that is conversation content rather than page chrome. */
+  const CONTENT = `${TURN}, [data-message-author-role]`;
+  const PICKER = '[data-testid="composer-intelligence-picker-content"], [data-model-picker-view]';
+  // ChatGPT has used both shapes in the live renderer: the older tool-message span
+  // and, as of 2026-08-15, a display-contents row wrapping the visible tool label.
+  // Keep both explicit structural anchors; hashed CSS-module names remain off limits.
+  const TOOL_LEGACY = 'span[class*="tool-message"]';
+  const TOOL = `${TOOL_LEGACY}, div.pointer-events-none.contents`;
+  // MAIN-world scan stamps only a row whose own message group proves api_tool.
+  // A translated label or a generic built-in tool button never establishes identity.
+  const CONNECTOR = '[data-clf-fiber]';
+  const STOP =
+    'button[data-testid="stop-button"], button[data-testid="composer-stop-button"], ' +
+    'button[aria-label="Stop streaming"], button[aria-label="Stop generating"], button[aria-label="Stop answering"]';
+  const SEND = 'button[data-testid="send-button"], form button[aria-label^="Send" i]';
+  /** The composer's own trailing controls, where the send and dictation buttons live. */
+  const TRAILING =
+    '[data-testid="composer-trailing-actions"], [data-testid="composer-footer-actions"], ' +
+    '[class~="[grid-area:trailing]"]';
+  const SPEECH =
+    'button[data-testid="composer-speech-button"], button[data-testid="composer-dictate-button"], ' +
+    'button[aria-label^="Dictate" i], button[aria-label^="Voice" i], ' +
+    'button[aria-label="Start dictation" i], button[aria-label="Start Voice" i]';
+  const safe = (fn, fallback) => {
+    try {
+      const value = fn();
+      return value === undefined || value === null ? fallback : value;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const matches = (node, selector) => !!(node && typeof node.matches === 'function' && node.matches(selector));
+
+  /** A current-renderer unit's message id: the selection id when present, else the first search id. */
+  function unitMessageId(unit) {
+    return safe(() => {
+      const selected = unit.matches('[data-chatgpt-selection-message-id]') ? unit
+        : unit.querySelector('[data-chatgpt-selection-message-id]');
+      const id = selected?.getAttribute('data-chatgpt-selection-message-id') ||
+        (unit.getAttribute('data-chatgpt-search-message-ids') || '').trim().split(/\s+/)[0];
+      return id && /^[a-zA-Z0-9._:-]{1,256}$/.test(id) ? id : null;
+    }, null);
+  }
+
+  /** The exact message id a rendered message holder names, in either renderer. */
+  function messageIdOf(node) {
+    return safe(() => node?.getAttribute?.('data-message-id') ||
+      (matches(node, USER_UNIT) || matches(node, ASSISTANT_UNIT) ? unitMessageId(node) : null), null);
+  }
+
+  /** The exchange's own user unit (outermost), or null. */
+  function userUnitOf(exchange) {
+    return safe(() => [...exchange.querySelectorAll('[data-chatgpt-search-unit-key$=":user"]')]
+      .find(unit => unit.closest(EXCHANGE) === exchange &&
+        !unit.parentElement?.closest('[data-chatgpt-search-unit-key$=":user"]')) || null, null);
+  }
+
+  /** The exchange's assistant units, outermost only, in order. */
+  function assistantUnitsOf(exchange) {
+    return safe(() => [...exchange.querySelectorAll(ASSISTANT_UNIT)]
+      .filter(unit => unit.closest(EXCHANGE) === exchange && !unit.parentElement?.closest(ASSISTANT_UNIT)), []);
+  }
+
+  /** Logical turns for one node matched by `${LEGACY_TURN}, ${EXCHANGE}`, in reading order. */
+  function logicalTurnsOf(node) {
+    if (!matches(node, EXCHANGE) || matches(node, LEGACY_TURN)) {
+      return [{ node, id: node.getAttribute('data-turn-id'), role: node.getAttribute('data-turn') }];
+    }
+    const id = node.getAttribute('data-turn-key') || null;
+    const user = userUnitOf(node);
+    return [...(user ? [{ node: user, id, role: 'user' }] : []), { node, id, role: 'assistant' }];
+  }
+
+  const text = (node, cap = 256_000) =>
+    node ? (node.textContent || '').replace(/ /g, ' ').trim().slice(0, cap) : '';
+
+  // Wire framing matches shared/user-prompt.ts; neither reader changes provider text.
+  const promptContinuation = value => /^\[\[CLF-(?:HANDOFF|RESUME):[A-Za-z0-9_-]{16,64}\]\]\n\n/.exec(value)?.[0] ?? '';
+  function userPromptText(value) {
+    value = value.replace(/\r\n?/g, '\n');
+    const identity = promptContinuation(value);
+    const header = /^\[\[(PARADIGMEVE_CONTEXT|COS_CONTEXT):(\d{1,6})\]\]\n/.exec(value.slice(identity.length));
+    if (!header) return null;
+    const end = identity.length + header[0].length + Number(header[2]);
+    const boundary = `\n[[/${header[1]}]]\n\n`;
+    return value.startsWith(boundary, end) ? identity + value.slice(end + boundary.length) : null;
+  }
+  function presentUserPrompts(readUserText) {
+    return safe(() => {
+      for (const raw of document.querySelectorAll(`:is(${USER_HOLDER}) :is(.whitespace-pre-wrap, .markdown):not([data-clf-user-text])`)) {
+        // Both native renderers can consume Markdown bytes. Parse the same
+        // exact-id source used by receipts/recording, never reconstructed HTML.
+        // A nested pre-wrap inside one already handled would be displayed twice.
+        if (raw.parentElement?.closest('.whitespace-pre-wrap')) continue;
+        const holder = raw.closest(USER_HOLDER);
+        const source = readUserText ? readUserText({ role: 'user', id: messageIdOf(holder),
+          node: raw.closest(TURN), text: messageText(holder, 'user') }) : raw.textContent;
+        // The native editor can prepend a blank paragraph to the exact provider
+        // source. Ignore that outer whitespace only for display; the frame's
+        // internal length/boundary and all receipt/recording bytes stay exact.
+        const authored = typeof source === 'string' ? userPromptText(source.trimStart()) : null;
+        let display = raw.nextElementSibling?.matches('[data-clf-user-text]') ? raw.nextElementSibling : null;
+        if (authored === null) {
+          raw.removeAttribute('data-clf-prompt-hidden'); display?.remove(); continue;
+        }
+        if (!display) {
+          display = document.createElement('div');
+          display.setAttribute('data-clf-user-text', '');
+          display.className = 'whitespace-pre-wrap';
+          display.dir = 'auto';
+          raw.after(display);
+        }
+        if (display.textContent !== authored) display.textContent = authored;
+        if (!raw.hasAttribute('data-clf-prompt-hidden')) raw.setAttribute('data-clf-prompt-hidden', '');
+      }
+    });
+  }
+
+  /**
+   * Visible page text with every CLF-owned surface removed first.
+   *
+   * The synthetic stream is mounted inside an assistant turn. On the live page ChatGPT's
+   * reasoning container can later expand/reparent around that mount, so reading the outer
+   * container's textContent naively feeds our own rendered transcript back into the recorder.
+   * That is the exact loop that produced twenty copies of the same assistant update. Clone
+   * and strip our nodes before extracting page text. Unknown/fake DOMs fall back safely.
+   */
+  const OWN_SURFACES = '.clf-stream, .clf-stage, .clf-composer, .clf-boot, [data-clf-user-text]';
+
+  /**
+   * Removes this extension's own rendered surfaces from a clone, in place.
+   *
+   * Every read of assistant DOM has to do this, not just pageText: our stream is mounted
+   * inside the turn, so anything that reads the turn and feeds the result back into the
+   * stream compounds on each repaint — one copy, then two, then three.
+   */
+  function stripOwn(clone) {
+    if (!clone || typeof clone.querySelectorAll !== 'function') return clone;
+    for (const own of clone.querySelectorAll(OWN_SURFACES)) own.remove();
+    return clone;
+  }
+
+  function pageText(node, cap = 256_000) {
+    return safe(() => {
+      if (!node) return '';
+      if (typeof node.cloneNode !== 'function') return text(node, cap);
+      return text(stripOwn(node.cloneNode(true)), cap);
+    }, '');
+  }
+
+  /** How an accessible page hides a live region from sight while keeping it announced. */
+  const SCREEN_READER_ONLY = '.sr-only, .visually-hidden, [data-testid="visually-hidden"]';
+
+  /**
+   * Whether a node is rendered for a person to read, rather than only announced.
+   *
+   * The one thing this separates is a visible banner from a screen-reader-only live region.
+   * Both are `role="alert"`; only one of them is an error the user saw.
+   *
+   * Two independent signals, because either alone is brittle: the conventional hiding class,
+   * and a box clipped to the couple of pixels that hiding leaves behind.
+   *
+   * Anything else counts as displayed, including a box of zero size — that is what a DOM
+   * with no layout engine reports for every node, and a DOM that cannot answer must not be
+   * able to delete evidence of a real transport failure. The turn-outcome check reads this
+   * same list, and silently losing an error there turns a failed turn into a completed one.
+   */
+  function displayed(node) {
+    return safe(() => {
+      if (!node) return true;
+      if (typeof node.closest === 'function' && node.closest(SCREEN_READER_ONLY)) return false;
+      if (typeof node.getBoundingClientRect !== 'function') return true;
+      const rect = node.getBoundingClientRect();
+      if (!rect) return true;
+      const clipped = (size) => size > 0 && size <= 8;
+      return !(clipped(rect.width) || clipped(rect.height));
+    }, true);
+  }
+  /**
+   * ChatGPT sometimes renders transport failures inside the same `.markdown` shape as
+   * a final assistant answer. Treating "Message delivery timed out … Retry" as model
+   * prose makes a broken/reloaded turn look completed. role=alert remains the primary
+   * signal; these are narrow fallbacks for failure copy observed on the live site.
+   */
+  /**
+   * Authored message text, without ChatGPT's controls around it.
+   *
+   * Reading the whole `[data-message-id].textContent` also captures UI chrome. The live
+   * page reproduced stored messages ending `Show moreShow less`, which polluted session
+   * history and compaction. Prefer ChatGPT's content subtrees; strip controls only as a
+   * fallback for an unfamiliar renderer shape.
+   */
+  function messageText(node, role) {
+    return safe(() => {
+      if (!node) return '';
+      if (role === 'user') {
+        const parts = [...node.querySelectorAll('.whitespace-pre-wrap')]
+          .filter(part => !part.hasAttribute?.('data-clf-user-text'))
+          .map((part) => text(part))
+          .filter(Boolean);
+        if (parts.length > 0) return parts.join('\n');
+      }
+      if (role === 'assistant') {
+        const parts = [...node.querySelectorAll(PROSE)]
+          .filter((part) => !(part.closest && part.closest('[data-interrupted]')))
+          .filter((part) => !(part.closest && part.closest(TOOL)))
+          .map((part) => text(part))
+          .filter(Boolean);
+        if (parts.length > 0) return parts.join('\n\n');
+      }
+      // Structural test fakes and a future partial DOM shim may not implement cloneNode.
+      // The live browser always does, but falling back to the node's own text is safer than
+      // turning an otherwise valid authored message into an empty string. Real ChatGPT
+      // still takes the clone/remove path, which is what strips Show more / Show less.
+      if (typeof node.cloneNode !== 'function') return role === 'assistant' ? '' : text(node);
+      const clone = node.cloneNode(true);
+      // Our own surfaces first, and this is not defensive tidying. A live assistant
+      // container with no authored `.markdown` fell through to here and returned the whole
+      // node — which contains the stream this extension drew into that very turn. The
+      // recorder stored `▣Listed open windows … ›_Ran …` as the assistant's final answer.
+      // Anything that reads a turn and feeds the result back into the stream compounds on
+      // every repaint, so the strip has to happen before any fallback, not only in
+      // pageText().
+      stripOwn(clone);
+      for (const control of clone.querySelectorAll('button, [role="button"], [data-testid*="copy"], [data-testid*="feedback"]')) {
+        control.remove();
+      }
+      // Everything the preferred path above excludes, excluded here too — otherwise the
+      // fallback is not a fallback, it is a different and much laxer rule that fires
+      // exactly when the strict one found nothing.
+      //
+      // Tool rows are ChatGPT's chrome, not its prose, and are reported separately as
+      // page_tool activity; reading them here turned one answer into a transcript of its
+      // own tool labels. Commentary is not the answer either: a turn that narrated its
+      // work and then produced no prose would otherwise have its narration promoted to
+      // `final: true`, which is what closes a turn and what a recovery later trusts.
+      //
+      // Nothing authored left is the honest record. An assistant final is the one thing a
+      // reader takes as "what it said", so absence beats a plausible-looking invention.
+      if (role === 'assistant') {
+        for (const row of clone.querySelectorAll(TOOL)) row.remove();
+        for (const commentary of clone.querySelectorAll('[data-interrupted]')) commentary.remove();
+      }
+      return text(clone);
+    }, '');
+  }
+
+  /**
+   * What ChatGPT itself has put into a section, as a value comparable with a later reading.
+   *
+   * Deliberately not `textContent`. content.js uses "this section's text changed since the
+   * baseline" as evidence that the generation now running is writing into it — and this
+   * extension rewrites the visible label of tool rows *inside assistant sections* as steps
+   * land (`applyLabel`, `applyPageLabel`). Raw text therefore changes in sections ChatGPT
+   * has not touched, and our own relabel of an old row was enough to bind a finished
+   * section to the new generation and file this turn's work under the previous answer.
+   *
+   * So it is built only from signals this extension does not write: authored prose, and how
+   * many tool rows the page is showing. A relabel moves neither. New prose or a new row
+   * moves one, which is precisely the page-authored activity the caller is asking about.
+   */
+  function sectionSignature(node) {
+    return safe(() => {
+      if (!node || typeof node.querySelectorAll !== 'function') return '0|0|';
+      // Structural, so it survives a relabel: this extension rewrites what a row *says*,
+      // never how many there are. A row appearing is page activity; "Inspecting" becoming
+      // "Inspected" is ours.
+      const rows = [...node.querySelectorAll(TOOL)].filter(
+        (row) => !(row.closest && row.closest(OWN_SURFACES))
+      ).length;
+      let authored = '';
+      if (typeof node.cloneNode === 'function') {
+        // Everything ChatGPT put here, with the two things this extension writes taken out:
+        // its own surfaces, and the tool rows whose labels it rewrites. Commentary counts —
+        // it is usually the *first* thing a new generation writes, and a signature made of
+        // final prose and rows alone stayed identical through the whole commentary phase,
+        // so a generation writing into an already-mounted section could not be recognised
+        // and its visible commentary was never recorded at all.
+        const clone = stripOwn(node.cloneNode(true));
+        for (const row of clone.querySelectorAll(TOOL)) row.remove();
+        authored = text(clone);
+      } else {
+        authored = [...node.querySelectorAll(PROSE)]
+          .filter((part) => !(part.closest && (part.closest(TOOL) || part.closest(OWN_SURFACES))))
+          .map((part) => text(part))
+          .join('\n');
+      }
+      return `${rows}|${authored.length}|${authored.slice(-96)}`;
+    }, '0|0|');
+  }
+
+  function transportFailure(value) {
+    const line = String(value || '').replace(/\s+/g, ' ').trim();
+    return /^(?:message delivery timed out(?:\. please try again\.?)?|connection interrupted\.? waiting for the complete answer\.?|unknown error occurred\.?|there was an error generating (?:a|the) response\.?|error in message stream\.?|network error\.?|something went wrong\.?|something went wrong while generating the response(?:\. if this issue persists please contact us through our help center at help\.openai\.com\.?)?\.?)(?: retry)?$/i.test(line);
+  }
+
+  /**
+   * A visible transport-failure card whose wrapper carries no alert role.
+   *
+   * The live 2026-09-03 renderer put the full help-center failure beside an exact Retry
+   * button, outside assistant markdown and without `role="alert"`. The accessible live
+   * region announced unrelated toast text instead, so the real failure never reached the
+   * session and recovery waited for the two-minute silence fallback. Start from the page's
+   * semantic control and climb only to the nearest whole recognised notice; never search
+   * arbitrary page prose for error wording.
+   */
+  function retryFailure(button) {
+    return safe(() => {
+      const label = (button.innerText || button.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!/^retry$/i.test(label) || !displayed(button)) return null;
+      let node = button.parentElement;
+      for (let up = 0; node && up < 8 && node !== document.body; up++, node = node.parentElement) {
+        if (node.closest && node.closest(OWN_SURFACES)) return null;
+        const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (value.length >= 500) return null;
+        if (displayed(node) && transportFailure(value)) return { text: value, node };
+      }
+      return null;
+    }, null);
+  }
+
+  /**
+   * The conversation a ChatGPT path names, or null when it names none.
+   *
+   * A conversation inside a Project is routed as `/g/<project>/c/<id>`, so anchoring at
+   * `/c/` recognised only chats at the site root. Everything downstream — the app session,
+   * the ownership registry, caller attribution — is keyed on this id, so in a Project the
+   * page was never recognised as being on a conversation at all.
+   *
+   * Deliberately not a loose `/c/<id>` search anywhere in the path: `/share/c/<id>` is a
+   * public read-only snapshot of someone's conversation, not a conversation this document
+   * can own, record or bind. One optional `/g/<slug>` segment is the whole exception.
+   */
+  function conversationFromPath(pathname) {
+    return safe(() => {
+      const match = /^\/(?:g\/[^/]+\/)?c\/([0-9a-f-]{8,64})(?:\/|$)/i.exec(String(pathname || ''));
+      return match ? match[1] : null;
+    }, null);
+  }
+
+  /** The conversation this tab is on, or null for a chat that has not been sent yet. */
+  function conversationId() {
+    return safe(() => conversationFromPath(location.pathname), null);
+  }
+
+  function normalizeConversationTitle(value) {
+    value = String(value || '').trim();
+    if (!value) return '';
+    value = value.replace(/\s*(?:[-|·]\s*)ChatGPT\s*$/i, '').trim();
+    if (!value || /^(?:ChatGPT|New chat)$/i.test(value)) return '';
+    return value.slice(0, 200);
+  }
+
+  /**
+   * Human ChatGPT title when one has actually been generated; never conversation identity.
+   *
+   * A rename made on another client can update the native conversation list without updating
+   * this already-open document's <title>. Prefer the sidebar row whose href proves the exact
+   * current conversation, then fall back to the browser-tab title. Route identity is still the
+   * authority; the row text is presentation metadata only. If ChatGPT temporarily renders two
+   * disagreeing rows for the same route, abstain rather than guessing which copy is newer.
+   */
+  function conversationTitle() {
+    return safe(() => {
+      const current = conversationId();
+      if (current) {
+        const native = new Set();
+        for (const link of document.querySelectorAll('a[data-sidebar-item="true"][href]')) {
+          if (link.closest(OWN_SURFACES)) continue;
+          let target;
+          try { target = new URL(link.getAttribute('href') || '', location.href); } catch { continue; }
+          if (target.origin !== location.origin || conversationFromPath(target.pathname) !== current) continue;
+          const value = normalizeConversationTitle(link.getAttribute('aria-label') || text(link, 200));
+          if (value) native.add(value);
+        }
+        if (native.size === 1) return native.values().next().value;
+      }
+      return normalizeConversationTitle(document.title);
+    }, '');
+  }
+
+  /**
+   * Logical conversation turns, newest last.
+   *
+   * ChatGPT can render one assistant request as several sibling `section` elements
+   * carrying the same data-turn-id. Treating each section as a turn makes a five-call
+   * request look like several partial requests, so every one fails content.js's
+   * one-block-per-call safety check and the page is left with a wall of "Called tool".
+   * Group only sections that explicitly share role + id; id-less sections stay
+   * independent because merging those would be a guess.
+   */
+  /**
+   * What this layer has already read out of a section, kept until the section changes.
+   *
+   * The content script reads the whole transcript once a second, and several times over: the
+   * recorder's message scan, the presentation pass per assistant turn, the progress and tool
+   * row lookups. Each of those walked every section and took the text of every message on the
+   * page again — six to eight full walks a second, on a page that only ever changes in one
+   * place. On a 300-turn chat that was most of a second of main thread per second, and the
+   * 2026-09-03 prime, over 300k tokens, sat unresponsive for three minutes after every reload.
+   *
+   * A section's rows, tool blocks and progress boxes are therefore read once and kept on the
+   * element. A MutationObserver of our own drops the entry for any section whose subtree or
+   * relevant attributes change, and — because a test, or React inside one frame, can mutate
+   * and read back before the observer's microtask runs — its pending records are drained
+   * synchronously before every cached read. Sections we never see mutate cost nothing after
+   * their first read; the one being streamed into is re-read as it grows, as it always was.
+   */
+  const sectionCache = new WeakMap();
+  let cacheObserver = null;
+  let cacheObserverFailed = false;
+  const CACHE_ATTRIBUTES = [
+    'class',
+    'data-interrupted',
+    'data-message-id',
+    'data-message-author-role',
+    'data-turn',
+    'data-turn-id',
+    'data-turn-key',
+    'data-chatgpt-search-unit-key',
+    'data-chatgpt-search-message-ids',
+    'data-chatgpt-selection-message-id',
+    'data-markdown-text-style',
+    'data-testid',
+    'aria-label'
+  ];
+
+  function invalidateFrom(record) {
+    const target = record && record.target;
+    if (!target) return;
+    const element = target.nodeType === 1 ? target : target.parentElement;
+    const section = element && typeof element.closest === 'function' ? element.closest(TURN) : null;
+    if (section) sectionCache.delete(section);
+    // A user unit sits inside its exchange, which is the assistant turn's section.
+    const exchange = element && typeof element.closest === 'function' ? element.closest(EXCHANGE) : null;
+    if (exchange) sectionCache.delete(exchange);
+  }
+
+  function ensureCacheObserver() {
+    if (cacheObserver) return true;
+    if (cacheObserverFailed) return false;
+    try {
+      if (typeof MutationObserver !== 'function' || !document.body) return false;
+      cacheObserver = new MutationObserver((records) => {
+        for (const record of records) invalidateFrom(record);
+      });
+      cacheObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: CACHE_ATTRIBUTES
+      });
+      return true;
+    } catch {
+      cacheObserverFailed = true;
+      cacheObserver = null;
+      return false;
+    }
+  }
+
+  /** The memo for one section, valid as of now. Null when caching is unavailable. */
+  function memoOf(section) {
+    if (!section || !ensureCacheObserver()) return null;
+    for (const record of cacheObserver.takeRecords()) invalidateFrom(record);
+    let memo = sectionCache.get(section);
+    if (!memo) {
+      memo = { rows: null, parts: null, blocks: null, boxes: null, interrupted: null, answers: null };
+      sectionCache.set(section, memo);
+    }
+    return memo;
+  }
+
+  /** The explicit messages of one section: id, the role attribute, text. */
+  function sectionRows(section) {
+    const memo = memoOf(section);
+    if (memo && memo.rows) return memo.rows;
+    const rows = [];
+    if (matches(section, USER_UNIT)) {
+      const id = unitMessageId(section);
+      if (id) rows.push({ id, roleAttr: 'user', text: messageText(section, 'user'), node: section });
+      if (memo) memo.rows = rows;
+      return rows;
+    }
+    if (matches(section, EXCHANGE) && !matches(section, LEGACY_TURN)) {
+      for (const unit of assistantUnitsOf(section)) {
+        const id = unitMessageId(unit);
+        if (id) rows.push({ id, roleAttr: 'assistant', text: messageText(unit, 'assistant'), node: unit });
+      }
+      if (memo) memo.rows = rows;
+      return rows;
+    }
+    for (const node of section.querySelectorAll('[data-message-id]')) {
+      const id = node.getAttribute('data-message-id');
+      if (!id) continue;
+      const roleAttr = node.getAttribute('data-message-author-role') || '';
+      const readable = roleAttr === 'user' || roleAttr === 'assistant';
+      rows.push({ id, roleAttr, text: readable ? messageText(node, roleAttr) : null, node });
+    }
+    if (memo) memo.rows = rows;
+    return rows;
+  }
+
+  /** The authored markdown blocks of one section, for a turn without explicit messages. */
+  function sectionParts(section) {
+    const memo = memoOf(section);
+    if (memo && memo.parts) return memo.parts;
+    const parts = [];
+    for (const markdown of section.querySelectorAll(PROSE)) {
+      if (markdown.closest && markdown.closest('[data-interrupted]')) continue;
+      if (markdown.closest && markdown.closest(USER_UNIT)) continue;
+      if (markdown.parentElement?.closest && section.contains(markdown.parentElement.closest(PROSE))) continue;
+      if (markdown.closest && markdown.closest(TOOL)) continue;
+      if (markdown.closest && markdown.closest(OWN_SURFACES)) continue;
+      const value = text(markdown);
+      if (value && parts[parts.length - 1] !== value) parts.push(value);
+    }
+    if (memo) memo.parts = parts;
+    return parts;
+  }
+
+  function turns() {
+    return safe(() => {
+      const out = [];
+      const byKey = new Map();
+      for (const found of document.querySelectorAll(`${LEGACY_TURN}, ${EXCHANGE}`)) {
+        for (const { node, id, role } of logicalTurnsOf(found)) {
+          const key = id ? `${role || ''}:${id}` : null;
+          if (key && byKey.has(key)) {
+            byKey.get(key).nodes.push(node);
+            continue;
+          }
+          const turn = { node, nodes: [node], id, role };
+          out.push(turn);
+          if (key) byKey.set(key, turn);
+        }
+      }
+      return out;
+    }, []);
+  }
+
+  /**
+   * Logical turns for presentation only.
+   *
+   * Keep this separate from `turns()`: the recorder has a deliberately conservative model
+   * that other code depends on. The renderer needs one extra guarantee the live ChatGPT DOM
+   * no longer gives it: `data-turn-id` can be reused by later requests. Grouping every
+   * section with the same id across the whole page therefore lets one old id swallow several
+   * different assistant turns and the overwrite renderer hides them all as one block.
+   *
+   * Split sections of one response are adjacent, while a later response is separated by a
+   * user turn. So presentation groups only consecutive sections with the same role + id.
+   * This changes no observation, attribution or recording path; it is only the list the
+   * synthetic stream paints into.
+   */
+  function presentationTurns() {
+    return safe(() => {
+      const out = [];
+      let previous = null;
+      for (const found of document.querySelectorAll(`${LEGACY_TURN}, ${EXCHANGE}`)) {
+        for (const { node, id, role } of logicalTurnsOf(found)) {
+          if (previous && id && previous.id === id && previous.role === role) {
+            previous.nodes.push(node);
+            continue;
+          }
+          previous = { node, nodes: [node], id, role };
+          out.push(previous);
+        }
+      }
+      return out;
+    }, []);
+  }
+
+  const turnNodes = (turn) =>
+    turn && Array.isArray(turn.nodes) && turn.nodes.length > 0 ? turn.nodes : turn && turn.node ? [turn.node] : [];
+
+  /**
+   * Visible messages, newest last.
+   *
+   * textContent rather than innerText on purpose: a long user message is visually
+   * clamped by ChatGPT, and the clamped part is exactly the part a five-hour session
+   * cannot afford to lose.
+   */
+  function messages() {
+    return safe(() => {
+      const out = [];
+      const seen = new Set();
+      for (const [index, turn] of turns().entries()) out.push(...messagesIn(turn, index, seen));
+      return out;
+    }, []);
+  }
+
+  /**
+   * The messages of exactly one turn.
+   *
+   * Split out of messages() rather than duplicated because callers that need turn-scoped
+   * evidence — "did *this* turn produce an answer" — must read the page the same way the
+   * whole-conversation scan does, including the no-data-message-id fallback below. Asking
+   * that question by filtering messages() on `turnId` is not the same thing: sections
+   * ChatGPT renders without a turn id all report `turnId: null`, so the filter silently
+   * merges every id-less turn into one.
+   *
+   * `seen` is shared by the whole-conversation scan so a message id rendered in two
+   * sections is reported once. On its own each turn gets a fresh one.
+   */
+  function messagesIn(turn, index = 0, seen = new Set()) {
+    return safe(() => {
+      const out = [];
+      const nodes = turnNodes(turn);
+      let explicit = 0;
+      for (const section of nodes) {
+        for (const row of sectionRows(section)) {
+          if (seen.has(row.id)) continue;
+          const role = row.roleAttr || turn.role;
+          if (role !== 'user' && role !== 'assistant') continue;
+          seen.add(row.id);
+          explicit++;
+          out.push({
+            id: row.id,
+            role,
+            // Read with the section's own role attribute when it has one; a node that carries
+            // none is read under the turn's role, which the cache cannot know in advance.
+            text: row.text !== null ? row.text : messageText(row.node, role),
+            turnId: turn.id,
+            node: section,
+            interrupted: interrupted(turn)
+          });
+        }
+      }
+
+      // The current ChatGPT renderer can mount a brand-new user turn before it puts
+      // data-message-id on the visible bubble. MAIN-world Fiber already proved the exact
+      // provider message id for this scan and stamps it on the user section. Admit that
+      // provider identity only when this logical user turn has no explicit message row and
+      // every stamped section agrees on one id. userMessageSource() then re-joins this row
+      // to the same scan-qualified Fiber descriptor for canonical raw text, so display text
+      // is never promoted to identity or authoritative source merely because the DOM lagged.
+      if (turn.role === 'user' && explicit === 0) {
+        const stamped = [...new Set(nodes.map(section => section.getAttribute?.('data-clf-user-message-id')).filter(Boolean))];
+        if (stamped.length === 1 && /^[a-zA-Z0-9._:-]{1,256}$/.test(stamped[0]) && !seen.has(stamped[0])) {
+          seen.add(stamped[0]);
+          out.push({
+            id: stamped[0],
+            role: 'user',
+            text: nodes.map(section => messageText(section, 'user')).filter(Boolean).join('\n'),
+            turnId: turn.id,
+            node: nodes[0] || null,
+            interrupted: false
+          });
+        }
+      }
+
+      // The current ChatGPT renderer no longer gives streaming assistant prose a
+      // data-message-id. Final prose is still exposed as `.markdown`; live progress
+      // prose is also `.markdown`, but lives under `[data-interrupted]`. Only use the
+      // fallback when there is no explicit assistant message and only collect
+      // markdown outside progress/tool containers. content.js itself waits until the
+      // turn has stopped generating before recording this as the final answer.
+      if (turn.role === 'assistant' && explicit === 0) {
+        const parts = [];
+        for (const section of nodes) {
+          for (const value of sectionParts(section)) {
+            if (parts[parts.length - 1] !== value) parts.push(value);
+          }
+        }
+        if (parts.length > 0) {
+          // The live renderer can leave several assistant-authored markdown blocks in one
+          // logical turn: interim commentary messages followed by the actual final answer.
+          // Joining them all promoted the whole visible work log to one "final answer" and
+          // later re-recorded those interim messages under an older reused page turn id.
+          // The final answer is the last authored markdown block. Canonical transcript
+          // identity/content is captured from ChatGPT's message model by fiber.js; this DOM
+          // fallback is used only for local lifecycle/compaction decisions.
+          const value = parts[parts.length - 1];
+          if (!transportFailure(value)) {
+            out.push({
+              id: `assistant:${turn.id || index}`,
+              role: 'assistant',
+              text: value,
+              turnId: turn.id,
+              node: nodes[0] || null,
+              interrupted: interrupted(turn)
+            });
+          }
+        }
+      }
+      return out;
+    }, []);
+  }
+
+  /** A pre-Send draft lease lasts only for this operation and these exact DOM nodes. */
+  function captureComposerDraft(value, stillCurrent = () => true) {
+    const box = composer(), host = composerBox() || composerActions()?.host;
+    // Native rich-text normalization moves line breaks into paragraph structure.
+    // Keep the same text comparison used by send receipts; editor identity and
+    // trusted edits still revoke the lease even when a user only changes spacing.
+    const compact = text => String(text || '').replace(/\s+/g, '');
+    const insertedText = compact(box?.textContent);
+    let touched = false;
+    let files = [];
+    const events = ['input', 'change', 'keydown', 'pointerdown', 'paste', 'drop'];
+    const changed = event => { if (event.isTrusted) touched = true; };
+    for (const name of events) host?.addEventListener(name, changed, true);
+    const same = () => !touched && stillCurrent() && composer() === box && box?.isConnected && compact(box.textContent) === insertedText;
+    const ownsAttachments = () => {
+      if (!same() || !host) return false;
+      const current = [...host.querySelectorAll('button[aria-label]')].filter(node => composerFileName(node));
+      return current.length === files.length && current.every(node => files.includes(node)) &&
+        !host.querySelector('[aria-busy="true"], [role="progressbar"], [data-inline-file-uploading]');
+    };
+    return {
+      attachments(nodes) { if (same()) files = [...nodes]; },
+      current: ownsAttachments,
+      async clear() {
+        if (!ownsAttachments() || !host) return false;
+        const current = [...host.querySelectorAll('button[aria-label]')].filter(node => composerFileName(node));
+        if (current.length !== files.length || current.some(node => !files.includes(node)) ||
+            host.querySelector('[aria-busy="true"], [role="progressbar"], [data-inline-file-uploading]')) return false;
+        for (const node of current) {
+          if (!same() || !node.isConnected) return false;
+          node.click();
+        }
+        if (current.length) await new Promise(resolve => {
+          let observer, timer;
+          const finish = () => { observer?.disconnect(); clearTimeout(timer); resolve(); };
+          const check = () => { if (!same() || !hasComposerAttachments()) finish(); };
+          observer = new MutationObserver(check);
+          observer.observe(host, { childList: true, subtree: true, attributes: true });
+          timer = setTimeout(finish, 1500); check();
+        });
+        return same() && !hasComposerAttachments() && clearPromptExact(value);
+      },
+      dispose() { for (const name of events) host?.removeEventListener(name, changed, true); }
+    };
+  }
+
+  /** A native control must belong to the rendered composer, never quoted history or a stale hidden tree. */
+  function renderedComposerNode(node) {
+    if (!node?.isConnected || node.closest(`${OWN_SURFACES}, ${CONTENT}, [hidden], [aria-hidden="true"], [inert]`)) return false;
+    for (let parent = node; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    }
+    return true;
+  }
+
+  function nativeComposerControls(selector) {
+    const form = composer()?.closest('form');
+    return [...(form || document).querySelectorAll(selector)].filter(button =>
+      renderedComposerNode(button) && (!form || button.closest('form') === form));
+  }
+
+  /** Stop is a busy hint only; the exact provider terminal still owns turn completion. */
+  function generating() {
+    return safe(() => nativeComposerControls(STOP).length > 0, false);
+  }
+
+  function stopButton() {
+    return safe(() => {
+      const buttons = nativeComposerControls(STOP);
+      return buttons.length === 1 ? buttons[0] : null;
+    }, null);
+  }
+
+  /** Only a visible, enabled native Stop control may end a proven turn. */
+  function stopGeneration(stillCurrent) {
+    if (typeof stillCurrent !== 'function' || !stillCurrent()) return false;
+    const button = stopButton();
+    if (!button || !button.isConnected || button.disabled || button.getAttribute('aria-disabled') === 'true' ||
+        button.hidden || button.closest('[hidden],[inert]') || button.getClientRects().length === 0) return false;
+    const style = getComputedStyle(button);
+    if (style.display === 'none' || style.visibility === 'hidden' || !stillCurrent()) return false;
+    button.click();
+    return true;
+  }
+
+  /** The page-owned Send control, exposed so content.js can witness an actual submission. */
+  function sendButton() {
+    return safe(() => {
+      const buttons = nativeComposerControls(SEND);
+      return buttons.length === 1 ? buttons[0] : null;
+    }, null);
+  }
+
+  // File tiles can appear while ChatGPT is still processing them and disables Send
+  // through ARIA only. Upload readiness and the final click must use the same gate.
+  function sendButtonEnabled(button) {
+    return !!button && !button.disabled && button.getAttribute('aria-disabled') !== 'true';
+  }
+
+  /**
+   * The live progress line of a turn.
+   *
+   * ChatGPT keeps its running commentary inside the block it also marks with
+   * data-interrupted, so that attribute doubles as the anchor for both.
+   */
+  function progressLine(turn) {
+    return safe(() => {
+      const parts = [];
+      for (const section of turnNodes(turn)) {
+        // Outermost containers only. These boxes nest, and reading whichever one came last
+        // in document order made this value flip between the whole reasoning block and
+        // whatever inner box was newest. A shrink is not a prefix of what came before, so
+        // the delta below could only report it as brand-new text — which is exactly how the
+        // same commentary line came to be printed two and three times.
+        for (const box of progressRoots(section)) {
+          const lines = pageText(box, 32_000)
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+          if (lines.length > 0) parts.push(lines.join('\n'));
+        }
+      }
+      return parts.length > 0 ? parts.join('\n').slice(0, 8000) : null;
+    }, null);
+  }
+
+  /**
+   * The outermost commentary containers of one section, in document order.
+   *
+   * Outermost only. These boxes nest, and a scan that returns the inner ones too reports
+   * the same sentence under two identities — which is how one caption came to be recorded,
+   * and drawn, several times over.
+   */
+  /**
+   * The identity a commentary root inherits from the prose block it swallowed, if any.
+   *
+   * The two families of item here are told apart by where the text sits: prose blocks are
+   * `.markdown` *outside* a `[data-interrupted]` container, commentary is what is inside
+   * one. ChatGPT moves text across that line mid-answer — it mounts the markdown first and
+   * wraps it a moment later — and the same visible words were then reported twice, once
+   * under each family's stamp. The commentary chain revises itself correctly, so what the
+   * user saw was a frozen truncated prefix of their answer sitting above the answer:
+   * "Yeah bro, I'll stay on the **current" and then the whole paragraph, in one turn.
+   *
+   * It is one block of text, so it gets one identity: the stamp the prose block already
+   * carries from this same generation. Only when the root has exactly one stamped block —
+   * two would make the inheritance a guess, and a guess here merges two different things
+   * into one row.
+   */
+  function adoptedProseId(box, namespace) {
+    if (!box || !box.querySelectorAll) return '';
+    let found = '';
+    for (const node of box.querySelectorAll('[data-clf-assistant-prose-id]')) {
+      const stamp = node.getAttribute('data-clf-assistant-prose-id') || '';
+      if (stamp.indexOf(`${namespace}#`) !== 0) continue;
+      if (found) return '';
+      found = stamp;
+    }
+    return found;
+  }
+
+  function progressRoots(section) {
+    return [...section.querySelectorAll('[data-interrupted]')].filter(
+      (node) => !(node.parentElement && node.parentElement.closest && node.parentElement.closest('[data-interrupted]'))
+    );
+  }
+
+  /**
+   * Stamps a list of nodes with per-generation identities, reusing a stamp only within the
+   * generation that minted it.
+   *
+   * The namespace is the caller's generation key, and that is the whole point. Stamping
+   * with ChatGPT's `data-turn-id` looked equivalent and was not: live, the page reuses the
+   * id `request-<conversation>-0` for turn after turn, and it reuses the commentary
+   * container node itself across turns as well. So a stamp minted on turn one was still
+   * sitting on the node during turn four, every turn's commentary was recorded under one
+   * identity, and the recorder folded four different captions into one row at the position
+   * of the first. A stamp from another generation is therefore treated as absent.
+   *
+   * Within a generation the stamp is what ties identity to the node's own lifecycle: React
+   * keeping the node — including reparenting it — keeps the id, and a container ChatGPT
+   * genuinely replaces gets a new one. The ordinal is only how an unstamped node is *named*;
+   * two nodes carrying the same stamp (React cloned a subtree) are separated rather than
+   * merged, because merging them would put two different things in one row.
+   */
+  function stampIdentities(nodes, attribute, key, letter) {
+    const namespace = `${key}#`;
+    const taken = new Set();
+    const ids = [];
+    for (const node of nodes) {
+      const stamp = node && node.getAttribute ? node.getAttribute(attribute) : null;
+      if (stamp && stamp.indexOf(namespace) === 0 && !taken.has(stamp)) {
+        taken.add(stamp);
+        ids.push(stamp);
+      } else {
+        ids.push(null);
+      }
+    }
+    let next = 0;
+    for (let at = 0; at < nodes.length; at++) {
+      if (ids[at]) continue;
+      let id = `${namespace}${letter}${next++}`;
+      while (taken.has(id)) id = `${namespace}${letter}${next++}`;
+      taken.add(id);
+      ids[at] = id;
+      try {
+        nodes[at].setAttribute(attribute, id);
+      } catch {
+        // A DOM that will not take the stamp still gets a usable id for this pass; it
+        // simply cannot keep it across a redraw. One row per redraw is the old failure,
+        // so the caller's own per-id state is what actually holds the line here.
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * One commentary container's text, with the streaming double-write collapsed.
+   *
+   * `textContent` of a live commentary container is not the sentence on screen. While
+   * ChatGPT streams, the container holds the raw markdown buffer *and* the parsed render of
+   * the same words at the same time, so reading it naively returns
+   * `…**that screenshot basically confirms` immediately followed by
+   * `…that screenshot basically confirms the gate theory`. That is a real duplication in
+   * what the page exposes, not a bug in how it is read, and every layer downstream that
+   * tried to reconcile snapshots against each other was reconciling text that already said
+   * everything twice.
+   *
+   * Two collapses, because the page produces the duplication in two shapes.
+   *
+   * Within a line, because there is very often no newline between the two copies at all.
+   * The recorded example is a single line reading
+   * `Yep bro, **that screenshot basically confirmsYep bro, that screenshot basically
+   * confirms the gate theory` — the raw buffer runs straight into the rendered copy, and a
+   * deduper that only looks across lines cannot see it. So a line that begins with a long
+   * prefix which then starts again immediately is cut back to the second copy, which is the
+   * complete one: the buffer is always the shorter, earlier half.
+   *
+   * Then across lines, where a block contained in one already kept — or containing one —
+   * collapses to the longer of the two.
+   *
+   * Markdown punctuation is ignored for both comparisons; the text kept is always the
+   * page's own, never a rewritten one. The prefix has to be long to count, because prose
+   * legitimately repeats short openings and this must never eat a real sentence.
+   */
+  const MARKDOWN_CHAR = /[*_`#>~[\]()]/;
+  const SPACE_CHAR = /\s/;
+  const bareText = (value) => value.replace(/[*_`#>~[\]()]/g, '').replace(/\s+/g, ' ').trim();
+
+  /** Shortest repeated opening that is taken as a streaming double-write rather than prose. */
+  const MIN_ECHO_CHARS = 12;
+
+  /**
+   * Where the segment starting at `from` is immediately restated, or -1.
+   *
+   * A restatement has to be exact and back-to-back — `plain.slice(from, cut)` repeated at
+   * `cut` — so this never fires on prose that merely opens the same way twice. The candidate
+   * positions are the places the segment's own opening occurs again, which is a handful of
+   * indices rather than every one; a commentary line can be thousands of characters long and
+   * this runs on every container on every tick. The nearest candidate wins, because the
+   * shortest restated segment is the one that was interrupted earliest.
+   */
+  function echoCut(plain, from) {
+    const probe = plain.slice(from, from + MIN_ECHO_CHARS);
+    if (probe.length < MIN_ECHO_CHARS) return -1;
+    for (let at = plain.indexOf(probe, from + MIN_ECHO_CHARS); at > from; at = plain.indexOf(probe, at + 1)) {
+      const width = at - from;
+      if (at + width > plain.length) break;
+      // Two words at minimum. A repeated single long word is a word, not a double-write.
+      if (plain.slice(from, at).indexOf(' ') < 0) continue;
+      if (plain.slice(from, at) === plain.slice(at, at + width)) return at;
+    }
+    return -1;
+  }
+
+  /**
+   * A line the page wrote over itself while streaming, reduced to its last and fullest pass.
+   *
+   * Measured live: ChatGPT's commentary container briefly holds the paragraph it is replacing
+   * alongside the replacement, and `innerText` runs the two together without a newline. The
+   * result is not `A + A` but a chain of ever-longer prefixes — `**Schritt 3 erled` then
+   * `Schritt 3 erledigt: Die ersten 15 Zeilen` then the same sentence carried further — all on
+   * one line, which is how a single interim message came to be stored reading itself three and
+   * four times over. Only `A + A` was recognised before, so none of that chain was caught.
+   *
+   * Each pass is a prefix of the one after it, so stripping the restated segment repeatedly
+   * peels the chain from the front and leaves the last pass. Markdown punctuation is ignored
+   * for the comparison; the text kept is always the page's own, never a rewritten one, and a
+   * line the page did not double is returned untouched.
+   */
+  function dropEcho(line) {
+    // React can briefly mount the old streaming buffer immediately beside the new one with
+    // no separator at all. The smallest live reproducer was `I’veI’ve gotI’ve got ...`:
+    // the old long-echo guard intentionally ignored the four-character first pass, so the
+    // corruption survived and every later snapshot compounded it. Peel only *immediate*
+    // duplicate prefixes whose join has no whitespace; normal prose such as `ha ha` keeps
+    // its separating space and is therefore untouched. Repeating this also handles the
+    // growing-prefix chain: A + AB + ABC -> AB + ABC -> ABC.
+    let compact = line;
+    for (;;) {
+      let cut = -1;
+      const max = Math.min(200, Math.floor(compact.length / 2));
+      for (let width = 3; width <= max; width++) {
+        const prefix = compact.slice(0, width);
+        if (/\s$/.test(prefix) || /^\s/.test(compact.slice(width))) continue;
+        if (compact.slice(width).startsWith(prefix)) {
+          cut = width;
+          break;
+        }
+      }
+      if (cut < 0) break;
+      compact = compact.slice(cut);
+    }
+    line = compact;
+    if (line.length < MIN_ECHO_CHARS * 2) return line;
+    const chars = [];
+    const origin = [];
+    for (let at = 0; at < line.length; at++) {
+      const ch = line[at];
+      if (MARKDOWN_CHAR.test(ch)) continue;
+      if (SPACE_CHAR.test(ch)) {
+        if (chars.length === 0 || chars[chars.length - 1] === ' ') continue;
+        chars.push(' ');
+        origin.push(at);
+        continue;
+      }
+      chars.push(ch);
+      origin.push(at);
+    }
+    const plain = chars.join('');
+    let from = 0;
+    for (let cut = echoCut(plain, from); cut > from; cut = echoCut(plain, from)) from = cut;
+    return from === 0 ? line : line.slice(origin[from]).trim();
+  }
+
+  function commentaryText(node) {
+    const blocks = pageText(node, 32_000)
+      .split('\n')
+      .map((line) => dropEcho(line.trim()))
+      .filter(Boolean);
+    const kept = [];
+    for (const block of blocks) {
+      const plain = bareText(block);
+      if (!plain) continue;
+      let merged = false;
+      for (let at = 0; at < kept.length; at++) {
+        const held = bareText(kept[at]);
+        if (held.indexOf(plain) >= 0) {
+          merged = true;
+          break;
+        }
+        if (plain.indexOf(held) >= 0) {
+          kept[at] = block;
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) kept.push(block);
+    }
+    return kept.join('\n').slice(0, 8000);
+  }
+
+  /**
+   * This turn's visible commentary, as identified items rather than as one blob of text.
+   *
+   * `progressLine()` answers "what does the whole reasoning area say right now", which is
+   * the wrong question for recording. ChatGPT grows one caption block in place, reparents
+   * it, shrinks it during a re-layout and grows it again; a caller comparing consecutive
+   * blobs can only see "the text changed" and has to guess whether that is new commentary
+   * or the same commentary redrawn. It guessed wrong, repeatedly, and every wrong guess
+   * became another stored event and another row on screen.
+   *
+   * `key` is the caller's generation key — see stampIdentities for why it may not be
+   * ChatGPT's turn id.
+   */
+  function progressItems(turn, key) {
+    return safe(() => {
+      const namespace = key || (turn && turn.id) || 'turn';
+      const boxes = [];
+      for (const section of turnNodes(turn)) boxes.push(...progressRoots(section));
+      const ids = stampIdentities(boxes, 'data-clf-progress-id', namespace, 'p');
+
+      const out = [];
+      for (let at = 0; at < boxes.length; at++) {
+        const value = commentaryText(boxes[at]);
+        if (value) out.push({ id: adoptedProseId(boxes[at], namespace) || ids[at], text: value });
+      }
+      return out;
+    }, []);
+  }
+
+  function interrupted(turn) {
+    return safe(
+      () =>
+        turnNodes(turn).some((section) => {
+          const memo = memoOf(section);
+          if (memo && memo.interrupted !== null) return memo.interrupted;
+          const value = section.querySelector('[data-interrupted="true"]') !== null;
+          if (memo) memo.interrupted = value;
+          return value;
+        }),
+      false
+    );
+  }
+
+  /** Marks ChatGPT's own progress/reasoning containers so our CSS can make them legible. */
+  function markProgress(turn) {
+    return safe(() => {
+      let marked = 0;
+      for (const section of turnNodes(turn)) {
+        for (const box of section.querySelectorAll('[data-interrupted]')) {
+          if (!box.hasAttribute('data-clf-progress')) marked++;
+          box.setAttribute('data-clf-progress', '1');
+        }
+      }
+      return marked;
+    }, 0);
+  }
+
+  /**
+   * Is this candidate really one tool row?
+   *
+   * `div.pointer-events-none.contents` is a layout shape, not a semantic one: ChatGPT uses
+   * display-contents wrappers in several places, and matching the class alone once counted
+   * containers that hold a whole answer. A tool row is a short header line — no prose, no
+   * nested tool row — so require that shape rather than trusting the class.
+   *
+   * A block we have already relabelled is always accepted. Expanding one puts its output
+   * inside, which would otherwise make our own row stop looking like a tool row and let
+   * its call be handed to a different block on the next repaint.
+   */
+  function isToolBlock(node) {
+    if (node.hasAttribute && node.hasAttribute('data-clf-call')) return true;
+    // A row that carries the tool-call control is a tool row whatever its size. Expanding
+    // one puts its result — markdown and all — inside it, and the length/markdown test
+    // below would then stop recognising it. Judging by the control instead of by the body
+    // is what keeps an expanded connector result out of the chronology as prose.
+    if (node.querySelector && node.querySelector(CONNECTOR)) return true;
+    if (node.closest && node.closest(CONNECTOR)) return true;
+    if (node.querySelector && node.querySelector(PROSE)) return false;
+    const label = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    return label.length > 0 && label.length <= 200;
+  }
+
+  /**
+   * Collapse nested selector matches without comparing every node with every other node.
+   * Long chats can contain hundreds of activity rows; the old `filter(...some(...))`
+   * shape turned every transcript pass into quadratic containment work.
+   */
+  function collapseNested(found, keepInnermost) {
+    if (found.length < 2) return found;
+    const candidates = new Set(found);
+    if (keepInnermost) {
+      const containsCandidate = new Set();
+      for (const node of found) {
+        for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+          if (candidates.has(parent)) containsCandidate.add(parent);
+        }
+      }
+      return found.filter((node) => !containsCandidate.has(node));
+    }
+    return found.filter((node) => {
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+        if (candidates.has(parent)) return false;
+      }
+      return true;
+    });
+  }
+
+  /** The tool-call blocks of one logical turn, across every split section, in DOM order. */
+  function toolBlocks(turn) {
+    return safe(
+      () =>
+        turnNodes(turn).flatMap((section) => {
+          const memo = memoOf(section);
+          if (memo && memo.blocks) return memo.blocks;
+          const current = [...section.querySelectorAll(TOOL)];
+          const found = (current.length > 0 ? current : [...section.querySelectorAll(TOOL_LEGACY)]).filter(
+            isToolBlock
+          );
+          // The two shapes nest — the display-contents wrapper can sit inside the legacy
+          // span — and relabelling both would put our icon and title inside our own row.
+          // Keep the innermost, which is the element that actually carries the label.
+          const blocks = collapseNested(found, true);
+          if (memo) memo.blocks = blocks;
+          return blocks;
+        }),
+      []
+    );
+  }
+
+  /**
+   * Whether this block is a connector (API tool) row rather than a built-in one.
+   *
+   * Structural, not textual: the row carries the control named by CONNECTOR, and built-in
+   * rows — "Searched the web", canvas, image generation — do not. That makes it stable
+   * across locales and immune to the label games a name-frequency guess is open to.
+   *
+   * It says "a connector", not "this connector". The provider's identity — the account
+   * name, the tool name, the request path — exists in ChatGPT's client state and appears
+   * in the expanded card and the side panel, but nothing in the collapsed row carries it,
+   * so a Gmail or Calendar row is indistinguishable from this app's from here. Callers
+   * that use this as evidence must treat it as narrowing, not as proof of provider.
+   */
+  /**
+   * Visible assistant activity in the exact DOM order ChatGPT drew it.
+   *
+   * ParadigmEve remains authoritative for its own call labels/results. This only supplies
+   * the missing chronology: a visible commentary paragraph can sit between two calls, and
+   * the recorder clock cannot recover that after a fast turn. ChatGPT's completed DOM can.
+   */
+  function activityItems(turn) {
+    return safe(() => {
+      const out = [];
+      let markerBase = 0;
+      for (const section of turnNodes(turn)) {
+        const roots = [...section.querySelectorAll('[data-interrupted]')].filter((node) => {
+          const parent = node.parentElement && node.parentElement.closest
+            ? node.parentElement.closest('[data-interrupted]')
+            : null;
+          return !parent;
+        });
+
+        for (const root of roots) {
+          // ChatGPT's reasoning is one outer data-interrupted container. Its inner
+          // display-contents activity rows are the *actual chronology slots*; plain text
+          // between them is the visible commentary. Replacing those rows with sentinels in
+          // a clone gives us the ordering without having to depend on hashed prose classes.
+          // Strip our own stream before reading a single character of this subtree. Without
+          // it, every repaint reads back what we rendered last time and republishes it.
+          const clone = stripOwn(root.cloneNode(true));
+          const found = [...clone.querySelectorAll(TOOL)].filter(isToolBlock);
+          const slots = collapseNested(found, true);
+          if (slots.length === 0) {
+            const value = (clone.innerText || clone.textContent || '').trim();
+            if (value) out.push({ kind: 'progress', text: value });
+            continue;
+          }
+
+          const markers = [];
+          slots.forEach((node, index) => {
+            const token = `\n[[CLF_ACTIVITY_${markerBase + index}]]\n`;
+            markers.push(token.trim());
+            node.replaceWith(document.createTextNode(token));
+          });
+          markerBase += slots.length;
+
+          const text = (clone.innerText || clone.textContent || '').replace(/\u00a0/g, ' ');
+          const pattern = /\[\[CLF_ACTIVITY_(\d+)\]\]/g;
+          let at = 0;
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const prose = text.slice(at, match.index).trim();
+            if (prose) out.push({ kind: 'progress', text: prose });
+            out.push({ kind: 'tool' });
+            at = match.index + match[0].length;
+          }
+          const tail = text.slice(at).trim();
+          if (tail) out.push({ kind: 'progress', text: tail });
+        }
+      }
+      return out;
+    }, []);
+  }
+
+  /**
+   * Whether this row is one of our own connector calls rather than something ChatGPT did.
+   *
+   * The answer is remembered on the row once it is known, and that is the point. The only
+   * live marker is the control ChatGPT puts in a connector row, and it does not survive
+   * everything the page does to that row: a collapse, a relabel, a React replacement of the
+   * button can all take it away. A row that loses its marker then reads as ChatGPT-native,
+   * and the call this app already recorded first-hand — with its arguments, outcome and
+   * duration — gets written down a second time as an anonymous page caption.
+   *
+   * Being wrong in this direction is cheap and the other direction is not: a row wrongly
+   * remembered as ours is one missing native caption, while a row wrongly read as native is
+   * a duplicate of work already in the log.
+   */
+  function isConnectorBlock(node) {
+    return safe(() => {
+      if (!node) return false;
+      if (node.getAttribute && node.getAttribute('data-clf-local') === '1') return true;
+      const found = !!node.querySelector(CONNECTOR) || !!node.closest(CONNECTOR);
+      if (found) markLocalBlock(node);
+      return found;
+    }, false);
+  }
+
+  /**
+   * Records that a row belongs to this connector, for callers who know it from elsewhere.
+   *
+   * The Fiber pass can prove it — a request whose resource path is this app's — and that
+   * proof outlives the DOM control, so it is worth keeping on the row.
+   */
+  function markLocalBlock(node) {
+    return safe(() => {
+      if (!node || !node.setAttribute) return false;
+      node.setAttribute('data-clf-local', '1');
+      return true;
+    }, false);
+  }
+
+  /**
+   * Whether this node is a connector row or contains one.
+   *
+   * Separate from isConnectorBlock because the questions are different: that one asks what
+   * a known tool row is, and answers upwards as well, while this one asks whether an
+   * arbitrary node that just appeared brought any evidence with it. React inserts whole
+   * subtrees, so the row is as often a descendant of what was added as it is the node
+   * itself, and only looking at the node would miss it.
+   */
+  function hasConnectorRow(node) {
+    return safe(() => !!node && node.nodeType === 1 && (node.matches(CONNECTOR) || !!node.querySelector(CONNECTOR)), false);
+  }
+
+  /**
+   * The connector rows inside a root, outermost first and counted once each.
+   *
+   * The evidence path asks this rather than filtering toolBlocks(), and that is deliberate.
+   * toolBlocks() exists for *relabelling*, so it has to find the element that carries the
+   * visible title, which means the display-contents/tool-message shapes and a heuristic
+   * about what a row looks like. Attribution needs none of that: it only needs to know how
+   * many connector calls this page has shown, and the one anchor that says so is CONNECTOR.
+   * Depending on the relabelling shapes for it meant a renderer change that moved the title
+   * silently turned every call in the browser into an unplaceable one.
+   *
+   * Nested matches are collapsed to the outermost, so a row whose control is labelled twice
+   * — the wrapper and the button inside it — is still one call.
+   */
+  function connectorRows(root) {
+    return safe(() => {
+      const scope = root || document;
+      const found = [...scope.querySelectorAll(CONNECTOR)];
+      if (scope.nodeType === 1 && scope.matches(CONNECTOR)) found.unshift(scope);
+      return collapseNested(found, false);
+    }, []);
+  }
+
+  /**
+   * The exact MAIN-world scan reference stamped on this block's connector row, or null.
+   *
+   * An index alone is not identity: React can leave a row stamped `0` from an earlier scan
+   * while the next scan also has a completely different descriptor at index 0. The helper
+   * therefore stamps `{scanToken,index}` and callers must match both. Numeric/legacy stamps
+   * deliberately fail closed rather than being reinterpreted against a newer frame.
+   */
+  function fiberRef(block) {
+    return safe(() => {
+      if (!block) return null;
+      const marked =
+        (block.closest && block.closest('[data-clf-fiber]')) ||
+        (block.querySelector && block.querySelector('[data-clf-fiber]'));
+      if (!marked) return null;
+      const value = marked.getAttribute('data-clf-fiber');
+      if (!value) return null;
+      const split = value.lastIndexOf(':');
+      if (split <= 0 || split === value.length - 1) return null;
+      const scanToken = value.slice(0, split);
+      const rawIndex = value.slice(split + 1);
+      if (scanToken.length > 64 || !/^\d+$/.test(rawIndex)) return null;
+      const index = Number(rawIndex);
+      if (!Number.isInteger(index) || index < 0) return null;
+      return { scanToken, index };
+    }, null);
+  }
+
+  /**
+   * The single text node inside a tool block that reads "Called tool".
+   *
+   * Found structurally — the first text-bearing leaf of the block's header button —
+   * rather than by matching the English string, so it also works in other languages.
+   */
+  function toolLabel(block) {
+    return safe(() => {
+      const marked = block.querySelector('[data-clf-label]');
+      if (marked) return marked;
+      const header = block.querySelector('button') || block;
+      for (const node of header.querySelectorAll('*')) {
+        if (node.children.length === 0 && (node.textContent || '').trim().length > 0) {
+          node.setAttribute('data-clf-label', '1');
+          return node;
+        }
+      }
+      return null;
+    }, null);
+  }
+
+  /**
+   * Visible error banners plus narrowly recognised transport-failure markdown.
+   *
+   * Occurrences, not strings. The same wording failing twice is two failures, and the
+   * caller has to be able to tell them apart: keyed on text alone, "Message delivery timed
+   * out" on turn nine was indistinguishable from the same banner on turn three, so the
+   * second one was never recorded and — because the outcome check consults the same
+   * filter — the failed turn could be written down as completed instead.
+   *
+   * What gives an occurrence its identity is the node it is rendered in, plus the turn it
+   * belongs to when it is inside one. A toast lives outside every turn, so it has no
+   * turnId; its node is still its identity.
+   *
+   * "Visible" is load-bearing and used to be assumed rather than checked. ChatGPT announces
+   * ordinary UI state through screen-reader-only `role="alert"` live regions, so a session
+   * accumulated "Reasoning details opened", "Actions refreshed." and "Dictation is active
+   * and in use" as recorded chat errors — 60 of them against 5 real transport failures in
+   * one run — and every error count the app showed was inflated by them. An offscreen
+   * announcement is not a banner. Neither is this extension's own surface, which was
+   * recording "ParadigmEve Desktop is now connected" as a ChatGPT failure.
+   */
+  const acknowledgedAccessNotices = new WeakSet();
+  function errors() {
+    return safe(() => {
+      const out = [];
+      const texts = new Set();
+      // Live provider access throttling is a dialog, not a broken transport. Match
+      // its semantic heading and notice together; quoted assistant prose is not it.
+      for (const node of document.querySelectorAll('[role="dialog"], [role="alertdialog"]')) {
+        if (node.closest(OWN_SURFACES) || node.closest('[hidden],[inert],[aria-hidden="true"]') || !node.getClientRects().length) continue;
+        const heading = node.querySelector('h1,h2,h3,[role="heading"]');
+        const headingText = (heading?.textContent || '').trim();
+        const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        const english = /^too many requests$/i.test(headingText) && /temporarily limited.*access/i.test(value) && /few minutes/i.test(value);
+        // Keep the localized provider literals ASCII-escaped in source. They are input-only
+        // recognition data for ChatGPT's dialog and never title/message metadata.
+        const korean = headingText === '\uc694\uccad\uc774 \ub108\ubb34 \ub9ce\uc2b5\ub2c8\ub2e4' &&
+          value.includes('\ub370\uc774\ud130\ub97c \ubcf4\ud638\ud558\uae30 \uc704\ud574 \ub300\ud654\uc5d0 \ub300\ud55c \uc561\uc138\uc2a4\uac00 \uc77c\uc2dc\uc801\uc73c\ub85c \uc81c\ud55c\ub418\uc5c8\uc2b5\ub2c8\ub2e4.') &&
+          value.includes('\uba87 \ubd84 \ud6c4 \ub2e4\uc2dc \uc2dc\ub3c4\ud574 \uc8fc\uc138\uc694.');
+        if (value.length >= 500 || (!english && !korean)) continue;
+        const notice = value.startsWith(headingText) ? `${headingText} ${value.slice(headingText.length).trim()}` : value;
+        out.push({ text: notice, node, turnId: null, recoverable: false, blocking: true });
+        texts.add(value);
+        // Acknowledge this identified informational notice once. The returned
+        // blocking diagnostic survives the click; it grants no retry authority.
+        const buttons = [...node.querySelectorAll('button')].filter(button =>
+          displayed(button) && !button.disabled && button.getAttribute('aria-disabled') !== 'true' &&
+          (korean ? button.textContent.trim() === '\uc54c\uaca0\uc2b5\ub2c8\ub2e4' : /^got it$/i.test(button.textContent.trim())));
+        if (!acknowledgedAccessNotices.has(node) && buttons.length === 1) {
+          acknowledgedAccessNotices.add(node); buttons[0].click();
+        }
+      }
+      for (const node of document.querySelectorAll('[role="alert"]')) {
+        if (node.closest('[aria-hidden="true"]')) continue;
+        if (out.some(error => error.blocking && error.node.contains(node))) continue;
+        if (node.closest && node.closest(OWN_SURFACES)) continue;
+        if (!displayed(node)) continue;
+        const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (value.length <= 2 || value.length >= 500) continue;
+        // Provider live regions also announce successful settings/actions changes. Only the
+        // existing transport classifier makes an announcement a chat error. A failed send
+        // can precede an assistant section, so recognized failures still need no turn id.
+        if (!transportFailure(value)) continue;
+        out.push({ text: value, node, turnId: null, recoverable: true });
+        texts.add(value);
+      }
+      // The current full-width failure card has no alert role. Its exact Retry control is
+      // the stable semantic anchor; retryFailure() accepts only the nearest complete notice
+      // whose whole text is already in the narrow transport-failure vocabulary above.
+      for (const button of document.querySelectorAll('button')) {
+        const failure = retryFailure(button);
+        if (!failure || texts.has(failure.text)) continue;
+        texts.add(failure.text);
+        out.push({ ...failure, turnId: null, recoverable: true });
+      }
+      for (const turn of turns()) {
+        if (turn.role !== 'assistant') continue;
+        for (const section of turnNodes(turn)) {
+          for (const markdown of section.querySelectorAll(PROSE)) {
+            if (markdown.closest(USER_UNIT)) continue;
+            const value = text(markdown, 500).replace(/\s+/g, ' ').trim();
+            if (!value || !transportFailure(value) || texts.has(value)) continue;
+            texts.add(value);
+            out.push({ text: value, node: markdown, turnId: turn.id, turn, recoverable: true });
+          }
+        }
+      }
+      return out;
+    }, []);
+  }
+
+  function composer() {
+    return safe(() => {
+      const legacy = document.querySelector('#prompt-textarea');
+      if (legacy) return legacy;
+
+      // ChatGPT's 2026-09-24 fresh-chat renderer dropped #prompt-textarea from the native
+      // ProseMirror editor. Do not replace one brittle provider selector with another class
+      // name: identify the editor by its semantic editing role and the native composer form
+      // it belongs to. The uniqueness fence matters because Search, dialogs and other page
+      // surfaces can also expose textboxes; guessing one would let a bootstrap type into the
+      // wrong UI. Provider controls are already the authority used everywhere else in this
+      // adapter to distinguish the real composer from quoted/hidden controls.
+      const nativeControls = `${SEND}, ${STOP}, ${SPEECH}, ${TRAILING}`;
+      const candidates = [...document.querySelectorAll('[role="textbox"][contenteditable="true"]')].filter(editor => {
+        if (!editor.isConnected || editor.closest(`${OWN_SURFACES}, [hidden], [aria-hidden="true"], [inert]`)) return false;
+        const form = editor.closest('form');
+        return !!form && !!form.querySelector(nativeControls);
+      });
+      return candidates.length === 1 ? candidates[0] : null;
+    }, null);
+  }
+
+  /**
+   * Whether ChatGPT's editing host is presently safe to receive a new user message.
+   *
+   * This deliberately says nothing about whether *our* recorder still considers the previous
+   * turn open; content.js owns that stronger lifecycle state. It is the page-native half of the
+   * same proof: a connected/editable composer, no Stop/generation control, and no user draft.
+   * Keeping the emptiness check here also makes it impossible for a revival waiter to "reserve"
+   * the composer by inserting its text before the page is actually ready.
+   */
+  function composerSubmitReady() {
+    return safe(() => {
+      const box = composer();
+      if (!box || !box.isConnected) return false;
+      if (generating() || stopButton()) return false;
+      if ((box.textContent || '').trim() !== '') return false;
+      if (box.getAttribute('aria-disabled') === 'true') return false;
+      if (box.getAttribute('contenteditable') === 'false') return false;
+      return true;
+    }, false);
+  }
+
+  /** The composer as a whole, used as the root to watch for React replacing it. */
+  function composerBox() {
+    return safe(() => {
+      const box = composer();
+      if (!box) return null;
+      return box.closest('form') || box.parentElement || null;
+    }, null);
+  }
+
+  /** A mounted editor behind Settings is not an available model-discovery surface. */
+  function composerVisible() {
+    const box = composer();
+    return !!box && !box.closest('[hidden],[aria-hidden="true"],[inert]') && box.getClientRects().length > 0;
+  }
+
+  /**
+   * Whether the page is currently drawn light or dark: `'light'` or `'dark'`.
+   *
+   * Not `prefers-color-scheme`. ChatGPT's appearance setting is its own — it can be pinned
+   * to Light on a dark Windows and the other way round — so asking the operating system
+   * gives our injected menu the opposite surface from the page it is sitting on. Not the
+   * `html` class either: the theme classes are ChatGPT's and would be one more name to
+   * break. What is asked instead is the paint: the composer's own background, which is the
+   * surface our control physically sits on, climbing until an ancestor is actually opaque
+   * (the composer's inner layers are transparent over the one that carries the colour).
+   */
+  function pageTheme() {
+    return safe(() => {
+      for (let node = composerBox() || document.body; node; node = node.parentElement) {
+        const found = luminance(getComputedStyle(node).backgroundColor);
+        if (found !== null) return found < 0.5 ? 'dark' : 'light';
+      }
+      const declared = getComputedStyle(document.documentElement).colorScheme || '';
+      return declared.indexOf('dark') >= 0 ? 'dark' : 'light';
+    }, 'dark');
+  }
+
+  /** Perceived brightness of a painted colour, or null if it paints nothing at all. */
+  function luminance(color) {
+    const parts = String(color).match(/[\d.]+/g);
+    if (!parts || parts.length < 3) return null;
+    // A transparent layer shows what is behind it, so it is not this node's answer.
+    if (parts.length > 3 && Number(parts[3]) === 0) return null;
+    const [red, green, blue] = parts.slice(0, 3).map(Number);
+    return (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+  }
+
+  /**
+   * Where a control of ours belongs in the composer: `{ host, before }`.
+   *
+   * ChatGPT gives its trailing button row no stable id, so the anchor is the send button
+   * (or the stop button that replaces it while generating, or the dictation button when
+   * the composer is empty and there is no send button at all). Our control goes *before*
+   * that anchor, so send stays the rightmost thing in the composer — moving the primary
+   * action of the page is not ours to do.
+   */
+  function composerActions() {
+    return safe(() => {
+      // The current provider microphone has no stable button test id; its sprite and
+      // composer trailing parent identify it without interpreting a translated label.
+      const anchor = sendButton() || stopButton() || nativeComposerControls(SPEECH)[0] ||
+        [...(composerBox()?.querySelectorAll(`${TRAILING} button`) || [])]
+        .find(button => !button.closest(OWN_SURFACES) && [...button.querySelectorAll('svg use')].some(use => {
+          const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
+          return href.slice(href.lastIndexOf('#')) === '#microphone-regular-24';
+        }));
+      const explicit = anchor ? anchor.closest(TRAILING) : [...(composerBox() || document).querySelectorAll(TRAILING)].find(renderedComposerNode);
+      if (!anchor) return explicit ? { host: explicit, before: null } : null;
+
+      // The row that holds several controls, not the wrapper around this one button.
+      // Capped: climbing all the way to <body> because every ancestor happens to have one
+      // child would put our control somewhere it has no business being.
+      // The native trailing area owns both the model picker and submit controls.
+      // Voice now has a nested wrapper with two children (button + description),
+      // so child count alone would stop below the model picker and never find it.
+      let host = explicit || anchor.parentElement;
+      for (let up = 0; up < 3 && host && host !== explicit && host.children.length < 2 && host.parentElement; up++) {
+        host = host.parentElement;
+      }
+      if (!host) return null;
+      let before = anchor;
+      while (before && before.parentElement !== host) before = before.parentElement;
+      return { host, before: before || null };
+    }, null);
+  }
+
+  /**
+   * The node holding the text of the chat's first user message, if there is one.
+   *
+   * Only ever asked for on a chat this app opened, where the first user message is the
+   * instruction the app typed. Returns the message element itself, so the caller folds
+   * away the text and nothing structural around it.
+   */
+  function firstUserMessage() {
+    return safe(() => {
+      for (const turn of turns()) {
+        for (const section of turnNodes(turn)) {
+          if (matches(section, USER_UNIT)) return section;
+          if (matches(section, EXCHANGE) && !matches(section, LEGACY_TURN)) return null;
+          for (const node of section.querySelectorAll('[data-message-id]')) {
+            const role = node.getAttribute('data-message-author-role') || turn.role;
+            if (role === 'assistant') return null;
+            if (role === 'user') return node;
+          }
+        }
+      }
+      return null;
+    }, null);
+  }
+
+  /**
+   * Where a panel of ours belongs *above* the composer: `{ host, before }`.
+   *
+   * Outside the composer's own container rather than inside it. A block element inside
+   * ChatGPT's input row fights the row's layout, and a click that lands anywhere in there
+   * is turned into "focus the textarea" — so a panel with text to read and scroll cannot
+   * live there.
+   */
+  function composerStack() {
+    return safe(() => {
+      const box = composerBox();
+      if (!box || !box.parentElement) return null;
+      return { host: box.parentElement, before: box };
+    }, null);
+  }
+
+  /**
+   * Stable mount point for the extension-owned activity stream of one assistant turn.
+   * The stream is a sibling of ChatGPT's own activity, so replacing a tool/reasoning
+   * subtree cannot take the local transcript with it.
+   */
+  function turnMount(turn) {
+    return safe(() => {
+      const sections = turnNodes(turn);
+      const host = sections[0] || null;
+      if (!host) return null;
+
+      // Where ChatGPT itself put this turn's activity. Anchoring there is the whole point:
+      // the stream stands in for that block, so it has to occupy the same place in the
+      // turn. Mounting at the top of the section instead — which is what this did — lifted
+      // every reconstructed call and caption above the commentary and prose they belong
+      // between, and made a long turn read as if all the work happened first.
+      for (const section of sections) {
+        for (const box of progressRoots(section)) {
+          if (box.closest && box.closest(OWN_SURFACES)) continue;
+          if (box.parentElement) return { host: box.parentElement, before: box };
+        }
+      }
+
+      // No activity block yet. The answer is the only other fixed landmark, and the stream
+      // belongs above it: everything in the stream happened before the turn could answer.
+      for (const section of sections) {
+        for (const prose of section.querySelectorAll(PROSE)) {
+          if (prose.closest && (prose.closest(TOOL) || prose.closest(OWN_SURFACES) || prose.closest(USER_UNIT))) continue;
+          if (prose.parentElement) return { host: prose.parentElement, before: prose };
+        }
+      }
+
+      // Neither: append, rather than prepend. An assistant section with tool rows and no
+      // reasoning box renders those rows first, and the stream stands after them.
+      return { host, before: null };
+    }, null);
+  }
+
+  /**
+   * Does this progress box also contain the turn's answer?
+   *
+   * ChatGPT's reasoning container can expand and reparent around content that started
+   * outside it, so a `[data-interrupted]` subtree is not reliably progress-only. Hiding
+   * one that has grown to hold the final prose is what leaves a turn showing "Worked for
+   * 45s" above an empty gap with no answer under it.
+   */
+  function holdsAnswer(box) {
+    return safe(() => {
+      const prose = [...box.querySelectorAll(PROSE)].filter(
+        (node) => !(node.closest && node.closest(TOOL)) && !(node.closest && node.closest(OWN_SURFACES))
+      );
+      return prose.some((node) => text(node).length > 0);
+    }, true);
+  }
+
+  /** Hides/restores only ChatGPT's own visible progress boxes for this logical turn. */
+  function hideProgress(turn, hidden) {
+    return safe(() => {
+      for (const section of turnNodes(turn)) {
+        const memo = memoOf(section);
+        if (memo && !memo.answers) memo.answers = new Map();
+        const boxes = memo && memo.boxes ? memo.boxes : [...section.querySelectorAll('[data-interrupted]')];
+        if (memo) memo.boxes = boxes;
+        for (const box of boxes) {
+          // Restoring is always safe; hiding is not. A box carrying the answer stays.
+          let holds = memo ? memo.answers.get(box) : undefined;
+          if (holds === undefined) {
+            holds = holdsAnswer(box);
+            if (memo) memo.answers.set(box, holds);
+          }
+          if (hidden && !holds) box.setAttribute('data-clf-native-hidden', '1');
+          else box.removeAttribute('data-clf-native-hidden');
+        }
+      }
+    }, undefined);
+  }
+
+  /**
+   * Mounts app-owned activity before one assistant turn without replacing ChatGPT's answer.
+   *
+   * The live React subtree remains the one renderer for prose, code/document blocks and action
+   * buttons. Overwrite owns only activity rows, mounted as a sibling so React cannot move them
+   * across a later user message. Turning it off removes only the marker/sibling; ChatGPT never
+   * has to reconstruct anything we destroyed.
+   */
+  function replaceActivity(turn, root, replaced) {
+    return safe(() => {
+      const sections = turnNodes(turn);
+      if (sections.length === 0) return false;
+      for (const section of sections) {
+        if (replaced) section.setAttribute('data-clf-turn-replaced', '1');
+        else section.removeAttribute('data-clf-turn-replaced');
+      }
+      const embedded = Boolean(root && sections.some((section) => root.parentElement === section));
+      if (replaced && root && (!root.isConnected || embedded)) {
+        const first = sections[0];
+        if (first && first.parentElement) first.parentElement.insertBefore(root, first);
+      }
+      return true;
+    }, false);
+  }
+
+  /** Types into the composer; dedicated fresh-chat automation may replace an autosaved draft. */
+  /**
+   * Puts `value` in the composer.
+   *
+   * `mode` says what to do with text already there: `false` refuses, `true` replaces it, and
+   * `'append'` writes after it on a new line — a stray character somebody left in the box is
+   * not a reason to hold a finished Goal reply at "sending" (2026-09-03: one letter did).
+   */
+  function insertPrompt(value, mode = false, failure = () => undefined) {
+    const box = composer();
+    const reject = reason => {
+      // A bounded predicate survives tab retirement without exposing authored data.
+      safe(() => failure(reason), undefined);
+      return false;
+    };
+    try {
+      if (!box) return reject('composer_missing');
+      const existing = (box.textContent || '').trim();
+      if (value === '' && mode !== true) return false;
+      if (existing !== '' && mode === false) return reject('existing_draft');
+      box.focus();
+      const selection = document.getSelection();
+      if (!selection) return reject('selection_missing');
+      if (existing !== '') {
+        selection.selectAllChildren(box);
+        if (mode === 'append') {
+          selection.collapseToEnd();
+          value = `\n${value}`;
+        }
+      } else selection.selectAllChildren(box);
+      if (!box.isConnected || composer() !== box) return reject('editor_replaced');
+      if (document.activeElement !== box) return reject('composer_not_focused');
+      if (!selection.rangeCount || !box.contains(selection.anchorNode) || !box.contains(selection.focusNode)) return reject('selection_changed');
+      // One native HTML edit uses the actual browser selection, including on a
+      // freshly mounted editor whose custom paste handler can consume and drop
+      // synthetic clipboard events. Insert inline content into the editor's own
+      // paragraph: an extra block wrapper is not part of the authored prompt.
+      // Text nodes keep markup literal; there is no paste fallback.
+      const paragraph = document.createElement('p');
+      value.split('\n').forEach((line, index) => {
+        if (index) paragraph.append(document.createElement('br'));
+        paragraph.append(document.createTextNode(line));
+      });
+      if (value === '') paragraph.append(document.createElement('br'));
+      if (!document.execCommand('insertHTML', false, paragraph.innerHTML)) return reject('native_edit_rejected');
+      const compact = text => String(text || '').replace(/\s+/g, '');
+      const expected = mode === 'append' ? existing + value : value;
+      if (!box.isConnected || composer() !== box) return reject('editor_replaced');
+      if (compact(box.textContent) !== compact(expected)) return reject('text_mismatch');
+      return true;
+    } catch {
+      return reject('insertion_exception');
+    }
+  }
+
+  /** Clears only app-owned text that still exactly matches the value it inserted. */
+  function clearPromptExact(value) {
+    return safe(() => {
+      const box = composer();
+      const compact = (text) => String(text || '').replace(/\s+/g, '');
+      if (!box || compact(box.textContent) !== compact(value)) return false;
+      box.focus();
+      document.execCommand('selectAll', false);
+      document.execCommand('delete', false);
+      box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+      return (box.textContent || '').trim() === '';
+    }, false);
+  }
+
+  async function send({ acceptanceTimeoutMs = 30000, stillCurrent = () => true, matchesUser = null, observeEvidence = null, clearAcceptedDraft = true, beforeSend = null } = {}) {
+    try {
+      const box = composer();
+      if (!box || !box.isConnected || !stillCurrent() || generating() || stopButton()) return false;
+      if (box.getAttribute('aria-disabled') === 'true' || box.getAttribute('contenteditable') === 'false') return false;
+      // Rich editors use adjacent paragraphs for newlines; textContent concatenates
+      // their words. Preserve those boundaries when matching the rendered user message.
+      const draftText = () => (typeof box.innerText === 'string' ? box.innerText : [...box.childNodes]
+        .map((node) => (node.textContent || '') + (/^(P|DIV|BR)$/.test(node.nodeName) ? '\n' : '')).join('')).trim();
+      const submitted = draftText();
+      if (!submitted) return false;
+      const compact = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const expected = compact(submitted);
+      const beforeConversation = conversationId();
+      const beforeGenerating = generating();
+      const beforeStop = stopButton();
+      const priorUsers = messages().filter((message) => message.role === 'user');
+      const priorUserNodes = new Set(priorUsers.map((message) => message.node));
+      const priorUserIds = new Set(priorUsers.map((message) => message.id).filter(Boolean));
+      let submittedMessageObserved = false;
+
+      // click()/dispatchEvent() only prove that JavaScript ran, not that ChatGPT accepted a
+      // prompt. Observe for a page-owned consequence instead of sleeping and re-sampling on a
+      // clock. Composer clear and a freshly rendered matching user message are direct submit
+      // evidence. Navigation alone is not acceptance: the user can open an unrelated chat
+      // while an already-clicked submit is still pending. A fresh chat's assigned id is
+      // accepted only with the exact new user message, not a Stop button in another chat.
+      const accepted = () => {
+        const currentConversation = conversationId();
+        if (beforeConversation && currentConversation !== beforeConversation) return false;
+        const visible = messages();
+        for (let at = visible.length - 1; at >= 0; at--) {
+          const message = visible[at];
+          if (message.role !== 'user') continue;
+          if (!priorUserNodes.has(message.node) && !priorUserIds.has(message.id) && (matchesUser ? matchesUser(message, submitted) : compact(message.text) === expected)) {
+            submittedMessageObserved = true;
+            return true;
+          }
+        }
+        if (currentConversation !== beforeConversation) return false;
+        const current = composer();
+        if (current === box && box.isConnected && (current.textContent || '').trim() === '') return true;
+        if (!beforeGenerating && generating()) return true;
+        if (!beforeStop && stopButton()) return true;
+        return false;
+      };
+
+      return await new Promise((resolve) => {
+        let done = false;
+        let attempted = false;
+        let authorizing = false;
+        let observer = null;
+        let timer = null;
+        let unsubscribeEvidence = null;
+        const finish = (value) => {
+          if (done) return;
+          done = true;
+          if (observer) observer.disconnect();
+          if (unsubscribeEvidence) unsubscribeEvidence();
+          if (timer !== null) clearTimeout(timer);
+          // A fresh matching user row proves this text was accepted. Some provider
+          // transitions retain that same draft; leaving it lets the next Loop append
+          // to and resend the entire bootstrap. Preserve replaced editors/new drafts.
+          if (clearAcceptedDraft && value && submittedMessageObserved && stillCurrent() && composer() === box)
+            clearPromptExact(submitted);
+          resolve(value);
+        };
+        const check = () => {
+          if (done) return;
+          if (!stillCurrent() || (beforeConversation && conversationId() !== beforeConversation)) return finish(false);
+          if (attempted) {
+            if (accepted()) finish(true);
+            return;
+          }
+          // React can enable/mount Send after accepting our editor input. Observe that
+          // readiness through this same bounded operation; neither a guessed Enter nor
+          // an unrelated Stop/composer-clear is evidence that this draft was submitted.
+          if (conversationId() !== beforeConversation || composer() !== box || !box.isConnected ||
+              draftText() !== submitted || generating()) return finish(false);
+          if (box.getAttribute('aria-disabled') === 'true' || box.getAttribute('contenteditable') === 'false') return;
+          const button = sendButton();
+          if (!sendButtonEnabled(button)) return;
+          if (authorizing) return;
+          const click = () => {
+            if (done) return;
+            // Authorization can await the app. The exact editor, text and native control
+            // must still be the ones it authorized; a late answer cannot revive this send.
+            if (!stillCurrent() || conversationId() !== beforeConversation || composer() !== box ||
+                !box.isConnected || draftText() !== submitted || generating() || sendButton() !== button ||
+                !sendButtonEnabled(button) || box.getAttribute('aria-disabled') === 'true' ||
+                box.getAttribute('contenteditable') === 'false') return finish(false);
+            attempted = true;
+            try { button.click(); } catch { return finish(false); }
+            check(); // Synchronous navigation/cancellation during click also re-proves ownership.
+          };
+          if (!beforeSend) return click();
+          authorizing = true;
+          // Claim/dispatch authority belongs at readiness, not before a possibly long
+          // disabled-Send wait. This is still one attempt under the existing deadline.
+          try { Promise.resolve(beforeSend(() => !done && stillCurrent())).then(allowed => allowed === true ? click() : finish(false), () => finish(false)); }
+          catch { finish(false); }
+        };
+
+        observer = new MutationObserver(check);
+        observer.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: true
+        });
+        if (observeEvidence) unsubscribeEvidence = observeEvidence(check);
+        // Readiness and acceptance share one deadline below the app's command lease.
+        const timeout = Number.isFinite(acceptanceTimeoutMs) ? Math.max(1, Math.min(30000, acceptanceTimeoutMs)) : 30000;
+        timer = setTimeout(() => { if (attempted) check(); finish(false); }, timeout);
+        check();
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /** Native ChatGPT photo input, observed as #upload-photos. Sending waits for every tile. */
+  function composerFileName(button) {
+    const group = button.closest('[role="group"][aria-label]');
+    if (group?.querySelector('[data-default-action="true"] button')) {
+      const actions = [...group.querySelectorAll('button')].filter(node => !node.closest('[data-default-action="true"]'));
+      return actions.length === 1 && actions[0] === button ? group.getAttribute('aria-label') : undefined;
+    }
+    return /^Remove file(?: \d+)?: (.+)$/.exec(button.getAttribute('aria-label') || '')?.[1];
+  }
+  function hasComposerAttachments() {
+    const host = composerBox() || composerActions()?.host;
+    return !!host && (!!host.querySelector('[data-inline-file-uploading], [role="progressbar"]') ||
+      [...host.querySelectorAll('button[aria-label]')].some(button => composerFileName(button)));
+  }
+  function composerAttachmentNames() {
+    const host = composerBox() || composerActions()?.host;
+    return host ? [...host.querySelectorAll('button[aria-label]')].map(composerFileName).filter(Boolean).slice(0, 20).sort() : [];
+  }
+  /** Observed ChatGPT Plugins settings surface. Missing/ambiguous structure is not proof. */
+  async function pluginRefreshView(connectorName, expectedTools = [], expectedAppId = null) {
+    const externalPlugins = connectorName === 'ParadigmEve Plugins';
+    const snapshot = await new Promise(resolve => {
+      const nonce = crypto.randomUUID();
+      const finish = value => { clearTimeout(timer); window.removeEventListener('message', receive); resolve(value); };
+      const receive = event => {
+        const data = event.data;
+        if (event.source === window && event.origin === location.origin && data?.source === 'clf-plugin-reply' && data.nonce === nonce && data.v === 1) finish(data.plugin);
+      };
+      const timer = setTimeout(() => finish(null), 1500);
+      window.addEventListener('message', receive); window.postMessage({ source: 'clf-plugin-ask', nonce }, location.origin);
+    });
+    const route = /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.hash);
+    // This isolated-world bridge only needs a transport safety bound. The main process owns
+    // the exact per-surface cardinality/name/schema check before it can claim a refresh.
+    // Keeping a second Core-specific count here made valid upgrades unreadable as soon as Core
+    // gained its 33rd tool (chat_review_plan), and also broke renamed Eve/Eva connectors.
+    const maxTools = 64;
+    if (!snapshot || snapshot.appId !== route?.[1] || (expectedAppId ? snapshot.appId !== expectedAppId : snapshot.connectorName !== connectorName) ||
+        !Array.isArray(snapshot.tools) || (snapshot.tools.length < 1 && !externalPlugins) || snapshot.tools.length > maxTools || JSON.stringify(snapshot.tools).length > 300000 ||
+        snapshot.tools.some(tool => !tool || typeof tool.name !== 'string' || !/^[a-z][a-z0-9_]{0,79}$/.test(tool.name) || typeof tool.description !== 'string' || tool.inputSchema?.type !== 'object') ||
+        new Set(snapshot.tools.map(tool => tool.name)).size !== snapshot.tools.length) return null;
+    const buttons = [...document.querySelectorAll('button[data-clf-plugin-refresh]')].filter(button => button.getAttribute('data-clf-plugin-refresh') === snapshot.appId && button.getClientRects().length > 0);
+    return typeof snapshot.refreshAvailable === 'boolean' && buttons.length === (snapshot.refreshAvailable ? 1 : 0) ? { appId: snapshot.appId, connectorName: snapshot.connectorName, versionId: typeof snapshot.versionId === 'string' ? snapshot.versionId.slice(0, 200) : null,
+      tools: snapshot.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })), refresh: buttons[0] || null } : null;
+  }
+  function pluginInstalledButtons(connectorName) {
+    return safe(() => {
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')].filter(panel => panel.getClientRects().length > 0 &&
+        panel.getAttribute('aria-labelledby')?.endsWith('-trigger-Plugins'));
+      if (panels.length !== 1) return null;
+      // Installed settings rows are buttons, not the links in the /plugins catalog.
+      // Match the name's own leaf so adjacent permission text cannot alter identity.
+      const rows = [...panels[0].querySelectorAll('button')].filter(button => !button.disabled && button.getClientRects().length > 0 &&
+        button.querySelector('[data-testid="plugin-icon-wrapper"]'));
+      if (!rows.length) return null;
+      return rows.filter(button => [...button.querySelectorAll('*')].some(node => !node.children.length && text(node) === connectorName));
+    }, null);
+  }
+  function pluginManagementIdle() {
+    return safe(() => ![...document.querySelectorAll('textarea,input:not([type="hidden"]),[contenteditable="true"]')].some(node => node.getClientRects().length > 0 && String(node.value || node.textContent || '').trim()), false);
+  }
+  async function uploadImages(images, stillCurrent = () => true, draft = null, files = []) {
+    if (files.length) images = [...(images || []), ...files];
+    if (!images?.length) return true;
+    if (!Array.isArray(images) || images.length > 20 || !stillCurrent() || hasComposerAttachments()) return false;
+    const input = document.querySelector(files.length ? 'input#upload-files[type="file"]' : 'input#upload-photos[type="file"][accept="image/*"]');
+    if (!input) return false;
+    const priorTiles = new Set((composerBox() || composerActions()?.host)?.querySelectorAll('button[aria-label]') || []);
+    const transfer = new DataTransfer();
+    try {
+      for (const image of images) {
+        if (image instanceof File) { transfer.items.add(image); continue; }
+        if (typeof image.name !== 'string' || !/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(image.dataUrl) || image.dataUrl.length > 512100) return false;
+        const raw = atob(image.dataUrl.split(',')[1]);
+        const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
+        transfer.items.add(new File([bytes], image.name, { type: 'image/webp' }));
+      }
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch { return false; }
+    return new Promise((resolve) => {
+      let observer, timer;
+      let ownedTiles = null;
+      const finish = (ok) => { observer?.disconnect(); clearTimeout(timer); resolve(ok); };
+      const check = () => {
+        if (!stillCurrent()) return finish(false);
+        const host = composerBox() || composerActions()?.host;
+        if (!host) return;
+        // ChatGPT's remove control names the complete filename. Each requested image
+        // needs its own new tile; a substring or an old same-name tile is no upload ACK.
+        const tiles = [...host.querySelectorAll('button[aria-label]')].filter((button) => !priorTiles.has(button) && composerFileName(button));
+        // Every attached file must belong to this input. A newly added user attachment
+        // cannot be silently included just because the requested subset finished uploading.
+        if (tiles.length > images.length) return finish(false);
+        if (!ownedTiles) {
+          const unmatched = [...tiles];
+          if (images.every((image) => {
+            const index = unmatched.findIndex((button) => composerFileName(button) === image.name);
+            if (index < 0) return false;
+            unmatched.splice(index, 1);
+            return true;
+          })) ownedTiles = tiles;
+        }
+        if (!ownedTiles) return;
+        // The provider can rename report.md to report(1).md during processing.
+        // Bind once by exact original names, then retain those exact remove controls.
+        if (tiles.length !== ownedTiles.length || tiles.some(node => !ownedTiles.includes(node))) return finish(false);
+        if (!host.querySelector('[aria-busy="true"], [role="progressbar"], [data-inline-file-uploading]') && sendButtonEnabled(sendButton())) {
+          draft?.attachments(ownedTiles);
+          finish(true);
+        }
+      };
+      observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+      timer = setTimeout(() => finish(false), files.length ? 600000 : 60000);
+      check();
+    });
+  }
+
+  const normalizeModelLabel = value => String(value || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
+  const SOL_MODEL_IDENTITIES = new Set(['5.6', 'gpt-5.6-sol', 'gpt-5-6', 'gpt-5-6-thinking']);
+  let modelSelectionFailure = null;
+  const noteModelSelectionFailure = reason => { modelSelectionFailure = reason; return false; };
+  const modelSelectionFailureReason = () => modelSelectionFailure;
+  function sameModelIdentity(actual, requested) {
+    if (!actual || !requested) return actual === requested;
+    const left = String(actual).trim().toLowerCase(), right = String(requested).trim().toLowerCase();
+    if (left === right) return true;
+    if (SOL_MODEL_IDENTITIES.has(left) && SOL_MODEL_IDENTITIES.has(right)) return true;
+    return normalizeModelLabel(actual) === normalizeModelLabel(requested);
+  }
+  /** One bounded read through the existing MAIN-world helper; no provider API or setters. */
+  function readPickerState() {
+    return new Promise(resolve => {
+      const nonce = crypto.randomUUID();
+      const finish = value => { clearTimeout(timer); window.removeEventListener('message', receive); resolve(value); };
+      const receive = event => {
+        const data = event.data;
+        if (event.source !== window || event.origin !== location.origin || data?.source !== 'clf-picker-reply' || data.nonce !== nonce || data.v !== 1) return;
+        const state = data.picker;
+        const groupId = value => typeof value === 'string' && value.length <= 80 && /^[\p{L}\p{N}._ -]+$/u.test(value) && value.trim() === value && value.trim();
+        const valid = state && typeof state.version === 'string' && Number.isInteger(state.currentBucket) &&
+          Array.isArray(state.versions) && state.versions.length > 0 && state.versions.length <= 20 &&
+          state.versions.every(v => groupId(v.id) && typeof v.label === 'string' && v.label.length > 0 && v.label.length <= 80) &&
+          Array.isArray(state.choices) && state.choices.length > 0 && state.choices.length <= 12 &&
+          state.choices.every(c => Number.isInteger(c.bucket) && typeof c.id === 'string' && /^[a-zA-Z0-9._-]{1,80}$/.test(c.id) && typeof c.label === 'string' && c.label.length > 0 && c.label.length <= 80 &&
+            groupId(c.familyId) && typeof c.familyLabel === 'string' && c.familyLabel.length > 0 && c.familyLabel.length <= 80 &&
+            ['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(c.effort) && typeof c.available === 'boolean') &&
+          new Set(state.versions.map(v => v.id)).size === state.versions.length && new Set(state.choices.map(c => c.bucket)).size === state.choices.length &&
+          state.versions.some(v => v.id === state.version) && state.choices.some(c => c.bucket === state.currentBucket);
+        finish(valid ? state : null);
+      };
+      const timer = setTimeout(() => finish(null), 1500);
+      window.addEventListener('message', receive);
+      window.postMessage({ source: 'clf-picker-ask', nonce }, location.origin);
+    });
+  }
+  /** UI only transports a requested selection. Provider state proves identity and availability. */
+  function modelPickerTriggerCandidates() {
+    const reported = '[data-codex-intelligence-trigger],[data-composer-navigation-target="reasoning"]';
+    const candidates = [...new Set([
+      ...(composer()?.closest('form')?.querySelectorAll('button[aria-haspopup="menu"]') || []),
+      ...document.querySelectorAll('button[aria-label="Select ChatGPT model"]'),
+      ...document.querySelectorAll(reported)
+    ])];
+    return candidates.filter(node => node.matches('button,[role="button"]') &&
+      !node.closest(`${OWN_SURFACES},${CONTENT},${PROSE},[contenteditable],[hidden],[aria-hidden="true"],[inert]`) &&
+      node.getClientRects().length > 0 && node.id !== 'composer-plus-btn' &&
+      !['composer-plus-btn', 'composer-tools'].includes(node.getAttribute('data-testid')));
+  }
+  function modelPickerTrigger() {
+    const candidates = modelPickerTriggerCandidates();
+    const reported = '[data-codex-intelligence-trigger],[data-composer-navigation-target="reasoning"]';
+    const observed = candidates.filter(node => node.getAttribute('data-clf-picker-route') === location.pathname);
+    if (observed.length === 1) return observed[0];
+    return candidates.length === 1 && !candidates[0].matches(reported) ? candidates[0] : null;
+  }
+  /** A provider-native mode control is positive evidence that this composer intentionally
+   * has no account model picker. The generic + control is shared with paid composers, so it
+   * cannot prove native-default by itself. */
+  function nativeDefaultModeEvidence(form) {
+    const shown = node => node && !node.closest('[hidden],[aria-hidden="true"],[inert]') && node.getClientRects().length > 0;
+    const semantic = [...form.querySelectorAll('[data-testid="system-hint-reason"]')]
+      .filter(node => !node.closest('[role="menu"],[data-radix-menu-content]') && shown(node));
+    const tools = [...form.querySelectorAll('button[data-testid="composer-tools"]')].filter(shown);
+    return semantic.length === 1 || tools.length === 1;
+  }
+  /** Free/Go can expose only ChatGPT's provider-native/default model, while paid picker
+   * controls hydrate after the rest of New Chat. Absence during that gap is not evidence.
+   * Before picker discovery runs, require a provider-native mode control. After the picker
+   * wait has completed, a stable visible composer with no picker is enough to preserve the
+   * provider-native fallback when an account truly has no catalog. */
+  async function nativeDefaultModelSurface(stillCurrent = () => true, pickerWaitCompleted = false) {
+    const matches = () => safe(() => {
+      const editor = composer(), form = editor?.closest('form'), actions = composerActions();
+      const picker = document.querySelector(PICKER);
+      return !!editor && !!form && !!actions && stillCurrent() && composerVisible() &&
+        !picker && modelPickerTriggerCandidates().length === 0 &&
+        (pickerWaitCompleted || nativeDefaultModeEvidence(form));
+    }, false);
+    if (!matches()) return false;
+    return new Promise(resolve => {
+      let done = false;
+      const finish = value => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const check = () => { if (!matches()) finish(false); };
+      const observer = new MutationObserver(check);
+      observer.observe(composerBox() || document.documentElement, { subtree: true, childList: true, attributes: true });
+      const timer = setTimeout(() => finish(matches()), 350);
+    });
+  }
+  function modelPickerAccess(stillCurrent) {
+    const shown = node => node && !node.closest('[hidden],[aria-hidden="true"],[inert]') && node.getClientRects().length > 0;
+    const picker = () => document.querySelector(PICKER);
+    const trigger = modelPickerTrigger;
+    let motion = null;
+    const openPicker = () => {
+      const panel = picker();
+      return panel && panel.closest('[role="menu"],[role="dialog"]')?.getAttribute('data-state') !== 'closed' ? panel : null;
+    };
+    const wait = (read, timeout = 3000) => new Promise(resolve => {
+      let reading = false, dirty = false, done = false;
+      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const check = async () => {
+        if (done) return;
+        if (!stillCurrent()) return finish(null);
+        if (reading) { dirty = true; return; }
+        reading = true;
+        try { let value = read(); if (value?.then) value = await value; if (stillCurrent() && value) finish(value); }
+        catch { finish(null); }
+        finally { reading = false; if (dirty && !done) { dirty = false; void check(); } }
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+      const timer = setTimeout(() => finish(null), timeout); void check();
+    });
+    const state = predicate => wait(async () => { const value = await readPickerState(); return value && (!predicate || predicate(value)) ? value : null; });
+    const readyTrigger = () => wait(async () => { await readPickerState(); return trigger(); }, 15000);
+    const key = (node, value) => { if (!node || !stillCurrent()) return false; node.focus(); node.dispatchEvent(new KeyboardEvent('keydown', { key: value, code: value, bubbles: true, cancelable: true })); return true; };
+    return {
+      state,
+      async open() {
+        if (!stillCurrent()) return null;
+        motion = document.createElement('style');
+        motion.textContent = '[role="menu"]:has(> [data-testid="composer-intelligence-picker-content"]),[role="dialog"]:has([data-testid="composer-intelligence-picker-content"]),[role="menu"]:has([data-model-picker-view]),[role="menu"][data-model-picker-view]{animation:none!important}';
+        document.head.append(motion);
+        if (!await readyTrigger() || !await prepareChatModelSurface(stillCurrent)) return null;
+        if (!openPicker()) { const button = await readyTrigger(); if (!key(button, 'Enter') || !await wait(openPicker)) return null; }
+        return state();
+      },
+      async close() {
+        try {
+          if (!stillCurrent()) return false;
+          const panel = picker();
+          if (!panel) return true;
+          const dialog = panel.closest('[role="dialog"]'), active = document.activeElement;
+          if (!shown(panel) && !shown(dialog)) return true;
+          if (!key(panel.contains(active) || dialog?.contains(active) ? active : panel, 'Escape')) return false;
+          const closed = Boolean(await wait(() => !shown(picker()) && (!dialog?.isConnected || !shown(dialog))));
+          if (closed && stillCurrent()) await readPickerState();
+          return closed && stillCurrent();
+        } finally { motion?.remove(); motion = null; }
+      },
+      async version(version) {
+        const before = await state(); if (!before) return null;
+        const versionRows = () => [...(picker()?.querySelectorAll('[role="menuitemradio"]') || [])].filter(shown);
+        if (before.version === version && !versionRows().length) return before;
+        const label = before.versions.find(v => v.id === version)?.label;
+        if (!label) return null;
+        // The picker may already show the version list (including a checked row).
+        // Select that row to return to its effort view; never assume the slider is open.
+        if (!versionRows().length) {
+          const toggle = [...picker().querySelectorAll('[role="menuitem"][aria-expanded], [role="menuitem"][data-model-picker-view-toggle]')].filter(shown);
+          if (toggle.length !== 1) return null;
+          toggle[0].click();
+        }
+        const option = await wait(() => {
+          const rows = versionRows().filter(node => node.textContent.trim() === label && node.getAttribute('aria-disabled') !== 'true');
+          return rows.length === 1 ? rows[0] : null;
+        });
+        if (!key(option, 'Enter')) return null;
+        return state(next => next.version === version && !versionRows().length);
+      },
+      async bucket(bucket) {
+        let current = await state();
+        for (let count = 0; current && count < 12; count++) {
+          if (current.currentBucket === bucket) return current;
+          const from = current.choices.findIndex(c => c.bucket === current.currentBucket), to = current.choices.findIndex(c => c.bucket === bucket);
+          if (from < 0 || to < 0) return null;
+          const expected = current.choices[from + (to > from ? 1 : -1)].bucket;
+          const controls = [...picker().querySelectorAll('[role="menuitem"][aria-keyshortcuts]')].filter(node => shown(node) && node.getAttribute('aria-keyshortcuts').includes('ArrowRight'));
+          if (controls.length !== 1 || !key(controls[0], to > from ? 'ArrowRight' : 'ArrowLeft')) return null;
+          const version = current.version;
+          current = await state(next => next.version === version && next.currentBucket === expected);
+        }
+        return null;
+      }
+    };
+  }
+  // The current native picker or closed trigger carries the MAIN-world snapshot.
+  // The route stamp prevents a retained composer from lending another chat proof.
+  function visibleModelSelection() {
+    const node = document.querySelector(PICKER) || modelPickerTrigger();
+    if (node?.getAttribute('data-clf-selected-route') !== location.pathname) return null;
+    const model = node?.getAttribute('data-clf-selected-model'), reasoningEffort = node?.getAttribute('data-clf-selected-effort');
+    return model && /^[a-zA-Z0-9._-]{1,80}$/.test(model) && ['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(reasoningEffort)
+      ? { model, reasoningEffort } : null;
+  }
+  /** Account model discovery belongs to Chat; Work mounts a different picker.
+   * The caller owns one idle document and verifies draft/epoch before and after this transition. */
+  async function prepareChatModelSurface(stillCurrent = () => true) {
+    const radios = () => [...document.querySelectorAll('[role="radio"][data-tpp-toggle-value]')]
+      .filter(node => !node.closest(OWN_SURFACES) && node.getClientRects().length > 0);
+    const state = () => {
+      const nodes = radios(), chat = nodes.filter(node => node.getAttribute('data-tpp-toggle-value') === 'chatgpt'),
+        work = nodes.filter(node => node.getAttribute('data-tpp-toggle-value') === 'work');
+      return chat.length === 1 && work.length === 1 ? { chat: chat[0], work: work[0] } : null;
+    };
+    if (!stillCurrent()) return false;
+    const before = state();
+    // Existing ordinary conversations do not expose the new-chat surface toggle.
+    if (!before) return radios().length === 0;
+    if (before.chat.getAttribute('aria-checked') === 'true') return true;
+    if (before.work.getAttribute('aria-checked') !== 'true' || before.chat.disabled || before.chat.getAttribute('aria-disabled') === 'true') return false;
+    return new Promise(resolve => {
+      let done = false;
+      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const check = () => {
+        if (!stillCurrent()) return finish(false);
+        const next = state();
+        if (next?.chat.getAttribute('aria-checked') === 'true' && next.work.getAttribute('aria-checked') === 'false') finish(true);
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+      const timer = setTimeout(() => finish(false), 5000);
+      before.chat.click(); check();
+    });
+  }
+  async function inspectModelSettings(stillCurrent = () => true, failure = () => {}, nativeDefault = () => {}) {
+    if (stillCurrent() && await nativeDefaultModelSurface(stillCurrent)) { nativeDefault(); return null; }
+    const ui = modelPickerAccess(stillCurrent);
+    // A fresh paid New Chat can already carry its complete current-family picker state on
+    // the closed native trigger. Read that provider-owned state before opening anything: it
+    // proves the default family/efforts without requiring the user to prime a model chat or
+    // touch the native picker. Additional versions still need the bounded picker walk below
+    // because the closed trigger exposes choices only for its currently selected version.
+    const passive = modelPickerTrigger() ? await readPickerState() : null;
+    const result = new Map();
+    const collect = state => {
+      for (const choice of state.choices.filter(c => c.available)) {
+        // A provider family owns its execution lanes. Instant/Thinking/Pro slugs
+        // are selectable pairs within that family, not separate model rows.
+        const entry = result.get(choice.familyId) || { id: choice.familyId, label: choice.familyLabel, efforts: [], aliases: [] };
+        if (!entry.efforts.includes(choice.effort)) entry.efforts.push(choice.effort);
+        if (!entry.aliases.includes(choice.id)) entry.aliases.push(choice.id);
+        result.set(choice.familyId, entry);
+      }
+    };
+    if (passive && stillCurrent()) collect(passive);
+    // One observed version is a complete catalog for this provider state. Keep the native
+    // picker closed and publish exactly what the account already exposed on New Chat.
+    if (passive && passive.versions.length === 1 && result.size) return [...result.values()];
+    const original = await ui.open();
+    if (!original) {
+      await ui.close();
+      if (stillCurrent() && await nativeDefaultModelSurface(stillCurrent, true)) nativeDefault();
+      else failure('picker_unavailable');
+      return null;
+    }
+    let restored = false;
+    try {
+      // One observation per version, not one mutation per effort. Computed choices
+      // include account/workspace denials which the raw global preset list does not prove.
+      for (const version of original.versions) {
+        if (passive?.version === version.id) continue;
+        const state = await ui.version(version.id);
+        if (!state) throw new Error('model_unconfirmed');
+        collect(state);
+      }
+    } catch { failure('model_unconfirmed'); result.clear(); }
+    finally {
+      if (stillCurrent() && await ui.version(original.version)) {
+        const state = await ui.bucket(original.currentBucket);
+        const previous = original.choices.find(c => c.bucket === original.currentBucket);
+        const selected = state?.choices.find(c => c.bucket === state.currentBucket);
+        restored = selected?.id === previous.id && selected?.effort === previous.effort;
+      }
+      await ui.close();
+    }
+    if (!restored) failure('restore_failed');
+    return restored && stillCurrent() && result.size ? [...result.values()] : null;
+  }
+  async function selectModelSettings(model, effort, stillCurrent = () => true) {
+    modelSelectionFailure = null;
+    if (!model && !effort) return true;
+    // MAIN-world provider state is already route-bound and is invalidated when the
+    // composer/model proof becomes ambiguous. If it proves the exact requested pair,
+    // leave ChatGPT alone: reopening the picker can fail during hydration even though
+    // the requested model is already active. Known Sol family ids are compatibility
+    // names for that same provider family; arbitrary models still require exact proof.
+    const confirms = current => current && (!model || sameModelIdentity(current.model, model)) && (!effort || current.reasoningEffort === effort);
+    let current = visibleModelSelection();
+    if (stillCurrent() && confirms(current)) return true;
+    // A fresh ChatGPT document can expose its composer before the passive Fiber scan has
+    // stamped the closed picker. Ask MAIN world for one bounded provider snapshot first;
+    // pickerSnapshot() refreshes that route-bound stamp without opening or changing UI.
+    if (!stillCurrent()) return noteModelSelectionFailure('target_changed');
+    await readPickerState();
+    if (!stillCurrent()) return noteModelSelectionFailure('target_changed');
+    current = visibleModelSelection();
+    if (confirms(current)) return true;
+    const pickerWasOpen = !!document.querySelector(PICKER);
+    const ui = modelPickerAccess(stillCurrent), original = await ui.open();
+    if (!original) {
+      await ui.close();
+      if (!stillCurrent()) return noteModelSelectionFailure('target_changed');
+      if (pickerWasOpen) return noteModelSelectionFailure('picker_state_unavailable');
+      const triggerCount = modelPickerTriggerCandidates().length;
+      if (triggerCount === 0) return noteModelSelectionFailure('picker_trigger_missing');
+      if (triggerCount > 1) return noteModelSelectionFailure('picker_trigger_ambiguous');
+      return noteModelSelectionFailure('picker_open_failed');
+    }
+    let selected = false;
+    try {
+      // Exact provider slug is preferred. Existing saved display slugs may resolve
+      // only to an actually observed, available pair; never to an account default.
+      const matches = c => c.available && (!effort || c.effort === effort) && (!model || sameModelIdentity(c.familyId, model) || sameModelIdentity(c.id, model) || normalizeModelLabel(c.familyLabel) === normalizeModelLabel(model) || normalizeModelLabel(c.label) === normalizeModelLabel(model));
+      for (const version of [original.versions.find(v => v.id === original.version), ...original.versions.filter(v => v.id !== original.version)]) {
+        const state = await ui.version(version.id); if (!state) return noteModelSelectionFailure('picker_state_unavailable');
+        const choices = state.choices.filter(matches);
+        if (!choices.length) continue;
+        const choice = choices.find(c => c.bucket === state.currentBucket) || choices[0];
+        const after = await ui.bucket(choice.bucket);
+        const confirmed = after?.choices.find(c => c.bucket === after.currentBucket);
+        selected = stillCurrent() && confirmed?.available === true && confirmed.id === choice.id && confirmed.effort === choice.effort;
+        if (!selected) return noteModelSelectionFailure(stillCurrent() ? 'selection_unconfirmed' : 'target_changed');
+        return true;
+      }
+      return noteModelSelectionFailure('requested_choice_unavailable');
+    } finally {
+      if (!selected && stillCurrent() && await ui.version(original.version)) await ui.bucket(original.currentBucket);
+      await ui.close();
+    }
+  }
+
+  /**
+   * Select one ChatGPT-native composer mode without pretending it is a model effort.
+   *
+   * Free/Go Think is a provider mode on the account's native/default model, not paid
+   * Sol High. Prefer the provider's semantic reason marker when it exists. The current
+   * web composer can also hide Think under its native +/Tools menu, where no stable
+   * model-picker state exists; that fallback is tightly scoped to the composer's own
+   * menu and exact Think labels. A click is never enough: success requires the active
+   * Think chip/toggle to be visible afterwards.
+   */
+  async function selectNativeMode(mode, stillCurrent = () => true) {
+    if (!mode) return true;
+    if (mode !== 'think' || !stillCurrent()) return false;
+    const shown = node => !!node && !node.closest('[hidden],[aria-hidden="true"],[inert]') && node.getClientRects().length > 0;
+    const exactThink = value => ['think', 'thinking', 'tänk', 'tänkande'].includes(String(value || '').replace(/\s+/g, ' ').trim().toLowerCase());
+    const menuRoot = node => node?.closest('[role="menu"],[data-radix-menu-content]') || null;
+    const semantic = () => [...document.querySelectorAll('[data-testid="system-hint-reason"]')].filter(shown);
+    const state = node => {
+      for (const candidate of [node, ...(node?.querySelectorAll?.('button,[role="button"],[role="menuitemradio"],[role="menuitemcheckbox"]') || [])]) {
+        const pressed = candidate?.getAttribute?.('aria-pressed');
+        const checked = candidate?.getAttribute?.('aria-checked');
+        const active = candidate?.getAttribute?.('data-active');
+        const dataState = candidate?.getAttribute?.('data-state');
+        if (pressed === 'true' || checked === 'true' || active === 'true' || ['on','active','checked'].includes(dataState)) return true;
+        if (pressed === 'false' || checked === 'false' || active === 'false' || ['off','inactive','unchecked'].includes(dataState)) return false;
+      }
+      return null;
+    };
+    const active = () => safe(() => {
+      for (const node of semantic()) {
+        if (menuRoot(node)) continue;
+        if (state(node) === true) return true;
+        // Current ChatGPT renders an active mode as a removable chip. Older builds
+        // rendered the semantic wrapper itself with pressed/checked state above.
+        const control = node.matches?.('button,[role="button"]') ? node : node.querySelector?.('button,[role="button"]');
+        if (control && exactThink(control.textContent) && /remove|ta bort/i.test(control.getAttribute('aria-label') || '')) return true;
+      }
+      for (const control of composerBox()?.querySelectorAll('button,[role="button"]') || []) {
+        if (!shown(control) || !exactThink(control.textContent)) continue;
+        if (/remove|ta bort/i.test(control.getAttribute('aria-label') || '')) return true;
+      }
+      return false;
+    }, false);
+    const wait = (read, timeout = 3000) => new Promise(resolve => {
+      let done = false;
+      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const check = () => {
+        if (!stillCurrent()) return finish(null);
+        const value = safe(read, null);
+        if (value) finish(value);
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+      const timer = setTimeout(() => finish(null), timeout);
+      check();
+    });
+    if (active()) return true;
+
+    // Older/native semantic toggle already mounted in the composer.
+    const direct = semantic().filter(node => !menuRoot(node));
+    if (direct.length === 1) {
+      const control = direct[0].matches?.('button,[role="button"]') ? direct[0]
+        : direct[0].querySelector?.('button,[role="button"]');
+      if (control && shown(control)) {
+        control.click();
+        if (await wait(active)) return true;
+      }
+    }
+
+    // Current Free/Go web UI exposes modes under the composer's +/Tools menu.
+    const form = composer()?.closest('form');
+    if (!form || !stillCurrent()) return false;
+    const tools = [...form.querySelectorAll('button[data-testid="composer-tools"],button[data-testid="composer-plus-btn"],button#composer-plus-btn')]
+      .filter(shown);
+    if (tools.length !== 1) return false;
+    tools[0].click();
+    const option = await wait(() => {
+      const roots = [...document.querySelectorAll('[role="menu"],[data-radix-menu-content]')].filter(shown);
+      if (roots.length !== 1) return null;
+      const candidates = [...roots[0].querySelectorAll('[data-testid="system-hint-reason"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="menuitem"]')]
+        .filter(node => shown(node) && (node.getAttribute('data-testid') === 'system-hint-reason' || exactThink(node.textContent)));
+      return candidates.length === 1 ? candidates[0] : null;
+    });
+    if (!option || !stillCurrent()) return false;
+    const control = option.matches?.('button,[role="menuitemradio"],[role="menuitemcheckbox"],[role="menuitem"]') ? option
+      : option.querySelector?.('button,[role="menuitemradio"],[role="menuitemcheckbox"],[role="menuitem"]');
+    if (!control) return false;
+    control.click();
+    return Boolean(await wait(active));
+  }
+
+  function projectHomeId(pathname = location.pathname) {
+    return /^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\/project\/?$/i.exec(pathname)?.[1]?.toLowerCase() || null;
+  }
+
+  /** Enter a Project through its source chat's native link. Cold /project loads can error. */
+  async function enterProject(entry, stillCurrent = () => true) {
+    if (!entry || !/^g-p-[0-9a-f]{32}$/.test(entry.id) || conversationId() !== entry.sourceConversationId) return false;
+    return new Promise(resolve => {
+      let clicked = false, done = false, sourceComposer = null;
+      const interrupt = event => { if (event.isTrusted) finish(false); };
+      const finish = result => {
+        if (done) return;
+        done = true; observer.disconnect(); clearTimeout(timer);
+        document.removeEventListener('pointerdown', interrupt, true);
+        document.removeEventListener('keydown', interrupt, true);
+        resolve(result);
+      };
+      const check = () => {
+        if (done) return;
+        if (!stillCurrent()) return finish(false);
+        if (clicked && projectHomeId() === entry.id && composer()?.isConnected && composer() !== sourceComposer && !turns().length) return finish(true);
+        if (conversationId() !== entry.sourceConversationId) {
+          if (projectHomeId() !== entry.id) finish(false);
+          return;
+        }
+        if (clicked) return;
+        // The native header arrives before the source chat finishes loading. Its link
+        // alone is not readiness: an early click can be swallowed during hydration and
+        // would also leave us comparing the destination editor with a null source.
+        // Preserve the source draft/generation and spend our one click only once its
+        // actual editor is mounted and ready.
+        const source = composer();
+        if (!source?.isConnected || !composerSubmitReady() || hasComposerAttachments()) return;
+        const links = [...document.querySelectorAll('header a[href], [role="banner"] a[href]')].filter(link =>
+          link.querySelector('[data-testid="project-folder-icon"]') && !link.closest(OWN_SURFACES) &&
+          new URL(link.href, location.href).origin === location.origin && projectHomeId(new URL(link.href, location.href).pathname) === entry.id);
+        if (links.length !== 1) return;
+        sourceComposer = source;
+        clicked = true;
+        // Loading the source and following its link are separate page transitions.
+        // Reuse the same deadline timer; source loading must not consume the budget
+        // for observing the replacement editor after the one permitted click.
+        clearTimeout(timer);
+        timer = setTimeout(() => finish(false), 12_000);
+        links[0].click();
+        check();
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+      let timer = setTimeout(() => finish(false), 12_000);
+      document.addEventListener('pointerdown', interrupt, true);
+      document.addEventListener('keydown', interrupt, true);
+      check();
+    });
+  }
+
+  async function newChatControl(stillCurrent = () => true) {
+    const shown = node => node && !node.closest(OWN_SURFACES) && !node.closest('[hidden],[aria-hidden="true"],[inert]') && node.getClientRects().length > 0;
+    const link = (root = document) => [...root.querySelectorAll('a[data-testid="create-new-chat-button"][data-sidebar-item="true"][href="/"]')].find(shown) || null;
+    if (!stillCurrent()) return null;
+    if (link()) return link();
+    // Compact ChatGPT unmounts navigation when its sidebar is closed. Reveal the
+    // actual native control before concluding that this document cannot be reused.
+    const toggles = [...document.querySelectorAll('button[data-testid="open-sidebar-button"][aria-expanded="false"][aria-controls]')].filter(shown);
+    if (toggles.length !== 1 || toggles[0].disabled) return null;
+    const toggle = toggles[0], sidebarId = toggle.getAttribute('aria-controls');
+    return new Promise(resolve => {
+      let done = false;
+      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const check = () => {
+        if (!stillCurrent()) return finish(null);
+        const sidebar = document.getElementById(sidebarId), control = sidebar && link(sidebar);
+        if (toggle.getAttribute('aria-expanded') === 'true' && control) finish(control);
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+      const timer = setTimeout(() => finish(null), 3000);
+      toggle.click(); check();
+    });
+  }
+  return {
+    userPromptText,
+    presentUserPrompts,
+    composerVisible,
+    prepareChatModelSurface,
+    newChatControl,
+    projectHomeId,
+    enterProject,
+    visibleModelSelection,
+    modelSelectionFailureReason,
+    inspectModelSettings,
+    uploadImages,
+    captureComposerDraft,
+    hasComposerAttachments,
+    composerAttachmentNames,
+    pluginRefreshView,
+    pluginInstalledButtons,
+    pluginManagementIdle,
+    selectModelSettings,
+    selectNativeMode,
+    temporaryChatReady: () => safe(() => [...document.querySelectorAll('button')].some(button => {
+      if (button.closest(`${OWN_SURFACES}, ${CONTENT}`) || !button.getClientRects().length) return false;
+      // The provider renders both icons at once. Only the visible checked glyph proves
+      // the mode; translated labels and the requested URL are not activation receipts.
+      return [...button.querySelectorAll('svg use')].some(use => {
+        const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
+        if (href.slice(href.lastIndexOf('#')) !== '#chat-temp-checked') return false;
+        for (let node = use.parentElement; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (node.hidden || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false;
+        }
+        return true;
+      });
+    }), false),
+    confirmTemporaryChatIntroduction: () => {
+      const dialog = [...document.querySelectorAll('[role="dialog"]')].find(node =>
+        [...node.querySelectorAll('h1,h2,[role="heading"]')].some(heading => text(heading, 100) === 'Temporary Chat') && /Not in history/.test(text(node, 2000)));
+      const button = dialog && [...dialog.querySelectorAll('button')].find(node => text(node, 100) === 'Continue');
+      if (button) button.click();
+    },
+    conversationId,
+    conversationFromPath,
+    conversationTitle,
+    turns,
+    presentationTurns,
+    messages,
+    messagesIn,
+    sectionSignature,
+    generating,
+    stopButton,
+    stopGeneration,
+    sendButton,
+    progressLine,
+    progressItems,
+    interrupted,
+    markProgress,
+    toolBlocks,
+    activityItems,
+    isConnectorBlock,
+    markLocalBlock,
+    hasConnectorRow,
+    connectorRows,
+    fiberRef,
+    toolLabel,
+    errors,
+    composer,
+    composerSubmitReady,
+    composerBox,
+    pageTheme,
+    composerActions,
+    composerStack,
+    firstUserMessage,
+    messageIdOf,
+    turnMount,
+    hideProgress,
+    replaceActivity,
+    insertPrompt,
+    clearPromptExact,
+    send
+  };
+})();

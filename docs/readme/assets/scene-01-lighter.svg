@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 760">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f1e7d9"/><stop offset="1" stop-color="#dce8e0"/></linearGradient><radialGradient id="sun"><stop stop-color="#f1c874"/><stop offset="1" stop-color="#f1c874" stop-opacity="0"/></radialGradient></defs>
+  <style>.bg{fill:url(#bg)}.paper{fill:#fffaf2;stroke:#8b7762;stroke-opacity:.24}.line{fill:none;stroke:#7a887d;stroke-opacity:.45}.gold{fill:#caa25d}.rose{fill:#d79a91}@media(prefers-color-scheme:dark){.bg{fill:#071522}.paper{fill:#0e2638;stroke:#d9b66f;stroke-opacity:.42}.line{stroke:#6f98bd;stroke-opacity:.5}.gold{fill:#d9b66f}.rose{fill:#274f72}}</style>
+  <rect class="bg" width="1000" height="760" rx="48"/><circle cx="778" cy="174" r="210" fill="url(#sun)" opacity=".86"/>
+  <path class="line" stroke-width="3" d="M70 566c190-146 340-78 455-174s255-126 402-65"/>
+  <path class="line" stroke-width="1.5" d="M58 614c210-93 338-52 460-119 129-70 253-90 421-34"/>
+  <g transform="translate(520 184) rotate(-7)"><rect class="paper" width="230" height="160" rx="18"/><path class="line" stroke-width="7" stroke-linecap="round" d="M34 48h146M34 79h108M34 110h132"/></g>
+  <g transform="translate(666 338) rotate(8)"><rect class="paper" width="205" height="144" rx="18"/><path class="line" stroke-width="7" stroke-linecap="round" d="M30 46h128M30 76h94M30 106h116"/></g>
+  <g opacity=".86"><rect class="rose" x="145" y="180" width="148" height="96" rx="20" transform="rotate(-10 219 228)"/><rect class="gold" x="230" y="305" width="132" height="84" rx="18" transform="rotate(7 296 347)"/></g>
+  <path class="line" stroke-width="5" stroke-linecap="round" d="M176 538c108 48 194 42 282-24"/><circle class="gold" cx="458" cy="514" r="9"/>
+</svg>
