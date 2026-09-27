@@ -25,6 +25,12 @@ operation.
   real messages.
 - The Plans catalog holds 5,000 Plans instead of 500, and never removes archived Plans automatically.
 - The heartbeat's closed-identity warning describes a closed tab rather than an ended chat.
+- Ported from chat-on-steroids 2.1.16 ("fewer stuck chats"): a large Project source chat gets 60 s to load before
+  Compact & Resume's native click (#457); a worker or resume bootstrap reacquires a composer ChatGPT replaces after
+  model selection instead of failing with `composer_missing` (#470); Goal recognises the current Temporary Chat
+  icon and introduction (#472); a stream request reported twice in one batch is kept instead of rejected (#464);
+  an automatic Compact & Resume ticket that has not reached Send is retried in two slower bursts before it is
+  abandoned (#391).
 
 ### Added
 
