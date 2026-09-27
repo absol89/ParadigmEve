@@ -2934,6 +2934,38 @@ describe('extension observation journal', () => {
     expect(JSON.stringify(journalOf(session))).not.toContain('rejected by the local bridge');
   });
 
+  it('keeps only the newest unsent snapshot of a streaming answer, so its drafts cannot evict real messages', async () => {
+    // Live 2026-09-27: while the app restarted, a streaming Compact & Resume brief journalled a
+    // full snapshot per revision, filled the 4 MB budget and evicted three real assistant messages.
+    const local = new FakeStorageArea({ port: 8765, token: 'paired-token' });
+    const session = new FakeStorageArea();
+    const fetch = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+      if (url.pathname === '/events') return response(503, { error: 'app restarting' });
+      return response(404, {});
+    });
+    const worker = loadWorker({ local, session, fetch });
+    const conversationId = '11111111-2222-3333-4444-555555555555';
+    const at = 1_700_000_000_000;
+
+    await worker.send({ type: 'events', conversationId, entries: [
+      { conversationId, event: { kind: 'user_message', time: at, text: 'Compact now.' } },
+      { conversationId, event: { kind: 'assistant_message', time: at + 1, messageId: 'earlier-reply', text: 'An earlier real reply.', state: 'final', final: true } }
+    ] });
+    for (let revision = 1; revision <= 60; revision++) {
+      await worker.send({ type: 'events', conversationId, entries: [{ conversationId, event: {
+        kind: 'assistant_message', time: at + 1 + revision, messageId: 'brief', state: revision === 60 ? 'final' : 'streaming',
+        final: revision === 60, text: `revision ${revision} `.padEnd(90_000, 'x')
+      } }] });
+    }
+
+    const journal = journalOf(session);
+    expect(JSON.stringify(journal)).not.toContain('were lost in the browser');
+    expect(journal.map(entry => entry.event.messageId ?? entry.event.kind)).toEqual(['user_message', 'earlier-reply', 'brief']);
+    expect(journal[2].event.text.startsWith('revision 60 ')).toBe(true);
+  });
+
   it('keeps one retry alarm while work remains instead of resetting it on every failure', async () => {
     const local = new FakeStorageArea({ port: 8765, token: 'paired-token' });
     const session = new FakeStorageArea();

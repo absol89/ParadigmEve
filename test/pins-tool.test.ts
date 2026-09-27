@@ -357,8 +357,65 @@ describe('model-facing Pins tool', () => {
     });
     expect(associate.isError).toBe(true);
     expect(text(associate)).toContain('Exact chat identity is required');
+    for (const change of [
+      { action: 'set_thread_prompt', thread_id: '11111111-1111-4111-8111-111111111111', prompt: 'planted' },
+      { action: 'set_pin_sticky', pin_id: '11111111-1111-4111-8111-111111111111', sticky: true }
+    ]) {
+      const refused = await run(change);
+      expect(refused.isError).toBe(true);
+      expect(text(refused)).toContain('Exact chat identity is required');
+    }
     expect((await pinsLibrary()).quilts).toHaveLength(0);
     expect((await pinsLibrary()).collections).toHaveLength(0);
+  });
+
+  it('creates a %Hotlink with its approved standing prompt in one call', async () => {
+    // The %claude request stayed blocked because the tool could not set a prompt at all.
+    const prompt = 'Eve and Claude collaborate through exact evidence: Eve reports live findings, Claude fixes and tests.';
+    const created = await run({ action: 'create_thread', title: '%claude', prompt, quilt_names: ['#Eve'] });
+    expect(created.isError).not.toBe(true);
+    const body = JSON.parse(text(created));
+    expect(body.created).toMatchObject({ reference: '%claude', prompt, pins: [], quilts: ['#Eve'] });
+    expect(body.prompt).toBe(prompt);
+    const listed = JSON.parse(text(await run({ action: 'list', reference: '%claude' })));
+    expect(listed.thread).toMatchObject({ prompt, pins: [] });
+  });
+
+  it('sets, replaces and clears one exact Thread prompt and refuses an unknown Thread', async () => {
+    const thread = JSON.parse(text(await run({ action: 'create_thread', title: 'notes', quilt_names: [] }))).created;
+    const first = await run({ action: 'set_thread_prompt', thread_id: thread.id, prompt: '  Summarise before answering.  ' });
+    expect(first.isError).not.toBe(true);
+    expect(JSON.parse(text(first))).toMatchObject({ updated: { id: thread.id, prompt: 'Summarise before answering.' }, cleared: false });
+    const cleared = JSON.parse(text(await run({ action: 'set_thread_prompt', thread_id: thread.id, prompt: '' })));
+    expect(cleared).toMatchObject({ updated: { id: thread.id, prompt: null }, cleared: true });
+    expect((await pinsLibrary()).quilts[0]!.prompt).toBeUndefined();
+
+    const missing = await run({ action: 'set_thread_prompt', thread_id: '22222222-2222-4222-8222-222222222222', prompt: 'x' });
+    expect(missing.isError).toBe(true);
+    expect(text(missing)).toContain('No prompt was changed');
+  });
+
+  it('sets and clears the Heart on one exact Prompt Pin', async () => {
+    const thread = JSON.parse(text(await run({ action: 'create_thread', title: 'hearts', quilt_names: [] }))).created;
+    fixture.events = [{
+      kind: 'user_message', seq: 5, time: 1, source: 'extension', messageId: 'm-5', turnId: 't-5',
+      authoredText: 'Keep this on top.', message: { text: 'Keep this on top.', truncated: false, chars: 17 }
+    }];
+    const pin = JSON.parse(text(await run({
+      action: 'pin', thread_id: thread.id, source: { kind: 'session_event', session_id: fixture.summary.id, event_seq: 5 }
+    }))).pin;
+
+    const on = await run({ action: 'set_pin_sticky', pin_id: pin.id, sticky: true });
+    expect(on.isError).not.toBe(true);
+    expect(JSON.parse(text(on))).toEqual({ pin_id: pin.id, sticky: true, thread_id: thread.id });
+    expect(JSON.parse(text(await run({ action: 'list', reference: '%hearts' }))).thread.pins[0]).toMatchObject({ id: pin.id, sticky: true });
+    const off = JSON.parse(text(await run({ action: 'set_pin_sticky', pin_id: pin.id, sticky: false })));
+    expect(off.sticky).toBe(false);
+    expect((await pinsLibrary()).pins[0]).not.toHaveProperty('sticky');
+
+    const missing = await run({ action: 'set_pin_sticky', pin_id: '33333333-3333-4333-8333-333333333333', sticky: true });
+    expect(missing.isError).toBe(true);
+    expect(text(missing)).toContain('No Heart was changed');
   });
 
   it('pins an exact Plan id without inventing a chat source', async () => {
@@ -385,7 +442,11 @@ describe('model-facing Pins tool', () => {
     expect(pinsToolSchema.safeParse({ action: 'list', reference: '#Eva', create: true }).success).toBe(false);
     expect(pinsToolSchema.safeParse({ action: 'list', reference: 'Eva' }).success).toBe(false);
     expect(pinsToolSchema.safeParse({ action: 'pin', thread_id: 'x', source: { kind: 'session_event', session_id: 'session-1', event_seq: 1 } }).success).toBe(false);
-    expect(pinsToolSchema.safeParse({ action: 'create_thread', title: 'Eva', prompt: 'hidden', quilt_names: [] }).success).toBe(false);
+    // A standing prompt is an explicit, user-approved field; an empty one is not a prompt.
+    expect(pinsToolSchema.safeParse({ action: 'create_thread', title: 'Eva', prompt: 'Approved guidance', quilt_names: [] }).success).toBe(true);
+    expect(pinsToolSchema.safeParse({ action: 'create_thread', title: 'Eva', prompt: '   ', quilt_names: [] }).success).toBe(false);
+    expect(pinsToolSchema.safeParse({ action: 'set_thread_prompt', thread_id: 'x', prompt: 'p' }).success).toBe(false);
+    expect(pinsToolSchema.safeParse({ action: 'set_pin_sticky', pin_id: '11111111-1111-4111-8111-111111111111' }).success).toBe(false);
     expect(pinsToolSchema.safeParse({ action: 'create_thread', title: 'Eva', collection_names: [] }).success).toBe(false);
     expect(pinsToolSchema.safeParse({ action: 'associate_quilt', thread_id: '11111111-1111-4111-8111-111111111111', quilt_name: '#Eva' }).success).toBe(false);
   });

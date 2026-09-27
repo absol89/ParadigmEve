@@ -900,7 +900,21 @@ export async function restoreParadigmEveChromeSessionForRecovery(
     }
 
     if (!ready) {
-      target = await navigateDedicatedBrowserWindowForRecovery(target, exactRecoveryUrl, { settleMs: 300 }, browser);
+      try {
+        target = await navigateDedicatedBrowserWindowForRecovery(target, exactRecoveryUrl, { settleMs: 300 }, browser);
+      } catch (error) {
+        // Typing into the omnibox needs the Eve Browser in the foreground, and Windows refuses
+        // that whenever another app holds focus — which is most background restarts (live: every
+        // restart logged FOCUS_FAILED from 2026-09-26 on, so the queued Eve wake never posted).
+        // The dedicated profile is already running here, so handing it the exact URL on its
+        // command line only adds that one tab; Chrome needs no focus for it, and its own session
+        // restore has already happened. Skip it if the Companion already reports the chat open.
+        if (!isRecoveryFocusFailure(error)) throw error;
+        const alreadyOpen = Boolean(options.exactConversationOpen && exactConversationId &&
+          await options.exactConversationOpen(exactConversationId) === true);
+        if (alreadyOpen) ready = true;
+        else await launchParadigmEveChromeProfile([exactRecoveryUrl], browser);
+      }
     }
     if (!ready && options.exactConversationOpen && exactConversationId) {
       const deadline = Date.now() + 10_000;

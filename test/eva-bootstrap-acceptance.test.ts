@@ -50,7 +50,8 @@ it('bootstraps starter Threads and a physical AppData Vault mirror on a fresh Ev
   await initializeDefaultThreads();
 
   const snapshot = await pinsLibrary();
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
+  expect(snapshot.quilts.find(thread => thread.title === 'claude')?.prompt).toContain('Eve ↔ Claude coordination');
   expect(snapshot.quilts.find(thread => thread.title === 'how')?.prompt).toContain('current packaged ParadigmEve manual');
   expect(await fs.readFile(path.join(userData, 'docs', 'vault', 'README.md'), 'utf8')).toBe('# Eva bootstrap manual\n');
 });
@@ -66,7 +67,7 @@ it('upgrades an older custom-only Pins library while refreshing the managed AppD
 
   const snapshot = await pinsLibrary();
   expect(snapshot.quilts[0]).toEqual(custom);
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['gen1', 'how', 'appdata%', 'expenses', 'organize', 'plans']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['gen1', 'how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
   expect(await fs.readFile(path.join(userData, 'docs', 'vault', 'README.md'), 'utf8')).toBe('# Eva bootstrap manual\n');
   await expect(fs.access(path.join(userData, 'docs', 'vault', 'removed.md'))).rejects.toBeDefined();
 });

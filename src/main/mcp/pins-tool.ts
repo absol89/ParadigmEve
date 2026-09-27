@@ -6,6 +6,8 @@ import {
   pinsLibrary,
   removePin,
   setCollectionDescription,
+  setPinSticky,
+  setQuiltPrompt,
   setThreadDescription
 } from '../pins.js';
 import { listPlans } from '../plans.js';
@@ -47,7 +49,20 @@ export const pinsToolSchema = z.discriminatedUnion('action', [
     action: z.literal('create_thread'),
     title: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(1_000).optional(),
+    // The exact standing prompt the user approved. With no Pins this makes a %Hotlink.
+    prompt: z.string().trim().min(1).max(16_000).optional(),
     quilt_names: z.array(z.string().trim().min(1).max(80)).max(50).default([])
+  }).strict(),
+  z.object({
+    action: z.literal('set_thread_prompt'),
+    thread_id: uuid,
+    // Empty clears the prompt.
+    prompt: z.string().max(16_000)
+  }).strict(),
+  z.object({
+    action: z.literal('set_pin_sticky'),
+    pin_id: uuid,
+    sticky: z.boolean()
   }).strict(),
   z.object({
     action: z.literal('create_concept'),
@@ -82,6 +97,7 @@ function threadView(thread: Quilt, quiltGroups: readonly QuiltCollection[], pins
       kind: pin.kind,
       title: pin.title ?? null,
       sourceLabel: pin.sourceLabel ?? null,
+      sticky: 'sticky' in pin && pin.sticky === true,
       provenance: pin.provenance
     }))
   };
@@ -160,10 +176,10 @@ export function registerPinsTool(reg: SurfaceRegistrar): void {
   reg.register('pins', toolDeclaration('pins', () => ({
     title: 'Pins, Threads and Quilts',
     description:
-      'Pins. list exact %Thread/#Quilt. pin exact recorded event/Plan to thread_id; unpin exact Pin. create_thread creates approved Thread+Quilts. ' +
-      'create_concept reserves/reuses one exact zero-Pin, promptless same-name %Thread with no same-name Quilt. ' +
-      'set_quilt_description updates one exact wider Quilt after user-approved enrichment. associate_quilt links exact Thread/Quilt; ' +
-      'create_if_missing=true only after approval. Never fuzzy-route or silently create.',
+      'Pins. list exact %Thread/#Quilt. pin exact event/Plan to thread_id; unpin. create_thread: approved Thread+Quilts, optional approved ' +
+      'prompt (0 Pins+prompt=%Hotlink). set_thread_prompt: set/clear (empty) exact Thread prompt, user-approved text only. ' +
+      'set_pin_sticky: Heart on exact Prompt/Message/Plan Pin. create_concept: exact 0-Pin promptless %Thread, no same-name Quilt. ' +
+      'set_quilt_description: approved Quilt text. associate_quilt: exact Thread/Quilt; create_if_missing only if approved. Never fuzzy-route.',
     inputSchema: pinsToolSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   })), args => guard('pins', async () => {
@@ -230,10 +246,31 @@ export function registerPinsTool(reg: SurfaceRegistrar): void {
       const thread = await createThread({
         title: args.title.startsWith('%') ? args.title.slice(1) : args.title,
         ...(args.description ? { description: args.description } : {}),
+        ...(args.prompt ? { prompt: args.prompt } : {}),
         collectionNames: args.quilt_names.map(name => name.startsWith('#') ? name.slice(1) : name)
       });
       const fresh = await pinsLibrary();
-      return ok(JSON.stringify({ created: threadView(thread, fresh.collections, fresh.pins), prompt: null }));
+      return ok(JSON.stringify({ created: threadView(thread, fresh.collections, fresh.pins), prompt: thread.prompt ?? null }));
+    }
+
+    if (args.action === 'set_thread_prompt') {
+      const held = library.quilts.find(row => row.id === args.thread_id);
+      if (!held) return fail(`Thread ${args.thread_id} was not found. No prompt was changed.`);
+      // Through the same state owner as the Thread editor, which also makes a shipped starter
+      // prompt user-owned so a later app update never overwrites it.
+      const updated = await setQuiltPrompt(held.id, args.prompt);
+      const fresh = await pinsLibrary();
+      return ok(JSON.stringify({ updated: threadView(updated, fresh.collections, fresh.pins), cleared: !updated.prompt }));
+    }
+
+    if (args.action === 'set_pin_sticky') {
+      const held = library.pins.find(pin => pin.id === args.pin_id);
+      if (!held) return fail(`Pin ${args.pin_id} was not found. No Heart was changed.`);
+      if (held.kind !== 'prompt' && held.kind !== 'message' && held.kind !== 'plan') {
+        return fail(`Pin ${args.pin_id} is a ${held.kind} Pin; only Prompt, Message, or Plan Pins take a Heart. Nothing was changed.`);
+      }
+      const updated = await setPinSticky(held.id, args.sticky);
+      return ok(JSON.stringify({ pin_id: updated.id, sticky: 'sticky' in updated && updated.sticky === true, thread_id: updated.quiltId }));
     }
 
     if (args.action === 'create_concept') {

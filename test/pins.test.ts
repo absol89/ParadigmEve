@@ -98,19 +98,20 @@ it('ships %how as a question-first helper that consults the current manual quiet
   expect(how.prompt).not.toContain('Chrome tab');
 });
 
-it('creates the five empty default Threads, including the #Eve how/appdata pair and Plans starter, on a pristine install', async () => {
+it('creates the six empty default Threads, including the #Eve how/appdata/claude starters and Plans starter, on a pristine install', async () => {
   await initializeDefaultThreads();
 
   const snapshot = await pinsLibrary();
   expect(snapshot.pins).toEqual([]);
   expect(snapshot.collections).toEqual([expect.objectContaining({ name: 'Eve' })]);
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
   const eve = snapshot.collections[0]!;
   const how = snapshot.quilts.find(thread => thread.title === 'how')!;
   const appdata = snapshot.quilts.find(thread => thread.title === 'appdata%')!;
   const expenses = snapshot.quilts.find(thread => thread.title === 'expenses')!;
   const organize = snapshot.quilts.find(thread => thread.title === 'organize')!;
   const plans = snapshot.quilts.find(thread => thread.title === 'plans')!;
+  const claude = snapshot.quilts.find(thread => thread.title === 'claude')!;
   expect(how).toMatchObject({
     state: 'pinned',
     collectionIds: [eve.id],
@@ -157,10 +158,17 @@ it('creates the five empty default Threads, including the #Eve how/appdata pair 
     description: 'Create and refine durable Plans with Eve. The plan stays near this app\'s chat window too.',
     prompt: expect.stringContaining('what they want the %Plan to accomplish')
   });
+  expect(claude).toMatchObject({
+    state: 'pinned',
+    collectionIds: [eve.id],
+    description: expect.stringContaining('between Eve and Claude'),
+    prompt: expect.stringContaining('Claude must not merge, tag, push, or start CI')
+  });
+  expect(claude.prompt).toContain('Latest promotion remains a separate user-controlled gate');
 
   resetDurableForTests();
   initDurableStore(directory);
-  expect((await pinsLibrary()).quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans']);
+  expect((await pinsLibrary()).quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
 });
 
 it('adds a starter generation to an older Pins library without rewriting its existing Threads', async () => {
@@ -175,7 +183,8 @@ it('adds a starter generation to an older Pins library without rewriting its exi
     'appdata%',
     'expenses',
     'organize',
-    'plans'
+    'plans',
+    'claude'
   ]);
   expect(snapshot.pins).toEqual([]);
 });
@@ -286,7 +295,7 @@ it('adopts a legacy custom starter reference without duplicating it and restores
   const how = snapshot.quilts.find(thread => thread.id === customHow.id)!;
   expect(how).toMatchObject({ title: '%HOW', prompt: 'My own help prompt', collectionIds: [] });
   expect(snapshot.quilts.filter(thread => /^%?how$/i.test(thread.title))).toHaveLength(1);
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['%HOW', 'appdata%', 'expenses', 'organize', 'plans']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['%HOW', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
 });
 
 it('upgrades an untouched legacy empty expenses starter into the shipped prompt', async () => {
@@ -335,7 +344,7 @@ it('recreates a shipped starter missing from an already-applied legacy generatio
   const restored = snapshot.quilts.filter(thread => thread.title === 'how');
   expect(restored).toHaveLength(1);
   expect(restored[0]).toMatchObject({ prompt: DEFAULT_THREAD_DEFINITIONS.find(thread => thread.title === 'how')!.prompt });
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['appdata%', 'expenses', 'organize', 'plans', 'how']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['appdata%', 'expenses', 'organize', 'plans', 'claude', 'how']);
 });
 
 it('updates an untouched old shipped how prompt but preserves a later explicitly saved prompt', async () => {
@@ -393,7 +402,7 @@ it('keeps a current shipped starter idempotent and follows a user rename by dura
     description: 'My own help card description.'
   });
   expect(renamed.quilts.filter(thread => thread.title === 'how')).toHaveLength(0);
-  expect(renamed.quilts).toHaveLength(5);
+  expect(renamed.quilts).toHaveLength(6);
 });
 
 it('upgrades untouched shipped expenses and legacy organizer prompts while preserving the Thread id and Pins', async () => {

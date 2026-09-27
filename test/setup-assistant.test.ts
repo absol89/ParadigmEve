@@ -732,6 +732,39 @@ describe('ParadigmEve setup browser', () => {
       .not.toContainEqual(expect.objectContaining({ type: 'keypress', keys: ['alt', 'enter'] }));
   });
 
+  it('opens the exact Prime through the running dedicated profile when Windows keeps refusing focus', async () => {
+    // Live 2026-09-26/27: every background restart logged FOCUS_FAILED and the queued Eve wake
+    // never posted. Handing the running profile the URL needs no foreground.
+    const setup = await modulePromise;
+    const target = { id: 77, app: 'Chrome.setupbrowserprofile.Default', title: 'New Tab - Google Chrome', process: 'chrome', x: 0, y: 0, width: 1200, height: 800, state: 'open' as const };
+    mocked.listWindows.mockResolvedValue({ windows: [target], screen: { x: 0, y: 0, width: 1920, height: 1080 } });
+    mocked.act.mockRejectedValue(new Error('PARTIAL_BATCH: completed_count=0 failed_index=0 routes=none. FOCUS_FAILED: requested 77 but foreground is 12'));
+    const exact = 'https://chatgpt.com/c/12121212-1212-4121-8121-121212121212';
+    const exactConversationOpen = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+
+    await expect(setup.restoreParadigmEveChromeSessionForRecovery({ exactRecoveryUrl: exact, exactConversationOpen, waitForRestoreOffer: false }))
+      .resolves.toMatchObject({ id: 77 });
+    expect(mocked.spawn).toHaveBeenCalledOnce();
+    const args = mocked.spawn.mock.calls[0]?.[1] as string[];
+    expect(args).toContain(`--user-data-dir=${path.join(userData, 'setup-browser-profile')}`);
+    expect(args.at(-1)).toBe(exact);
+    expect(args).not.toContain('--restore-last-session');
+  });
+
+  it('opens no second tab when the Companion already reports the exact Prime after focus is refused', async () => {
+    const setup = await modulePromise;
+    const target = { id: 77, app: 'Chrome.setupbrowserprofile.Default', title: 'ChatGPT - Google Chrome', process: 'chrome', x: 0, y: 0, width: 1200, height: 800, state: 'open' as const };
+    mocked.listWindows.mockResolvedValue({ windows: [target], screen: { x: 0, y: 0, width: 1920, height: 1080 } });
+    mocked.act.mockRejectedValue(new Error('PARTIAL_BATCH: completed_count=0 failed_index=0 routes=none. FOCUS_FAILED: requested 77 but foreground is 12'));
+    const exact = 'https://chatgpt.com/c/13131313-1313-4131-8131-131313131313';
+
+    await expect(setup.restoreParadigmEveChromeSessionForRecovery({ exactRecoveryUrl: exact, exactConversationOpen: async () => true, waitForRestoreOffer: false }))
+      .resolves.toMatchObject({ id: 77 });
+    expect(mocked.spawn).not.toHaveBeenCalled();
+  });
+
   it('recommits the same exact Prime after the URL was staged but Enter lost focus', async () => {
     const setup = await modulePromise;
     const first = { id: 77, app: 'Chrome.setupbrowserprofile.Default', title: 'New Tab - Google Chrome', process: 'chrome', x: 0, y: 0, width: 1200, height: 800, state: 'foreground' as const };

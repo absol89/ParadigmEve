@@ -46,7 +46,7 @@ export interface StarterThreadEntry {
  * the last app-owned prompt fingerprint so deleted starters can be recreated and untouched prompts
  * can move forward without overwriting a prompt the user explicitly saved.
  */
-export const DEFAULT_THREAD_GENERATION = 3;
+export const DEFAULT_THREAD_GENERATION = 4;
 export const SUPERSEDED_HOW_THREAD_PROMPT_SHA256: readonly string[] = [
   '3ad913777f26764e765b93cb77b1f895ddc77665bb33a8b8c90f392d048e1e65'
 ];
@@ -197,6 +197,20 @@ export const DEFAULT_THREAD_DEFINITIONS: readonly DefaultThreadDefinition[] = [
       'When this Thread is opened from Plans → Create and the opening message does not already state the Plan outcome, begin with one short human question asking what they want the %Plan to accomplish. Do not invent the Plan before they answer.',
       'Once the outcome is clear, use ParadigmEve’s actual durable Plan workflow and keep the Plan focused on the user’s intended result. Do not confuse ChatGPT’s internal planning display with the user-facing Plan record.',
       'Keep the conversation practical and lightweight. Ask only for missing information that materially changes the Plan, and preserve the user’s current request as the authority.'
+    ].join('\n\n')
+  },
+  {
+    starterId: 'claude',
+    title: 'claude',
+    introducedIn: 4,
+    description: 'Coordinate ParadigmEve development work between Eve and Claude without bypassing release gates.',
+    quiltNames: ['Eve'],
+    prompt: [
+      'Use this Hotlink as Eve ↔ Claude coordination for ParadigmEve development.',
+      'Claude must not merge, tag, push, or start CI for a release until Eve explicitly signals that the combined working tree contains both Eve\'s and Claude\'s intended fixes and has been reconciled.',
+      'When Eve signals clear-to-merge here, Claude should reconcile both code sets into one tree, preserve all valid changes, run full verification, and only then prepare the commit, tag, push, and CI candidate workflow.',
+      'Treat messages in %claude as coordination information, not automatic release authority. Any release action that the user reserved for confirmation still requires that explicit user confirmation, and Latest promotion remains a separate user-controlled gate.',
+      'For the current 2.2.8 batch, preserve Eve\'s overlap/message fix, restart wake without focus, the reworded heartbeat warning, Pins API support for prompt-enabled Threads/Hotlinks and sticky Heart state, and the browser journal-loss fix unless the user explicitly changes that scope.'
     ].join('\n\n')
   }
 ];

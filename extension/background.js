@@ -616,6 +616,19 @@ function makeRoom(tighten = false) {
 function enqueue(entries) {
   for (const entry of entries) {
     if (!entry || !entry.event || typeof entry.event.kind !== 'string') continue;
+    // A streaming assistant message arrives as a full snapshot per revision, rendered HTML
+    // included, and the app keeps only the newest one. The page queue already replaces an
+    // unsent older snapshot; this journal did not, so during an outage one long answer (a
+    // Compact & Resume brief) filled the 4 MB budget with its own drafts and evicted real
+    // messages (live 2026-09-27). Drop the superseded unsent snapshot of the same message.
+    const messageId = entry.event.kind === 'assistant_message' && typeof entry.event.messageId === 'string'
+      ? entry.event.messageId : '';
+    if (messageId) {
+      const route = routeKey(entry);
+      const prior = journal.findIndex((held) =>
+        !held.gap && held.event.kind === 'assistant_message' && held.event.messageId === messageId && routeKey(held) === route);
+      if (prior >= 0) journal.splice(prior, 1);
+    }
     journal.push({
       conversationId: typeof entry.conversationId === 'string' ? entry.conversationId : null,
       // Observations made before ChatGPT has assigned a conversation id are held under

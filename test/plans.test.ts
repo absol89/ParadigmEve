@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
-import { archivePlan, backfillSessionPlans, createPlan, listPlans, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
+import { archivePlan, backfillSessionPlans, createPlan, listPlans, resetPlansForTests, setPlanReferenceGuard, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
 import { appendEvent, createSession, initSessionStore, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
 
 let directory: string;
@@ -650,4 +650,66 @@ it('creates a Live projection when an archived checklist is later reopened', asy
   const library = await listPlans();
   expect(library.done.map(plan => plan.id)).toContain(first!.id);
   expect(library.live.map(plan => plan.id)).toContain(reopened!.id);
+});
+
+/** A full 500-Plan catalog like the live one on 2026-09-27: 470 archived, 30 live. */
+function fullCatalog(live = 30) {
+  const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+  return Array.from({ length: 500 }, (_, index) => {
+    const archived = index >= live;
+    return {
+      id: uuid(index + 1),
+      title: archived ? `Finished ${index}` : `Live ${index}`,
+      items: [{ id: uuid(10_000 + index), text: 'Step', status: archived ? 'done' : 'todo' }],
+      createdAt: 1_000 + index,
+      updatedAt: 2_000 + index,
+      // Archived oldest first: index 30 is the oldest archive.
+      archivedAt: archived ? 3_000 + index : null
+    };
+  });
+}
+
+it('rolls the oldest unreferenced archived Plans off a full catalog instead of refusing new Plans', async () => {
+  const seeded = fullCatalog();
+  await writeDurableNow('plans', { version: 1, plans: seeded });
+  const protectedIds = new Set([seeded[30]!.id, seeded[31]!.id]);
+  setPlanReferenceGuard(async () => protectedIds);
+
+  const created = await createPlan({ title: 'New after full', items: [{ text: 'Go', status: 'todo' }] });
+  const library = await listPlans();
+  const ids = new Set([...library.live, ...library.done].map(plan => plan.id));
+
+  expect(ids.has(created.id)).toBe(true);
+  expect(library.live).toHaveLength(31);
+  // One batch of 25 archived Plans rolled off, oldest first, skipping the two still referenced.
+  expect(ids.size).toBe(500 - 25 + 1);
+  for (const kept of protectedIds) expect(ids.has(kept)).toBe(true);
+  expect(ids.has(seeded[32]!.id)).toBe(false);
+  expect(ids.has(seeded[56]!.id)).toBe(false);
+  expect(ids.has(seeded[57]!.id)).toBe(true);
+  for (const plan of seeded.slice(0, 30)) expect(ids.has(plan.id)).toBe(true);
+
+  // Room remains afterwards, so the next Plan is written without another rotation.
+  await createPlan({ title: 'Second', items: [{ text: 'Go', status: 'todo' }] });
+  expect([...(await listPlans()).live, ...(await listPlans()).done]).toHaveLength(477);
+});
+
+it('still refuses a new Plan when every Plan is live or referenced', async () => {
+  const seeded = fullCatalog(500);
+  await writeDurableNow('plans', { version: 1, plans: seeded });
+  await expect(createPlan({ title: 'No room', items: [{ text: 'Go', status: 'todo' }] })).rejects.toThrow('Plan catalog limit reached');
+
+  const archived = fullCatalog();
+  await writeDurableNow('plans', { version: 1, plans: archived });
+  setPlanReferenceGuard(async () => new Set(archived.slice(30).map(plan => plan.id)));
+  await expect(createPlan({ title: 'No room', items: [{ text: 'Go', status: 'todo' }] })).rejects.toThrow('Plan catalog limit reached');
+});
+
+it('lets a chat update_plan create its Plan again once the catalog rotates', async () => {
+  await writeDurableNow('plans', { version: 1, plans: fullCatalog() });
+  const session = await createSession({ title: 'Eve after compaction', conversationId: 'conversation-full' });
+  const projected = await syncSessionAgentPlan(session.id, 'conversation-full', 'Eve after compaction', {
+    plan: [{ step: 'Keep working', status: 'in_progress' }]
+  });
+  expect(projected).toMatchObject({ title: 'Eve after compaction' });
 });

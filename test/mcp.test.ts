@@ -948,13 +948,14 @@ describe('model-facing surfaces', () => {
     // And the size, which is what a discovery pull actually costs the model on every
     // conversation that touches the connector. The ceilings sit just above what the
     // surface measures today (Windows Core ~39.5 KB after the Expenses read/mutation split plus
-    // the 2.2.3 Pins/Thread, plan-continuity and heartbeat lifecycle additions; Desktop 10,116
+    // the 2.2.3 Pins/Thread, plan-continuity and heartbeat lifecycle additions, ~40.45 KB after the
+    // 2.2.8 Pins prompt/Heart actions; Desktop 10,116
     // bytes on 2026-09-10) rather than at a
     // round number well above it: a budget with room to spare is a budget that never
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 39_700 : 39_300);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 40_500 : 40_300);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
@@ -982,7 +983,9 @@ describe('model-facing surfaces', () => {
               : tool.name === 'pins'
                 // 2.2.3 exposes the complete strict Pins/Thread/Concept/Quilt mutation contract in
                 // one tool instead of splitting related durable operations across extra schemas.
-                ? 4_100
+                // 2.2.8 adds the Thread prompt and Pin Heart mutations the app already owned
+                // (4,848 bytes), so Eve can maintain %Hotlinks without editing pins.json.
+                ? 4_900
               : tool.name === 'exec_command'
                 // Windows carries `WINDOWS_SHELL_GUIDANCE` in the same description, and that text
                 // is quoted verbatim from Codex's own shell spec — it is not ours to trim to fit a

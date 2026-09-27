@@ -109,6 +109,25 @@ describe('ChatGPT DOM adapter on the per-exchange renderer', () => {
     expect(mount?.host && (mount.host as Element).closest('[data-turn-key]')).not.toBeNull();
     expect(header.closest('[data-turn-key]')?.getAttribute('data-turn-key')).toBe('user-a');
   });
+
+  it('mounts replacement activity inside the virtualized exchange instead of before its measured row', () => {
+    const { api, document } = clf(exchange(0, 'user-a', 'Question', 'asst-a', 'Answer'));
+    const assistant = api.turns()[1];
+    const exchangeNode = document.querySelector('[data-turn-key="user-a"]')!;
+    const root = document.createElement('div');
+    root.className = 'clf-stream';
+    root.textContent = 'Synthetic activity';
+
+    expect(api.replaceActivity(assistant, root, true)).toBe(true);
+
+    // The live regression was a 150px .clf-stream sibling before [data-turn-key]: the stream
+    // pushed the exchange's visible contents down while ChatGPT kept the following virtual row
+    // at its cached offset. Keeping the stream inside the exchange makes its height part of the
+    // exact box the virtualizer measures.
+    expect(root.closest('[data-turn-key]')).toBe(exchangeNode);
+    expect(root.parentElement).not.toBe(exchangeNode.parentElement);
+    expect(exchangeNode.previousElementSibling).not.toBe(root);
+  });
 });
 
 describe('fiber evidence on the per-exchange renderer', () => {

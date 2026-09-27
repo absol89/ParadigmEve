@@ -1760,9 +1760,17 @@ var CLF_DOM = (() => {
    * Mounts app-owned activity before one assistant turn without replacing ChatGPT's answer.
    *
    * The live React subtree remains the one renderer for prose, code/document blocks and action
-   * buttons. Overwrite owns only activity rows, mounted as a sibling so React cannot move them
-   * across a later user message. Turning it off removes only the marker/sibling; ChatGPT never
-   * has to reconstruct anything we destroyed.
+   * buttons. Overwrite owns only activity rows.
+   *
+   * IMPORTANT: on the per-exchange virtualized renderer, the assistant logical turn is the
+   * [data-turn-key] exchange itself. Mounting the stream as a sibling *before* that exchange
+   * changes visible height without changing the exchange's measured box. ChatGPT's virtualizer
+   * then keeps the next exchange at its old offset and the two rows overlap by exactly the
+   * synthetic stream height. Mount inside the turn at turnMount() instead so the exchange's own
+   * geometry includes the stream and its virtualized parent can measure the real height.
+   *
+   * Turning Overwrite off removes only the extension-owned stream; ChatGPT never has to
+   * reconstruct prose or controls we destroyed.
    */
   function replaceActivity(turn, root, replaced) {
     return safe(() => {
@@ -1772,10 +1780,23 @@ var CLF_DOM = (() => {
         if (replaced) section.setAttribute('data-clf-turn-replaced', '1');
         else section.removeAttribute('data-clf-turn-replaced');
       }
-      const embedded = Boolean(root && sections.some((section) => root.parentElement === section));
-      if (replaced && root && (!root.isConnected || embedded)) {
+      if (replaced && root) {
         const first = sections[0];
-        if (first && first.parentElement) first.parentElement.insertBefore(root, first);
+        if (matches(first, EXCHANGE) && !matches(first, LEGACY_TURN)) {
+          const mount = turnMount(turn);
+          if (!mount || !mount.host) return false;
+          const alreadyMounted = root.parentElement === mount.host &&
+            (mount.before ? root.nextSibling === mount.before : root === mount.host.lastChild);
+          if (!alreadyMounted) mount.host.insertBefore(root, mount.before || null);
+        } else {
+          // Legacy per-role sections are not virtualized as one measured exchange. Keep the
+          // established external sibling ownership there so React moving/reusing the native
+          // assistant section cannot carry an older synthetic stream across a later user turn.
+          const embedded = sections.some((section) => root.parentElement === section);
+          if (!root.isConnected || embedded) {
+            if (first && first.parentElement) first.parentElement.insertBefore(root, first);
+          }
+        }
       }
       return true;
     }, false);

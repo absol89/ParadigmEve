@@ -57,7 +57,7 @@ it('binds the local Expenses project to the preseeded expenses Thread without cr
 
   const project = await startExpensesProject(folder);
   expect(project.template?.quiltId).toBe(starter!.id);
-  expect((await pinsLibrary()).quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans']);
+  expect((await pinsLibrary()).quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
 });
 
 it('reopens through the stored Thread id after the bound Thread is renamed', async () => {

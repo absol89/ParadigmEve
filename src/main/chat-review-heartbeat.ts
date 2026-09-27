@@ -722,6 +722,18 @@ export async function readChatReviewHeartbeatPublicStatus(): Promise<ChatReviewH
 }
 
 /**
+ * Every Plan id the heartbeat still points at: its current review batch and the sweep still to
+ * review. A missing batch Plan stops the heartbeat, so the Plans catalog never rotates these out.
+ */
+export async function chatReviewReferencedPlanIds(): Promise<Set<string>> {
+  const state = await defaults.readState();
+  return new Set([
+    ...(state?.debt?.planBatch ?? []).map(target => target.planId),
+    ...(state?.planSweep?.remainingPlanIds ?? [])
+  ]);
+}
+
+/**
  * Retire one durable semantic-review debt from the exact coordinator's explicit MCP receipt.
  *
  * Browser delivery and a normal assistant final are deliberately insufficient: they prove that a

@@ -385,7 +385,7 @@ export function syncSessionAgentPlan(
     if (options.importOnly) {
       const imported = fromSession.find(plan => sameAgentSteps(plan, update));
       if (imported) return projectPlan(imported);
-      if (plans.length >= 500) throw new Error('Plan catalog limit reached');
+      const room = await withRoomForPlan(plans);
       const created: PlanRecord = {
         id: randomUUID(),
         title,
@@ -400,7 +400,7 @@ export function syncSessionAgentPlan(
         updatedAt: now,
         archivedAt: null
       };
-      await writeRecords([...plans, created]);
+      await writeRecords([...room, created]);
       return projectPlan(created);
     }
 
@@ -435,7 +435,7 @@ export function syncSessionAgentPlan(
       return projectPlan(updated);
     }
 
-    if (plans.length >= 500) throw new Error('Plan catalog limit reached');
+    const room = await withRoomForPlan(plans);
     const created: PlanRecord = {
       id: randomUUID(),
       title,
@@ -450,16 +450,49 @@ export function syncSessionAgentPlan(
       updatedAt: now,
       archivedAt: null
     };
-    await writeRecords([...plans, created]);
+    await writeRecords([...room, created]);
     return projectPlan(created);
   });
+}
+
+/**
+ * The catalog holds at most this many Plans, live and archived together.
+ *
+ * Archived Plans are finished history and used to count forever, so a busy installation filled
+ * the catalog with them and every chat's update_plan was refused (live 2026-09-27: 470 archived,
+ * 30 live). When full, the oldest archived Plans that nothing references roll off in one batch.
+ */
+const MAX_PLANS = 500;
+/** How many archived Plans one rotation frees, so a full catalog is not pruned on every write. */
+const PLAN_ROTATION_BATCH = 25;
+
+/**
+ * Plans another owner still points at: a Plan Pin in a Thread, or the chat review heartbeat's
+ * current batch and sweep. Registered at startup, because both of those owners import this file.
+ */
+let planReferences: () => Promise<ReadonlySet<string>> = async () => new Set();
+
+export function setPlanReferenceGuard(guard: () => Promise<ReadonlySet<string>>): void {
+  planReferences = guard;
+}
+
+/** The catalog with room for one more Plan, or an error when only live/referenced Plans remain. */
+async function withRoomForPlan(plans: PlanRecord[]): Promise<PlanRecord[]> {
+  if (plans.length < MAX_PLANS) return plans;
+  const referenced = await planReferences();
+  const oldestArchived = plans
+    .filter(plan => plan.archivedAt !== null && !referenced.has(plan.id))
+    .sort((left, right) => (left.archivedAt ?? 0) - (right.archivedAt ?? 0) || left.createdAt - right.createdAt);
+  const needed = plans.length - MAX_PLANS + 1;
+  if (oldestArchived.length < needed) throw new Error('Plan catalog limit reached');
+  const retire = new Set(oldestArchived.slice(0, Math.max(needed, Math.min(PLAN_ROTATION_BATCH, oldestArchived.length))).map(plan => plan.id));
+  return plans.filter(plan => !retire.has(plan.id));
 }
 
 export function createPlan(input: PlanCreate): Promise<PlanView> {
   return queueMutation(async () => {
     const parsed = planCreateSchema.parse(input);
-    const plans = await readRecords();
-    if (plans.length >= 500) throw new Error('Plan catalog limit reached');
+    const plans = await withRoomForPlan(await readRecords());
     const now = Date.now();
     const plan: PlanRecord = {
       id: randomUUID(),
@@ -664,6 +697,7 @@ function planUpdateId(id: string): string {
 /** Test seam: Plans have no in-memory state beyond the mutation serializer. */
 export function resetPlansForTests(): void {
   mutations = Promise.resolve();
+  planReferences = async () => new Set();
   sessionBackfill = null;
   changeListeners.clear();
 }
