@@ -3,17 +3,16 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.2.5 source line, what remains the stable 2.2.2 Angel baseline, and the acceptance gates to use
+2.2.9 source line, what remains the public 2.2.8 baseline, and the acceptance gates to use
 before packaging, installing, or calling a change complete.
 
 ## Current product state
 
-- Current source package/app line: **2.2.5**, cumulative over the 2.2.4 dogfood line (itself based on the
-  frozen 2.2.3 source checkpoint).
-- Stable released/installed Angel baseline: **App + Companion 2.2.2**.
+- Current source package/app line: **2.2.9**, cumulative over the public **2.2.8** release.
+- Current public release baseline: **2.2.8**. The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.2.5 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.2.5 runtime.
+- A 2.2.9 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.2.9 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
@@ -91,7 +90,7 @@ for the mechanics.
 - Replies backfilled from older exchanges carry no provider time on the render-item page and are timed
   when recorded, so they can appear after later user messages.
 - Attribution recovery for a turn that spans an app restart is regression-tested but not yet proven in
-  installed dogfood.
+  an installed self-test.
 - Request Trail `running` is still written once at admission; nothing closes a finished Plan-creation
   request, so such records stay `running` (they no longer toast — see below).
 
@@ -114,7 +113,7 @@ for the mechanics.
 - Connector request/discovery and recognized tool invocation are separate evidence. Durable onboarding
   requires both on every required non-optional surface; app self-tests, tunnel probes, and broker-owned
   local workers cannot satisfy the external ChatGPT first-tool proof.
-- A safely refused recognized external tool call may prove routing for onboarding, but release dogfood
+- A safely refused recognized external tool call may prove routing for onboarding, but release self-test
   separately requires one harmless Eve tool to actually succeed.
 - Fresh installs keep `roots=[]` and Computer Use off. Filesystem access requires an explicit approved
   root; screen/control/clipboard permissions remain explicit opt-ins.
@@ -175,7 +174,7 @@ an upgrade ritual.
 
 ### 5. Verify installed bytes and live behavior
 
-Prove the installed package contains the current main/renderer bundle and packaged Vault, then dogfood:
+Prove the installed package contains the current main/renderer bundle and packaged Vault, then self-test:
 
 - Eve/Companion current-version handshake;
 - View / Pins / Plans visible;

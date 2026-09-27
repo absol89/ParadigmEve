@@ -27,7 +27,7 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-09-22**, including current working-tree changes. App/extension **2.2.5 development**,
+Source alignment: **2026-09-27**, including current working-tree changes. App/extension **2.2.9 development**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -1820,25 +1820,22 @@ renderer, so changing a runtime environment variable cannot unlock a driver excl
 installed build. Non-shipping packages append `-debug` or `-dev` to their artifact name; shipping
 keeps the canonical public filenames used by release/update flows.
 
-For the current local **2.2.5** Windows dogfood line, the laptop builds **x64 debug
-only** so the implemented GPT Chat agent lane remains available. Preserve the frozen 2.2.3 source
-tag and published/private installer evidence; do not overwrite that archived evidence while
-qualifying 2.2.5. A private Angel display copy may omit `-debug`
+For the current local **2.2.9** Windows self-test line, the laptop builds **x64 debug
+only** so the implemented GPT Chat agent lane remains available. Preserve prior release and installer
+evidence; do not overwrite archived evidence while qualifying 2.2.9. A private Angel display copy may omit `-debug`
 only when its filename remains visibly non-canonical (for example
 `ParadigmEve-2.2.4-x64-Angel-<hash>.exe`) and its recorded provenance still says the compiled
 flavor is debug. Never rename those bytes to the canonical shipping/update filename.
-Public shipping/arm64 artifacts are a separate release workflow and must never be substituted for
+Public arm64 artifacts are a separate release workflow and must never be substituted for
 the local debug artifact.
 
-The **2.2.5 line is cumulative over the 2.2.4 dogfood line and the frozen 2.2.3 source checkpoint**,
-which is itself cumulative over the stable 2.2.2 Angel release. Git provenance must say that plainly. Before
-packaging or claiming a 2.2.5 candidate, inspect
+The **2.2.9 line is cumulative over the public 2.2.8 release**. Git provenance must say that plainly. Before
+packaging or claiming a 2.2.9 candidate, inspect
 `git branch --show-current`, `git status`, recent history and the tracked release notes. A final
-release checkpoint must contain the frozen 2.2.3 baseline plus all accepted 2.2.4 and 2.2.5 work; package/
-version declarations or a stale directory name do not prove ancestry. Do not create/switch a release
+release checkpoint must contain the accepted cumulative 2.2.9 work over 2.2.8; package/version
+declarations or a stale directory name do not prove ancestry. Do not create/switch a release
 branch from stale HEAD while leaving the real cumulative work only in the working tree.
-`docs/release-notes/v2.2.3.md`, `docs/release-notes/v2.2.4.md` and `docs/release-notes/v2.2.5.md`
-belong in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
+`docs/release-notes/v2.2.9.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
 current. A dirty worktree is allowed during active integration, but it is not immutable release
 evidence and must be described honestly until checkpointed. `scripts/package.mjs` enforces this by
 default: packaging requires a clean target-version branch (or exact version tag) and tracked current
@@ -1884,12 +1881,18 @@ GitHub marks **Latest** in `absol89/ParadigmEve`, asked at most every six hours.
 is a compiled constant; never make it configurable or take it from a response. Pre-releases and
 drafts are never offered, so a published release reaches installations only when the
 maintainer promotes it to Latest. Asset URLs are built from the repository, a validated tag and
-the artifact name of this build's own flavor (`-debug` builds take `-debug` artifacts), and a
+the artifact candidates of this build's own flavor (`-debug` builds take `-debug` artifacts), and a
 redirect may land only on GitHub hosts. A Latest release without this flavor's artifact is
 offered as its release page. Download to a partial file, verify SHA-256 against the release's
 `SHA256SUMS.txt` before staging/adoption, and rehash at ordinary quit before handing off. Windows NSIS/Linux AppImage can apply automatically; macOS/DEB present the supported manual
 path, development does not stage. Explicit install may relaunch; ordinary quit does not force
 relaunch. Failed checks never replace a verified staged candidate with unverified bytes.
+
+**2.2.9 is the Windows filename bridge.** It continues to build and publish
+`ParadigmEve-Setup-<arch>-debug.exe`, while its updater accepts both
+`ParadigmEve-Windows-<arch>-debug.exe` and `ParadigmEve-Setup-<arch>-debug.exe`, preferring
+`Windows` when both are checksum-authorized. This is what lets 2.3.0 switch the public Windows
+filename without breaking automatic updates from 2.2.9.
 
 CI verifies supported OS families; native `release.yml` builds/smokes all six targets, then
 assembles installers, extension ZIP, native-sources archive and `SHA256SUMS.txt`. `publish.yml`
@@ -1897,6 +1900,8 @@ is dispatched **at the reviewed version tag**, calls that reusable build in the 
 requires `docs/release-notes/vX.Y.Z.md`, rechecks versions/privacy/hashes and refuses an existing
 release. A tag alone does not build/publish. An unpublished candidate can be built separately,
 but do not mix artifacts from another ref/run into a release.
+Current release CI sets **debug** explicitly. macOS ZIPs may remain candidate/test artifacts, but
+the public release surface and public checksum file omit those ZIPs and retain the macOS DMGs.
 
 `verify:notices` checks installed production dependencies against the lockfile and rejects
 missing license material or mismatched reviewed catalog hashes. Custom package updates cannot

@@ -49,7 +49,7 @@ Persisted pairing from yesterday cannot satisfy post-install recovery readiness 
 
 ## Browser repair authority
 
-The current 2.2.5 source line and the stable 2.2.2 Angel release both use **bridge protocol 15**.
+The current 2.2.9 source line and the public 2.2.8 release both use **bridge protocol 15**.
 Browser repair includes a final
 `/browser-repair/claim` fence immediately before Chrome mutation. The flow is:
 

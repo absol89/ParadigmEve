@@ -167,7 +167,7 @@ manual/product defect to fix.
 ## Relationship to Pins context
 
 Architecture decisions can be harvested into an Architecture Thread and brought into a fresh Eve
-conversation with `%architecture`; a broader `#eve` Quilt can bring several related Threads.
+conversation with `%Architecture`; a broader `#eve` Quilt can bring several related Threads.
 Pins are working context, not a replacement for the manual. Once a decision becomes durable
 operational policy, reconcile it into the vault so future recovery does not depend on finding one
 past chat.

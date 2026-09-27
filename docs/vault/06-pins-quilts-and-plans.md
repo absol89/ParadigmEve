@@ -153,7 +153,7 @@ does not expose Thread-prompt editing or Thread deletion; those remain separate 
 ## Threads and Quilts
 
 - A Thread is one specific durable work/context fabric and Pin home. In direct context references,
-  `%architecture` means activate that exact Thread/binding: its Thread prompt comes first, followed by its Pins.
+  `%Architecture` means activate that exact Thread/binding: its Thread prompt comes first, followed by its Pins.
 - Quilts group Threads broadly by theme/context. In direct context references, `#eve` means the wider Quilt
   and expands only the saved Pins across its currently pinned Threads. It does not activate member Thread prompts.
 - The built-in Expenses workflow has one narrow convenience alias: `#expenses` activates the linked
@@ -179,7 +179,7 @@ Fresh Eve conversations can explicitly bring durable Pins context forward from t
 
 ```text
 #eve             -> the Eve Quilt, across its pinned Threads
-%architecture    -> activate the one specific Architecture Thread/work-context binding
+%Architecture    -> activate the one specific Architecture Thread/work-context binding
 ```
 
 The sigils are callout syntax; the stored display names may remain plain `Eve` and `Architecture`.

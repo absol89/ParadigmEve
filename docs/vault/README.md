@@ -37,7 +37,7 @@ state lives, and what to check when something breaks**. See [Self-reliant AI and
 | [07 — Plugins and connector refresh](07-plugins-and-connector-refresh.md) | How do external MCP integrations run and how does ChatGPT schema refresh stay safe? |
 | [08 — Persistence, security and filesystem](08-persistence-security-and-filesystem.md) | Where does state live, how does the durable chat archive work, what is encrypted, and how are filesystem/tool boundaries enforced? |
 | [09 — Build, install, update and release](09-build-install-update-release.md) | How does a source tree become a package and how is a private build applied? |
-| [10 — Current state and acceptance](10-current-state-and-acceptance.md) | What is true in the current 2.2.5 source, what remains the stable 2.2.2 Angel baseline, and what must be proved before packaging or calling a change complete? |
+| [10 — Current state and acceptance](10-current-state-and-acceptance.md) | What is true in the current 2.2.9 source, what remains the public 2.2.8 baseline, and what must be proved before packaging or calling a change complete? |
 | [11 — Debugging playbooks](11-debugging-playbooks.md) | What evidence should be collected first for the recurring hard failure classes? |
 | [12 — Self-reliant AI and the manual](12-self-reliant-ai-and-the-manual.md) | How should Eve use the manual and current evidence without exposing internal documentation mechanics unless they help? |
 | [13 — Schedule workspace and Eve routines](13-schedules-and-routines.md) | How do Schedule, `#schedules`, `#myweek`, `#routines`, `%schedule`, `%evecron` and evidence-backed Started/Done fit together? |
@@ -56,7 +56,7 @@ Do not duplicate these when they already answer the narrow question well:
 - [`docs/product/feature-spec-template.md`](../product/feature-spec-template.md) — generic template-project authority, retention, provenance and external-context questions.
 - [`docs/product/expenses.md`](../product/expenses.md) — Expenses dogfood contract for recurring intake, canonical structured data and optional raw evidence.
 - [`docs/release-notes/v2.2.2.md`](../release-notes/v2.2.2.md) — release notes for the stable Angel release.
-- [`docs/release-notes/v2.2.5.md`](../release-notes/v2.2.5.md) — release notes for the current 2.2.5 line.
+- [`docs/release-notes/v2.2.9.md`](../release-notes/v2.2.9.md) — release notes for the current 2.2.9 line.
 - [`docs/product/README.md`](../product/README.md) — product direction and human goals.
 
 ## Reading convention

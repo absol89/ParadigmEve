@@ -12,9 +12,9 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current app source line is **2.2.5**. It is cumulative over the 2.2.4 dogfood line, which is itself
-based on the frozen 2.2.3 source checkpoint; the last stable Angel release is **App + Companion 2.2.2**, and the current bridge
-protocol is **15**. A 2.2.5 package is not coherent
+The current app source line is **2.2.9**. It is cumulative over the public **2.2.8** release; the
+earlier **App + Companion 2.2.2** Angel checkpoint remains part of the release history, and the current bridge
+protocol is **15**. A 2.2.9 package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other.
 
@@ -111,7 +111,7 @@ separate state/config location.
 The controller's recovery readiness fence is regression-tested against the current bridge protocol
 so a successful modern reconnect is not misreported as a failed reinstall.
 
-For a local debug dogfood build, pass the suffixed installer explicitly; the controller's no-argument default deliberately remains the canonical shipping filename:
+For a local debug self-test build, pass the suffixed installer explicitly; the controller's no-argument default deliberately remains the canonical shipping filename:
 
 ```powershell
 npm.cmd run dist:x64 -- --flavor debug
@@ -124,11 +124,11 @@ Do not rename a debug artifact to the canonical shipping filename just to satisf
 
 ### One canonical debug artifact per version
 
-A local dogfood build is published once per version as
+A local self-test build is published once per version as
 `ParadigmEve-<version>-windows-x64-debug.exe` in that version's folder of the local installer
-directory, with a `.sha` (SHA-256) and `.blockmap` beside it. Dogfood runs only that exact artifact,
+directory, with a `.sha` (SHA-256) and `.blockmap` beside it. Self-testing runs only that exact artifact,
 never a repo `release/` output, a temp copy or an old install path. A fix to a version that has not
-yet passed dogfood replaces its artifact; once a version has passed, its artifact stays untouched and
+yet passed self-test replaces its artifact; once a version has passed, its artifact stays untouched and
 new work goes to the next version. After installing, verify the running executable path and version and
 the Companion `version_name` build before judging behaviour.
 
@@ -173,22 +173,33 @@ For the current source line, live acceptance includes checks such as:
 - no obsolete connector-maintenance page hijacks the active chat;
 - Companion/browser reconnect proves the current build.
 
-## Private runtime updater
+## Runtime updater
 
-`src/main/update.ts` deliberately has **no network update authority**.
+`src/main/update.ts` checks two bounded authorities and chooses the higher newer version; the
+local feed wins a tie:
 
-It scans a local private feed:
+1. a local private feed:
 
 ```text
 <private-update-root>/<version>/SHA256SUMS.txt
 <private-update-root>/<version>/<fixed platform artifact>
 ```
 
+2. the release marked **Latest** in the fixed public repository
+   `absol89/ParadigmEve`. Drafts and pre-releases are never offered, and GitHub is checked at most
+   every six hours. Publishing a pre-release therefore does not distribute it to installed apps;
+   the maintainer's separate Latest promotion is the distribution gate.
+
 The updater:
 
 - accepts only direct version directories;
 - rejects symlink/junction authority;
-- chooses the artifact name from current platform/arch, never a remote manifest;
+- chooses artifact candidates from current platform/arch/build flavor, never a remote manifest;
+- on Windows 2.2.9, checks checksum authority for
+  `ParadigmEve-Windows-<arch><flavor>.exe` first and
+  `ParadigmEve-Setup-<arch><flavor>.exe` second. 2.2.9 itself still packages/publishes the
+  `Setup` name; this bridge lets 2.3.0 switch the public filename to `Windows` without stranding
+  2.2.9 installations;
 - verifies SHA-256 before staging;
 - rehashes staged bytes before install handoff;
 - never lets a missing/broken update replace the current app.
@@ -199,9 +210,11 @@ On packaged Windows, a staged private installer can be applied automatically at 
 
 The repository's release pipeline builds/smokes supported OS/architecture targets and assembles
 installers, the extension ZIP, checksums and native-source/legal artifacts. Public release additionally
-uses privacy/history and “do not overwrite existing release” gates. Local laptop development uses the
-`debug` flavor; `dev` requires the build wrapper to prove a public GitHub repository, and release CI
-uses `shipping`.
+uses privacy/history and “do not overwrite existing release” gates. Local laptop development and
+current release CI both use the `debug` flavor explicitly, so public candidate filenames retain
+`-debug`. macOS ZIPs may remain CI/test artifacts, but the public release and public
+`SHA256SUMS.txt` expose the DMGs instead. `dev` still requires the build wrapper to prove a public
+GitHub repository.
 
 ## Concurrency warning
 
