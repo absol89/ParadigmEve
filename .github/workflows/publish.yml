@@ -81,9 +81,7 @@ jobs:
             'ParadigmEve-Setup-x64-debug.exe',
             'ParadigmEve-Setup-arm64-debug.exe',
             'ParadigmEve-macOS-x64-debug.dmg',
-            'ParadigmEve-macOS-x64-debug.zip',
             'ParadigmEve-macOS-arm64-debug.dmg',
-            'ParadigmEve-macOS-arm64-debug.zip',
             'ParadigmEve-Linux-x64-debug.AppImage',
             'ParadigmEve-Linux-x64-debug.deb',
             'ParadigmEve-Linux-arm64-debug.AppImage',
@@ -174,6 +172,21 @@ jobs:
           cat SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
 
+      # The macOS ZIPs are built and checked above for CI coverage but are not release assets
+      # (the DMG is the public macOS download). Publish checksums only for files actually attached.
+      - name: Keep CI-only archives out of the public checksums
+        working-directory: publish
+        run: |
+          set -euo pipefail
+          grep -v -E '  ParadigmEve-macOS-(x64|arm64)-debug\.zip$' SHA256SUMS.txt > SHA256SUMS.public.txt
+          mv SHA256SUMS.public.txt SHA256SUMS.txt
+          if grep -q -E 'ParadigmEve-macOS-.*\.zip' SHA256SUMS.txt; then
+            echo "CI-only macOS ZIP still listed in the public checksums" >&2
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Publish the release
         run: |
           set -euo pipefail
@@ -185,9 +198,7 @@ jobs:
             publish/ParadigmEve-Setup-x64-debug.exe \
             publish/ParadigmEve-Setup-arm64-debug.exe \
             publish/ParadigmEve-macOS-x64-debug.dmg \
-            publish/ParadigmEve-macOS-x64-debug.zip \
             publish/ParadigmEve-macOS-arm64-debug.dmg \
-            publish/ParadigmEve-macOS-arm64-debug.zip \
             publish/ParadigmEve-Linux-x64-debug.AppImage \
             publish/ParadigmEve-Linux-x64-debug.deb \
             publish/ParadigmEve-Linux-arm64-debug.AppImage \

@@ -60,13 +60,15 @@ const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
  * Linux package-manager installs need root and macOS artifacts are intentionally unsigned, so
  * those installations only report that a newer build exists; they do not apply it themselves.
  */
+type StagedArtifact = { name: string; kind: 'installer' | 'appimage'; target: string };
+
 export function stagedArtifact(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
   appImage: string | undefined = process.env.APPIMAGE,
   packaged: boolean = app.isPackaged,
   flavor: BuildFlavor = BUILD_FLAVOR
-): { name: string; kind: 'installer' | 'appimage'; target: string } | null {
+): StagedArtifact | null {
   if (!packaged) return null;
   if (arch !== 'x64' && arch !== 'arm64') return null;
   // The suffix scripts/build-flavor.mjs gives the packages, so a build only ever takes an
@@ -77,6 +79,25 @@ export function stagedArtifact(
     return { name: `ParadigmEve-Linux-${arch}${suffix}.AppImage`, kind: 'appimage', target: appImage };
   }
   return null;
+}
+
+/**
+ * 2.2.9 is the Windows filename bridge. It still builds `Setup`, but its updater understands the
+ * future `Windows` spelling as well. Prefer `Windows` when both names are checksum-authorized so
+ * 2.3.0 can switch the public filename without stranding 2.2.9 installations.
+ */
+function stagedArtifacts(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  appImage: string | undefined = process.env.APPIMAGE,
+  packaged: boolean = app.isPackaged,
+  flavor: BuildFlavor = BUILD_FLAVOR
+): StagedArtifact[] {
+  const primary = stagedArtifact(platform, arch, appImage, packaged, flavor);
+  if (!primary) return [];
+  if (platform !== 'win32') return [primary];
+  const suffix = flavor === 'shipping' ? '' : `-${flavor}`;
+  return [{ ...primary, name: `ParadigmEve-Windows-${arch}${suffix}.exe` }, primary];
 }
 
 /** `v2.0.3` -> `2.0.3`, and anything that is not a stable release version -> null. */
@@ -261,23 +282,26 @@ async function runPass(): Promise<void> {
 
   const label = chosen.source === 'github' ? `release ${chosen.version} (GitHub Latest)` : `private build ${chosen.version}`;
   logInfo(`update: ${label} is available; this app is ${APP_VERSION}`);
-  const artifact = stagedArtifact();
-  if (!artifact) {
+  const artifacts = stagedArtifacts();
+  if (!artifacts.length) {
     staged = null;
     set({ latest: chosen.version, stage: 'idle', error: null, releaseUrl: chosen.releaseUrl });
     return;
   }
 
-  const expected = (await chosen.digests()).get(artifact.name);
-  if (!expected) {
-    if (chosen.source === 'private') throw new Error(`private build ${chosen.version} provides no digest for ${artifact.name}`);
+  const digests = await chosen.digests();
+  const artifact = artifacts.find((candidate) => digests.has(candidate.name));
+  if (!artifact) {
+    const names = artifacts.map((candidate) => candidate.name).join(' or ');
+    if (chosen.source === 'private') throw new Error(`private build ${chosen.version} provides no digest for ${names}`);
     // A release without this build's flavor is news, not a failure: this installation is shown
     // the release page and updates by hand.
     staged = null;
-    logWarn(`update: ${label} publishes no ${artifact.name}; offering the release page instead`);
+    logWarn(`update: ${label} publishes no ${names}; offering the release page instead`);
     set({ latest: chosen.version, stage: 'idle', error: null, releaseUrl: chosen.releaseUrl });
     return;
   }
+  const expected = digests.get(artifact.name)!;
   await chosen.present(artifact.name);
 
   if (staged?.version === chosen.version && staged.digest === expected && (await fileDigest(staged.file)) === expected) {

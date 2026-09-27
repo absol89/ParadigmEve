@@ -13,6 +13,17 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.2.9] — Clearer Windows downloads
+
+### Changed
+
+- 2.2.9 keeps publishing the existing `ParadigmEve-Setup-…` Windows installer names so 2.2.8 and older installs
+  can update into it normally.
+- The 2.2.9 updater also understands `ParadigmEve-Windows-…` and prefers that checksum-authorized name when
+  available, preparing 2.3.0 to switch the public Windows filename without breaking updates.
+- Public macOS release assets now use DMGs only; ZIPs remain CI/test artifacts rather than duplicate user downloads,
+  and the public `SHA256SUMS.txt` lists only attached assets.
+
 ## [2.2.8] — Steadier recovery, Pins prompts from Eve
 
 ### Fixed

@@ -63,6 +63,7 @@ const NEXT = '99.0.0';
 const REPLACEMENT = '99.0.1';
 // Tests run as the local default flavor, debug, so they take `-debug` artifacts.
 const WINDOWS_ASSET = `ParadigmEve-Setup-${process.arch}-debug.exe`;
+const FUTURE_WINDOWS_ASSET = `ParadigmEve-Windows-${process.arch}-debug.exe`;
 const APPIMAGE_ASSET = `ParadigmEve-Linux-${process.arch}-debug.AppImage`;
 const LATEST_API = 'https://api.github.com/repos/absol89/ParadigmEve/releases/latest';
 const DOWNLOADS = 'https://github.com/absol89/ParadigmEve/releases/download/';
@@ -325,6 +326,20 @@ describe('staging and applying verified local bytes', () => {
     expect(spawned).toEqual([{ file: staged, args: ['/S', '--updated'] }]);
   });
 
+  it('can take the future Windows filename when that is the authorized private artifact', async () => {
+    const body = 'future private build';
+    const { dir } = privateBuild({ body, sums: `${sha256(body)}  ${FUTURE_WINDOWS_ASSET}\n` });
+    rmSync(path.join(dir, WINDOWS_ASSET), { force: true });
+    writeFileSync(path.join(dir, FUTURE_WINDOWS_ASSET), body);
+    await asPlatform('win32', undefined, () => checkForUpdates());
+
+    const futureStaged = stagedPath(NEXT, FUTURE_WINDOWS_ASSET);
+    expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
+    expect(readFileSync(futureStaged, 'utf8')).toBe(body);
+    await applyStagedUpdate();
+    expect(spawned).toEqual([{ file: futureStaged, args: ['/S', '--updated'] }]);
+  });
+
   it('fails closed when artifact bytes do not match the local checksum authority', async () => {
     const body = 'same-size-private-build';
     privateBuild({ body, sums: `${sha256('different-private-build')}  ${WINDOWS_ASSET}\n` });
@@ -358,7 +373,8 @@ describe('staging and applying verified local bytes', () => {
     privateBuild({ sums: `${sha256('x')}  ParadigmEve-Extension.zip\n` });
     await asPlatform('win32', undefined, () => checkForUpdates());
     expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
-    expect(updateStatus().error).toContain(`provides no digest for ${WINDOWS_ASSET}`);
+    expect(updateStatus().error).toContain(WINDOWS_ASSET);
+    expect(updateStatus().error).toContain(FUTURE_WINDOWS_ASSET);
     expect(markInstallOnQuit()).toBe(false);
   });
 
@@ -570,6 +586,30 @@ describe('the GitHub Latest release of absol89/ParadigmEve', () => {
     expect(markInstallOnQuit()).toBe(true);
     await applyStagedUpdate();
     expect(spawned).toEqual([{ file: stagedPath(), args: ['/S', '--updated', '--force-run'] }]);
+  });
+
+  it('uses the future Windows asset when a later release publishes only that authorized name', async () => {
+    const body = 'future published installer';
+    latest = { tag: `v${NEXT}`, body, sums: `${sha256(body)}  ${FUTURE_WINDOWS_ASSET}\n` };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+
+    const futureStaged = stagedPath(NEXT, FUTURE_WINDOWS_ASSET);
+    expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
+    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${FUTURE_WINDOWS_ASSET}`]);
+    expect(readFileSync(futureStaged, 'utf8')).toBe(body);
+  });
+
+  it('prefers the future Windows asset when both Windows names are checksum-authorized', async () => {
+    const body = 'bridge release bytes';
+    latest = {
+      tag: `v${NEXT}`,
+      body,
+      sums: `${sha256(body)}  ${WINDOWS_ASSET}\n${sha256(body)}  ${FUTURE_WINDOWS_ASSET}\n`
+    };
+    await asPlatform('win32', undefined, () => checkForUpdates());
+
+    expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
+    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${FUTURE_WINDOWS_ASSET}`]);
   });
 
   it('asks only the fixed repository, whatever the release says about itself', async () => {

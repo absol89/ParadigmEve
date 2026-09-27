@@ -872,9 +872,7 @@ Load command 11
       'ParadigmEve-Setup-x64-debug.exe',
       'ParadigmEve-Setup-arm64-debug.exe',
       'ParadigmEve-macOS-x64-debug.dmg',
-      'ParadigmEve-macOS-x64-debug.zip',
       'ParadigmEve-macOS-arm64-debug.dmg',
-      'ParadigmEve-macOS-arm64-debug.zip',
       'ParadigmEve-Linux-x64-debug.AppImage',
       'ParadigmEve-Linux-x64-debug.deb',
       'ParadigmEve-Linux-arm64-debug.AppImage',
@@ -891,9 +889,24 @@ Load command 11
     const publishStep = publish.slice(publish.indexOf('      - name: Publish the release'));
     for (const artifact of artifacts) {
       expect(notes).toContain(`\`${artifact}\``);
-      expect(candidateUpload).toContain(artifact);
       expect(publishStep).toContain(artifact);
     }
+    for (const artifact of artifacts) expect(candidateUpload).toContain(artifact);
+    for (const ciOnly of ['ParadigmEve-macOS-x64-debug.zip', 'ParadigmEve-macOS-arm64-debug.zip']) {
+      expect(candidateUpload).toContain(ciOnly);
+      expect(checksumStep).toContain(ciOnly);
+      expect(publishStep).not.toContain(ciOnly);
+      expect(notes).not.toContain(`\`${ciOnly}\``);
+    }
+    // The candidate's checksums still cover the ZIPs, but after the full re-verify the public
+    // SHA256SUMS.txt drops them so it lists only attached release assets.
+    const reverify = publish.indexOf('      - name: Re-verify the checksums');
+    const publicStart = publish.indexOf('      - name: Keep CI-only archives out of the public checksums');
+    const publicSums = publish.slice(publicStart, publish.indexOf('      - name: Publish the release'));
+    expect(reverify).toBeGreaterThan(0);
+    expect(publicStart).toBeGreaterThan(reverify);
+    expect(publicSums).toContain("grep -v -E '  ParadigmEve-macOS-(x64|arm64)-debug\\.zip$' SHA256SUMS.txt > SHA256SUMS.public.txt");
+    expect(publicSums).toContain('sha256sum -c SHA256SUMS.txt');
     for (const artifact of artifacts.filter((artifact) => artifact !== 'SHA256SUMS.txt')) {
       expect(checksumStep).toContain(artifact);
     }
