@@ -34,7 +34,7 @@ function manager(): UnifiedExecProcessManager {
 }
 
 async function waitForProcess(instance: UnifiedExecProcessManager, processId: number): Promise<void> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 15_000; // Process start on a slow hosted runner; still inside the test timeout.
   while (Date.now() < deadline) {
     if (instance.listProcesses().some((item) => item.processId === processId)) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -43,7 +43,7 @@ async function waitForProcess(instance: UnifiedExecProcessManager, processId: nu
 }
 
 async function waitForFile(file: string): Promise<void> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 15_000; // Process start on a slow hosted runner; still inside the test timeout.
   while (Date.now() < deadline) {
     try {
       await access(file);

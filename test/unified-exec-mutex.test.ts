@@ -25,7 +25,7 @@ it('does not let a lock attempt barge ahead of an already queued waiter', async 
   });
 
   try {
-    const deadline = Date.now() + 2_000;
+    const deadline = Date.now() + 15_000; // Process start on a slow hosted runner; still inside the test timeout.
     while (!manager.listProcesses().some((entry) => entry.processId === processId)) {
       if (Date.now() >= deadline) throw new Error('process was not stored as live');
       await new Promise((resolve) => setTimeout(resolve, 10));

@@ -197,7 +197,9 @@ describe('runCommand', () => {
     const result = await launchCommand(shell!, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], cwd);
     expect(result.pid).toBeGreaterThan(0);
 
-    const deadline = Date.now() + 3000;
+    // A cold PowerShell start on a hosted Windows runner (arm64 especially) can exceed 3 s; a
+    // payload that never runs still fails well inside the 30 s test timeout.
+    const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       const text = await fs.readFile(marker, 'utf8').catch(() => '');
       if (text === 'launched') return;
