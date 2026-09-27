@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -86,6 +86,8 @@ $info = New-Object System.Diagnostics.ProcessStartInfo
 $info.FileName = $exe; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
 $info.RedirectStandardOutput = $true; $info.RedirectStandardInput = $true
 $owned = [System.Diagnostics.Process]::Start($info)
+# If the runner kills this probe on timeout, the test still stops the fixture before cleanup.
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'fixture.pid'), [string]$owned.Id)
 try {
   $handles = $owned.StandardOutput.ReadLine() -split ','
   $id = [int64]$handles[0]; $popupId = [int64]$handles[1]; $unrelatedId = [int64]$handles[2]
@@ -192,14 +194,24 @@ try {
 `;
       const file = path.join(dir, 'probe.ps1');
       writeFileSync(file, helper + probe, 'utf8');
+      // About 5 s on a desktop; hosted runners have taken over 35 s for the same UIA and app-catalog work.
       const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], {
-        encoding: 'utf8', timeout: 35_000, windowsHide: true
+        encoding: 'utf8', timeout: 120_000, windowsHide: true
       });
       expect(result.error, result.stderr).toBeUndefined();
       expect(result.status, result.stderr + result.stdout).toBe(0);
       expect(result.stdout).toContain('WINDOWS_ACCESSIBILITY_PROBE_OK');
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      // A probe killed by its timeout leaves the fixture running and its .exe locked. Stop it, so
+      // cleanup cannot replace the real failure with EPERM.
+      const pidFile = path.join(dir, 'fixture.pid');
+      if (existsSync(pidFile)) {
+        const pid = Number(readFileSync(pidFile, 'utf8'));
+        if (Number.isInteger(pid) && pid > 0) {
+          spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 10_000 });
+        }
+      }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
-  }, 40_000);
+  }, 130_000);
 });
