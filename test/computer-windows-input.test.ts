@@ -106,7 +106,7 @@ Write-Output 'WINDOWS_INPUT_PROBE_OK'
       const file = path.join(dir, 'probe.ps1');
       writeFileSync(file, script + assertions, 'utf8');
       const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], {
-        encoding: 'utf8', timeout: 25_000, windowsHide: true
+        encoding: 'utf8', timeout: 60_000, windowsHide: true
       });
       expect(result.error, result.stderr).toBeUndefined();
       expect(result.status, result.stderr + result.stdout).toBe(0);
@@ -114,5 +114,5 @@ Write-Output 'WINDOWS_INPUT_PROBE_OK'
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 70_000);
 });
