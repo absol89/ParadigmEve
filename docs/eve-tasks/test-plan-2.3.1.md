@@ -24,7 +24,7 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
 
 | Phase | Eve (real UI) | Claude (automation) | Gate |
 | --- | --- | --- | --- |
-| 0 Freeze candidate | — | Open | Open |
+| 0 Freeze candidate | — | Done | Green (`b19ab11`) |
 | 1 Install & startup | Open | Open | Open |
 | 2 Turn lifecycle / Goal / finish | Open | Done for ported fixes | Open |
 | 3 Composer & attachments | Open | Done for ported fixes | Open |
@@ -71,10 +71,10 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
   - [x] Transient safety refusal retried once; finish tool offered to any model (`9d6f654`) —
     `test/mcp-user-instructions.test.ts`.
 - [-] No further ports: the user set the first candidate to priorities 1 and 2 only.
-- [ ] Full automated suite, `npm run typecheck`, `npm run verify:privacy`, `npm run verify:notices` pass on the
-  candidate commit.
-- [ ] Candidate commit recorded in the Candidate log.
-- [ ] Windows x64 debug installer built from that exact commit into
+- [x] On `b19ab11`: full suite 5,190 passed (plus `computer` 20 and `mcp-shutdown` 2), `npm run typecheck`,
+  `npm run verify:privacy` and `npm run verify:notices` pass.
+- [x] Candidate commit recorded in the Candidate log.
+- [x] Windows x64 debug installer built from that exact commit into
   `ParadigmEve-installers\2.3.1\ParadigmEve-2.3.1-windows-x64-debug.exe`, with `.sha` and `.blockmap`.
 
 **Gate:** candidate frozen. The branch changes only to fix a confirmed failure. No tag or publish is part of this plan.
@@ -124,8 +124,10 @@ same ladder again, while only the Core smoke set and phases touched by the fix a
 
 **Claude**
 
-- [ ] Packaging and install smoke (`dist:x64` smoke checks, NSIS Vault check).
-- [ ] Migration tests, version agreement (package, lock, manifest, `APP_VERSION`), and a log scan after Eve's run.
+- [x] Packaging smoke on `b19ab11`: resources and native runtimes verified for 2.3.1, 16 Vault pages verified inside
+  the NSIS installer.
+- [x] Version agreement (package, lock, manifest, `APP_VERSION`) — `test/packaging.test.ts` on `b19ab11`.
+- [ ] Migration check and log scan after Eve's install run.
 
 **Gate:** no startup crash, migration loss, duplicated state or broken reconnect.
 
@@ -438,7 +440,7 @@ If a fix touches any of these areas, expand testing to that whole phase.
 
 | Candidate | Commit | Installer SHA-256 | Built by | Date | Notes |
 | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | No 2.3.1 candidate frozen yet |
+| 2.3.1-c1 | `b19ab11` | `546129c30f2e155ffd793004b40558ceb8e1b9d8aa6c8fe8c5b833776b2f42a3` | Claude | 2026-09-28 | Priorities 1 and 2. Later commits that touch only this checklist do not change the candidate. |
 
 ## Bug log
 
