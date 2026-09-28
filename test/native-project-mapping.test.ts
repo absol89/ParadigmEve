@@ -89,6 +89,15 @@ describe('the app side of the mapping', () => {
     expect(unlinked.nativeEntryConversationId).toBeUndefined();
   });
 
+  it('keeps a pasted Project chat link when its chat cannot join the project', async () => {
+    const project = await addProject(path.join(approved, 'first'));
+    const entry = await createSession({ title: 'Native Project entry', conversationId: ENTRY_CHAT });
+    await fs.rm(path.join(approved, 'first'), { recursive: true });
+    expect(await linkNativeProject(project.id, `https://chatgpt.com/g/${NATIVE}/c/${ENTRY_CHAT}`))
+      .toMatchObject({ nativeProjectId: NATIVE, nativeEntryConversationId: ENTRY_CHAT });
+    expect((await getSession(entry.id))?.projectId).toBeUndefined();
+  });
+
   it('files an observed chat under the linked project without overriding any existing or inherited binding', async () => {
     const first = await addProject(path.join(approved, 'first'));
     const second = await addProject(path.join(approved, 'second'));

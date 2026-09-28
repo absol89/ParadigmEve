@@ -7,7 +7,7 @@ import { getConfig } from './config.js';
 import { resolvePath } from './sandbox.js';
 import { bindSessionProject, findSessionByConversation, getSession } from './session/store.js';
 import { nativeChatGptProjectId, nativeProjectConversationId, type LocalProject } from '../shared/projects.js';
-import { logInfo } from './logger.js';
+import { logInfo, logWarn } from './logger.js';
 
 const projectSchema = z.object({ id: z.string().uuid(), name: z.string().min(1).max(160), path: z.string().min(1).max(32768), createdAt: z.number().finite().nonnegative(), ungrouped: z.boolean().optional(), template: z.object({ id: z.literal('expenses'), version: z.literal(1), quiltId: z.string().uuid() }).strict().optional(), nativeProjectId: z.string().regex(/^g-p-[0-9a-f]{32}$/).optional(), nativeEntryConversationId: z.string().regex(/^[0-9a-f-]{8,64}$/).optional() });
 const catalogSchema = z.array(projectSchema).max(200);
@@ -84,10 +84,15 @@ export function linkNativeProject(projectId: string, value: string | null): Prom
   mutations = operation.catch(() => undefined);
   return operation;
 }
+/** Best effort: the link is already committed, so a chat that cannot join it never fails the link. */
 async function bindNativeEntryConversation(projectId: string, conversationId: string): Promise<void> {
-  const session = await findSessionByConversation(conversationId);
-  if (!session || session.projectId || session.origin?.fromSessionId) return;
-  await bindSessionProject(session.id, projectId);
+  try {
+    const session = await findSessionByConversation(conversationId);
+    if (!session || session.projectId || session.origin?.fromSessionId) return;
+    await assignSessionProject(session.id, projectId);
+  } catch (err) {
+    logWarn(`project ${projectId}: linked ChatGPT Project chat ${conversationId} could not join it — ${(err as Error).message}`);
+  }
 }
 /** The local project explicitly linked to this native ChatGPT Project, if any. */
 export async function projectForNativeProject(nativeProjectId: string | null): Promise<LocalProject | null> {
