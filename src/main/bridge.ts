@@ -3027,6 +3027,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (typeof body['destinationMessageId'] === 'string') {
       const entry = continuationByToken(checkpointToken);
       if (!entry) return json(res, 409, { error: 'no_such_continuation' }, origin);
+      // A fresh ChatGPT conversation gets its provider id slightly after the new-chat surface
+      // appears. During that gap the replacement page can still report chat A's cached route
+      // while already containing the marked RESUME message. That observation is not a terminal
+      // session-layer refusal: leave the continuation claimed and let the page reconcile again
+      // once the provider route names chat B.
+      if (id === entry.from) {
+        return json(res, 409, { error: 'resume_destination_pending', retryable: true }, origin);
+      }
       const bound = await bindContinuationDestinationMessageNow(
         checkpointToken,
         id,

@@ -1,3 +1,9 @@
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createInterface } from 'node:readline';
 import { describe, expect, it } from 'vitest';
 import {
   act,
@@ -11,6 +17,58 @@ import {
   waitForWindow
 } from '../src/main/computer/index.js';
 import { IS_WINDOWS } from './helpers.js';
+
+async function ownedCaptureWindow(): Promise<{ id: number; close: () => Promise<void> }> {
+  const dir = mkdtempSync(path.join(tmpdir(), 'paradigmeve-capture-test-'));
+  const executable = path.join(dir, 'fixture.exe');
+  const framework = path.join(process.env.windir ?? 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319');
+  const compile = spawnSync(
+    path.join(framework, 'csc.exe'),
+    [
+      '/nologo',
+      '/r:System.Xaml.dll',
+      ...['WindowsBase.dll', 'PresentationCore.dll', 'PresentationFramework.dll'].map((name) => `/r:${path.join(framework, 'WPF', name)}`),
+      `/out:${executable}`,
+      path.resolve('test/fixtures/windows-desktop/background-capture.cs')
+    ],
+    { encoding: 'utf8', windowsHide: true, timeout: 30_000 }
+  );
+  if (compile.status !== 0) {
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(`Could not compile owned capture fixture: ${compile.stderr || compile.stdout}`);
+  }
+  const child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+  const next = await Promise.race([
+    lines.next(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Owned capture fixture startup timed out')), 10_000))
+  ]);
+  if (next.done) throw new Error(`Owned capture fixture exited before startup: ${stderr}`);
+  const id = Number(next.value);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    child.kill();
+    await once(child, 'exit');
+    throw new Error(`Owned capture fixture was not ready: ${next.value}`);
+  }
+  return {
+    id,
+    close: async () => {
+      if (child.exitCode === null) {
+        child.stdin.write('quit\n');
+        await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 5_000))]);
+        if (child.exitCode === null) {
+          child.kill();
+          await once(child, 'exit');
+        }
+      }
+      // Windows can keep a just-executed fixture image locked briefly even after process exit.
+      // Leave this tiny successful-run directory to the OS temp lifecycle rather than making
+      // file-unlink timing part of the WGC assertion.
+    }
+  };
+}
 
 describe.runIf(IS_WINDOWS)('desktop helper', () => {
   // A hosted runner can have no visible desktop window at all, and getWindowState is right
@@ -64,13 +122,16 @@ describe.runIf(IS_WINDOWS)('desktop helper', () => {
     await expect(screenshot({ window: 999_999_999, maxWidth: 320 })).rejects.toThrow(
       /WINDOW_NOT_FOUND: window 999999999 is no longer open/
     );
-    const { windows } = await listWindows();
-    const background = windows.find((w) => w.state !== 'minimized');
-    if (!background) return;
-    const shot = await screenshot({ window: background.id, maxWidth: 320 });
-    expect(shot.width).toBeGreaterThan(0);
-    expect(typeof shot.focused).toBe('boolean');
-  });
+    const fixture = await ownedCaptureWindow();
+    try {
+      const shot = await screenshot({ window: fixture.id, maxWidth: 320 });
+      expect(shot.width).toBeGreaterThan(0);
+      expect(shot.captureMode).toBe('window');
+      expect(shot.focused).toBe(false);
+    } finally {
+      await fixture.close();
+    }
+  }, 40_000);
 
   it('does not move foreground focus while observing a background window', async () => {
     const before = (await activeWindow()).window;
