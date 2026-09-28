@@ -24,7 +24,7 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
 
 | Phase | Eve (real UI) | Claude (automation) | Gate |
 | --- | --- | --- | --- |
-| 0 Freeze candidate | — | Done | Green (`ae4be915`) |
+| 0 Freeze candidate | — | Done | Green (`dd8864c9`, c3) |
 | 1 Install & startup | Open | Open | Open |
 | 2 Turn lifecycle / Goal / finish | Open | Done for ported fixes | Open |
 | 3 Composer & attachments | Open | Done for ported fixes | Open |
@@ -444,6 +444,7 @@ If a fix touches any of these areas, expand testing to that whole phase.
 | --- | --- | --- | --- | --- | --- |
 | 2.3.1-c1 | `b19ab11` | `546129c30f2e155ffd793004b40558ceb8e1b9d8aa6c8fe8c5b833776b2f42a3` | Claude | 2026-09-28 | Priorities 1 and 2. Later commits that touch only this checklist do not change the candidate. |
 | 2.3.1-c2 | `ae4be915` | `f0732069bcf6498aec70583ce447bbd357334c0172fa8be88bdf1cccce08daf7` | Eve | 2026-09-28 | Rebuild after the Compact & Resume race fix, deterministic Windows WGC fixture, and fresh CI-timeout fixes. Exact head passed `npm run verify`; packaged runtime and NSIS Vault smoke passed. |
+| 2.3.1-c3 | `dd8864c9` | `e0bf5a570a52b12838b8e3fbd4994c015112ea38e5cde9423855a1d963b72a51` | Claude | 2026-09-28 | Rebuild with the native ChatGPT Project mapping fixes (`45b3dc3`, `dd8864c`): old Project chats from chatgpt.com join their Eve project folder, and a Project link survives an entry chat that cannot join. Full suite 5,192 passed plus `computer` and `mcp-shutdown`; typecheck, privacy and notices passed; packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c3`. Rerun the Core smoke set and Phase 4. |
 
 ## Bug log
 
