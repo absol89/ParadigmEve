@@ -3070,6 +3070,38 @@ describe('delivering a bootstrap', () => {
     expect(pendingCommands().some((entry) => entry.id === command.id)).toBe(false);
   });
 
+  it('keeps a resume open when the fresh-chat marker is first observed with chat A cached', async () => {
+    // Dogfood 2026-09-28: ChatGPT rendered the marked RESUME message before its fresh-chat
+    // provider route became authoritative. The content script therefore sent chat A as the
+    // destination for one pass. Treating that transient observation as a terminal commit
+    // refusal aborted the continuation; milliseconds later the real chat B was recorded as a
+    // shadow session and its tool calls were unattributed.
+    await pair();
+    const chatA = 'a3a3a3a3-2222-4333-8444-555555555555';
+    const chatB = 'b3b3b3b3-2222-4333-8444-555555555555';
+    const { sessionId, token } = await compactedSession(chatA, 'the brief for the delayed route');
+    const command = queueResume(sessionId, token)!;
+    expect((await redeem(command.id, 'tab-b3')).text).toContain('the brief for the delayed route');
+    expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
+
+    const stale = await request('POST', '/compact', {
+      body: { conversationId: chatA, token, destinationMessageId: 'm-b3-marked-resume' }
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ error: 'resume_destination_pending', retryable: true });
+    expect(continuationByToken(token)?.state).toBe('claimed');
+    expect((await getSession(sessionId))?.conversationId).toBe(chatA);
+    expect(pendingCommands().some((entry) => entry.id === command.id)).toBe(true);
+
+    const committed = await request('POST', '/compact', {
+      body: { conversationId: chatB, token, destinationMessageId: 'm-b3-marked-resume' }
+    });
+    expect(committed.status).toBe(200);
+    expect(committed.body.committed).toBe(true);
+    expect((await getSession(sessionId))?.conversationId).toBe(chatB);
+  });
+
   it('arms the resumed chat the moment the session moves onto it', async () => {
     // 2026-09-02: chat B's first two calls each waited out the identity window as nobody's,
     // and the unattributed incident had no suspect to reload because B had never reported a
