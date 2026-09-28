@@ -24,7 +24,7 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
 
 | Phase | Eve (real UI) | Claude (automation) | Gate |
 | --- | --- | --- | --- |
-| 0 Freeze candidate | — | Done | Green (`b19ab11`) |
+| 0 Freeze candidate | — | Done | Green (`ae4be915`) |
 | 1 Install & startup | Open | Open | Open |
 | 2 Turn lifecycle / Goal / finish | Open | Done for ported fixes | Open |
 | 3 Composer & attachments | Open | Done for ported fixes | Open |
@@ -71,11 +71,13 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
   - [x] Transient safety refusal retried once; finish tool offered to any model (`9d6f654`) —
     `test/mcp-user-instructions.test.ts`.
 - [-] No further ports: the user set the first candidate to priorities 1 and 2 only.
-- [x] On `b19ab11`: full suite 5,190 passed (plus `computer` 20 and `mcp-shutdown` 2), `npm run typecheck`,
-  `npm run verify:privacy` and `npm run verify:notices` pass.
+- [x] On `ae4be915`: full suite 5,191 passed (plus `computer` 20 and `mcp-shutdown` 2), `npm run typecheck`,
+  `npm run verify:privacy` and `npm run verify:notices` pass. This head includes the reproduced Compact & Resume
+  provider-id race fix, deterministic owned Windows capture fixture, and CI-sized timeout adjustments.
 - [x] Candidate commit recorded in the Candidate log.
 - [x] Windows x64 debug installer built from that exact commit into
-  `ParadigmEve-installers\2.3.1\ParadigmEve-2.3.1-windows-x64-debug.exe`, with `.sha` and `.blockmap`.
+  `ParadigmEve-installers\2.3.1\c2\ParadigmEve-2.3.1-windows-x64-debug.exe`, with `.sha`, `.blockmap`, and
+  `COMMIT.txt`; c1 remains preserved separately.
 
 **Gate:** candidate frozen. The branch changes only to fix a confirmed failure. No tag or publish is part of this plan.
 
@@ -441,6 +443,7 @@ If a fix touches any of these areas, expand testing to that whole phase.
 | Candidate | Commit | Installer SHA-256 | Built by | Date | Notes |
 | --- | --- | --- | --- | --- | --- |
 | 2.3.1-c1 | `b19ab11` | `546129c30f2e155ffd793004b40558ceb8e1b9d8aa6c8fe8c5b833776b2f42a3` | Claude | 2026-09-28 | Priorities 1 and 2. Later commits that touch only this checklist do not change the candidate. |
+| 2.3.1-c2 | `ae4be915` | `f0732069bcf6498aec70583ce447bbd357334c0172fa8be88bdf1cccce08daf7` | Eve | 2026-09-28 | Rebuild after the Compact & Resume race fix, deterministic Windows WGC fixture, and fresh CI-timeout fixes. Exact head passed `npm run verify`; packaged runtime and NSIS Vault smoke passed. |
 
 ## Bug log
 
