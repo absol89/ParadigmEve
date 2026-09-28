@@ -812,7 +812,7 @@ Load command 11
   it('fails release-existence preflight closed on API errors instead of spending packaging runners', async () => {
     const options = {
       repository: 'owner/repo',
-      tag: 'v2.3.0',
+      tag: 'v2.3.1',
       token: 'test-token'
     };
     await expect(assertReleaseAbsent({

@@ -135,7 +135,7 @@ jobs:
           test -f "$dmg"
           test -f "$zip"
           hdiutil verify "$dmg"
-          # ZIP containers cannot be code-signed, but DMGs can. v2.3.0 explicitly promises a
+          # ZIP containers cannot be code-signed, but DMGs can. v2.3.1 explicitly promises a
           # publisher-unsigned Mac distribution, so reject a signed outer disk image as well as
           # the .app. Fail closed if codesign itself errors for any reason other than the expected
           # unsigned-object result.
