@@ -32,6 +32,17 @@ operation.
   older-ChatGPT fallback, and setup asks users to keep the suggested app name.
 - The prime is told worker reports arrive only with tool results, to collect pending ones with one status call
   before finalizing, and to say review is pending rather than claim delegated verification is complete.
+- Goal and Loop: the helper sees how many Eve tool calls each turn made (never names, arguments or results unless
+  the user opted into tool detail), so it stops asking for work that already ran, and `session_finish` no longer
+  stays held after a continuation worked through with tools only. Hold calls are not counted as work.
+- Goal and Loop keep working when the saved helper model or reasoning is no longer offered: the helper uses
+  ChatGPT's current selection, logs it once and names the model it actually runs. A saved worker default the
+  account does not offer is dropped the same way, with a note in the spawn result; explicit requests stay strict,
+  and GPT-5.6 Sol keeps its shipped handle.
+- Goal/Loop helper chats no longer report request origins, so they stop opening empty "ChatGPT session" rows, and a
+  finished helper tab still closes after ChatGPT moves it to `/c/<id>?temporary-chat=true`.
+- Core instructions explain ChatGPT's transient "couldn't determine the safety status" refusal (retry the identical
+  call once), and `session_finish` is offered to any model when the user prompt asks for it.
 
 ## [2.3.0] — Windows-named installers, a Companion that updates itself when idle
 

@@ -496,6 +496,30 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     expect(h.remove.mock.calls).toEqual([[7]]);
     expect(h.create.mock.invocationCallOrder[0]).toBeLessThan(h.remove.mock.invocationCallOrder[0]!);
   });
+  it('closes a finished planner that ChatGPT moved to /c/<id>?temporary-chat=true after Send', async () => {
+    // Ported from Chat On Steroids 2.1.17: the routed helper URL drops cos-input, so its elected
+    // tab is the only locator, and the page's exact decision proof is the only close authority.
+    const work = { id: secondId, conversationId: null };
+    const cleanup = { id: firstId, conversationId: null, owner: '7:planner:1', lifetime: 'temporary-planner', close: true, replacements: [work] };
+    const h = await worker([work as typeof cleanup, cleanup], undefined, { inputOpenings: { [firstId]: { tab: 7, stage: 'ready' } } });
+    const routed = 'https://chatgpt.com/c/f0f00020-2222-4222-8222-222222222222?temporary-chat=true';
+    h.tabs.push({ id: 7, url: routed });
+    await h.authorizeDocument({ tab: { id: 7 }, documentId: 'planner', frameId: 0, url: routed }, { navigationEpoch: 1 });
+    h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-close-temporary-planner' ? { safe: true } as never : { ok: true });
+    await h.maintain();
+    expect(h.remove.mock.calls).toEqual([[7]]);
+  });
+  it('never closes an ordinary chat through a planner election, even when the page reports it safe', async () => {
+    const work = { id: secondId, conversationId: null };
+    const cleanup = { id: firstId, conversationId: null, owner: '7:planner:1', lifetime: 'temporary-planner', close: true, replacements: [work] };
+    const h = await worker([work as typeof cleanup, cleanup], undefined, { inputOpenings: { [firstId]: { tab: 7, stage: 'ready' } } });
+    const ordinary = 'https://chatgpt.com/c/f0f00020-2222-4222-8222-222222222222';
+    h.tabs.push({ id: 7, url: ordinary });
+    await h.authorizeDocument({ tab: { id: 7 }, documentId: 'planner', frameId: 0, url: ordinary }, { navigationEpoch: 1 });
+    h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-close-temporary-planner' ? { safe: true } as never : { ok: true });
+    await h.maintain();
+    expect(h.remove).not.toHaveBeenCalledWith(7);
+  });
   it.each(['draft', 'replacement-closed', 'navigation'])('keeps a retiring planner when %s prevents safe handoff', async reason => {
     const work = { id: secondId, conversationId: null };
     const h = await worker([{ id: firstId, conversationId: null, owner: '7:planner:1', lifetime: 'temporary-planner', close: true, replacements: [work] } as any]);

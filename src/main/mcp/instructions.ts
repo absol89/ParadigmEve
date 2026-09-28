@@ -75,6 +75,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
     `; ${surfaceDefinition('plugins').connectorName} for enabled external apps and services.`,
     `Host: ${host}. Instance: ${connectorName}. Roots: ${roots}`,
     ctx.readOnly ? 'The local tools are read-only.' : 'Use the tools listed in this conversation.',
+    '"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before Eve receives the call. It is not an Eve failure or a missing capability: retry the identical call once.',
     'An approved root may be the parent of the project. Use the exact project path and keep every intermediate folder; do not guess a missing project level.',
     'Paths may be virtual under the roots above or absolute native paths inside them. Once this chat has a project, later paths may be relative to it. Use a full path to select another project.',
     connectedWorkGuidance(connectorName),
@@ -151,7 +152,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
   );
   if (ctx.exposedFinishTool ?? config.ui.finishTool) lines.push(
     '',
-    'session_finish is for Astra only when the user prompt explicitly requests it. Follow that prompt’s finish timing after implementation; complete newly delivered work. It is not a plan/progress update or a way to collect queued tasks. Workers use agents action=finish instead.'
+    'Use session_finish only when the user prompt explicitly requests it, with any model. Follow that prompt’s finish timing after implementation; complete newly delivered work. It is not a plan/progress update or a way to collect queued tasks. Workers use agents action=finish instead.'
   );
   if (desktop && (caps.screen || caps.control || caps.clipboardRead || caps.clipboardWrite)) {
     lines.push('', '# Computer use', desktopInstructions(ctx, platform, false));

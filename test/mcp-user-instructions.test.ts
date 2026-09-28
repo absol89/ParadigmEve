@@ -74,6 +74,15 @@ afterEach(() => {
 });
 
 describe('the user’s own connector instructions', () => {
+  it('explains the transient ChatGPT safety refusal and offers session_finish to any model', () => {
+    // Ported from Chat On Steroids 2.1.17 (#555, #556).
+    const text = serverInstructions({ ...ctx, exposedFinishTool: true } as any, 'core', 'win32');
+    expect(text).toContain('"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before Eve receives the call');
+    expect(text).toContain('retry the identical call once');
+    expect(text).toContain('Use session_finish only when the user prompt explicitly requests it, with any model.');
+    expect(text).not.toMatch(/Astra only/);
+  });
+
   it('projects a Unicode per-install name into Core guidance and work_context while keeping serverName stable', async () => {
     const config = getConfig();
     await saveConfig({ ...config, mcp: { ...config.mcp, connectorName: 'Eva Å' } });

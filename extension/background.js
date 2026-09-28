@@ -2186,6 +2186,10 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
       }
     }
     if (input.close === true && input.lifetime === 'temporary-planner') {
+      // After Send, ChatGPT moves a temporary chat to /c/<id>?temporary-chat=true without the
+      // cos-input marker, so fall back to the tab this helper was elected to. Only the page's
+      // exact decision proof below can make it closable (Chat On Steroids 2.1.17).
+      if (!tab && elected?.tab != null) tab = tabs.find(candidate => candidate.id === elected.tab);
       if (!tab || tab.pinned) continue;
       // Preserve the warm planner until newer app work has an actual browser tab.
       // Terminal input metadata is the lifecycle authority, including after restart;
@@ -2200,7 +2204,10 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
         const proof = await tabReply(tab.id, { type: 'clf-close-temporary-planner', id: input.id, owner: input.owner }, { documentId });
         const current = await chrome.tabs.get(tab.id);
         const successor = replacement ? await chrome.tabs.get(replacement.id) : null;
-        if (proof?.safe === true && ownsDocument(source) && !current.pinned && !current.pendingUrl && String(current.url || '').includes(marker) &&
+        const currentUrl = new URL(current.url || 'about:blank');
+        const helperUrl = String(current.url || '').includes(marker) ||
+          (currentUrl.searchParams.get('temporary-chat') === 'true' && /^\/c\/[0-9a-f-]{36}$/i.test(currentUrl.pathname));
+        if (proof?.safe === true && ownsDocument(source) && !current.pinned && !current.pendingUrl && helperUrl &&
             (input.retire === true || (successor && replacements.some(next => matchesInput(next, successor))))) await chrome.tabs.remove(tab.id);
       } catch { /* only the exact still-owned temporary document may close */ }
       continue;

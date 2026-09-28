@@ -1327,7 +1327,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
   }));
   if (reg.ctx.exposedFinishTool ?? getConfig().ui.finishTool === true) {
     reg.register('session_finish', toolDeclaration('session_finish', () => ({
-      description: 'For Astra only, when explicitly requested by a user prompt. Call near actual completion, after implementing the requested work. Receives queued instructions; complete and verify them before calling again. Do not use for progress updates or queue collection. While HELD with no work remaining, call to wait. Each call waits at most 25 seconds.',
+      description: 'Only when explicitly requested by a user prompt, with any model. Call near actual completion, after implementing the requested work. Receives queued instructions; complete and verify them before calling again. Do not use for progress updates or queue collection. While HELD with no work remaining, call to wait. Each call waits at most 25 seconds.',
       inputSchema: z.object({ summary: z.string().min(1).max(1000) }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
     })), async ({ summary }) => {
@@ -1573,7 +1573,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
             if (!accepted) staged.rollback();
             throw error;
           }
-          const { created, becamePrime, runId } = staged;
+          const { created, becamePrime, runId, defaultNotes } = staged;
           // Browser tabs are a publication side effect, never part of planning. They become
           // visible only after the exact broker revision above is durable.
           requestWorkerBootstraps(created.map((worker) => worker.id), runId);
@@ -1588,6 +1588,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                   (becamePrime ? `This conversation is now the ${agentName()} conversation for worker run ${runId}. ` : '') +
                   `${created.length} worker(s) matched: ${created.map((info) => `${info.id} (${info.label}, ${info.state}${info.model ? `, model ${info.model}` : ''}${info.reasoningEffort ? `, reasoning ${info.reasoningEffort}` : ''})`).join(', ')}. ` +
                   (invited.length > 0 ? 'New worker chats are opening with their briefs already in them. ' : '') +
+                  (defaultNotes?.length ? `${defaultNotes.join(' ')} ` : '') +
                   (sleeping.length > 0
                     ? `${sleeping.map((worker) => worker.id).join(', ')} already finished that earlier piece and is sleeping in its existing chat; wake it with action=message instead of spawning a duplicate. `
                     : '') +

@@ -1308,6 +1308,8 @@ export interface SpawnResult {
   /** True on the call that established the run, so the caller can say what happened. */
   becamePrime: boolean;
   runId: string;
+  /** App defaults from Settings that this account does not offer, and what was used instead. */
+  defaultNotes?: string[];
 }
 
 /**
@@ -1428,6 +1430,40 @@ function normalizeReasoningEffort(index: number, value: string | null | undefine
     );
   }
   return effort;
+}
+
+/**
+ * Drops an app default that the observed catalog does not offer, instead of failing the spawn.
+ *
+ * Explicit tool arguments stay strict (validateWorkerModel below). A default saved in Settings is
+ * different: once it stops matching the account's catalog, every spawn failed until someone found
+ * the setting. The worker then runs with ChatGPT's current selection; its row records no model,
+ * so nothing claims a model it does not run, and the caller is told (Chat On Steroids 2.1.17).
+ * GPT-5.6 Sol keeps its shipped handle, which the native picker confirms.
+ */
+function usableDefaults(
+  model: string | null, effort: ReasoningEffort | null, defaultModel: boolean, defaultEffort: boolean,
+  models: ChatModelOption[], notes: Set<string>
+): { model: string | null; effort: ReasoningEffort | null } {
+  if (!models.length) return { model, effort };
+  const matching = (id: string) => models.filter(choice => choice.id === id || choice.aliases?.includes(id));
+  if (model === CHATGPT_SOL_MODEL_ID) {
+    const shipped = CHATGPT_SETTINGS_MODELS.find(choice => choice.id === CHATGPT_SOL_MODEL_ID)!;
+    if (defaultEffort && effort && !shipped.efforts.includes(effort) && !matching(model).some(choice => choice.efforts.includes(effort!))) {
+      notes.add(`The default worker reasoning "${effort}" saved in Settings is not offered for GPT-5.6 Sol, so workers use ChatGPT's current reasoning. Choose an available level in Settings → Agents & automation.`);
+      effort = null;
+    }
+    return { model, effort };
+  }
+  if (defaultModel && model && matching(model).length !== 1) {
+    notes.add(`The default worker model "${model}" saved in Settings is not offered by this ChatGPT account, so workers use ChatGPT's current model. Choose an available model in Settings → Agents & automation.`);
+    model = null;
+  }
+  if (defaultEffort && effort && !(model ? matching(model) : models).some(choice => choice.efforts.includes(effort!))) {
+    notes.add(`The default worker reasoning "${effort}" saved in Settings is not offered${model ? ` for model "${model}"` : ''} by this ChatGPT account, so workers use ChatGPT's current reasoning. Choose an available level in Settings → Agents & automation.`);
+    effort = null;
+  }
+  return { model, effort };
 }
 
 /** Reject known-invalid choices before reserving any workers or opening browser documents. */
@@ -1552,6 +1588,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   }
 
   const observedModels = getChatModels().models;
+  const defaultNotes = new Set<string>();
   const planned = input.workers.map((worker, index) => {
     const task = worker.task.trim();
     if (!task) throw new AgentError(`Worker ${index + 1} has no task. Every worker needs one.`);
@@ -1560,8 +1597,11 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
     if (label.length > MAX_LABEL_CHARS) {
       throw new AgentError(`Worker ${index + 1}'s label is too long (limit ${MAX_LABEL_CHARS} characters)`);
     }
-    const model = normalizeModel(index, worker.model === undefined ? getConfig().multiAgent.defaultModel : worker.model);
-    const reasoningEffort = normalizeReasoningEffort(index, worker.reasoning_effort === undefined ? getConfig().multiAgent.defaultReasoning : worker.reasoning_effort);
+    const requested = usableDefaults(
+      normalizeModel(index, worker.model === undefined ? getConfig().multiAgent.defaultModel : worker.model),
+      normalizeReasoningEffort(index, worker.reasoning_effort === undefined ? getConfig().multiAgent.defaultReasoning : worker.reasoning_effort),
+      worker.model === undefined, worker.reasoning_effort === undefined, observedModels, defaultNotes);
+    const model = requested.model, reasoningEffort = requested.effort;
     validateWorkerModel(index, model, reasoningEffort, observedModels);
     // Composed once, here, and stored as *the* task. Everything downstream — the bootstrap
     // the browser types, the repeated-spawn match, the status table, the snapshot — then
@@ -1640,7 +1680,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
     const runId = activeRun.runId;
     if (!options.deferDelivery) requestWorkerBootstraps(repeat.map((agent) => agent.info.id), run.runId);
     logInfo(`multi-agent: repeated spawn matched ${repeat.length} existing worker(s) in run ${runId}`);
-    return { created: repeat.map((agent) => ({ ...agent.info })), becamePrime, runId };
+    return { created: repeat.map((agent) => ({ ...agent.info })), becamePrime, runId, ...(defaultNotes.size ? { defaultNotes: [...defaultNotes] } : {}) };
   }
 
   if (live.length + planned.length > max) {
@@ -1707,7 +1747,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   );
   changed();
   if (!options.deferDelivery) requestWorkerBootstraps(created.map((agent) => agent.id), activeRun.runId);
-  return { created, becamePrime, runId: activeRun.runId };
+  return { created, becamePrime, runId: activeRun.runId, ...(defaultNotes.size ? { defaultNotes: [...defaultNotes] } : {}) };
 }
 
 /**
