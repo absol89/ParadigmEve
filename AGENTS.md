@@ -1224,6 +1224,16 @@ identity changes, do not stop. Once committed, the one outbox receipt owns injec
 delivery and must not be duplicated. Persisted `activeTurnId` after restart is candidate evidence,
 not live Stop authority; a stop still requires separate current proof/authorization.
 
+The exact-agent restart wake for an open turn is delivered only after the reloaded page has taken
+that turn over, and Stop and the page's own completion wait for the same takeover. So a page that
+never takes it over would strand the chat. `watchRestartRecovery()` (bridge) therefore rechecks the
+wake every five minutes and escalates **once** to Compact & Resume, which acts on what ChatGPT shows
+now and needs no takeover, when the exact wake is still queued, the session is still on that chat
+and turn, no local call is in flight, no page reports a generation, and no continuation is open.
+Its ticket carries `recovery: true`. That page never clicks Stop: if ChatGPT is answering it
+refuses and withdraws the unsent ticket. The commit moves the session and Eve identity to a new
+chat, which retires the wake.
+
 **Recovery rule: click Restore → reuse the restored tabs → resume the interrupted Prime.**
 The restored tabs are interactable and carry Eve's working connection. Browser/system-crash
 recovery leaves the Companion alone: Chrome loads it when Chrome restarts. Reinstall/update first

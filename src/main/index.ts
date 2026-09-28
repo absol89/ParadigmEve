@@ -14,7 +14,7 @@ import { flushLogBeforeExit, initLogFile, logError, logInfo, logWarn, snapshotLo
 import { unifiedExecManager } from './codex/manager.js';
 import { initSecretsPath } from './secrets.js';
 import { pluginManager } from './plugins/manager.js';
-import { beginCompanionRecoveryAttempt, beginCompanionRecoveryEvidence, browserChatTabOpen, browserConversationOpen, companionRecoveryReady, onCompanionProtocolMismatch, setBrowserOpener, setCompanionBuild, setBrowserWorkArea, shutdownBridge, startBridge } from './bridge.js';
+import { beginCompanionRecoveryAttempt, beginCompanionRecoveryEvidence, browserChatTabOpen, browserConversationOpen, companionRecoveryReady, onCompanionProtocolMismatch, setBrowserOpener, setCompanionBuild, setBrowserWorkArea, shutdownBridge, startBridge, watchRestartRecovery } from './bridge.js';
 import { companionBuild, extensionDir } from './extension-path.js';
 import {
   findSessionByConversation,
@@ -195,6 +195,8 @@ function prepareRestartRecovery(): Promise<RestartRecoveryPlan | null> {
   const work = requested
     .then((plan) => {
       restartRecoveryPlan = plan;
+      // A wake its replacement page never admits escalates once to Compact & Resume.
+      if (plan) watchRestartRecovery(plan);
       return plan;
     })
     .catch((error) => {

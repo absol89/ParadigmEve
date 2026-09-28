@@ -43,6 +43,10 @@ operation.
   finished helper tab still closes after ChatGPT moves it to `/c/<id>?temporary-chat=true`.
 - Core instructions explain ChatGPT's transient "couldn't determine the safety status" refusal (retry the identical
   call once), and `session_finish` is offered to any model when the user prompt asks for it.
+- A restart wake the reloaded ChatGPT page never admits no longer strands Eve's chat. After five minutes with the
+  wake still queued for the same open turn, no local call running and no generation reported, the app starts one
+  Compact & Resume for that chat. That ticket never clicks Stop: if ChatGPT is still answering, the page refuses and
+  withdraws it.
 
 ## [2.3.0] — Windows-named installers, a Companion that updates itself when idle
 

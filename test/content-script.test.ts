@@ -13985,6 +13985,48 @@ describe('the context meter and automatic compaction', () => {
     expect(live.sent.filter((message) => message.type === 'focus_tab')).toHaveLength(1);
   });
 
+  it.each([true, false])('runs a restart-recovery ticket without ever clicking Stop (generating: %s)', async generating => {
+    let sendState = 'not-attempted';
+    let filed = false;
+    const recoveryTicket = () => ({ job: { ...automaticTicket(sendState).job, automatic: false, recovery: true } });
+    live = await harness(undefined, {
+      activity: () => withContext(20_000, settings(), filed ? recoveryTicket() : {}),
+      compact: (message: Record<string, unknown>) => {
+        if (message.cancel) return { ok: true, data: { cancelled: true } };
+        if (message.sourceAttempt) {
+          sendState = 'attempted-unresolved';
+          return { ok: true, data: { allowed: true } };
+        }
+        if (message.sourceDispatch) {
+          sendState = 'dispatched-unresolved';
+          return { ok: true, data: { armed: true } };
+        }
+        return { ok: true, data: { started: false, token: 'tok-recovery-1', prompt: 'write the brief and call save_handoff', ...recoveryTicket() } };
+      }
+    });
+    live.hook.injectControl();
+    if (generating) startGenerating(live.document);
+    filed = true;
+    const stop = live.document.querySelector('[data-testid="stop-button"]') as HTMLButtonElement | null;
+    let stopped = false;
+    stop?.addEventListener('click', () => { stopped = true; stopGenerating(live!.document); });
+
+    await live.hook.pullActivity();
+    await settle();
+
+    expect(stopped).toBe(false);
+    expect(live.sent.filter((message) => message.type === 'focus_tab')).toHaveLength(1);
+    if (generating) {
+      // ChatGPT is answering, so the chat is alive: refuse, and withdraw the unsent ticket.
+      expect(startedCompactions(live)).toEqual([]);
+      expect(live.sent).toContainEqual(expect.objectContaining({ type: 'compact', cancel: true }));
+    } else {
+      expect(startedCompactions(live)).toHaveLength(1);
+      expect(live.sent).toContainEqual(expect.objectContaining({ type: 'compact', token: 'tok-recovery-1', sourceAttempt: true }));
+      expect(live.sent).not.toContainEqual(expect.objectContaining({ type: 'compact', cancel: true }));
+    }
+  });
+
   /**
    * Mid-tool-call is mid-turn, and is explicitly allowed. Local calls are not raced: the
    * same settle barrier a manual press goes through waits for them before anything is typed.

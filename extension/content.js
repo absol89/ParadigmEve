@@ -8400,7 +8400,7 @@
     stagePanel.body.hidden = view.body === '';
   }
 
-  async function startCompact(automatic = false) {
+  async function startCompact(automatic = false, noInterrupt = false) {
     const forId = conversationId;
     const forEpoch = epoch;
     // A refused duplicate must not revoke the run already awaiting an app reply.
@@ -8512,13 +8512,15 @@
     // summary of a machine state that had already moved on.
     // Automatic runs stop the turn exactly like a press does. They are *started* by a turn
     // being in flight, so refusing to interrupt one would refuse every automatic run.
-    const barrier = await stopAndSettle(forId, forEpoch, forRun, sameTurn);
+    const barrier = await stopAndSettle(forId, forEpoch, forRun, sameTurn, noInterrupt);
     // Every await above can span an SPA navigation. `conversationId` is mutable global
     // state, so continuing after A -> B would otherwise post B to /compact and type A's
     // handoff instruction into B's composer. The new chat's reset already owns its UI state;
     // a stale continuation must not repaint or cancel anything there.
     if (!current()) return;
     if (barrier) {
+      // Nothing was sent, so a refused recovery ticket is withdrawn rather than left to expire.
+      if (noInterrupt) void ask({ type: 'compact', conversationId: forId, cancel: true }).catch(() => undefined);
       pressedAt = 0;
       nativeBusy = false;
       nativePhase = '';
@@ -8576,12 +8578,14 @@
     if (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved') return;
     if (!alive || conversationId !== forId || epoch !== forEpoch || CLF_DOM.conversationId() !== forId) return;
     const automatic = job.automatic === true;
+    // A stuck restart recovery's ticket may move the chat but must never stop a running turn.
+    const recovery = job.recovery === true;
     // An automatic ticket is the app's decision about a chat nobody is necessarily looking at,
     // and a hidden tab is a throttled one: on 2026-09-03 the source page froze solid while the
     // brief was being written in the background. Raising it first is presentation, not
     // authority — a refused focus changes nothing about the ticket.
-    if (automatic) void ask({ type: 'focus_tab', conversationId: forId }).catch(() => undefined);
-    await startCompact(automatic);
+    if (automatic || recovery) void ask({ type: 'focus_tab', conversationId: forId }).catch(() => undefined);
+    await startCompact(automatic, recovery);
   }
 
   /**
@@ -8596,7 +8600,7 @@
    * not hear about it, and the handoff would describe a machine that no longer exists by
    * the time the fresh chat reads it.
    */
-  async function stopAndSettle(forId, forEpoch, forRun, sameTurn) {
+  async function stopAndSettle(forId, forEpoch, forRun, sameTurn, noInterrupt = false) {
     const current = () =>
       alive &&
       nativeRun === forRun &&
@@ -8608,6 +8612,7 @@
     // hand or automatically: this happens because the turn is long, not because it is
     // nearly done.
     if (CLF_DOM.generating()) {
+      if (noInterrupt) return 'ChatGPT is still answering in this chat. Restart recovery never stops a running turn, so nothing was compacted.';
       nativePhase = 'interrupting';
       renderControl();
       const stop = CLF_DOM.stopButton();
