@@ -61,6 +61,11 @@ it('searches whole settings sections without empty headings, orphaned controls o
   expect(document.getElementById('settingsSearchEmpty')!.hidden).toBe(true);
 });
 
+it('refreshes the open chat when the durable Plan projection changes', () => {
+  expect(chatSource).toContain('api.onSessionChanged(scheduleReload);');
+  expect(chatSource).toContain('api.onPlansChanged(scheduleReload);');
+});
+
 it('exposes Goal tool context as an opt-in setting wired into the existing form', () => {
   const toggle = document.getElementById('goalIncludeToolCalls') as HTMLInputElement;
   expect(toggle.type).toBe('checkbox');

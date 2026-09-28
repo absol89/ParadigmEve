@@ -111,6 +111,22 @@ it('keeps checked-off Plan items readable without striking through their text', 
   expect(completedTitleRule).not.toContain('line-through');
 });
 
+it('exposes durable task descriptions in the Plans surface', () => {
+  const host = document.getElementById('host')!;
+  createPlansLibrary({
+    host,
+    plans: [{
+      id: 'plan-details',
+      title: 'Described checklist',
+      lifecycle: 'live',
+      items: [{ id: 'step-details', title: 'Inspect the source', status: 'in-progress', detail: 'Read the exact session and repository state.' }]
+    }]
+  });
+  const row = host.querySelector<HTMLElement>('.plans-item')!;
+  expect(row.querySelector('.plans-item-detail')?.textContent).toBe('Read the exact session and repository state.');
+  expect(row.querySelector('.plans-item-detail')?.getAttribute('title')).toBe('Read the exact session and repository state.');
+});
+
 it('gives installed Computer Use exact semantic handles for a Thread-owned Plan source and user signoff', () => {
   const host = document.getElementById('host')!;
   const onOpenSource = vi.fn();

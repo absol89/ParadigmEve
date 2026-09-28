@@ -721,6 +721,7 @@ function planCard(plan: PlanView): PlanViewModel {
       id: item.id,
       title: item.text,
       status: item.status === 'in_progress' ? 'in-progress' as const : item.status,
+      ...(item.details ? { detail: item.details } : {}),
       ...(item.priority ? { priority: item.priority } : {})
     })),
     currentItemId: plan.currentItemId,

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readDurableStrict, writeDurableNow } from './durable.js';
 import { agentPlanUpdateSchema, type AgentPlanUpdate } from '../shared/agent-plan.js';
-import { indexedSessions, readSessionPlan } from './session/store.js';
+import { indexedSessions, readSessionPlan, updateSessionPlan } from './session/store.js';
 import {
   PLAN_CATALOG_MAX,
   planCatalogSchema,
@@ -44,6 +44,48 @@ async function writeRecords(plans: PlanRecord[]): Promise<void> {
   for (const listener of changeListeners) listener();
 }
 
+/**
+ * Keep the originating session-local Agent Plan in lockstep with a human Plan mutation.
+ *
+ * `update_plan` writes session `plan.json` first and this catalog is its durable projection, but
+ * the Plans screen is also an editor. Human edits therefore have to flow back to the exact source
+ * conversation instead of leaving the inline chat card with an older checklist forever. Only the
+ * first-class `kind: plan` provenance is eligible; ambiguous/backfilled Plans deliberately fail
+ * closed because there is no exact conversation to mutate.
+ */
+async function syncOriginatingSessionPlan(plan: PlanRecord, clear = false): Promise<boolean> {
+  const provenance = plan.provenance;
+  if (provenance?.kind !== 'plan' || !provenance.sessionId || !provenance.conversationId) return true;
+
+  const current = await readSessionPlan(provenance.sessionId);
+  if (!current) return true;
+  const startedAt = Math.max(Date.now(), current.updatedAt + 1);
+  if (clear) {
+    return updateSessionPlan(provenance.sessionId, provenance.conversationId, { plan: [] }, startedAt);
+  }
+
+  // Preserve the chat-side explanation/details while replacing the checklist and its statuses.
+  // Text is the only shared identity available in the legacy AgentPlan schema; consume duplicate
+  // text matches in order so repeated step labels remain deterministic.
+  const detailsByText = new Map<string, string[]>();
+  for (const item of current.plan) {
+    if (!item.details) continue;
+    const values = detailsByText.get(item.step) ?? [];
+    values.push(item.details);
+    detailsByText.set(item.step, values);
+  }
+  return updateSessionPlan(provenance.sessionId, provenance.conversationId, {
+    explanation: current.explanation,
+    plan: plan.items.map(item => {
+      const details = item.details ?? detailsByText.get(item.text)?.shift();
+      return {
+        step: item.text,
+        status: item.status === 'done' ? 'completed' : item.status === 'in_progress' ? 'in_progress' : 'pending',
+        ...(details ? { details } : {})
+      };
+    })
+  }, startedAt);
+}
 function projectPlan(plan: PlanRecord, audience: PlanAudience = 'human', sourceSettled = false): PlanView {
   const activeItems = plan.items.filter(item => item.status !== 'done');
   const reminderTimes = activeItems.flatMap(item => item.reminderAt === undefined ? [] : [item.reminderAt]);
@@ -144,10 +186,14 @@ function replacementItems(current: PlanRecord, updates: PlanItemUpdate[]): PlanI
   const existing = new Map(current.items.map(item => [item.id, item]));
   return updates.map(update => {
     if (update.id !== undefined && !existing.has(update.id)) throw new Error('Plan item does not belong to this Plan');
+    const previous = update.id === undefined ? undefined : existing.get(update.id);
     return {
       id: update.id ?? randomUUID(),
       text: update.text,
       status: update.status,
+      ...(update.details === undefined
+        ? previous?.details === undefined ? {} : { details: previous.details }
+        : update.details ? { details: update.details } : {}),
       ...(update.priority === undefined ? {} : { priority: update.priority }),
       ...(update.reminderAt === undefined ? {} : { reminderAt: update.reminderAt })
     };
@@ -343,14 +389,18 @@ function agentStatus(status: AgentPlanUpdate['plan'][number]['status']): PlanIte
 }
 
 function sameAgentDocument(plan: PlanRecord, update: AgentPlanUpdate): boolean {
-  return sameAgentSteps(plan, update) && plan.items.every((item, index) => item.status === agentStatus(update.plan[index]!.status));
+  return sameAgentSteps(plan, update) && plan.items.every((item, index) =>
+    item.status === agentStatus(update.plan[index]!.status) &&
+    (item.details ?? '') === (update.plan[index]!.details ?? '')
+  );
 }
 
 function agentItems(current: PlanRecord | null, update: AgentPlanUpdate): PlanItem[] {
   return update.plan.map((step, index) => ({
     id: current?.items[index]?.id ?? randomUUID(),
     text: step.step,
-    status: agentStatus(step.status)
+    status: agentStatus(step.status),
+    ...(step.details ? { details: step.details } : {})
   }));
 }
 
@@ -542,6 +592,9 @@ export function updatePlan(id: string, patch: PlanPatch, expectedUpdatedAt: numb
       ...(parsedPatch.items === undefined ? {} : { items: replacementItems(current, parsedPatch.items) }),
       updatedAt: nextTimestamp(current.updatedAt)
     };
+    if (parsedPatch.items !== undefined && !(await syncOriginatingSessionPlan(updated))) {
+      throw new Error('Plan source changed; refresh before editing it again');
+    }
     const next = [...plans];
     next[index] = updated;
     await writeRecords(next);
@@ -649,6 +702,7 @@ export async function cancelPlan(id: string): Promise<PlanView> {
     }
     const at = nextTimestamp(current.updatedAt);
     const cancelled: PlanRecord = { ...current, archivedAt: at, cancelledAt: at, updatedAt: at };
+    if (!(await syncOriginatingSessionPlan(cancelled, true))) throw new Error('Plan source changed; refresh before editing it again');
     const next = [...plans];
     next[index] = cancelled;
     await writeRecords(next);
@@ -677,6 +731,7 @@ export async function archivePlan(id: string): Promise<PlanView> {
       : current.items;
     const archivedAt = nextTimestamp(current.updatedAt);
     const archived: PlanRecord = { ...current, items, archivedAt, updatedAt: archivedAt };
+    if (!(await syncOriginatingSessionPlan(archived, true))) throw new Error('Plan source changed; refresh before editing it again');
     const next = [...plans];
     next[index] = archived;
     await writeRecords(next);

@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import { archivePlan, backfillSessionPlans, cancelPlan, createPlan, listPlans, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
-import { appendEvent, createSession, initSessionStore, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
+import { appendEvent, createSession, initSessionStore, readSessionPlan, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
 
 let directory: string;
 
@@ -48,6 +48,97 @@ it('backfills durable pre-upgrade session plans and fails closed on Compact & Re
   const updatedAt = library.live[0]!.updatedAt;
   await backfillSessionPlans();
   expect((await listPlans()).live).toEqual([expect.objectContaining({ id: library.live[0]!.id, updatedAt })]);
+});
+
+it('round-trips Plan task descriptions and Plans-surface status changes to the exact source chat', async () => {
+  const session = await createSession({ title: 'Shared Plan', conversationId: 'shared-plan-chat' });
+  expect(await updateSessionPlan(session.id, 'shared-plan-chat', {
+    explanation: 'Keep both editing surfaces synchronized.',
+    plan: [
+      { step: 'Inspect the source', status: 'in_progress', details: 'Read the exact session and repository state.' },
+      { step: 'Verify the mutation', status: 'pending', details: 'Confirm the same checklist is visible from both surfaces.' }
+    ]
+  }, Date.now())).toBe(true);
+
+  const projected = await syncSessionAgentPlan(session.id, 'shared-plan-chat', session.title, {
+    explanation: 'Keep both editing surfaces synchronized.',
+    plan: [
+      { step: 'Inspect the source', status: 'in_progress', details: 'Read the exact session and repository state.' },
+      { step: 'Verify the mutation', status: 'pending', details: 'Confirm the same checklist is visible from both surfaces.' }
+    ]
+  });
+  expect(projected).not.toBeNull();
+  expect(projected!.items[0]!.details).toBe('Read the exact session and repository state.');
+
+  const completed = await updatePlan(projected!.id, {
+    items: projected!.items.map(item => ({ ...item, status: item.id === projected!.items[0]!.id ? 'done' as const : item.status }))
+  }, projected!.updatedAt);
+  expect(completed.items[0]!.status).toBe('done');
+  expect(completed.items[0]!.details).toBe('Read the exact session and repository state.');
+  const sourceAfterPlanEdit = await readSessionPlan(session.id);
+  expect(sourceAfterPlanEdit?.plan).toEqual([
+    { step: 'Inspect the source', status: 'completed', details: 'Read the exact session and repository state.' },
+    { step: 'Verify the mutation', status: 'pending', details: 'Confirm the same checklist is visible from both surfaces.' }
+  ]);
+
+  const chatUpdate = await updateSessionPlan(session.id, 'shared-plan-chat', {
+    explanation: 'Keep both editing surfaces synchronized.',
+    plan: [
+      { step: 'Inspect the source', status: 'completed', details: 'Updated from chat.' },
+      { step: 'Verify the mutation', status: 'completed', details: 'Confirm the same checklist is visible from both surfaces.' }
+    ]
+  }, Date.now() + 10);
+  expect(chatUpdate).toBe(true);
+  const refreshed = await syncSessionAgentPlan(session.id, 'shared-plan-chat', session.title, {
+    explanation: 'Keep both editing surfaces synchronized.',
+    plan: [
+      { step: 'Inspect the source', status: 'completed', details: 'Updated from chat.' },
+      { step: 'Verify the mutation', status: 'completed', details: 'Confirm the same checklist is visible from both surfaces.' }
+    ]
+  });
+  expect(refreshed!.id).toBe(projected!.id);
+  expect(refreshed!.items.map(item => item.status)).toEqual(['done', 'done']);
+  expect(refreshed!.items[0]!.details).toBe('Updated from chat.');
+});
+
+it('fails closed when Plans provenance is ambiguous and never guesses the current conversation', async () => {
+  const session = await createSession({ title: 'Ambiguous Plan', conversationId: 'chat-a' });
+  expect(await updateSessionPlan(session.id, 'chat-a', {
+    plan: [{ step: 'Do not guess', status: 'in_progress', details: 'This must not be routed to another chat.' }]
+  }, Date.now())).toBe(true);
+  const projected = await syncSessionAgentPlan(session.id, null, session.title, {
+    plan: [{ step: 'Do not guess', status: 'in_progress', details: 'This must not be routed to another chat.' }]
+  });
+  expect(projected!.provenance).not.toHaveProperty('conversationId');
+  const changed = await updatePlan(projected!.id, {
+    items: [{ ...projected!.items[0]!, status: 'done' }]
+  }, projected!.updatedAt);
+  expect(changed.items[0]!.status).toBe('done');
+  expect((await readSessionPlan(session.id))?.plan[0]?.status)
+    .toBe('in_progress');
+});
+
+it('clears the exact source chat when a shared Plan is cancelled or archived', async () => {
+  const session = await createSession({ title: 'Lifecycle Plan', conversationId: 'lifecycle-chat' });
+  const source = {
+    plan: [{ step: 'Finish the work', status: 'completed' as const, details: 'Already verified.' }]
+  };
+  expect(await updateSessionPlan(session.id, 'lifecycle-chat', source, Date.now())).toBe(true);
+  const projected = await syncSessionAgentPlan(session.id, 'lifecycle-chat', session.title, source);
+  const archived = await archivePlan(projected!.id);
+  expect(archived.section).toBe('done');
+  expect((await readSessionPlan(session.id))?.plan).toEqual([]);
+
+  const cancelSession = await createSession({ title: 'Cancelled Lifecycle Plan', conversationId: 'cancel-lifecycle-chat' });
+  const cancelSource = {
+    plan: [{ step: 'Cancel this work', status: 'in_progress' as const, details: 'No longer needed.' }]
+  };
+  expect(await updateSessionPlan(cancelSession.id, 'cancel-lifecycle-chat', cancelSource, Date.now())).toBe(true);
+  const second = await syncSessionAgentPlan(cancelSession.id, 'cancel-lifecycle-chat', cancelSession.title, cancelSource);
+  const cancelled = await cancelPlan(second!.id);
+  expect(cancelled.section).toBe('done');
+  expect(cancelled.cancelledAt).toBe(cancelled.archivedAt);
+  expect((await readSessionPlan(cancelSession.id))?.plan).toEqual([]);
 });
 
 it('never rolls first-class progress or archive state back from stale legacy session plan backfill', async () => {
@@ -482,7 +573,7 @@ it('archives legacy report-only debt from Eve Activity without requiring that sy
   await syncSessionAgentPlan(worker.id, 'worker-handoff-chat', worker.title, planUpdate);
 
   const before = (await listPlans()).live.find(plan => plan.provenance?.sessionId === worker.id)!;
-  const finishAt = Math.max(Date.now(), before.updatedAt + 1);
+  const finishAt = Math.max(Date.now() + 100, before.updatedAt + 1);
   await appendEvent(worker.id, {
     time: finishAt + 1,
     source: 'app',
