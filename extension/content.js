@@ -866,6 +866,8 @@
   }
   const GOAL_MARKER_INSTRUCTION = '\n\nFor this Goal session only: at the end of each final reply, write exactly one separate last line: [[PARADIGMEVE_GOAL:COMPLETE]] if the entire requested task is finished, or [[PARADIGMEVE_GOAL:CONTINUE]] if requested work remains. Do not claim completion for partial work. If user input is required, explain it and omit both markers.';
   function rememberUserSend() {
+    // A retired recorder's listeners are removed, but one already dispatching must not act.
+    if (!alive) return;
     // Only the explicitly selected offline Goal backend changes the user prompt.
     const composer = CLF_DOM.composer();
     if (goalConfig?.backend === 'templates' && (goalConfig?.enabled === true || (!goalConfig?.own && !!goalConfig?.objective)) && goalConfig?.mode !== 'loop' && !desktopDecision) {
@@ -892,17 +894,18 @@
       at: Date.now()
     };
   }
-  document.addEventListener('click', (event) => {
+  // Registered through `listen` so a retired recorder stops capturing native sends.
+  listen(document, 'click', (event) => {
     const button = CLF_DOM.sendButton?.();
     if (button && event.target && button.contains(event.target)) rememberUserSend();
   }, true);
-  document.addEventListener('submit', (event) => {
+  listen(document, 'submit', (event) => {
     const composer = CLF_DOM.composer();
     if (composer && event.target && typeof event.target.contains === 'function' && event.target.contains(composer)) {
       rememberUserSend();
     }
   }, true);
-  document.addEventListener('keydown', (event) => {
+  listen(document, 'keydown', (event) => {
     const composer = CLF_DOM.composer();
     if (
       composer &&
@@ -1848,9 +1851,19 @@
     if (!latest) return null;
     // Any node of the logical turn, not just the first. ChatGPT splits one answer across
     // sibling sections, and a new sibling appended to a section that was already there is
-    // still this generation writing.
+    // still this generation writing. A new node above this generation's own question is not:
+    // ChatGPT can remount the previous answer right after Send, and adopting it closed the
+    // new turn within milliseconds with that answer's end_turn (chat-on-steroids 2.1.17). The
+    // check is per node: a reused page turn id groups a new section below the question with an
+    // old one above it, and only the old one is a remount.
+    const question = turns.findLastIndex(turn => turn.role === 'user');
+    const questionNode = openedUserMessageId && question >= 0 &&
+      CLF_DOM.messagesIn(turns[question]).some(message => message.role === 'user' && message.id === openedUserMessageId)
+      ? turns[question].node : null;
+    const remountedAbove = node => !unwitnessedGeneration && questionNode !== null && node !== questionNode &&
+      Boolean(node.compareDocumentPosition(questionNode) & Node.DOCUMENT_POSITION_FOLLOWING);
     for (const node of latest.nodes || [latest.node]) {
-      if (!node || priorSections.has(node)) continue;
+      if (!node || priorSections.has(node) || remountedAbove(node)) continue;
       genNode = node;
       return latest;
     }
