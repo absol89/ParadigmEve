@@ -1943,8 +1943,9 @@ shared-tree change may already have addressed them.
   answer completion (`45c9efe`, `generated-image` items ending a turn) depends on it and is not ported.
 - **Self-pruned tabs read as closes:** `/closed` carries no "the Companion removed this tab itself"
   fact, so a managed prune of a prime tab ends its run like a user close. Upstream separates the two
-  with durable removal receipts (Chat On Steroids `48cee02`); ParadigmEve's run-ending semantics need
-  a decision before porting it.
+  with durable removal receipts (Chat On Steroids `48cee02`). Decided 2026-09-28: the Companion's own
+  tidying must not count as the user ending the run; implement and test that distinction before
+  claiming it.
 
 Do not restore obsolete claims while investigating: two MCP surfaces, one global prime run,
 fresh `saveArtifact=false`, three browser command kinds, fixed 60s Unattributed repair, tab-query

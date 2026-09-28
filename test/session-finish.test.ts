@@ -339,6 +339,38 @@ describe('session finish turn identity', () => {
     expect(hooks.followup).toHaveBeenCalledTimes(3);
     expect(notify).not.toHaveBeenCalled();
   });
+  it('decides again after a delivered continuation was worked through with tools only', async () => {
+    // Ported from Chat On Steroids 2.1.17 (#558): after one automatic Goal continuation the executor
+    // worked only through MCP, and every later session_finish answered "context is unchanged".
+    // Default privacy: only per-turn counts reach the helper, never tool names or detail.
+    await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, finishTool: true, finishAction: 'goal' } });
+    const recordTool = (tool: string, time: number, result = 'ok') => appendEvent(sessionId, {
+      source: 'mcp', kind: 'tool_call', turnId: 'turn-one', time,
+      call: { callId: randomUUID(), tool, attribution: 'request_id', requestId: `r-${time}`, conversationId: hooks.caller.conversationId,
+        attributionMethod: 'request_id', args: { text: '{"cmd":"PRIVATE_ARGUMENT"}', chars: 26, truncated: false },
+        result: { text: `PRIVATE_RESULT ${result}`, chars: 20, truncated: false }, outcome: 'ok', durationMs: 1,
+        summary: { title: tool, tone: 'neutral', kind: 'other' } }
+    });
+    await appendEvent(sessionId, { source: 'extension', kind: 'user_message', time: 1100, messageId: 'u-558', message: { text: 'Audit the project', chars: 17, truncated: false } });
+    await appendEvent(sessionId, { source: 'extension', kind: 'assistant_message', turnId: 'turn-one', time: 1200, messageId: 'a-558', final: false,
+      message: { text: 'Auditing the project now.', chars: 25, truncated: false } });
+    await recordTool('exec_command', 1300);
+    await announceSessionFinish(sessionId, 'First pass done');
+    expect(hooks.followup).toHaveBeenCalledTimes(1);
+    await recordTool('session_finish', 2100, 'HELD');
+    await announceSessionFinish(sessionId, 'Waiting for the continuation');
+    expect(hooks.followup).toHaveBeenCalledTimes(1);
+    // The continuation arrives through the tool outbox and is worked through with tools only.
+    await recordTool('exec_command', 2300);
+    await recordTool('apply_patch', 2400);
+    await announceSessionFinish(sessionId, 'Second pass done');
+    expect(hooks.followup).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(hooks.followup.mock.calls[1]?.[2])).not.toMatch(/PRIVATE_|exec_command|apply_patch/);
+    // Hold calls alone are still not work.
+    await recordTool('session_finish', 2600, 'HELD');
+    await announceSessionFinish(sessionId, 'Empty wait');
+    expect(hooks.followup).toHaveBeenCalledTimes(2);
+  });
   it('reconsiders new authored progress once while preserving the notification receipt', async () => {
     await announceSessionFinish(sessionId, 'First');
     await announceSessionFinish(sessionId, 'Empty wait with a different summary');

@@ -8338,6 +8338,18 @@ describe('a page leaving the screen', () => {
  * a parser of something it trusts, and these tests are mostly about what it refuses.
  */
 describe('evidence from the page context', () => {
+  it('does not correlate requests from a Goal helper temporary chat', async () => {
+    // Ported from Chat On Steroids 2.1.17: each decision otherwise opened an empty "ChatGPT session".
+    live = await harness('https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee?temporary-chat=true&cos-input=helper-decision#cos-input=helper-decision');
+    live.reply.set('correlate', () => ({ ok: true, data: { ok: true, confirmed: ['wfr_helper'] } }));
+    live.window.dispatchEvent(new live.window.MessageEvent('message', {
+      source: live.window as unknown as Window, origin: 'https://chatgpt.com',
+      data: { type: 'cos-request-origin', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', requestIds: ['wfr_helper'] }
+    }));
+    await settle();
+    expect(live.sent.filter(message => message.type === 'correlate')).toEqual([]);
+  });
+
   const GOOD = {
     v: 12,
     index: 0,

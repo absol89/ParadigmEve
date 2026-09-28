@@ -28,8 +28,9 @@
  * ## What is sent
  *
  * Authored user messages, ChatGPT commentary and final answers, in order, plus
- * the Compact & Resume bootstrap that the replacement chat actually received. No tool calls,
- * no arguments, no results, no file contents. The goal model is deciding whether the user's
+ * the Compact & Resume bootstrap that the replacement chat actually received. Of tool calls
+ * only a count per turn (unless the user opted into `goal.includeToolCalls`), so work that ran
+ * is not mistaken for a claim: no tool names, no arguments, no results, no file contents. The goal model is deciding whether the user's
  * request has been satisfied, and the conversation is the only evidence it needs for that;
  * the rest is this machine's business and does not leave it.
  *
@@ -54,7 +55,9 @@ import { logInfo, logWarn } from './logger.js';
 import { getSecret } from './secrets.js';
 import { getSession, readEvents, readHandoff, readRecentEvents } from './session/store.js';
 import { foldProgress } from '../shared/session.js';
-import { configuredChatModelLabel, configuredChatModelRequest, isAstraModel } from '../shared/chat-models.js';
+import { CHATGPT_SOL_MODEL_ID, configuredChatModelLabel, configuredChatModelRequest, isAstraModel } from '../shared/chat-models.js';
+import { getChatModels } from './chat-models.js';
+import type { ReasoningEffort } from '../shared/session.js';
 
 /** Astra continuation belongs to session_finish, never to a new browser turn. */
 export async function astraFinishOnly(sessionId: string, conversationId: string): Promise<boolean> {
@@ -131,6 +134,10 @@ export function goalProviderKey(kind: GoalProviderKind): Promise<string | null> 
 
 /** How many messages of history the goal model is given, newest kept. */
 const MAX_CONTEXT_MESSAGES = 120;
+/** Recent Eve tool calls read to count per turn; a busy turn can make hundreds. */
+const MAX_TOOL_CALLS_COUNTED = 500;
+/** Hold calls are waiting, not work, exactly as the finish boundary counts them. */
+const HOLD_TOOLS = new Set(['session_finish', 'keep_astra_on_forever']);
 /** …and how many characters of them, so one 200k-character answer cannot be the whole prompt. */
 const MAX_CONTEXT_CHARS = 120_000;
 /** The per-message cut. Long enough to carry an answer's substance, short enough to fit many. */
@@ -973,7 +980,7 @@ export function goalProgressFor(mode: GoalMode, draft?: GoalDraftView | null): {
   const backend = draft?.backend ?? goalBackendFor(mode);
   return {
     backend,
-    model: draft?.model ?? (backend === 'chatgpt' ? configuredChatModelLabel(settings.helperModel)
+    model: draft?.model ?? (backend === 'chatgpt' ? helperModelLabel()
       : backend === 'templates' ? 'Offline templates' : primaryGoalModel(settings, settings.provider.kind)),
     provider: settings.provider.kind
   };
@@ -1276,7 +1283,7 @@ export function startGoalDraft(input: StartGoalDraftInput): GoalDraftView {
     turnId: input.turnId,
     stage: 'sending',
     model: backend === 'chatgpt'
-      ? configuredChatModelLabel(settings.helperModel)
+      ? helperModelLabel()
       : backend === 'templates'
         ? 'Offline templates'
         : models[0] ?? '',
@@ -1380,14 +1387,47 @@ interface GoalRequest {
  * page's Goal loop, which reads the failure back off `retryable` and asks again on its own
  * clock. A second attempt from in here would be spent against a turn nobody rechecked.
  */
-async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision | { action: 'http'; error: string; retryAfterMs?: number }> {
+let helperFallbackLogged = '';
+
+/**
+ * The ChatGPT helper's model and reasoning as this account can actually run them.
+ *
+ * A model or level saved in Settings can stop being offered (a rollout changes the catalog, or a
+ * value was saved on another account), and sending it anyway failed every Goal and Loop decision
+ * in the helper tab. When the observed catalog does not offer it, the helper uses ChatGPT's
+ * current selection (null) instead and says so once in the log (ported from Chat On Steroids
+ * 2.1.17). GPT-5.6 Sol keeps its shipped handle: the browser confirms it in the native picker
+ * even when a partial catalog omits it, exactly as worker spawns treat it.
+ */
+export function goalHelperSelection(): { model: string | null; reasoningEffort: ReasoningEffort | null } {
   const settings = getConfig().goal;
+  let model = configuredChatModelRequest(settings.helperModel);
+  let reasoningEffort: ReasoningEffort | null = model ? settings.helperReasoning ?? 'high' : null;
+  const models = getChatModels().models;
+  if (!models.length || model === null || model === CHATGPT_SOL_MODEL_ID) return { model, reasoningEffort };
+  const matching = models.filter(choice => choice.id === model || choice.aliases?.includes(model!));
+  const notes: string[] = [];
+  if (matching.length !== 1) { notes.push(`model "${model}"`); model = null; reasoningEffort = null; }
+  else if (reasoningEffort && !matching[0]!.efforts.includes(reasoningEffort)) { notes.push(`reasoning "${reasoningEffort}"`); reasoningEffort = null; }
+  const key = notes.join(',');
+  if (key && key !== helperFallbackLogged) {
+    helperFallbackLogged = key;
+    logWarn(`goal: the saved helper ${notes.join(' and ')} is not offered by this ChatGPT account; using ChatGPT's current selection`);
+  }
+  return { model, reasoningEffort };
+}
+
+/** The helper model as it will actually run, for progress and logs; never one it will not use. */
+function helperModelLabel(): string {
+  return configuredChatModelLabel(goalHelperSelection().model);
+}
+
+async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision | { action: 'http'; error: string; retryAfterMs?: number }> {
   if (request.backend === 'chatgpt') {
     const protocol = request.mode === 'loop' ? LOOP_OUTPUT_PROTOCOL : GOAL_OUTPUT_PROTOCOL;
     const helper = request.sourceSessionId ? [...goalSwitches].find(([, row]) => row.role === 'decision' && row.sourceSessionId === request.sourceSessionId) : undefined;
     const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-    const helperModel = configuredChatModelRequest(settings.helperModel);
-    const helperReasoning = helperModel ? settings.helperReasoning ?? 'high' : null;
+    const { model: helperModel, reasoningEffort: helperReasoning } = goalHelperSelection();
     const instructions = hash([request.system, protocol, request.trailer, helperModel, helperReasoning]);
     const prior = helper?.[1].context;
     // A full-prefix digest proves the helper already received precisely this recording.
@@ -1755,7 +1795,7 @@ export async function draftOpeningMessage(
   // Custom endpoints may be keyless; only OpenRouter fails here without one.
   if (backend === 'api' && !key && endpoint.kind === 'openrouter') return { error: 'no_api_key' };
   const models = backend === 'api' ? [...goalModelsFor(settings, endpoint.kind)] : [];
-  const model = backend === 'chatgpt' ? configuredChatModelLabel(settings.helperModel) : models[0] ?? '';
+  const model = backend === 'chatgpt' ? helperModelLabel() : models[0] ?? '';
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -2195,9 +2235,22 @@ async function committedResumeHandoffId(
 export async function conversationMessages(sessionId: string, deliveredInput: readonly string[] = [], excludedInputIds: ReadonlySet<string> = new Set()): Promise<ChatMessage[]> {
   const includeTools = getConfig().goal.includeToolCalls === true;
   const recentLimit = MAX_CONTEXT_MESSAGES * 2;
-  const events = await readRecentEvents(sessionId, recentLimit, {
-    kinds: ['user_message', 'assistant_message', 'progress', ...(includeTools ? ['tool_call' as const] : [])]
-  });
+  const [events, toolCalls] = await Promise.all([
+    readRecentEvents(sessionId, recentLimit, {
+      kinds: ['user_message', 'assistant_message', 'progress', ...(includeTools ? ['tool_call' as const] : [])]
+    }),
+    includeTools ? Promise.resolve([]) : readRecentEvents(sessionId, MAX_TOOL_CALLS_COUNTED, { kinds: ['tool_call'] })
+  ]);
+  // Without the opt-in tool detail, still say how many Eve tool calls each turn made. Otherwise
+  // the helper cannot tell "ran the command" from "said it did" and keeps asking for the same
+  // work again (ported from Chat On Steroids 2.1.17). Only the count leaves this machine.
+  const callsByTurn = new Map<string, number>();
+  for (const call of toolCalls) {
+    if (call.kind === 'tool_call' && call.source === 'mcp' && call.turnId && !HOLD_TOOLS.has(call.call.tool)) {
+      callsByTurn.set(call.turnId, (callsByTurn.get(call.turnId) ?? 0) + 1);
+    }
+  }
+  const lastAnswerOfTurn = new Map<string, number>();
   const ordered: ChatMessage[] = [];
   const byStableMessage = new Map<string, number>();
   for (const event of foldProgress(events)) {
@@ -2228,6 +2281,14 @@ export async function conversationMessages(sessionId: string, deliveredInput: re
       if (key) byStableMessage.set(key, ordered.length);
       ordered.push(next);
     }
+    const turn = next.role === 'assistant' && typeof event.turnId === 'string' ? event.turnId : null;
+    if (turn && callsByTurn.has(turn)) lastAnswerOfTurn.set(turn, Math.max(lastAnswerOfTurn.get(turn) ?? -1, existingAt ?? ordered.length - 1));
+  }
+  for (const [turn, at] of lastAnswerOfTurn) {
+    const count = callsByTurn.get(turn)!;
+    ordered[at] = { ...ordered[at]!, content: `${ordered[at]!.content}
+
+[ParadigmEve: ${count} tool call${count === 1 ? '' : 's'} ran in this turn. Arguments and results are not shown.]` };
   }
   for (const text of deliveredInput.slice(-5)) {
     const content = clip(userPromptText(text) ?? text);
