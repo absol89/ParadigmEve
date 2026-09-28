@@ -454,7 +454,7 @@ the affected phase, then the Core smoke set. A bug closes only when the original
 
 | # | Phase | Found by | Repro and evidence | Fix commit and test | Candidate | Eve re-verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | — | — |
+| 1 | Core smoke / Phase 1 restart-resume | User on Eva | After installing `2.3.1-c3`, restart recovery wake appeared in the still-open Eva main chat, but ParadigmEve immediately showed `Restart recovery retired because the conversation moved on.` The chat was open/alive, so recovery was retired against the wrong conversation-liveness/movement state. Screenshot supplied in chat on 2026-09-28. | Open — Claude to trace and add deterministic regression coverage. | `2.3.1-c3` (`dd8864c9`) | No |
 
 ## Known gaps (explicitly deferred, not untested)
 
