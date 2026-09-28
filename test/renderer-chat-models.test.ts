@@ -365,13 +365,15 @@ it('never folds observed Pro lanes or unrelated model families into the three-st
   expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#composerReasoning option')].map(option => option.value)).not.toContain('pro');
   expect(slider.max).toBe('2');
   slider.value = '2'; slider.dispatchEvent(new dom.window.Event('input'));
-  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toMatch(/Auto-compaction at 400[,.]000 tokens/);
+  // The meter formats with the machine's locale (400,000 in English, 400 000 with a no-break space in Swedish).
+  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain(`Auto-compaction at ${new Intl.NumberFormat().format(400_000)} tokens`);
   expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
   expect(dom.window.document.querySelector('.power-dot.locked')?.getAttribute('aria-label')).toBe('xhigh · Pro');
   expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol · Medium');
   expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
-  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toMatch(/Auto-compaction at 400[,.]000 tokens/);
+  // The meter formats with the machine's locale (400,000 in English, 400 000 with a no-break space in Swedish).
+  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain(`Auto-compaction at ${new Intl.NumberFormat().format(400_000)} tokens`);
 });
 
 it('replaces loading with the backend failure reason and an enabled retry control', async () => {
