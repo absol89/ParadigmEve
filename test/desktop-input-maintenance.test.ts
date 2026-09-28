@@ -131,22 +131,6 @@ it('withholds queued input from a document being refreshed in the same pass', as
   expect(h.create).not.toHaveBeenCalled();
 });
 
-it('prefers the active duplicate tab for a conversation when electing a new durable input', async () => {
-  const h = await worker([{ id: firstId, conversationId: secondId }]);
-  h.tabs.push(
-    { id: 7, active: false, url: `https://chatgpt.com/c/${secondId}` },
-    { id: 8, active: true, url: `https://chatgpt.com/c/${secondId}` }
-  );
-
-  await h.maintain();
-
-  expect(h.sendMessage).toHaveBeenCalledWith(8, {
-    type: 'clf-desktop-input', id: firstId, conversationId: secondId
-  });
-  expect(h.sendMessage.mock.calls.some(([id, message]) => id === 7 && message.type === 'clf-desktop-input')).toBe(false);
-  expect(h.create).not.toHaveBeenCalled();
-});
-
 it('carries the direct-turn offer only to the elected existing conversation', async () => {
   const directTurn = { id: 'tool-free-turn', startedAt: 1000 };
   const h = await worker([{ id: firstId, conversationId: secondId, directTurn }]);

@@ -601,6 +601,35 @@ it.each([
   expect(recorded[0]?.querySelector('.message-attachments > img')?.getAttribute('alt')).toBe('issue.png');
 });
 
+it.each([
+  ['image-only', 'Please look at the attached files.'],
+  ['text + image', 'Please inspect this']
+] as const)('does not pin a delivered %s message above the composer once its canonical copy is older than the loaded tail', async (_case, authored) => {
+  const attachment = { id: 'c'.repeat(32), name: 'screenshot.png', mimeType: 'image/png', size: 84, preview: 'data:image/webp;base64,Yg==' };
+  const recorded: SessionEvent = {
+    seq: 1, origin: 1, time: T0, source: 'app', kind: 'user_message', messageId: 'old-image', inputId: 'old-image-input',
+    inputDelivery: 'confirmed', message: text(authored), attachments: [attachment]
+  };
+  // Eve kept working after the screenshot: its canonical copy is now outside the 160-row tail.
+  const later = Array.from({ length: 200 }, (_, index) => toolCall(index + 2, `after-${index}`));
+  const app = await boot([recorded, ...later]);
+  const tail = (app.w as any).api.getSession;
+  (app.w as any).api.getSession = (id: string, options?: { from?: number; before?: number; limit?: number }) =>
+    options?.before === undefined && options?.from === undefined
+      ? tail(id, { ...options, before: Number.MAX_SAFE_INTEGER })
+      : tail(id, options);
+  app.live.inputs.push({
+    id: 'old-image-input', sessionId: summary([]).id, text: authored, attachments: [attachment],
+    mode: 'auto', dueAt: 0, model: null, reasoningEffort: null, state: 'sent', owner: null,
+    createdAt: T0, deliveredAt: T0, messageId: 'old-image', historyRecorded: true, conversationId: 'chat-a'
+  });
+  app.notifySession();
+  await settle(550);
+
+  expect(app.w.document.querySelector('.said.is-user')).toBeNull();
+  expect(app.w.document.querySelector('.pending-message')).toBeNull();
+});
+
 it('loads recorded tool images on expansion and hides truncated binary envelopes', async () => {
   const app = await boot([]);
   const { w } = app;

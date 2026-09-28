@@ -3643,6 +3643,20 @@ function recordedInputFilesAreVisible(entry: InputEntry): boolean {
   return recordedImages >= images.length;
 }
 
+/**
+ * A delivered row is echoed below the timeline only until the transcript shows its canonical copy.
+ * The transcript is a bounded tail: a copy older than its first loaded event is not missing, it is
+ * out of this window. Echoing it again pinned that old message, image and all, above the composer
+ * for good, and every queue refresh reloaded the chat trying to catch up with it.
+ */
+function deliveredInputAwaitingTranscript(entry: InputEntry): boolean {
+  if (!entry.historyRecorded) return true;
+  if (recordedInputFilesAreVisible(entry)) return false;
+  const oldest = events[0]?.time;
+  const recordedAt = entry.deliveredAt ?? entry.offeredAt ?? entry.createdAt;
+  return !(totalEvents > events.length && oldest !== undefined && recordedAt < oldest);
+}
+
 async function refreshInputQueue(): Promise<void> {
   const request = ++inputQueueGeneration;
   const selection = selectionGeneration;
@@ -3653,7 +3667,7 @@ async function refreshInputQueue(): Promise<void> {
     entry.state === 'sent' && entry.historyRecorded === true && !!entry.messageId &&
     (entry.sessionId ?? entry.deliveredSessionId) === selected &&
     ((entry.attachments?.length ?? 0) > 0 || (entry.images?.length ?? 0) > 0) &&
-    !recordedInputFilesAreVisible(entry));
+    deliveredInputAwaitingTranscript(entry));
   if (needsRecordedFiles) {
     // listInputs() publishes history before returning, so this bounded incremental read can see
     // the just-written revision immediately instead of waiting for the coalesced notification.
@@ -3813,7 +3827,7 @@ async function refreshInputQueue(): Promise<void> {
   const rows = all.filter((entry) => !dismissedInputNotices.has(entry.id) && !(entry.state === 'tool' && entry.historyRecorded) && !(queuedFollowup(entry) && ['queued', 'tool', 'browser'].includes(entry.state)) && (belongsToSelection(entry) || unbound(entry) || notice(entry)) &&
     (notice(entry) || unbound(entry) || selectedId !== null || projectGroup(entry.projectId) === selectedProjectId) &&
     (notice(entry) || !['sent', 'cancelled'].includes(entry.state) ||
-      (entry.state === 'sent' && entry.messageId && (!entry.historyRecorded || !recordedInputFilesAreVisible(entry)))));
+      (entry.state === 'sent' && entry.messageId && deliveredInputAwaitingTranscript(entry))));
   for (const entry of startingInputs.values()) if (belongsToSelection(entry) && !all.some(row => row.id === entry.id)) rows.push(entry);
   $('inputQueue').replaceChildren(...rows.map((entry) => {
     const row = el('div', 'pending-message');
