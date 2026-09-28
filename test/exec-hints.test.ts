@@ -1022,7 +1022,9 @@ describe('repairing a bash-style escaped quote', () => {
         input: `${commandLine}\n`
       })
         .split(/\r?\n/)
-        .filter((line) => line !== '');
+        // Only the probe's own lines. Without a real console PowerShell can print host warnings
+        // (PSReadLine, for one) that must not be counted as arguments.
+        .filter((line) => /^<.*>$/.test(line));
     };
 
     // Invoked as a native executable on purpose. Passing a literal quote is a property of the
