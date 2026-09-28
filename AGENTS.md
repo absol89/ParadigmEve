@@ -27,7 +27,7 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-09-28**, including current working-tree changes. App/extension **2.3.0 development**,
+Source alignment: **2026-09-28**, including current working-tree changes. App/extension **2.3.1 development**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -1820,22 +1820,22 @@ renderer, so changing a runtime environment variable cannot unlock a driver excl
 installed build. Non-shipping packages append `-debug` or `-dev` to their artifact name; shipping
 keeps the canonical public filenames used by release/update flows.
 
-For the current local **2.3.0** Windows self-test line, the laptop builds **x64 debug
+For the current local **2.3.1** Windows self-test line, the laptop builds **x64 debug
 only** so the implemented GPT Chat agent lane remains available. Preserve prior release and installer
-evidence; do not overwrite archived evidence while qualifying 2.3.0. A private Angel display copy may omit `-debug`
+evidence; do not overwrite archived evidence while qualifying 2.3.1. A private Angel display copy may omit `-debug`
 only when its filename remains visibly non-canonical (for example
 `ParadigmEve-2.2.4-x64-Angel-<hash>.exe`) and its recorded provenance still says the compiled
 flavor is debug. Never rename those bytes to the canonical shipping/update filename.
 Public arm64 artifacts are a separate release workflow and must never be substituted for
 the local debug artifact.
 
-The **2.3.0 line is cumulative over the public 2.2.9 release**. Git provenance must say that plainly. Before
-packaging or claiming a 2.3.0 candidate, inspect
+The **2.3.1 line is cumulative over 2.3.0 and the public 2.2.9 release**. Git provenance must say that plainly. Before
+packaging or claiming a 2.3.1 candidate, inspect
 `git branch --show-current`, `git status`, recent history and the tracked release notes. A final
-release checkpoint must contain the accepted cumulative 2.3.0 work over 2.2.9; package/version
+release checkpoint must contain the accepted cumulative 2.3.1 work over 2.3.0; package/version
 declarations or a stale directory name do not prove ancestry. Do not create/switch a release
 branch from stale HEAD while leaving the real cumulative work only in the working tree.
-`docs/release-notes/v2.3.0.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
+`docs/release-notes/v2.3.1.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
 current. A dirty worktree is allowed during active integration, but it is not immutable release
 evidence and must be described honestly until checkpointed. `scripts/package.mjs` enforces this by
 default: packaging requires a clean target-version branch (or exact version tag) and tracked current
@@ -1936,6 +1936,15 @@ shared-tree change may already have addressed them.
   disposition is absent. Current watchdog checks already fence superseded A; do not claim the
   old historical-A reopening bug is unconditionally present. Intent is one idempotent committed
   projection and explicit supersession of A's debt, never treating it as B's completed turn.
+- **ChatGPT alternate "app shell" layout (upstream 2.1.15–2.1.17):** the Companion reads classic
+  sections and the September `[data-turn-key]`/`data-chatgpt-search-unit-key` layout, but not the
+  A/B `[data-app-shell-main-surface]` shell with `data-content-search-unit-key` units and typed Fiber
+  `entry.turn.items` (Chat On Steroids `80d2b5a`, `62f940c`, `bbd1390`). Upstream's image-only
+  answer completion (`45c9efe`, `generated-image` items ending a turn) depends on it and is not ported.
+- **Self-pruned tabs read as closes:** `/closed` carries no "the Companion removed this tab itself"
+  fact, so a managed prune of a prime tab ends its run like a user close. Upstream separates the two
+  with durable removal receipts (Chat On Steroids `48cee02`); ParadigmEve's run-ending semantics need
+  a decision before porting it.
 
 Do not restore obsolete claims while investigating: two MCP surfaces, one global prime run,
 fresh `saveArtifact=false`, three browser command kinds, fixed 60s Unattributed repair, tab-query

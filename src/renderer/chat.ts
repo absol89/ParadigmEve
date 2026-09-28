@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel } from './chat-models.js';
-import { marked, Marked } from 'marked';
+import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
 import { renderAgentPlan } from './agent-plan.js';
@@ -1588,6 +1588,28 @@ function citationLabels(source: string, capture?: StoredText): Map<string, strin
  * heading and list item is a newline, so it keeps `msg`'s pre-wrap — flowing it would run a
  * whole brief together into one paragraph.
  */
+/**
+ * ChatGPT's writing block: `:::writing{variant="…" id="…" title="…"}`, the text, then `:::`.
+ * ChatGPT draws it as a card; as plain Markdown it showed its raw directive. It renders as a
+ * quote with its title in bold, a shape the sanitised message view already styles.
+ */
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+const WRITING_BLOCK: TokenizerAndRendererExtension = {
+  name: 'writingBlock', level: 'block',
+  start: value => value.match(/^:::writing\b/m)?.index,
+  tokenizer(value) {
+    const match = value.match(/^:::writing(\{[^}\n]*\})?[ \t]*\n([\s\S]*?)\n:::[ \t]*(?:\n|$)/);
+    if (!match) return undefined;
+    const title = match[1]?.match(/\btitle="([^"\n]*)"/)?.[1] ?? '';
+    return { type: 'writingBlock', raw: match[0], title, tokens: this.lexer.blockTokens(match[2] ?? '', []) };
+  },
+  renderer(token) {
+    const heading = token['title'] ? `<p><strong>${escapeHtml(String(token['title']))}</strong></p>` : '';
+    return `<blockquote>${heading}${this.parser.parse(token.tokens ?? [])}</blockquote>`;
+  }
+};
+
 export function renderedMarkdown(source: string, capture?: StoredText): HTMLElement {
   // Fiber's canonical text can be complete while a background provider tab still
   // paints its first words. Render this revision directly; captured DOM HTML is
@@ -1595,7 +1617,7 @@ export function renderedMarkdown(source: string, capture?: StoredText): HTMLElem
   const text = source.slice(0, MAX_RENDERED_HTML_CHARS);
   const citations = text.includes('\uE200') ? citationLabels(text, capture) : new Map<string, string>();
   // An inline tokenizer leaves literal citation examples inside code spans/fences intact.
-  const parser = new Marked({ gfm: true, extensions: [{
+  const parser = new Marked({ gfm: true, extensions: [WRITING_BLOCK, {
     name: 'providerReference', level: 'inline',
     start: value => value.indexOf('\uE200'),
     tokenizer(value) {

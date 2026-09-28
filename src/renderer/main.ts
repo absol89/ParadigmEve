@@ -1622,7 +1622,7 @@ function apply(next: AppState): void {
   ui(chatgptNote, 'textContent', () => status.lastRequestAt === null
       ? t("ChatGPT has not called this app yet.")
       : requiredMissingTool.length > 0
-        ? t("ChatGPT connected {0} but has never run a tool. If it says “does not support developer MCPs”, switch Developer mode back on in ChatGPT → Settings → Apps & Connectors → Advanced.", [ago(status.lastRequestAt)])
+        ? t("ChatGPT connected {0} but has never run a tool. Check that the app is enabled under ChatGPT → Plugins; on older ChatGPT versions, also turn Developer mode back on if it says “does not support developer MCPs”.", [ago(status.lastRequestAt)])
         : unverified.length > 0
           ? // Name the still-missing app explicitly instead of reducing it to "something is off".
             t("ChatGPT ran a tool {0}, but {1} has never been called — create it in ChatGPT to use it.", [ago(requiredToolCallAt), unverified
@@ -1835,7 +1835,7 @@ function facts(next: AppState): HTMLElement[] {
     if (status.lastRequestAt !== null) {
       rows.push([
         'ChatGPT ran a tool',
-        () => status.lastToolCallAt === null ? t("never — check Developer mode") : ago(status.lastToolCallAt),
+        () => status.lastToolCallAt === null ? t("never — check the app under ChatGPT → Plugins") : ago(status.lastToolCallAt),
         status.lastToolCallAt === null
       ]);
     }

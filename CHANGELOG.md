@@ -13,6 +13,26 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.1] — ChatGPT page fixes from Chat On Steroids 2.1.17
+
+### Fixed
+
+- App-sent images and files attach again with ChatGPT's current composer: the upload input is elected by kind inside
+  the composer form instead of the removed `#upload-photos`/`#upload-files` ids, and the new image tile counts as the
+  upload receipt. Delivery errors wrap instead of being cut off.
+- A new turn is no longer closed by the previous answer that ChatGPT remounts above its question right after Send.
+  ParadigmEve checks each section's document position against the exact question, so a reused page turn id still
+  lets a genuinely new section below it belong to the new turn.
+- Native Send click/submit/Enter capture is registered through the recorder's cleanup, so a retired recorder stops
+  capturing sends.
+- ChatGPT `:::writing{…}` blocks render as a titled quote instead of the raw directive.
+- Chats started from the app are titled from the user's request, not ChatGPT's title for Eve's instructions, and
+  stored instruction titles are repaired on load; "ChatGPT - <project>" page titles are ignored.
+- Setup, the health card and docs point to Plugins → Add → Create MCP App; Developer mode is described as an
+  older-ChatGPT fallback, and setup asks users to keep the suggested app name.
+- The prime is told worker reports arrive only with tool results, to collect pending ones with one status call
+  before finalizing, and to say review is pending rather than claim delegated verification is complete.
+
 ## [2.3.0] — Windows-named installers, a Companion that updates itself when idle
 
 ### Changed

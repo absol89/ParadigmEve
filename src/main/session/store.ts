@@ -37,7 +37,7 @@ import type {
 } from '../../shared/session.js';
 import { CONTINUATION_MARKER, eventTokens, normalizedToolOutcome } from '../../shared/session.js';
 import { chronological } from '../../shared/chronology.js';
-import { automaticTitle, firstTitleMessage, legacyContextTitle, refreshUserTitle } from './title.js';
+import { automaticTitle, firstTitleMessage, legacyContextTitle, providerTitleIgnored, refreshUserTitle } from './title.js';
 import { agentPlanSchema, agentPlanUpdateSchema, MAX_AGENT_PLAN_BYTES, type AgentPlan, type AgentPlanUpdate } from '../../shared/agent-plan.js';
 import { getConfig } from '../config.js';
 import { logError, logInfo, logWarn } from '../logger.js';
@@ -2547,6 +2547,7 @@ export async function renameSession(id: string, title: string, source: SessionSu
       if (conversationId && entry.summary.conversationId !== conversationId) return;
       if (!automaticTitle(entry.summary, firstTitleMessage(entry.messages.values()))) return;
       if (source === 'fallback' && entry.summary.titleSource === 'provider') return;
+      if (source === 'provider' && providerTitleIgnored(entry.summary)) return;
     }
     if (entry.summary.title === title.slice(0, 120) && entry.summary.titleSource === source) return;
     entry.summary.title = title.slice(0, 120);

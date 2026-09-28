@@ -2939,6 +2939,12 @@ describe('recording authored message text', () => {
     live.hook.observe();
     await settle();
     expect(emitted(live.sent, 'conversation_title')).toHaveLength(1);
+
+    // A project chat carries the project's page title until ChatGPT names the conversation.
+    live.document.title = 'ChatGPT - Homelab Development';
+    live.hook.observe();
+    await settle();
+    expect(emitted(live.sent, 'conversation_title')).toHaveLength(1);
   });
 
   it('prefers the exact current sidebar title when another client renamed the open conversation', async () => {
@@ -6168,6 +6174,45 @@ describe('generation identity while ChatGPT mounts and reorders assistant sectio
  * "Unattributed activity", the first of them 194 ms after the premature end.
  */
 describe('a stop button that goes missing while the turn is still running', () => {
+  it('does not close a new turn with the previous answer remounted above its question', async () => {
+    // Ported from chat-on-steroids 2.1.17 (live 2026-09-27/28): ChatGPT remounted the previous
+    // answer as the next question was sent, and its end_turn closed the new turn within 5 ms.
+    live = await harness();
+    startGenerating(live.document);
+    userTurn(live.document, 'remount-q1', 'first question');
+    const first = assistantTurn(live.document, 'remount-a1', []);
+    live.hook.observe(); await settle();
+    const firstEnd = { turnId: 'remount-a1', endMessageId: 'remount-a1-final', calls: [], activities: [],
+      messages: [{ messageId: 'remount-a1-final', stable: true, rawText: 'First answer.', renderedHtml: '<p>First answer.</p>' }] };
+    await bindFiberTurns([{ section: first, turn: firstEnd }]);
+    await live.hook.flush(); await settle();
+    stopGenerating(live.document);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(1);
+
+    const question = userTurn(live.document, 'remount-q2', 'second question');
+    startGenerating(live.document);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_start')).toHaveLength(2);
+    first.remove();
+    const remounted = assistantTurn(live.document, 'remount-a1', []);
+    question.before(remounted);
+    live.hook.observe(); await settle();
+    await bindFiberTurns([{ section: remounted, turn: firstEnd }]);
+    await live.hook.flush(); await settle();
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(1);
+
+    const second = assistantTurn(live.document, 'remount-a2', []);
+    live.hook.observe(); await settle();
+    await bindFiberTurns([{ section: remounted, turn: firstEnd }, { section: second, turn: { turnId: 'remount-a2', endMessageId: 'remount-a2-final',
+      calls: [], activities: [], messages: [{ messageId: 'remount-a2-final', stable: true, rawText: 'Second answer.', renderedHtml: '<p>Second answer.</p>' }] } }]);
+    await live.hook.flush(); await settle();
+    const ends = emitted(live.sent, 'turn_end').map(entry => entry.event);
+    expect(ends).toHaveLength(2);
+    expect(ends[1]).toMatchObject({ turnId: emitted(live.sent, 'turn_start')[1]!.event.turnId, outcome: 'completed' });
+  });
+
   const dropout = async (ticks: number): Promise<void> => {
     stopGenerating(live!.document);
     for (let tick = 0; tick < ticks; tick++) {
@@ -11682,6 +11727,57 @@ describe('folding away the chat’s opening instruction', () => {
 });
 
 describe('the fresh chat the app opened', () => {
+  it.each(['click', 'submit', 'keydown'] as const)('retires native send capture and keeps its successor single-owned (%s)', async type => {
+    live = await harness();
+    const window = live.window as any;
+    const composer = live.document.querySelector('#prompt-textarea')!;
+    composer.textContent = 'Preserve this authored draft';
+    const readAttachments = vi.spyOn(window.CLF_DOM, 'composerAttachmentNames');
+    const dispatch = () => {
+      if (type === 'click') {
+        live!.document.querySelector('[data-testid="send-button"]')!
+          .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      } else if (type === 'submit') {
+        composer.parentElement!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+      } else {
+        composer.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      }
+    };
+
+    // Ported from chat-on-steroids 2.1.17: a retired recorder stops capturing native sends.
+    const predecessor = window.__CLF_CONTENT_RECORDER__;
+    readAttachments.mockClear();
+    dispatch();
+    expect(readAttachments).toHaveBeenCalledTimes(1);
+
+    predecessor.stop();
+    readAttachments.mockClear();
+    dispatch();
+    expect(readAttachments, 'the retired recorder still captured a send').not.toHaveBeenCalled();
+    expect(composer.textContent).toBe('Preserve this authored draft');
+
+    window.CLF_TEST_HOOK = (api: Hook) => { live!.hook = api; };
+    window.eval(contentSource);
+    await settle();
+    expect(window.__CLF_CONTENT_RECORDER__).not.toBe(predecessor);
+    predecessor.stop();
+    readAttachments.mockClear();
+    dispatch();
+    expect(readAttachments).toHaveBeenCalledTimes(1);
+    expect(composer.textContent).toBe('Preserve this authored draft');
+
+    readAttachments.mockClear();
+    live.document.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const unrelatedForm = live.document.createElement('form');
+    live.document.body.append(unrelatedForm);
+    unrelatedForm.dispatchEvent(new window.Event('submit', { bubbles: true }));
+    for (const options of [{ shiftKey: true }, { isComposing: true }]) {
+      composer.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, ...options }));
+    }
+    expect(readAttachments).not.toHaveBeenCalled();
+  });
+
+
   it('keeps one redeemed fresh worker waiting when ChatGPT mounts its composer after the old 12-second deadline', async () => {
     let submitted = '';
     live = await harness(

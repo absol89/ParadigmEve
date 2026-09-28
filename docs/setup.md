@@ -6,7 +6,7 @@
 
 1. **Install and open CoS.** Choose the download for your operating system and CPU.
 2. **Choose what ChatGPT may access.** In **Settings → Workspace**, approve a project folder and review the tool permissions.
-3. **Connect the local tools.** Configure a tunnel in **Settings → Setup**, press **Connect**, then add the **Core** app in ChatGPT's Developer mode.
+3. **Connect the local tools.** Configure a tunnel in **Settings → Setup**, press **Connect**, then add the **Core** app in ChatGPT under **Plugins → Add → Create MCP App**.
 4. **Load the companion extension.** Press **Open extension folder**. In `chrome://extensions`, enable Developer mode, choose **Load unpacked** and select that folder. Pairing is automatic.
 5. **Start a task.** Choose a project and model in CoS, write your request and send it.
 
@@ -21,7 +21,7 @@ changed.
 ## Requirements and platform notes
 
 Windows 10/11, **macOS 13 Ventura or newer**, or a current desktop Linux. Chrome 116+ or a current
-Edge/Brave, plus a ChatGPT account/workspace with Developer mode and custom MCP apps.
+Edge/Brave, plus a ChatGPT account/workspace that can create custom MCP apps.
 
 - **Unsigned beta:** Windows builds are not publisher-signed; macOS builds are unsigned and
   unnotarized. Verify each package against the release checksums.
@@ -40,7 +40,7 @@ For voice-assisted or accessibility-focused setup, and for the rules governing c
 1. Create a tunnel in [Platform → Tunnels](https://platform.openai.com/settings/organization/tunnels), in the same workspace you use in ChatGPT.
 2. Create a **Restricted** [API key](https://platform.openai.com/settings/organization/api-keys) with **Tunnels: Read** and **Tunnels: Use**.
 3. Enter the tunnel ID and key in CoS and press **Connect**.
-4. In ChatGPT, enable Developer mode under **Settings → Apps → Advanced settings**, then create a custom app of type **Tunnel**. Review and enable its actions.
+4. In ChatGPT, open **Plugins**, click **Add → Create MCP App** (older versions show **+**, and may first need Developer mode turned on under **Settings → Apps → Advanced settings**), then create a custom app of type **Tunnel** with **No authentication**. Keep the suggested app name: ParadigmEve recognizes its own tool calls by it. Review and enable its actions.
 
 Core, Desktop and Plugins are separate connectors. Configure each surface you enable. Release packages include the pinned, checksum-verified `tunnel-client`.
 
@@ -86,7 +86,7 @@ History is stored locally, with recording on and 30-day retention by default. Cr
 - **Linux credential storage unavailable:** unlock GNOME Keyring or KWallet, then restart CoS.
 - **A chat will not stop:** **Block** revokes local tools for that exact conversation. It does not claim to cancel the provider's generation.
 
-The MCP connector uses ChatGPT's Developer mode and tunnel interfaces. The companion also observes and automates the browser UI; this is not a public ChatGPT automation API. Your account's [terms and policies](https://openai.com/policies/) apply. Do not use it to evade limits or safety controls.
+The MCP connector uses ChatGPT's custom MCP app and tunnel interfaces. The companion also observes and automates the browser UI; this is not a public ChatGPT automation API. Your account's [terms and policies](https://openai.com/policies/) apply. Do not use it to evade limits or safety controls.
 
 ## Build from source and contribute
 

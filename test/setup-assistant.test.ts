@@ -1222,7 +1222,9 @@ describe('ParadigmEve setup browser', () => {
     expect(html).toContain('OPEN OPENAI API KEYS');
     expect(html).toContain('class="yes launch" id="openTunnels"');
     expect(html).toContain('class="yes launch" id="openApiKeys"');
-    expect(html).toContain('YES — Open Developer mode');
+    expect(html).toContain('YES — Open ChatGPT Plugins');
+    expect(html).toContain('Create MCP App');
+    expect(html).toContain('older ChatGPT versions only');
     expect(html).toContain('OPEN DEVELOPER MODE');
     expect(html).toContain('OPEN CREATE CONNECTOR');
     expect(html).toContain('OPEN EXTENSIONS PAGE');
@@ -1300,7 +1302,8 @@ describe('ParadigmEve setup browser', () => {
     expect(html).toContain('Copy icon folder');
     expect(html).toContain(path.dirname(baseOptions.connectorIconPath));
     expect(html).not.toContain(`<div class="copyvalue" id="connectorIconPath">${baseOptions.connectorIconPath}</div>`);
-    expect(html).toContain('Developer mode enables the custom ParadigmEve connector');
+    expect(html).toContain('It enables the custom ParadigmEve app');
+    expect(html).toContain('keep the suggested name');
     expect(html).toContain('Allow low risk actions');
     expect(html).toContain('Allow all actions');
     expect(html).toContain('Choose how much autonomy you want');
@@ -1395,7 +1398,7 @@ describe('ParadigmEve setup browser', () => {
     expect(skippedDeveloperMode.status).toBe(409);
     expect(await skippedDeveloperMode.json()).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/developer mode/i),
+      error: expect.stringMatching(/ChatGPT Plugins/),
     });
 
     expect((await guideAction(guideUrl, { action: 'core-app-start' })).status).toBe(200);
@@ -1412,7 +1415,7 @@ describe('ParadigmEve setup browser', () => {
 
     expect(html).toContain('Name it <strong>Eva Å</strong>');
     expect(html).toContain('Add Eva Å to ChatGPT');
-    expect(html).toContain('custom Eva Å connector');
+    expect(html).toContain('custom Eva Å app');
     expect(html).toContain('select the <strong>Eva Å</strong> tunnel');
     expect(html).toContain('Settings → Plugins → Eva Å → Permissions');
     expect(html).toContain('ParadigmEve Companion');

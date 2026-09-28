@@ -159,7 +159,7 @@ Read the full **[2.2.9 release guide](docs/release-notes/v2.2.9.md)** or browse 
 
 - Windows 10/11, macOS 13 Ventura or newer, or a current desktop Linux.
 - Chrome / Chromium, Edge, or Brave for the Companion workflow.
-- A ChatGPT account/workspace that can use Developer mode and custom apps/connectors.
+- A ChatGPT account/workspace that can create custom MCP apps (Plugins → Add → Create MCP App).
 
 Windows is the primary self-tested desktop at the moment, but the release workflow also builds the macOS and Linux packages listed on the release page.
 
