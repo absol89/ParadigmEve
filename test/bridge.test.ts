@@ -11,7 +11,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import sharp from 'sharp';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_VERSION, BRIDGE_PROTOCOL } from '../src/main/version.js';
 import { userPromptText } from '../src/shared/user-prompt.js';
 import { currentCoreInstructions } from '../src/main/mcp/instructions.js';
@@ -53,6 +53,9 @@ const {
   browserConversationOpen,
   onBridgeChange,
   compactSession,
+  escalateRestartRecovery,
+  watchRestartRecovery,
+  RESTART_RECOVERY_ESCALATION_MS,
   setSessionObjective,
   unattributedRepairEta,
   cancelResume,
@@ -157,7 +160,7 @@ const {
 );
 const { makeTempDir, removeTempDir, SAMPLE_BRIEF, faultGate } = await import('./helpers.js');
 const { resumeBootstrapText } = await import('../src/main/session/handoff.js');
-const { getLog } = await import('../src/main/logger.js');
+const { getLog, onLog } = await import('../src/main/logger.js');
 const { noteInboundToolRequest, resetInboundRequestsForTests } = await import('../src/main/mcp/inbound.js');
 const {
   AGENT_IDENTITY_STATE,
@@ -1877,6 +1880,86 @@ describe('activity feed', () => {
  * the app's: it files the durable ticket on the evidence that the chat is working, and the
  * page resumes the ticket — so a page that has frozen mid-turn is still compacted.
  */
+/**
+ * A restart wake the replacement page never admits.
+ *
+ * The wake waits for the reloaded page to take over the interrupted turn, and Stop and the
+ * page's own completion wait for the same takeover. When it never comes, recovery escalates
+ * once to Compact & Resume, which does not need it, and never while ChatGPT is answering.
+ */
+describe('restart recovery escalation', () => {
+  const INPUT_ID = 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+  async function stuckWake(conversationId: string, turnId: string, options: { generating?: boolean } = {}) {
+    await pair();
+    const { enqueueInput, markRestartRecoveryInput, resetInputForTests } = await import('../src/main/session/input.js');
+    await writeDurableNow('session-input', []);
+    resetInputForTests();
+    const opened = await request('POST', '/events', { body: { conversationId,
+      events: [{ kind: 'turn_start', time: Date.now(), turnId }] } });
+    const sessionId = opened.body.sessionId as string;
+    // The app restarted: its recorder no longer holds a generating page for this chat.
+    if (!options.generating) resetRecorderForTests();
+    await enqueueInput({ id: INPUT_ID, sessionId, text: 'Restart wake', mode: 'auto', dueAt: Date.now(), model: null, reasoningEffort: null });
+    await markRestartRecoveryInput(INPUT_ID, turnId);
+    return { sessionId, conversationId, turnId, inputId: INPUT_ID };
+  }
+
+  afterEach(async () => {
+    const { resetInputForTests } = await import('../src/main/session/input.js');
+    await writeDurableNow('session-input', []);
+    resetInputForTests();
+  });
+
+  it('files a recovery Compact & Resume ticket for the exact stuck turn and opens its chat', async () => {
+    const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e501', 'g-stuck-0-3');
+    expect((await getSession(target.sessionId))?.activeTurnId).toBe('g-stuck-0-3');
+    expect(await escalateRestartRecovery(target)).toBe('escalated');
+    expect(continuationForSession(target.sessionId)).toMatchObject({ from: target.conversationId, automatic: false, recovery: true });
+    expect(resumeJobFor(target.sessionId)).toMatchObject({ stage: 'handoff-pending', recovery: true, automatic: false });
+    expect(recoveryBrowserWake).toHaveBeenCalledTimes(1);
+    expect(recoveryBrowserWake.mock.calls[0]![0]).toBe(`https://chatgpt.com/c/${target.conversationId}`);
+    // One escalation: the open ticket is the recovery now.
+    expect(await escalateRestartRecovery(target)).toBe('done');
+    expect(recoveryBrowserWake).toHaveBeenCalledTimes(1);
+    abortContinuation(continuationForSession(target.sessionId)!.token, 'test_cleanup');
+  });
+
+  it('waits while ChatGPT is still generating in that chat', async () => {
+    const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e502', 'g-live-0-1', { generating: true });
+    expect(liveConversations().find(row => row.conversationId === target.conversationId)?.generating).toBe(true);
+    expect(await escalateRestartRecovery(target)).toBe('waiting');
+    expect(continuationForSession(target.sessionId)).toBeNull();
+    expect(recoveryBrowserWake).not.toHaveBeenCalled();
+  });
+
+  it('has nothing to do once the turn ended, the wake is gone, or the target names another turn', async () => {
+    const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e503', 'g-ended-0-2');
+    expect(await escalateRestartRecovery({ ...target, turnId: 'g-other-0-9' })).toBe('done');
+    expect(await escalateRestartRecovery({ ...target, inputId: 'dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee' })).toBe('done');
+    await recordFinalForTest(target.conversationId, target.turnId);
+    expect((await getSession(target.sessionId))?.activeTurnId).toBeNull();
+    expect(await escalateRestartRecovery(target)).toBe('done');
+    expect(continuationForSession(target.sessionId)).toBeNull();
+    expect(recoveryBrowserWake).not.toHaveBeenCalled();
+  });
+
+  it('escalates only after the wake has waited, and never for an idle-restart wake', async () => {
+    const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e504', 'g-timer-0-4');
+    vi.useFakeTimers();
+    try {
+      watchRestartRecovery({ ...target, turnId: null, entry: {}, exactPrime: true });
+      watchRestartRecovery({ ...target, entry: {}, exactPrime: true });
+      await vi.advanceTimersByTimeAsync(RESTART_RECOVERY_ESCALATION_MS - 1_000);
+      expect(continuationForSession(target.sessionId)).toBeNull();
+      await vi.advanceTimersByTimeAsync(2_000);
+    } finally { vi.useRealTimers(); }
+    await vi.waitFor(() => expect(continuationForSession(target.sessionId)?.recovery).toBe(true));
+    expect(recoveryBrowserWake).toHaveBeenCalledTimes(1);
+    abortContinuation(continuationForSession(target.sessionId)!.token, 'test_cleanup');
+  });
+});
+
 describe('automatic compaction', () => {
   const settled = () => new Promise((resolve) => setTimeout(resolve, 25));
 
@@ -3115,31 +3198,27 @@ describe('delivering a bootstrap', () => {
     expect((await redeem(command.id, 'tab-b2')).text).toContain('the brief for the armed move');
     expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
     expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
-    const logged = getLog().length;
+    // Collected as they are written: the log buffer is a 500-entry ring, so an offset into it
+    // stops meaning "since here" once earlier tests have filled it.
+    const logged: string[] = [];
+    const stopListening = onLog((entry) => logged.push(entry.message));
+    try {
+      const reply = await request('POST', '/compact', {
+        body: { conversationId: chatB, token, destinationMessageId: 'm-b2-marked-resume' }
+      });
+      expect(reply.status).toBe(200);
+      expect(reply.body.committed).toBe(true);
+      expect((await getSession(sessionId))?.conversationId).toBe(chatB);
+      expect(logged.some((message) => message.includes(`resumed chat ${chatB} armed`))).toBe(true);
+      expect((await request('GET', '/status')).body.recoveryMonitoring).toBe(true);
 
-    const reply = await request('POST', '/compact', {
-      body: { conversationId: chatB, token, destinationMessageId: 'm-b2-marked-resume' }
-    });
-    expect(reply.status).toBe(200);
-    expect(reply.body.committed).toBe(true);
-    expect((await getSession(sessionId))?.conversationId).toBe(chatB);
-    expect(
-      getLog()
-        .slice(logged)
-        .some((entry) => entry.message.includes(`resumed chat ${chatB} armed`))
-    ).toBe(true);
-    expect((await request('GET', '/status')).body.recoveryMonitoring).toBe(true);
-
-    // Idempotent re-reads of the marked message (a reloaded B) do not arm it a second time.
-    const again = await request('POST', '/compact', {
-      body: { conversationId: chatB, token, destinationMessageId: 'm-b2-marked-resume' }
-    });
-    expect(again.status).toBe(200);
-    expect(
-      getLog()
-        .slice(logged)
-        .filter((entry) => entry.message.includes(`resumed chat ${chatB} armed`))
-    ).toHaveLength(1);
+      // Idempotent re-reads of the marked message (a reloaded B) do not arm it a second time.
+      const again = await request('POST', '/compact', {
+        body: { conversationId: chatB, token, destinationMessageId: 'm-b2-marked-resume' }
+      });
+      expect(again.status).toBe(200);
+      expect(logged.filter((message) => message.includes(`resumed chat ${chatB} armed`))).toHaveLength(1);
+    } finally { stopListening(); }
   });
 
   /**

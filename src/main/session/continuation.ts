@@ -189,6 +189,8 @@ interface Continuation {
   sourceProgress: number;
   /** Auto-compaction ticket: survives page/retry clocks until commit or explicit Off/cancel. */
   automatic: boolean;
+  /** Filed by a stuck restart recovery. Its page never clicks Stop: a generating chat refuses it. */
+  recovery: boolean;
   /** When the brief request first went on its way; the automatic clock starts here. */
   askedAt: number | null;
   state: ContinuationState;
@@ -244,6 +246,8 @@ interface ContinuationRecord {
   sourceProgress?: number;
   /** Absent in records written before durable auto-compaction tickets existed. */
   automatic?: boolean;
+  /** Absent in records written before restart recovery could escalate to a handoff. */
+  recovery?: boolean;
   /** Absent in records written before automatic handovers had a deadline. */
   askedAt?: number | null;
   /** Absent in records written before Project affinity was carried; null means the site root. */
@@ -277,6 +281,7 @@ function durableRecord(entry: Continuation): ContinuationRecord {
     touchedAt: entry.touchedAt,
     sourceProgress: entry.sourceProgress,
     automatic: entry.automatic,
+    recovery: entry.recovery,
     askedAt: entry.askedAt,
     project: entry.project,
     state: entry.state,
@@ -331,6 +336,7 @@ function publishRecord(entry: Continuation, record: ContinuationRecord): void {
   entry.touchedAt = Math.max(entry.touchedAt, record.touchedAt ?? record.openedAt);
   entry.sourceProgress = record.sourceProgress ?? 0;
   entry.automatic = record.automatic === true;
+  entry.recovery = record.recovery === true;
   entry.state = record.state;
   entry.summary = record.summary;
   entry.handoffId = record.handoffId;
@@ -407,6 +413,7 @@ export interface ContinuationView {
   error: string | null;
   openedAt: number;
   automatic: boolean;
+  recovery: boolean;
   /** When the brief request first went on its way, or null while it has not. */
   askedAt: number | null;
   /** The Project the replacement chat belongs in, or null for the site root. */
@@ -426,6 +433,7 @@ const view = (entry: Continuation): ContinuationView => ({
   error: entry.error,
   openedAt: entry.openedAt,
   automatic: entry.automatic,
+  recovery: entry.recovery,
   askedAt: entry.askedAt,
   project: entry.project,
   sourceSend: { ...entry.sourceSend },
@@ -701,7 +709,7 @@ export async function repairPrimeFromResumeShadow(conversationId: string): Promi
  * one already running. That is deliberate — the previous design let each press become its
  * own handoff and its own fresh tab.
  */
-function makeContinuation(sessionId: string, fromConversationId: string, automatic: boolean, project: string | null): Continuation {
+function makeContinuation(sessionId: string, fromConversationId: string, automatic: boolean, project: string | null, recovery: boolean): Continuation {
   return {
     sourceTurnId: null,
     token: randomBytes(16).toString('base64url'),
@@ -712,6 +720,7 @@ function makeContinuation(sessionId: string, fromConversationId: string, automat
     touchedAt: Date.now(),
     sourceProgress: 0,
     automatic,
+    recovery,
     askedAt: null,
     state: 'awaiting-summary',
     summary: '',
@@ -731,7 +740,8 @@ export async function openContinuationNow(
   sessionId: string,
   fromConversationId: string,
   automatic = false,
-  project: string | null = null
+  project: string | null = null,
+  recovery = false
 ): Promise<ContinuationView> {
   sweep();
   const existing = [...byToken.values()].find((entry) => entry.sessionId === sessionId && isOpen(entry));
@@ -742,7 +752,7 @@ export async function openContinuationNow(
   const work = (async (): Promise<ContinuationView> => {
     const again = [...byToken.values()].find((entry) => entry.sessionId === sessionId && isOpen(entry));
     if (again) return view(again);
-    const entry = makeContinuation(sessionId, fromConversationId, automatic, normalizeProjectId(project));
+    const entry = makeContinuation(sessionId, fromConversationId, automatic, normalizeProjectId(project), recovery);
     entry.sourceTurnId = (await getSession(sessionId))?.activeTurnId ?? null;
     try {
       await writeDurableNow(CONTINUATIONS_STATE, snapshotWith(entry.token, durableRecord(entry)));
@@ -1509,6 +1519,7 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
       sourceProgress: Number.isSafeInteger(raw.sourceProgress) && raw.sourceProgress! >= 0 && raw.sourceProgress! <= 4_000_000 ? raw.sourceProgress! : 0,
       touchedAt: Number.isFinite(raw.touchedAt) && raw.touchedAt! >= raw.openedAt && raw.touchedAt! <= now ? Number(raw.touchedAt) : raw.openedAt,
       automatic: raw.automatic === true,
+      recovery: raw.recovery === true,
       askedAt: null,
       state: raw.state,
       summary: typeof raw.summary === 'string' ? raw.summary.slice(0, 512 * 1024) : '',

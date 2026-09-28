@@ -15,7 +15,7 @@ export { setBrowserWorkArea } from './browser-window-layout.js';
 import { pendingBrowserPreferenceRequest, acknowledgeBrowserPreferences } from './browser-preferences.js';
 import { sessionFinishHeld, releaseSessionFinish, getSessionFinishDraft, sessionFinishWaiting } from './session/finish.js';
 import { observeUsage } from './session/usage.js';
-import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, completeBrowserDecision, enqueueWorkerAttention, listInputs } from './session/input.js';
+import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, completeBrowserDecision, enqueueWorkerAttention, listInputs, restartRecoveryWaiting } from './session/input.js';
 import { syncEvecronOccurrenceStart } from './evecron-runner.js';
 /**
  * The local bridge between the Chrome extension and this app.
@@ -106,7 +106,7 @@ import {
   readActivityEvents,
   sessionDurableModifiedAt
 } from './session/store.js';
-import { inFlightMcpRequests, runningToolCalls, runningToolProgress, settlingToolCalls } from './mcp/call-context.js';
+import { inFlightMcpRequests, inFlightToolCalls, runningToolCalls, runningToolProgress, settlingToolCalls } from './mcp/call-context.js';
 import { hasInboundToolRequest, onInboundToolRequest } from './mcp/inbound.js';
 import { nativeHandoffPrompt } from './session/handoff-prompt.js';
 import { briefShortfall, handoffPlanNotice, resumeBootstrapText } from './session/handoff.js';
@@ -1682,13 +1682,13 @@ export async function setSessionAutomation(sessionId: string, automation: Sessio
   return sessionControlsFor(sessionId);
 }
 /** One ticket publication boundary shared by browser and app controls. */
-async function fileCompactionTicket(sessionId: string, id: string, automatic = false) {
+async function fileCompactionTicket(sessionId: string, id: string, automatic = false, recovery = false) {
   if (await controlledConversation(sessionId) !== id) throw new Error('conversation_changed');
   if (goalWorkerChat(id)) throw new Error('worker_compaction_disabled');
   if (isChatBlocked(id)) throw new Error('chat_blocked');
   if (automatic && !automaticCompactionAllowed(await getSession(sessionId))) throw new Error('automatic_compaction_disabled');
   const existing = continuationForSession(sessionId);
-  const opened = existing ?? await openContinuationNow(sessionId, id, automatic);
+  const opened = existing ?? await openContinuationNow(sessionId, id, automatic, null, recovery);
   rememberToken(sessionId, opened.token);
   clearAutomaticCompactionDeadline(id);
   changed();
@@ -1696,6 +1696,11 @@ async function fileCompactionTicket(sessionId: string, id: string, automatic = f
 }
 export async function compactSession(sessionId: string): Promise<SessionControlsView> {
   const { opened } = await fileCompactionTicket(sessionId, await controlledConversation(sessionId));
+  await openCompactionSource(sessionId, opened);
+  return sessionControlsFor(sessionId);
+}
+/** Opens chat A so its page can collect a ticket the app filed; the page runs the handoff. */
+async function openCompactionSource(sessionId: string, opened: ContinuationView): Promise<void> {
   const lifecycle = bridgeLifecycleEpoch;
   await wakeBrowserUrl(chatUrl(opened.from), true, getConfig().ui.backgroundChats === true, {
     current: () => bridgeLifecycleEpoch === lifecycle && !bridgeShutdownRequested &&
@@ -1703,7 +1708,62 @@ export async function compactSession(sessionId: string): Promise<SessionControls
       continuationForSession(sessionId)?.token === opened.token &&
       continuationForSession(sessionId)?.state === 'awaiting-summary'
   });
-  return sessionControlsFor(sessionId);
+}
+
+/** How long a restart wake may wait for its replacement page before recovery escalates. */
+export const RESTART_RECOVERY_ESCALATION_MS = 5 * 60_000;
+
+/**
+ * Escalates a restart wake that its replacement page never admitted to Compact & Resume.
+ *
+ * The wake can only be delivered once the reloaded page has taken over the interrupted turn.
+ * When it never does, nothing else closes that turn: Stop and the page's own completion need
+ * the same takeover. Compact & Resume does not: its page acts on what ChatGPT shows now, and
+ * the commit moves the session and its Eve identity to a fresh chat, which retires the wake.
+ *
+ * Escalates only for the exact wake, chat and open turn it was queued for, with no local call
+ * in flight and no generation the app can see. The ticket is marked as recovery, so its page
+ * refuses rather than clicks Stop if ChatGPT turns out to be answering after all.
+ * `waiting` asks the caller to look again later; `done` means there is nothing left to do.
+ */
+export async function escalateRestartRecovery(target: {
+  sessionId: string; conversationId: string; turnId: string; inputId: string;
+}): Promise<'escalated' | 'waiting' | 'done'> {
+  const { sessionId, conversationId, turnId, inputId } = target;
+  if (bridgeShutdownRequested || !(await restartRecoveryWaiting(inputId, turnId))) return 'done';
+  const session = await getSession(sessionId);
+  if (session?.conversationId !== conversationId || session.activeTurnId !== turnId) return 'done';
+  const [boundary] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
+  if (boundary?.kind !== 'turn_start' || boundary.turnId !== turnId) return 'done';
+  if (isChatBlocked(conversationId) || await conversationWasSuperseded(conversationId) ||
+      continuationForSession(sessionId)) return 'done';
+  if (inFlightToolCalls(conversationId) > 0 ||
+      liveConversations().some(row => row.conversationId === conversationId && row.generating)) return 'waiting';
+  const { opened, started } = await fileCompactionTicket(sessionId, conversationId, false, true);
+  if (!started) return 'done';
+  logWarn(`restart recovery for session ${sessionId} was never admitted to turn ${turnId}; starting Compact & Resume`);
+  await openCompactionSource(sessionId, opened);
+  return 'escalated';
+}
+/**
+ * Arms the escalation for one restart wake that recovers an open turn, checking every
+ * {@link RESTART_RECOVERY_ESCALATION_MS} until it escalates once or has nothing left to do.
+ * An idle-restart wake needs none: ordinary input admission already delivers it.
+ */
+export function watchRestartRecovery(plan: {
+  sessionId: string; conversationId: string; turnId: string | null; inputId: string; entry: unknown; exactPrime: boolean;
+}): void {
+  if (!plan.exactPrime || !plan.turnId || !plan.entry) return;
+  const target = { sessionId: plan.sessionId, conversationId: plan.conversationId, turnId: plan.turnId, inputId: plan.inputId };
+  const arm = (): void => {
+    const timer = setTimeout(() => {
+      void escalateRestartRecovery(target)
+        .then(outcome => { if (outcome === 'waiting') arm(); })
+        .catch(error => logWarn(`restart recovery could not escalate for session ${target.sessionId}: ${error instanceof Error ? error.message : String(error)}`));
+    }, RESTART_RECOVERY_ESCALATION_MS);
+    timer.unref?.();
+  };
+  arm();
 }
 export async function cancelSessionCompaction(sessionId: string): Promise<SessionControlsView> {
   await controlledConversation(sessionId);
@@ -5238,6 +5298,8 @@ export interface ResumeJobView {
   startedAt: number;
   /** True only for a threshold-triggered ticket; Auto Off may cancel only these. */
   automatic: boolean;
+  /** Filed by a stuck restart recovery: the page must refuse rather than click Stop. */
+  recovery: boolean;
   /** True while the button must stay disabled. */
   busy: boolean;
   handoffId: string | null;
@@ -5295,6 +5357,7 @@ export function resumeJobFor(sessionId: string): ResumeJobView | null {
     stage,
     startedAt: entry.openedAt,
     automatic: entry.automatic,
+    recovery: entry.recovery,
     busy: RUNNING_STAGES.has(stage),
     handoffId: entry.handoffId,
     sourceSend: entry.sourceSend,

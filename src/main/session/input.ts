@@ -769,6 +769,11 @@ export function restartRecoveryPending(sessionId: string): Promise<boolean> {
   return serial(async () => (await load()).some(row =>
     row.sessionId === sessionId && !!row.recoveryTurnId && !terminal(row)));
 }
+/** True while this exact restart wake is still queued, unclaimed, for the turn it recovers. */
+export function restartRecoveryWaiting(id: string, recoveryTurnId: string): Promise<boolean> {
+  return serial(async () => (await load()).some(row =>
+    row.id === id && row.recoveryTurnId === recoveryTurnId && row.state === 'queued'));
+}
 const CHAT_REVIEW_ATTENTION_HEADER = '[[PARADIGMEVE-CHAT-REVIEW:v1]]';
 function chatReviewPlanBatchText(review: ChatReviewAttention): string {
   const plans = review.plans ?? [];
