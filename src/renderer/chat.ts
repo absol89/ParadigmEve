@@ -4594,6 +4594,7 @@ export function initChat(next: Deps): void {
   });
 
   api.onSessionChanged(scheduleReload);
+  api.onPlansChanged(scheduleReload);
   api.onTaskProgress(progress => {
     if (!goalProgress || progress.requestId !== goalProgress.requestId || goalProgress.selection !== selectionGeneration) return;
     Object.assign(goalProgress, progress); paintGoalProgress();
