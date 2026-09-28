@@ -1386,38 +1386,55 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 describe('post-install Companion document proof', () => {
   const paired = { port: 8765, token: 'paired-token' };
 
-  it('reloads a Companion still running an older same-version build once, and never a current one', async () => {
+  it('reloads a Companion still running an older same-version build once it is idle, and never a current one', async () => {
     // Dogfood 2026-09-26: Chrome kept executing the previous 2.2.4 debug build's page code after
     // the installer replaced the files, so the reply fix never ran. Version and protocol match.
-    const helloWith = (companionBuild?: string) => vi.fn(async (input: string) => {
+    const statusWith = (companionBuild?: string, extra: Record<string, unknown> = {}) => vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/hello') {
         return response(200, { app: 'chat-on-steroids', product: 'paradigmeve', paired: true, compatible: true,
           version: APP_VERSION, bridge: BRIDGE_PROTOCOL, ...(companionBuild ? { companionBuild } : {}) });
       }
-      return response(200, { ok: true, repairs: [], recoveryMonitoring: false });
+      return response(200, { ok: true, repairs: [], recoveryMonitoring: false,
+        ...(companionBuild ? { companionBuild, companionBusy: false } : {}), ...extra });
     });
     const current = `${APP_VERSION} build aaaaaaaaaaaa`;
+    const chatTab = async () => [{ id: 5, windowId: 7, url: 'https://chatgpt.com/c/chat' }];
 
-    const same = loadWorker({ local: new FakeStorageArea({}), session: new FakeStorageArea({}), fetch: helloWith(current),
+    const same = loadWorker({ local: new FakeStorageArea({ ...paired }), session: new FakeStorageArea({ ...paired }), fetch: statusWith(current),
       manifest: { version: APP_VERSION, version_name: current } });
     await same.fireAlarm();
     expect(same.runtimeReload).not.toHaveBeenCalled();
 
     // Development / unstamped app folders name no build and are never second-guessed.
-    const unnamed = loadWorker({ local: new FakeStorageArea({}), session: new FakeStorageArea({}), fetch: helloWith(),
+    const unnamed = loadWorker({ local: new FakeStorageArea({ ...paired }), session: new FakeStorageArea({ ...paired }), fetch: statusWith(),
       manifest: { version: APP_VERSION, version_name: `${APP_VERSION} build bbbbbbbbbbbb` } });
     await unnamed.fireAlarm();
     expect(unnamed.runtimeReload).not.toHaveBeenCalled();
 
-    const local = new FakeStorageArea({});
-    const stale = loadWorker({ local, session: new FakeStorageArea({}), fetch: helloWith(current),
-      manifest: { version: APP_VERSION } });
+    // Busy work defers the reload: an app tool call, a bridge command, a page mid-turn, or a page
+    // whose older code cannot say whether it is busy.
+    const local = new FakeStorageArea({ ...paired });
+    for (const [fetch, tabsSendMessage] of [
+      [statusWith(current, { companionBusy: true }), async () => ({ ok: true, busy: false })],
+      [statusWith(current, { commands: 1 }), async () => ({ ok: true, busy: false })],
+      [statusWith(current), async () => ({ ok: true, busy: true })],
+      [statusWith(current), async () => ({ ok: true })]
+    ] as const) {
+      const busy = loadWorker({ local, session: new FakeStorageArea({ ...paired }), fetch, tabsQuery: chatTab, tabsSendMessage,
+        manifest: { version: APP_VERSION } });
+      await busy.fireAlarm();
+      expect(busy.runtimeReload).not.toHaveBeenCalled();
+    }
+
+    const stale = loadWorker({ local, session: new FakeStorageArea({ ...paired }), fetch: statusWith(current), tabsQuery: chatTab,
+      tabsSendMessage: async () => ({ ok: true, busy: false }), manifest: { version: APP_VERSION } });
     await stale.fireAlarm();
     expect(stale.runtimeReload).toHaveBeenCalledTimes(1);
+    expect(stale.tabsSendMessage).toHaveBeenCalledWith(5, { type: 'clf-recorder-ping' }, undefined);
 
     // A reload that still does not produce the named build must not loop.
-    const again = loadWorker({ local, session: new FakeStorageArea({}), fetch: helloWith(current),
+    const again = loadWorker({ local, session: new FakeStorageArea({ ...paired }), fetch: statusWith(current),
       manifest: { version: APP_VERSION } });
     await again.fireAlarm();
     expect(again.runtimeReload).not.toHaveBeenCalled();

@@ -13,6 +13,26 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.0] — Windows-named installers, a Companion that updates itself when idle
+
+### Changed
+
+- Windows installers are published as `ParadigmEve-Windows-<arch>-debug.exe` instead of `ParadigmEve-Setup-…`.
+  2.2.9 installations update into them automatically; 2.2.8 and older only know the `Setup` name and need a manual
+  install (or 2.2.9 first). The updater still accepts the legacy `Setup` name second.
+- The Companion reloads itself into the build the app ships (ported from chat-on-steroids 2.1.17) only when idle: the
+  app reports `companionBusy` in `/status`, no bridge command may be in flight, and every ChatGPT page must answer
+  its ping with `busy: false`. It no longer reloads the moment `/hello` names another build. `/hello` keeps the
+  field for Companions up to 2.2.9, which still reload that way.
+
+### Fixed
+
+- Expenses `record` rejected every reasonable receipt shape because the published tool schema left `facts` opaque
+  and the validator required keys that are honestly unknown. The `facts` contract is now published in the tool
+  schema. Unknown optional facts (`location`, `notes`, item details, `items`) default to null or empty, JSON numbers
+  are accepted as decimal amounts at the tool boundary, and rejections name each bad field. `expectedRevision`, the
+  accounting backstop (`purchasedOn`, `merchant`, `currency`, `total`) and full-object `correct` stay mandatory.
+
 ## [2.2.9] — Clearer Windows downloads
 
 ### Changed

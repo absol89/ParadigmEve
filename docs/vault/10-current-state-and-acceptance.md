@@ -3,16 +3,16 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.2.9 source line, what remains the public 2.2.8 baseline, and the acceptance gates to use
+2.3.0 source line, what remains the public 2.2.9 baseline, and the acceptance gates to use
 before packaging, installing, or calling a change complete.
 
 ## Current product state
 
-- Current source package/app line: **2.2.9**, cumulative over the public **2.2.8** release.
-- Current public release baseline: **2.2.8**. The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
+- Current source package/app line: **2.3.0**, cumulative over the public **2.2.9** release.
+- Current public release baseline: **2.2.9**. The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.2.9 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.2.9 runtime.
+- A 2.3.0 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.3.0 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
@@ -78,7 +78,8 @@ for the mechanics.
   restart. Browser evidence alone never creates local traffic or overwrites a correlation.
 - An unattributed-activity repair never reloads a streaming page.
 - The running Companion must be the installed build: the folder is materialized before any browser
-  launch, and a Companion loaded from another build reloads itself once.
+  launch, and a Companion loaded from another build reloads itself once, never under a running tool
+  call, bridge command or busy ChatGPT page.
 - A pending restart wake for the pinned agent conversation is delivered before automatic Compact &
   Resume may post its handoff.
 - A silent install relaunches ParadigmEve only when it closed a running instance itself.

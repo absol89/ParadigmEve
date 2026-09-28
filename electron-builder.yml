@@ -96,7 +96,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: ParadigmEve
-  artifactName: ParadigmEve-Setup-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}
+  artifactName: ParadigmEve-Windows-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}
   uninstallDisplayName: ParadigmEve
   deleteAppDataOnUninstall: false
 

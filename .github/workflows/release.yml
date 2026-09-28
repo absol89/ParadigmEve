@@ -46,14 +46,14 @@ jobs:
             runner: windows-2025
             script: dist:x64
             artifact: package-windows-x64
-            files: release/ParadigmEve-Setup-x64-debug.exe
+            files: release/ParadigmEve-Windows-x64-debug.exe
           - name: Windows arm64
             platform: win32
             arch: arm64
             runner: windows-11-arm
             script: dist:arm64
             artifact: package-windows-arm64
-            files: release/ParadigmEve-Setup-arm64-debug.exe
+            files: release/ParadigmEve-Windows-arm64-debug.exe
           - name: macOS x64
             platform: darwin
             arch: x64
@@ -364,8 +364,8 @@ jobs:
         run: |
           set -euo pipefail
           files=(
-            release/ParadigmEve-Setup-x64-debug.exe
-            release/ParadigmEve-Setup-arm64-debug.exe
+            release/ParadigmEve-Windows-x64-debug.exe
+            release/ParadigmEve-Windows-arm64-debug.exe
             release/ParadigmEve-macOS-x64-debug.dmg
             release/ParadigmEve-macOS-x64-debug.zip
             release/ParadigmEve-macOS-arm64-debug.dmg
@@ -379,8 +379,8 @@ jobs:
           )
           for file in "${files[@]}"; do test -f "$file" || { echo "Missing $file" >&2; exit 1; }; done
           (cd release && sha256sum \
-            ParadigmEve-Setup-x64-debug.exe \
-            ParadigmEve-Setup-arm64-debug.exe \
+            ParadigmEve-Windows-x64-debug.exe \
+            ParadigmEve-Windows-arm64-debug.exe \
             ParadigmEve-macOS-x64-debug.dmg \
             ParadigmEve-macOS-x64-debug.zip \
             ParadigmEve-macOS-arm64-debug.dmg \
@@ -400,8 +400,8 @@ jobs:
           # fail after all six package jobs. A run id is filesystem-safe and caller-stable.
           name: paradigmeve-candidate-${{ github.run_id }}
           path: |
-            release/ParadigmEve-Setup-x64-debug.exe
-            release/ParadigmEve-Setup-arm64-debug.exe
+            release/ParadigmEve-Windows-x64-debug.exe
+            release/ParadigmEve-Windows-arm64-debug.exe
             release/ParadigmEve-macOS-x64-debug.dmg
             release/ParadigmEve-macOS-x64-debug.zip
             release/ParadigmEve-macOS-arm64-debug.dmg

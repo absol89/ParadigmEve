@@ -1000,7 +1000,6 @@ async function hello(candidate) {
     if (!response.ok) return null;
     const body = await response.json();
     if (!body || body.app !== 'chat-on-steroids' || body.product !== BRIDGE_PRODUCT) return null;
-    await reloadForCompanionBuild(body.companionBuild);
     return body;
   } catch {
     return null;
@@ -1012,24 +1011,36 @@ async function hello(candidate) {
  *
  * Chrome keeps executing unpacked extension code it loaded before an update replaced the files,
  * and every debug build of one version reports the same `version` and protocol. The app stamps
- * each materialized manifest's `version_name` and names that build in `/hello`; the loaded
- * manifest is what this generation actually runs. A mismatch reloads once per named build (a
- * reload of a folder that still differs must not loop), and `runtime.onInstalled` then
- * re-injects the current page code into the already-open ChatGPT documents.
+ * each materialized manifest's `version_name` and names that build in `/status`; the loaded
+ * manifest is what this generation actually runs. A reload cuts off whatever the pages and the
+ * bridge are doing, so it waits for a pass in which the app runs no tool call, no bridge command
+ * is in flight and every ChatGPT page answers that it is idle. A page that cannot answer has
+ * nothing running here; one that answers without `busy` runs older page code that cannot say,
+ * and counts as busy. A mismatch reloads once per named build (a reload of a folder that still
+ * differs must not loop), and `runtime.onInstalled` then re-injects the current page code into
+ * the already-open ChatGPT documents. Returns true when this worker is about to be replaced.
  */
-async function reloadForCompanionBuild(wanted) {
-  if (typeof wanted !== 'string' || !wanted) return;
+async function reloadForCompanionBuild(status) {
+  const wanted = status && status.companionBuild;
+  if (typeof wanted !== 'string' || !wanted) return false;
   let loaded = null;
-  try { loaded = chrome.runtime.getManifest().version_name || null; } catch { return; }
-  if (loaded === wanted) return;
+  try { loaded = chrome.runtime.getManifest().version_name || null; } catch { return false; }
+  if (loaded === wanted) return false;
+  if (status.companionBusy !== false || (Number.isInteger(status.commands) && status.commands > 0)) return false;
   try {
     const stored = await chrome.storage.local.get('companionBuildReload');
-    if (stored.companionBuildReload === wanted) return;
+    if (stored.companionBuildReload === wanted) return false;
+    for (const tab of await chrome.tabs.query({ url: CHATGPT_TAB_URLS })) {
+      if (!Number.isInteger(tab.id) || tab.discarded === true) continue;
+      const ping = await tabReply(tab.id, { type: 'clf-recorder-ping' });
+      if (ping && ping.busy !== false) return false;
+    }
     await chrome.storage.local.set({ companionBuildReload: wanted });
   } catch {
-    return;
+    return false;
   }
   chrome.runtime.reload();
+  return true;
 }
 
 /** Lets the app say plainly when the two halves are out of step. */
@@ -2723,6 +2734,9 @@ async function maintainOnce() {
     ...(openChatTabs === undefined ? {} : { openChatTabs })
   }) });
   if (!reply.ok || !reply.data) return;
+  // Before this pass starts any page or input work of its own; the durable app rows are offered
+  // again to the reloaded worker.
+  if (await reloadForCompanionBuild(reply.data)) return;
   connectWakeSocket();
   // Quoted back exactly as they arrived. A token names the handout being answered, so that a
   // receipt this pass sends late cannot close a repair the app has since raised for a different

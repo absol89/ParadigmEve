@@ -9,11 +9,12 @@ export const expenseFinancialKindSchema = z.enum(['purchase', 'bill', 'transfer'
   'Financial meaning of the evidence. Purchase and bill count as spending. Transfer is a movement between the user\'s own accounts and never spending. Income is tracked separately from spending.'
 );
 // Decimal strings retain exact source precision. No binary floating point enters totals.
-export const expenseDecimalSchema = z.string().regex(/^-?(?:0|[1-9]\d{0,14})(?:\.\d{1,4})?$/);
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+export const expenseDecimalSchema = z.string().regex(/^-?(?:0|[1-9]\d{0,14})(?:\.\d{1,4})?$/,
+  'Use a decimal string such as "208.18" (at most 4 decimals, no currency symbol or thousands separator)');
+const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { error: 'Use an ISO date YYYY-MM-DD', abort: true }).refine(value => {
   const parsed = new Date(value + 'T00:00:00Z');
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-});
+}, 'Use a real calendar date YYYY-MM-DD');
 const expenseLocalSourceSchema = z.object({
   kind: z.enum(['text', 'image']),
   sessionId: id,
@@ -35,25 +36,32 @@ export const expenseSourceSchema = z.union([expenseLocalSourceSchema, expenseCon
 export const expenseItemSchema = z.object({
   id,
   rawName: z.string().min(1).max(500),
-  normalizedName: nullableText,
-  category: nullableText,
+  normalizedName: nullableText.default(null),
+  category: nullableText.default(null),
   confidence: z.enum(['high', 'medium', 'low', 'unknown']).default('unknown'),
-  quantity: expenseDecimalSchema.nullable(),
+  quantity: expenseDecimalSchema.nullable().default(null),
   unit: nullableText.default(null),
   brand: nullableText.default(null),
   unitPrice: expenseDecimalSchema.nullable().default(null),
-  amount: expenseDecimalSchema.nullable(),
+  amount: expenseDecimalSchema.nullable().default(null),
   budgetBucket: expenseBudgetBucketSchema.default(null).describe('Optional monthly budget allocation, separate from category and receipt merchant/location provenance. Use an established user bucket such as fun only when supported by the user\'s allocation rules; durability is a hint, never an automatic assignment.'),
-  warranty: z.object({ candidate: z.boolean(), reason: nullableText }).strict()
+  warranty: z.object({ candidate: z.boolean(), reason: nullableText.default(null) }).strict()
+    .default(() => ({ candidate: false, reason: null }))
 }).strict();
+// An omitted item id is the item's 1-based receipt line position; ids only need to be unique per record.
+const expenseItemsSchema = z.preprocess(items => items === undefined ? [] : Array.isArray(items)
+  ? items.map((item, index) => item && typeof item === 'object' && !Array.isArray(item) && (item as { id?: unknown }).id === undefined
+    ? { ...item, id: String(index + 1) } : item)
+  : items,
+z.array(expenseItemSchema).max(500).refine(items => new Set(items.map(item => item.id)).size === items.length, 'Item ids must be unique'));
 export const expenseFactsSchema = z.object({
   financialKind: expenseFinancialKindSchema.default('purchase'),
   purchasedOn: date.nullable(),
   rawDateText: nullableText.default(null),
   merchant: nullableText,
   rawMerchant: nullableText.default(null),
-  location: nullableText,
-  currency: z.string().regex(/^[A-Z]{3}$/).nullable(),
+  location: nullableText.default(null),
+  currency: z.string().regex(/^[A-Z]{3}$/, 'Use an uppercase ISO 4217 code such as "SEK"').nullable(),
   total: expenseDecimalSchema.nullable(),
   subtotal: expenseDecimalSchema.nullable().default(null),
   discount: expenseDecimalSchema.nullable().default(null),
@@ -64,11 +72,28 @@ export const expenseFactsSchema = z.object({
   // The record bucket is only the fallback classification. Merchant/location remain evidence,
   // and an item's budgetBucket can override this fallback for its exact amount.
   defaultBudgetBucket: expenseBudgetBucketSchema.default(null),
-  items: z.array(expenseItemSchema).max(500).refine(items => new Set(items.map(item => item.id)).size === items.length, 'Item ids must be unique'),
-  notes: z.string().max(2000).nullable()
+  items: expenseItemsSchema,
+  notes: z.string().max(2000).nullable().default(null)
   ,confidence: z.enum(['high', 'medium', 'low', 'unknown']).default('unknown')
   ,uncertainties: z.array(z.string().min(1).max(500)).max(50).default([])
 }).strict();
+// Model callers naturally send receipt amounts as JSON numbers. Below 1e11 a value with at most
+// four decimals has at most 15 significant digits, so its shortest round-trip text is exactly the
+// digits the caller wrote. Only this caller boundary converts; stored ledger facts stay strings.
+const callerDecimal = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) < 1e11 ? String(value) : value;
+const DECIMAL_FACTS = ['total', 'subtotal', 'discount', 'tax'] as const;
+const DECIMAL_ITEM_FACTS = ['quantity', 'unitPrice', 'amount'] as const;
+const withCallerDecimals = (value: unknown, keys: readonly string[]) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const row = { ...value } as Record<string, unknown>;
+  for (const key of keys) if (key in row) row[key] = callerDecimal(row[key]);
+  return row;
+};
+export const expenseFactsInputSchema = z.preprocess(value => {
+  const facts = withCallerDecimals(value, DECIMAL_FACTS) as Record<string, unknown>;
+  return facts !== value && Array.isArray(facts.items)
+    ? { ...facts, items: facts.items.map(item => withCallerDecimals(item, DECIMAL_ITEM_FACTS)) } : facts;
+}, expenseFactsSchema);
 export const expenseRetentionSchema = z.object({
   status: z.enum(['not-retained', 'requested', 'declined', 'retained']),
   localPath: z.string().min(1).max(1000).nullable(),

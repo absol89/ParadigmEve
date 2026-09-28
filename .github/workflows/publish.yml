@@ -78,8 +78,8 @@ jobs:
             throw new Error(`${notesPath} must disclose unsigned and unnotarized macOS artifacts`);
           }
           for (const artifact of [
-            'ParadigmEve-Setup-x64-debug.exe',
-            'ParadigmEve-Setup-arm64-debug.exe',
+            'ParadigmEve-Windows-x64-debug.exe',
+            'ParadigmEve-Windows-arm64-debug.exe',
             'ParadigmEve-macOS-x64-debug.dmg',
             'ParadigmEve-macOS-arm64-debug.dmg',
             'ParadigmEve-Linux-x64-debug.AppImage',
@@ -195,8 +195,8 @@ jobs:
           npm run verify:tunnel-current
           node scripts/check-release-absent.mjs
           gh release create "$TAG" \
-            publish/ParadigmEve-Setup-x64-debug.exe \
-            publish/ParadigmEve-Setup-arm64-debug.exe \
+            publish/ParadigmEve-Windows-x64-debug.exe \
+            publish/ParadigmEve-Windows-arm64-debug.exe \
             publish/ParadigmEve-macOS-x64-debug.dmg \
             publish/ParadigmEve-macOS-arm64-debug.dmg \
             publish/ParadigmEve-Linux-x64-debug.AppImage \

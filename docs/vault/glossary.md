@@ -10,7 +10,7 @@ Back to [vault index](README.md).
 current protocol-15 final authority claim.
 
 **Companion build** — The `version_name` stamped into a materialized Companion manifest (`<version> build
-<fingerprint>`). `/hello` names it so a Companion still running another build reloads itself once.
+<fingerprint>`). `/hello` and `/status` name it so a Companion still running another build reloads itself once it is idle.
 
 **ChatGPT conversation** — Provider-side chat id / frontend. It can be replaced by Compact & Resume while the local session continues.
 

@@ -11354,6 +11354,9 @@
         sendResponse({
           ok: true,
           recorderVersion: RECORDER_VERSION,
+          // This page is mid-turn or mid-handoff, so the Companion must not reload under it.
+          busy: Boolean(generating || CLF_DOM.generating() || pendingTools > 0 || goalBusy || nativeBusy || job?.busy ||
+            desktopInputBusy || modelCatalogBusy || pluginRefreshBusy),
           ...(commandId ? { protectCommandReload: protectedCommandReloads.has(commandId) } : {})
         });
         return false;

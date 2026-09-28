@@ -591,12 +591,17 @@ describe('who is allowed to talk to it', () => {
   });
 
   it('names the materialized Companion build so an older loaded build can reload itself', async () => {
+    await pair();
     setCompanionBuild(`${APP_VERSION} build 0123456789ab`);
     try {
       const reply = await request('GET', '/hello', { auth: null });
       expect(reply.body.companionBuild).toBe(`${APP_VERSION} build 0123456789ab`);
+      // Current Companions decide in maintenance, where the app also says whether it is busy.
+      const status = await request('POST', '/status', { body: { openConversations: [] } });
+      expect(status.body).toMatchObject({ companionBuild: `${APP_VERSION} build 0123456789ab`, companionBusy: false });
     } finally { setCompanionBuild(null); }
     expect((await request('GET', '/hello', { auth: null })).body).not.toHaveProperty('companionBuild');
+    expect((await request('POST', '/status', { body: { openConversations: [] } })).body).not.toHaveProperty('companionBuild');
   });
 
   it('advertises an older Companion as superseded after the current generation is established', async () => {

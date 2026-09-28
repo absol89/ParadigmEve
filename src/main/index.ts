@@ -804,7 +804,8 @@ void app.whenReady().then(async () => {
   // Chrome loads the Companion from the materialized folder. Refresh it before the bridge answers
   // /hello and before any startup path below launches the Companion profile: on 2026-09-26 an
   // unclean-restart launch started Chrome one second before the lazy refresh, so the new build's
-  // page code never ran. /hello then names this build so a still-running older one reloads.
+  // page code never ran. /status then names this build so a still-running older one reloads
+  // once nothing is busy.
   setCompanionBuild(companionBuild(extensionDir()));
 
   // Historical Unattributed repair may legitimately scan and rewrite a large legacy bucket.

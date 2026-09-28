@@ -12,9 +12,9 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current app source line is **2.2.9**. It is cumulative over the public **2.2.8** release; the
+The current app source line is **2.3.0**. It is cumulative over the public **2.2.9** release; the
 earlier **App + Companion 2.2.2** Angel checkpoint remains part of the release history, and the current bridge
-protocol is **15**. A 2.2.9 package is not coherent
+protocol is **15**. A 2.3.0 package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other.
 
@@ -117,7 +117,7 @@ For a local debug self-test build, pass the suffixed installer explicitly; the c
 npm.cmd run dist:x64 -- --flavor debug
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-self-reinstall.ps1 `
-  -InstallerPath .\release\ParadigmEve-Setup-x64-debug.exe
+  -InstallerPath .\release\ParadigmEve-Windows-x64-debug.exe
 ```
 
 Do not rename a debug artifact to the canonical shipping filename just to satisfy the default. Artifact identity is part of the build-flavor safety boundary.
@@ -195,11 +195,11 @@ The updater:
 - accepts only direct version directories;
 - rejects symlink/junction authority;
 - chooses artifact candidates from current platform/arch/build flavor, never a remote manifest;
-- on Windows 2.2.9, checks checksum authority for
-  `ParadigmEve-Windows-<arch><flavor>.exe` first and
-  `ParadigmEve-Setup-<arch><flavor>.exe` second. 2.2.9 itself still packages/publishes the
-  `Setup` name; this bridge lets 2.3.0 switch the public filename to `Windows` without stranding
-  2.2.9 installations;
+- on Windows, checks checksum authority for
+  `ParadigmEve-Windows-<arch><flavor>.exe` first and the legacy
+  `ParadigmEve-Setup-<arch><flavor>.exe` second. Since 2.3.0 the packages and public release use
+  the `Windows` name; 2.2.9 was the bridge release that taught the updater it, so 2.2.8 and older
+  installations must update through 2.2.9 or install 2.3.0 manually;
 - verifies SHA-256 before staging;
 - rehashes staged bytes before install handoff;
 - never lets a missing/broken update replace the current app.

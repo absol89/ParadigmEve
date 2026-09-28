@@ -49,7 +49,7 @@ Persisted pairing from yesterday cannot satisfy post-install recovery readiness 
 
 ## Browser repair authority
 
-The current 2.2.9 source line and the public 2.2.8 release both use **bridge protocol 15**.
+The current 2.3.0 source line and the public 2.2.9 release both use **bridge protocol 15**.
 Browser repair includes a final
 `/browser-repair/claim` fence immediately before Chrome mutation. The flow is:
 
@@ -197,10 +197,14 @@ equal to the installed one:
 - **Materialize before any browser launch.** At startup the app refreshes the stable Companion folder
   before the bridge answers `/hello` and before any restore/recovery path opens the Companion profile.
 - **Name the build.** Each materialized manifest is stamped with `version_name = "<version> build
-  <12-hex fingerprint>"`, and `/hello` reports that `companionBuild`. A Companion whose *loaded* manifest
-  names a different build calls `chrome.runtime.reload()` once per named build (never a loop);
-  `runtime.onInstalled` then re-injects the current page code into already-open ChatGPT tabs. Unstamped
-  development folders are never second-guessed.
+  <12-hex fingerprint>"`, and `/hello` and `/status` report that `companionBuild`. A Companion whose
+  *loaded* manifest names a different build calls `chrome.runtime.reload()` once per named build (never
+  a loop), but only from a maintenance pass in which `/status` says `companionBusy: false` (no tool call
+  or MCP request running), no bridge command is in flight, and every ChatGPT page answers
+  `clf-recorder-ping` with `busy: false`; a page that answers without `busy` runs older code and counts as
+  busy. `runtime.onInstalled` then re-injects the current page code into already-open ChatGPT tabs.
+  Unstamped development folders are never second-guessed. Companions up to 2.2.9 still reload as soon as
+  `/hello` names another build, which is why `/hello` keeps the field (ported from chat-on-steroids 2.1.17).
 
 ## 22-minute semantic review heartbeat
 

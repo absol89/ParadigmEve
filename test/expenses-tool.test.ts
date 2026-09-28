@@ -55,6 +55,7 @@ const retention = { status: 'not-retained', localPath: null, userChoiceMessageId
 const recordId = '11111111-1111-4111-8111-111111111111';
 const context = (): CallContext => ({ startedAt: 100, transportKey: null, agent: null, caller: { transportKey: null, requestId: 'request', sessionId: 'session', conversationId: 'chat' }, outcome: null, evidence: emptyEvidence() });
 let run: (args: unknown, ctx?: CallContext) => Promise<ToolResult>;
+let declarations: Map<string, { description: string; inputSchema: z.ZodType }>;
 beforeEach(() => {
   vi.clearAllMocks();
   mock.config = { capabilities: { read: true, create: true, edit: true, deleteFile: true }, readOnly: false };
@@ -74,8 +75,10 @@ beforeEach(() => {
   mock.deleteRetained.mockImplementation(async (_folder, _input, authorize) => { await authorize(); return { revision: 2, recordId, deleted: true, outcome: 'deleted' }; });
   mock.read.mockResolvedValue({ version: 1, revision: 0, records: [], corrections: [] });
   const handlers = new Map<string, (args: unknown, ctx?: CallContext) => Promise<ToolResult>>();
+  declarations = new Map();
   registerExpensesTool({ caps: mock.config.capabilities, exposedCaps: mock.config.capabilities,
-    register: (name: string, config: { inputSchema: z.ZodType }, handler: (args: any) => Promise<ToolResult>) => {
+    register: (name: string, config: { description: string; inputSchema: z.ZodType }, handler: (args: any) => Promise<ToolResult>) => {
+      declarations.set(name, config);
       handlers.set(name, (args, ctx = context()) => runInCallContext(ctx, () => handler(config.inputSchema.parse(args))));
     }
   } as unknown as SurfaceRegistrar);
@@ -321,4 +324,74 @@ it('refuses truncated or excessive selector history', async () => {
   mock.messages = Array.from({ length: 5001 }, (_, seq) => ({ kind: 'user_message', seq, messageId: String(seq), time: seq, message: { text: '%expenses' } }));
   expect((await record()).isError).toBe(true);
   expect(mock.record).not.toHaveBeenCalled();
+});
+
+// Eve's 2026-09-28 Lidl receipt: a natural caller omits honest-null keys and sends JSON numbers.
+const lidlFacts = {
+  purchasedOn: '2026-09-28', merchant: 'Lidl', currency: 'SEK', total: 208.18,
+  items: [{ rawName: 'Mjölk 3%', amount: 15.9, quantity: 2 }, { rawName: 'Bröd', amount: '24.90', category: 'groceries' }]
+};
+
+it('records a natural receipt shape against the live revision without inventing facts', async () => {
+  mock.record.mockImplementation(async (_folder, _input, authorize) => { await authorize(); return { revision: 101, duplicate: false, record: { id: recordId }, warnings: [] }; });
+  const result = await run({ action: 'record', expectedRevision: 100, facts: lidlFacts });
+  expect(result.isError).not.toBe(true);
+  expect(JSON.parse(message(result)).result).toMatchObject({ revision: 101, recordId });
+  const request = mock.record.mock.calls[0]![1];
+  expect(request.expectedRevision).toBe(100);
+  expect(request.draft.facts).toMatchObject({
+    financialKind: 'purchase', purchasedOn: '2026-09-28', merchant: 'Lidl', location: null, currency: 'SEK', total: '208.18', notes: null,
+    items: [
+      { id: '1', rawName: 'Mjölk 3%', amount: '15.9', quantity: '2', normalizedName: null, category: null, warranty: { candidate: false, reason: null } },
+      { id: '2', rawName: 'Bröd', amount: '24.90', category: 'groceries' }
+    ]
+  });
+  expect(request.draft.retention).toEqual({ status: 'not-retained', localPath: null, sha256: null, userChoiceMessageId: null });
+});
+
+it('keeps the read-before-write revision and accounting backstop mandatory', async () => {
+  const missingRevision = await run({ action: 'record', facts: lidlFacts });
+  expect(missingRevision.isError).toBe(true);
+  expect(message(missingRevision)).toContain('expectedRevision: required');
+  const { total: _total, ...withoutTotal } = lidlFacts;
+  expect(message(await run({ action: 'record', expectedRevision: 100, facts: withoutTotal }))).toContain('facts.total: required');
+  expect(mock.record).not.toHaveBeenCalled();
+  mock.record.mockRejectedValueOnce(new Error('Expenses revision conflict; read the current revision'));
+  await expect(run({ action: 'record', expectedRevision: 99, facts: lidlFacts })).rejects.toThrow(/revision conflict/);
+});
+
+it('names every rejected field so the caller can self-correct', async () => {
+  const result = await run({ action: 'record', expectedRevision: 100, facts: {
+    ...lidlFacts, purchasedOn: '28/09/2026', total: '208,18 kr', items: [{ name: 'Mjölk', price: 15.9 }]
+  } });
+  expect(result.isError).toBe(true);
+  const text = message(result);
+  expect(text).toContain('facts.purchasedOn: Use an ISO date YYYY-MM-DD');
+  expect(text).not.toContain('real calendar date');
+  expect(text).toContain('facts.total: Use a decimal string such as "208.18"');
+  expect(text).toContain('facts.items[0].rawName: required');
+  expect(text).toContain('facts.items[0]: Unrecognized keys: "name", "price"');
+  expect(text).toContain('facts contract:');
+  expect(mock.record).not.toHaveBeenCalled();
+  expect(message(await run({ action: 'record', expectedRevision: 100, facts: { ...lidlFacts, total: 1e-7 } }))).toContain('facts.total: Use a decimal string');
+});
+
+it('publishes the facts field contract instead of an opaque value', () => {
+  const wire = declarations.get('expenses')!.inputSchema as z.ZodObject<any>;
+  for (const field of ['purchasedOn', 'merchant', 'location', 'currency', 'total', 'items', 'rawName', 'amount', 'warranty']) {
+    expect(wire.shape.facts.description).toContain(field);
+  }
+  // The published example is itself a valid record.
+  const example = JSON.parse(/Example: (\{.*\})$/.exec(wire.shape.facts.description)![1]!);
+  expect(expensesToolSchema.safeParse({ action: 'record', expectedRevision: 100, facts: example }).success).toBe(true);
+});
+
+it('keeps correct a full replacement so omitted keys never erase recorded evidence', async () => {
+  const partial = await run({ action: 'correct', expectedRevision: 101, recordId, retention, reason: 'Total typo', facts: { purchasedOn: '2026-09-28', merchant: 'Lidl', currency: 'SEK', total: '208.18' } });
+  expect(partial.isError).toBe(true);
+  expect(message(partial)).toContain('facts.items: required for correct');
+  expect(message(partial)).toContain('facts.location: required for correct');
+  expect(mock.correct).not.toHaveBeenCalled();
+  expect((await run({ action: 'correct', expectedRevision: 101, recordId, retention, reason: 'Total typo', facts: { ...facts, total: 208.18 } })).isError).not.toBe(true);
+  expect(mock.correct.mock.calls[0]![1].facts.total).toBe('208.18');
 });

@@ -12,7 +12,7 @@ import { ATTACHMENT_CHUNK_BYTES, readInputAttachmentChunk } from '../session/inp
 import { assignSessionProject, getProject, projectWorkspace } from '../projects.js';
 import { hasExpensesDataReference, resolveCanonicalExpensesProject, resolveExpensesDataProject, resolveExpensesProject } from '../expenses-project.js';
 import { readExpensesLedger, recordExpense, correctExpense, deleteRetainedExpenseReceipt } from '../expenses-ledger.js';
-import { expenseFactsSchema, expenseRetentionSchema, defaultExpenseRetention, deriveExpenseSummary } from '../../shared/expenses.js';
+import { expenseFactsInputSchema, expenseRetentionSchema, defaultExpenseRetention, deriveExpenseSummary } from '../../shared/expenses.js';
 import { EXPENSES_INSTRUCTIONS } from '../../shared/expenses-template.js';
 import { positionOf } from '../../shared/chronology.js';
 import { userPromptText } from '../../shared/user-prompt.js';
@@ -24,14 +24,24 @@ export const expensesReadToolSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('read'), ...paging, recordId: z.string().uuid().optional() }).strict(),
   z.object({ action: z.literal('summary'), ...paging }).strict()
 ]);
+// correct replaces the whole facts object: omitted keys must not silently erase recorded evidence.
+const REPLACED_FACT_KEYS = ['purchasedOn', 'merchant', 'location', 'currency', 'total', 'items', 'notes'] as const;
+const correctedFactsSchema = z.preprocess((facts, ctx) => {
+  if (facts && typeof facts === 'object' && !Array.isArray(facts)) {
+    for (const key of REPLACED_FACT_KEYS) {
+      if (!(key in facts)) ctx.addIssue({ code: 'custom', path: [key], message: 'required for correct; resend the full corrected facts from expenses_read', input: facts });
+    }
+  }
+  return facts;
+}, expenseFactsInputSchema);
 export const expensesMutationToolSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('record'), expectedRevision: revision,
     sourceIndex: z.number().int().min(0).max(99).default(0).describe('Image ordinal in the current user message. Omit for text or a single image.'),
     sourceKind: z.enum(['text', 'image']).default('text'),
-    facts: expenseFactsSchema,
+    facts: expenseFactsInputSchema,
     retention: expenseRetentionSchema.default(defaultExpenseRetention) }).strict(),
   z.object({ action: z.literal('correct'), expectedRevision: revision, recordId: z.string().uuid(),
-    facts: expenseFactsSchema, retention: expenseRetentionSchema,
+    facts: correctedFactsSchema, retention: expenseRetentionSchema,
     reason: z.string().trim().min(1).max(1000) }).strict(),
   z.object({ action: z.literal('delete_retained_receipt'), expectedRevision: revision, recordId: z.string().uuid(),
     status: z.enum(['not-retained', 'declined']).default('declined'), reason: z.string().trim().min(1).max(1000) }).strict()
@@ -45,17 +55,32 @@ const expensesReadWireSchema = z.object({
   limit: z.number().optional(),
   recordId: z.string().optional()
 }).strict();
+// The wire schema stays permissive so the handler, not an SDK protocol error, owns every
+// rejection. It must still publish the exact facts contract: facts is otherwise an opaque value.
+const EXPENSE_FACTS_CONTRACT = 'Only these keys. Required, null if absent: purchasedOn YYYY-MM-DD, merchant, currency e.g. SEK, total decimal string e.g. "208.18". Optional: financialKind purchase|bill|transfer|income, location, rawDateText, rawMerchant, subtotal, discount, tax, paymentCardLast4, paymentReference, transferAccount, defaultBudgetBucket, notes, confidence, uncertainties[], items[]. Item: rawName required; optional id, normalizedName, category, quantity, unit, brand, unitPrice, amount, budgetBucket, confidence, warranty{candidate,reason}. Example: {"purchasedOn":"2026-09-28","merchant":"Lidl","currency":"SEK","total":"208.18","items":[{"rawName":"Mjölk","amount":"15.90"}]}';
 const expensesMutationWireSchema = z.object({
   action: z.enum(['record', 'correct', 'delete_retained_receipt']),
   expectedRevision: z.number().optional(),
   recordId: z.string().optional(),
   sourceIndex: z.number().optional(),
   sourceKind: z.string().optional(),
-  facts: z.unknown().optional(),
+  facts: z.unknown().optional().describe(EXPENSE_FACTS_CONTRACT),
   retention: z.unknown().optional(),
   status: z.string().optional(),
   reason: z.string().optional()
 }).strict();
+
+/** Names each rejected field so the caller can repair its own call instead of asking the user. */
+export function expenseInputIssues(error: z.ZodError, limit = 8): string {
+  const issues = error.issues.flatMap(issue => issue.code === 'invalid_union' && issue.errors.length
+    ? issue.errors.reduce((best, branch) => branch.length < best.length ? branch : best).map(branch => ({ ...branch, path: [...issue.path, ...branch.path] }))
+    : [issue]);
+  const lines = issues.slice(0, limit).map(issue => {
+    const at = issue.path.reduce<string>((text, key) => typeof key === 'number' ? text + '[' + key + ']' : text ? text + '.' + String(key) : String(key), '') || '(input)';
+    return at + ': ' + (issue.code === 'invalid_type' && /received undefined$/.test(issue.message) ? 'required' : issue.message);
+  });
+  return lines.join('; ') + (issues.length > limit ? '; +' + (issues.length - limit) + ' more' : '');
+}
 
 class ExpensesRefusal extends Error {}
 const refuse = (message: string): never => { throw new ExpensesRefusal(message); };
@@ -295,7 +320,7 @@ export function registerExpensesTool(reg: SurfaceRegistrar): void {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   })), wireArgs => guard('expenses_read', async () => {
     const parsed = expensesReadToolSchema.safeParse(wireArgs);
-    if (!parsed.success) return fail('Invalid Expenses read input. Use read or summary with bounded pagination.');
+    if (!parsed.success) return fail('Invalid Expenses read input. Use read or summary with bounded pagination: ' + expenseInputIssues(parsed.error));
     return execute(parsed.data);
   }));
 
@@ -307,7 +332,8 @@ export function registerExpensesTool(reg: SurfaceRegistrar): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   })), wireArgs => guard('expenses', async () => {
     const parsed = expensesMutationToolSchema.safeParse(wireArgs);
-    if (!parsed.success) return fail('Invalid Expenses mutation input. Read with expenses_read first and use the action-specific fields in the Expenses instructions.');
+    if (!parsed.success) return fail('Invalid Expenses mutation input; the ledger and its revision are unchanged. Fix these fields and retry: ' +
+      expenseInputIssues(parsed.error) + '. facts contract: ' + EXPENSE_FACTS_CONTRACT);
     return execute(parsed.data);
   }));
 }

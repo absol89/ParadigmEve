@@ -664,11 +664,13 @@ let companionProtocolMismatchListener: ((actual: number, expected: number) => vo
 let materializedCompanionBuild: string | null = null;
 
 /**
- * Publishes the materialized Companion build in `/hello`.
+ * Publishes the materialized Companion build in `/hello` and `/status`.
  *
  * Same-protocol builds of one version are otherwise indistinguishable, and Chrome keeps running
  * the unpacked code it loaded before an update replaced the files. A Companion whose loaded build
  * differs reloads itself once, which re-injects the current page code into open ChatGPT tabs.
+ * Current Companions wait for an idle `/status` pass; Companions up to 2.2.9 still reload on the
+ * `/hello` field, which is therefore kept.
  */
 export function setCompanionBuild(build: string | null): void {
   materializedCompanionBuild = build;
@@ -2120,7 +2122,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         // replace the visible failure with "Trying" before a renderer could ever observe it.
         repairs: repairFailed ? [] : await takePendingRepairs(),
         ...tabPolicy,
-        recoveryMonitoring: browserRecoveryMonitoring()
+        recoveryMonitoring: browserRecoveryMonitoring(),
+        // The build this app materialized for Chrome. A Companion running another build reloads
+        // into it on its own, but only while this app runs no tool call and every ChatGPT page
+        // reports itself idle: chats that merely have an agent or a Goal are usually just waiting.
+        ...(materializedCompanionBuild ? {
+          companionBuild: materializedCompanionBuild,
+          companionBusy: runningToolCalls() > 0 || inFlightMcpRequests() > 0
+        } : {})
       },
       origin
     );

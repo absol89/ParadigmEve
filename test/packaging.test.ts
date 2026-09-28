@@ -151,7 +151,7 @@ describe('cross-platform packaging targets', () => {
     expect(vite).toContain('__PARADIGMEVE_BUILD_FLAVOR__');
     expect(vite.match(/define: compileTimeFlavor/g)).toHaveLength(3);
     expect(release.jobs.package.env.PARADIGMEVE_BUILD_FLAVOR).toBe('debug');
-    expect(builder.nsis.artifactName).toBe('ParadigmEve-Setup-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
+    expect(builder.nsis.artifactName).toBe('ParadigmEve-Windows-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
     expect(builder.mac.artifactName).toBe('ParadigmEve-macOS-${arch}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
     expect(builder.linux.artifactName).toBe('ParadigmEve-Linux-${env.COS_PACKAGE_ARCH}${env.PARADIGMEVE_ARTIFACT_FLAVOR_SUFFIX}.${ext}');
   });
@@ -207,7 +207,7 @@ describe('cross-platform packaging targets', () => {
     expect(packagedRuntime).toContain('does not match the source bytes');
     expect(packageScript).toContain("run(node, ['scripts/smoke-packaged-runtime.mjs', '--platform', platform, '--arch', arch]);");
     expect(packageScript).toContain("scripts/smoke-windows-installer-vault.mjs");
-    expect(packageScript).toContain("`ParadigmEve-Setup-${arch}${artifactSuffix}.exe`");
+    expect(packageScript).toContain("`ParadigmEve-Windows-${arch}${artifactSuffix}.exe`");
     expect(installerVaultSmoke).toContain("arch === 'x64' ? 'app-64.7z' : 'app-arm64.7z'");
     expect(installerVaultSmoke).toContain('$PLUGINSDIR\\\\${appArchiveName}');
     expect(installerVaultSmoke).toContain("'resources\\\\docs\\\\vault\\\\*.md'");
@@ -356,11 +356,11 @@ describe('cross-platform packaging targets', () => {
     expect(matrix).toEqual([
       {
         name: 'Windows x64', platform: 'win32', arch: 'x64', runner: 'windows-2025',
-        script: 'dist:x64', artifact: 'package-windows-x64', files: 'release/ParadigmEve-Setup-x64-debug.exe'
+        script: 'dist:x64', artifact: 'package-windows-x64', files: 'release/ParadigmEve-Windows-x64-debug.exe'
       },
       {
         name: 'Windows arm64', platform: 'win32', arch: 'arm64', runner: 'windows-11-arm',
-        script: 'dist:arm64', artifact: 'package-windows-arm64', files: 'release/ParadigmEve-Setup-arm64-debug.exe'
+        script: 'dist:arm64', artifact: 'package-windows-arm64', files: 'release/ParadigmEve-Windows-arm64-debug.exe'
       },
       {
         name: 'macOS x64', platform: 'darwin', arch: 'x64', runner: 'macos-15-intel',
@@ -869,8 +869,8 @@ Load command 11
     expect(notes).toMatch(/unnotarized/i);
 
     const artifacts = [
-      'ParadigmEve-Setup-x64-debug.exe',
-      'ParadigmEve-Setup-arm64-debug.exe',
+      'ParadigmEve-Windows-x64-debug.exe',
+      'ParadigmEve-Windows-arm64-debug.exe',
       'ParadigmEve-macOS-x64-debug.dmg',
       'ParadigmEve-macOS-arm64-debug.dmg',
       'ParadigmEve-Linux-x64-debug.AppImage',

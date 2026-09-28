@@ -74,7 +74,7 @@ export function stagedArtifact(
   // The suffix scripts/build-flavor.mjs gives the packages, so a build only ever takes an
   // artifact of its own flavor.
   const suffix = flavor === 'shipping' ? '' : `-${flavor}`;
-  if (platform === 'win32') return { name: `ParadigmEve-Setup-${arch}${suffix}.exe`, kind: 'installer', target: '' };
+  if (platform === 'win32') return { name: `ParadigmEve-Windows-${arch}${suffix}.exe`, kind: 'installer', target: '' };
   if (platform === 'linux' && appImage) {
     return { name: `ParadigmEve-Linux-${arch}${suffix}.AppImage`, kind: 'appimage', target: appImage };
   }
@@ -82,9 +82,9 @@ export function stagedArtifact(
 }
 
 /**
- * 2.2.9 is the Windows filename bridge. It still builds `Setup`, but its updater understands the
- * future `Windows` spelling as well. Prefer `Windows` when both names are checksum-authorized so
- * 2.3.0 can switch the public filename without stranding 2.2.9 installations.
+ * 2.3.0 publishes Windows installers as `ParadigmEve-Windows-…`; 2.2.9 was the bridge release that
+ * taught the updater that name. The legacy `Setup` spelling stays accepted after it, so a release
+ * that still carries only that name keeps updating, but `Windows` wins when both are authorized.
  */
 function stagedArtifacts(
   platform: NodeJS.Platform = process.platform,
@@ -97,7 +97,7 @@ function stagedArtifacts(
   if (!primary) return [];
   if (platform !== 'win32') return [primary];
   const suffix = flavor === 'shipping' ? '' : `-${flavor}`;
-  return [{ ...primary, name: `ParadigmEve-Windows-${arch}${suffix}.exe` }, primary];
+  return [primary, { ...primary, name: `ParadigmEve-Setup-${arch}${suffix}.exe` }];
 }
 
 /** `v2.0.3` -> `2.0.3`, and anything that is not a stable release version -> null. */

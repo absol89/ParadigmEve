@@ -32,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if (-not $InstallerPath) {
-  $InstallerPath = Join-Path $PSScriptRoot '..\release\ParadigmEve-Setup-x64.exe'
+  $InstallerPath = Join-Path $PSScriptRoot '..\release\ParadigmEve-Windows-x64.exe'
 }
 if (-not $LogPath) {
   $LogPath = Join-Path $PSScriptRoot '..\build\self-reinstall.log'

@@ -84,7 +84,7 @@ for (const arch of arches) {
     run(node, [
       'scripts/smoke-windows-installer-vault.mjs',
       '--arch', arch,
-      '--installer', path.join('release', `ParadigmEve-Setup-${arch}${artifactSuffix}.exe`)
+      '--installer', path.join('release', `ParadigmEve-Windows-${arch}${artifactSuffix}.exe`)
     ]);
   }
 }

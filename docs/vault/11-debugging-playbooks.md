@@ -146,7 +146,7 @@ Do not pre-close Eve/Chrome. Check:
 6. `/recovery` current document proof reports bridge 15 and `ready=true`;
 7. installed `app.asar` matches the package before declaring success.
 
-For a debug-flavor rehearsal, also verify Settings -> Agents & automation reports `Build channel: debug` and use `-InstallerPath .\release\ParadigmEve-Setup-x64-debug.exe` rather than the controller's canonical shipping default.
+For a debug-flavor rehearsal, also verify Settings -> Agents & automation reports `Build channel: debug` and use `-InstallerPath .\release\ParadigmEve-Windows-x64-debug.exe` rather than the controller's canonical shipping default.
 
 ## Plugins settings keeps opening
 

@@ -14347,9 +14347,11 @@ describe('one live isolated-world recorder per document', () => {
   it('reports the recorder protocol version rather than the unrelated Fiber protocol version', async () => {
     live = await harness();
 
+    // `busy` tells the Companion whether reloading into a newer build would cut this page off.
     await expect(live.runtimeMessage({ type: 'clf-recorder-ping' })).resolves.toEqual({
       ok: true,
-      recorderVersion: 12
+      recorderVersion: 12,
+      busy: false
     });
   });
 

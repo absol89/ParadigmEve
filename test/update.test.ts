@@ -62,8 +62,9 @@ const {
 const NEXT = '99.0.0';
 const REPLACEMENT = '99.0.1';
 // Tests run as the local default flavor, debug, so they take `-debug` artifacts.
-const WINDOWS_ASSET = `ParadigmEve-Setup-${process.arch}-debug.exe`;
-const FUTURE_WINDOWS_ASSET = `ParadigmEve-Windows-${process.arch}-debug.exe`;
+const WINDOWS_ASSET = `ParadigmEve-Windows-${process.arch}-debug.exe`;
+// Published up to 2.2.9 and still accepted second.
+const LEGACY_WINDOWS_ASSET = `ParadigmEve-Setup-${process.arch}-debug.exe`;
 const APPIMAGE_ASSET = `ParadigmEve-Linux-${process.arch}-debug.AppImage`;
 const LATEST_API = 'https://api.github.com/repos/absol89/ParadigmEve/releases/latest';
 const DOWNLOADS = 'https://github.com/absol89/ParadigmEve/releases/download/';
@@ -261,9 +262,9 @@ describe('private update authority', () => {
 
 describe('which installations can apply a private build', () => {
   it('takes the Windows installer and Linux AppImage of its own flavor, and nothing else', () => {
-    expect(stagedArtifact('win32', 'x64')).toMatchObject({ name: 'ParadigmEve-Setup-x64-debug.exe', kind: 'installer' });
-    expect(stagedArtifact('win32', 'x64', undefined, true, 'shipping')).toMatchObject({ name: 'ParadigmEve-Setup-x64.exe' });
-    expect(stagedArtifact('win32', 'arm64', undefined, true, 'dev')).toMatchObject({ name: 'ParadigmEve-Setup-arm64-dev.exe' });
+    expect(stagedArtifact('win32', 'x64')).toMatchObject({ name: 'ParadigmEve-Windows-x64-debug.exe', kind: 'installer' });
+    expect(stagedArtifact('win32', 'x64', undefined, true, 'shipping')).toMatchObject({ name: 'ParadigmEve-Windows-x64.exe' });
+    expect(stagedArtifact('win32', 'arm64', undefined, true, 'dev')).toMatchObject({ name: 'ParadigmEve-Windows-arm64-dev.exe' });
     expect(stagedArtifact('linux', 'arm64', '/opt/cos.AppImage')).toMatchObject({
       name: 'ParadigmEve-Linux-arm64-debug.AppImage',
       kind: 'appimage',
@@ -326,18 +327,18 @@ describe('staging and applying verified local bytes', () => {
     expect(spawned).toEqual([{ file: staged, args: ['/S', '--updated'] }]);
   });
 
-  it('can take the future Windows filename when that is the authorized private artifact', async () => {
-    const body = 'future private build';
-    const { dir } = privateBuild({ body, sums: `${sha256(body)}  ${FUTURE_WINDOWS_ASSET}\n` });
+  it('can take the legacy Setup filename when that is the authorized private artifact', async () => {
+    const body = 'legacy private build';
+    const { dir } = privateBuild({ body, sums: `${sha256(body)}  ${LEGACY_WINDOWS_ASSET}\n` });
     rmSync(path.join(dir, WINDOWS_ASSET), { force: true });
-    writeFileSync(path.join(dir, FUTURE_WINDOWS_ASSET), body);
+    writeFileSync(path.join(dir, LEGACY_WINDOWS_ASSET), body);
     await asPlatform('win32', undefined, () => checkForUpdates());
 
-    const futureStaged = stagedPath(NEXT, FUTURE_WINDOWS_ASSET);
+    const legacyStaged = stagedPath(NEXT, LEGACY_WINDOWS_ASSET);
     expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
-    expect(readFileSync(futureStaged, 'utf8')).toBe(body);
+    expect(readFileSync(legacyStaged, 'utf8')).toBe(body);
     await applyStagedUpdate();
-    expect(spawned).toEqual([{ file: futureStaged, args: ['/S', '--updated'] }]);
+    expect(spawned).toEqual([{ file: legacyStaged, args: ['/S', '--updated'] }]);
   });
 
   it('fails closed when artifact bytes do not match the local checksum authority', async () => {
@@ -374,7 +375,7 @@ describe('staging and applying verified local bytes', () => {
     await asPlatform('win32', undefined, () => checkForUpdates());
     expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
     expect(updateStatus().error).toContain(WINDOWS_ASSET);
-    expect(updateStatus().error).toContain(FUTURE_WINDOWS_ASSET);
+    expect(updateStatus().error).toContain(LEGACY_WINDOWS_ASSET);
     expect(markInstallOnQuit()).toBe(false);
   });
 
@@ -588,28 +589,28 @@ describe('the GitHub Latest release of absol89/ParadigmEve', () => {
     expect(spawned).toEqual([{ file: stagedPath(), args: ['/S', '--updated', '--force-run'] }]);
   });
 
-  it('uses the future Windows asset when a later release publishes only that authorized name', async () => {
-    const body = 'future published installer';
-    latest = { tag: `v${NEXT}`, body, sums: `${sha256(body)}  ${FUTURE_WINDOWS_ASSET}\n` };
+  it('still uses the legacy Setup asset when a release publishes only that authorized name', async () => {
+    const body = 'legacy published installer';
+    latest = { tag: `v${NEXT}`, body, sums: `${sha256(body)}  ${LEGACY_WINDOWS_ASSET}\n` };
     await asPlatform('win32', undefined, () => checkForUpdates());
 
-    const futureStaged = stagedPath(NEXT, FUTURE_WINDOWS_ASSET);
+    const legacyStaged = stagedPath(NEXT, LEGACY_WINDOWS_ASSET);
     expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
-    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${FUTURE_WINDOWS_ASSET}`]);
-    expect(readFileSync(futureStaged, 'utf8')).toBe(body);
+    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${LEGACY_WINDOWS_ASSET}`]);
+    expect(readFileSync(legacyStaged, 'utf8')).toBe(body);
   });
 
-  it('prefers the future Windows asset when both Windows names are checksum-authorized', async () => {
+  it('prefers the Windows asset when both Windows names are checksum-authorized', async () => {
     const body = 'bridge release bytes';
     latest = {
       tag: `v${NEXT}`,
       body,
-      sums: `${sha256(body)}  ${WINDOWS_ASSET}\n${sha256(body)}  ${FUTURE_WINDOWS_ASSET}\n`
+      sums: `${sha256(body)}  ${LEGACY_WINDOWS_ASSET}\n${sha256(body)}  ${WINDOWS_ASSET}\n`
     };
     await asPlatform('win32', undefined, () => checkForUpdates());
 
     expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
-    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${FUTURE_WINDOWS_ASSET}`]);
+    expect(assetFetches()).toEqual([`${DOWNLOADS}v${NEXT}/SHA256SUMS.txt`, `${DOWNLOADS}v${NEXT}/${WINDOWS_ASSET}`]);
   });
 
   it('asks only the fixed repository, whatever the release says about itself', async () => {
