@@ -7,6 +7,7 @@ export const PLAN_PROVENANCE_KINDS = ['manual', 'message', 'result', 'plan'] as 
 const timestampSchema = z.number().finite().int().nonnegative();
 const planTitleSchema = z.string().trim().min(1).max(160);
 const planItemTextSchema = z.string().trim().min(1).max(1_000);
+const planItemDetailsSchema = z.string().trim().max(2_000).optional();
 
 export const planPrioritySchema = z.enum(PLAN_PRIORITIES);
 export const planItemStatusSchema = z.enum(PLAN_ITEM_STATUSES);
@@ -31,6 +32,7 @@ export const planProvenanceSchema = z.object({
 const planItemFields = {
   text: planItemTextSchema,
   status: planItemStatusSchema,
+  details: planItemDetailsSchema,
   priority: planPrioritySchema.optional(),
   reminderAt: timestampSchema.optional()
 };

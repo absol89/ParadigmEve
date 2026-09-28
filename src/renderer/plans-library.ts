@@ -165,6 +165,7 @@ function itemRow(
   if (item.detail) {
     const detail = el('p', 'plans-item-detail', item.detail);
     detail.dir = 'auto';
+    detail.title = item.detail;
     content.append(detail);
   }
 
