@@ -2148,7 +2148,9 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
     const target = cleanConversationId(input.conversationId);
     const marker = `cos-input=${encodeURIComponent(input.id)}`;
     const candidates = tabs.filter(tab => matchesInput(input, tab));
-    let tab = candidates.sort((a, b) => a.id - b.id)[0];
+    // Multiple tabs can show the same conversation after Resume/Open-in-Eva.
+    // Route new durable input to the tab the user is actually using; the lowest tab id can hand old queued work to a stale duplicate while the active tab carries the live turn.
+    let tab = candidates.sort((a, b) => Number(b.active === true) - Number(a.active === true) || a.id - b.id)[0];
     let elected = elections[input.id];
     let recoveredReuse = null;
     // A queued checkpoint follows the app's durable session rebind. Transfer only
