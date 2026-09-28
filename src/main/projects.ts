@@ -52,7 +52,8 @@ export function linkExpensesProject(projectId: string, quiltId: string): Promise
  *
  * Explicit and exact: the user supplies the Project's URL or id; names are never compared. One
  * native Project belongs to at most one local project, so ingress and egress each have a single
- * answer. Linking grants no filesystem permission and rebinds no existing session.
+ * answer. Linking grants no filesystem permission; an explicit Project chat URL may bind its
+ * already-observed, otherwise unfiled session to this project.
  */
 export function linkNativeProject(projectId: string, value: string | null): Promise<LocalProject> {
   const operation = mutations.then(async () => {
@@ -67,17 +68,26 @@ export function linkNativeProject(projectId: string, value: string | null): Prom
     }
     // A pasted chat URL also names a chat inside the Project, which is how fresh chats enter it.
     const entry = nativeProjectId ? nativeProjectConversationId(value) : null;
-    if ((project.nativeProjectId ?? null) === nativeProjectId && (!entry || project.nativeEntryConversationId === entry)) return project;
+    if ((project.nativeProjectId ?? null) === nativeProjectId && (!entry || project.nativeEntryConversationId === entry)) {
+      if (entry) await bindNativeEntryConversation(projectId, entry);
+      return project;
+    }
     const { nativeProjectId: _, nativeEntryConversationId: previousEntry, ...rest } = project;
     const keptEntry = entry ?? (project.nativeProjectId === nativeProjectId ? previousEntry : undefined);
     const linked: LocalProject = nativeProjectId
       ? { ...rest, nativeProjectId, ...(keptEntry ? { nativeEntryConversationId: keptEntry } : {}) }
       : rest;
     await writeDurableNow('projects', projects.map(row => row.id === projectId ? linked : row));
+    if (entry) await bindNativeEntryConversation(projectId, entry);
     return linked;
   });
   mutations = operation.catch(() => undefined);
   return operation;
+}
+async function bindNativeEntryConversation(projectId: string, conversationId: string): Promise<void> {
+  const session = await findSessionByConversation(conversationId);
+  if (!session || session.projectId || session.origin?.fromSessionId) return;
+  await bindSessionProject(session.id, projectId);
 }
 /** The local project explicitly linked to this native ChatGPT Project, if any. */
 export async function projectForNativeProject(nativeProjectId: string | null): Promise<LocalProject | null> {
