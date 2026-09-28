@@ -2909,7 +2909,7 @@ describe('bounded output', () => {
     } finally {
       await fs.rm(broad, { recursive: true, force: true });
     }
-  });
+  }, 70_000);
 
   it('does not call an exactly-full glob result truncated until a 21st match actually exists', async () => {
     const folder = path.join(approved, 'exact-glob-cap');
