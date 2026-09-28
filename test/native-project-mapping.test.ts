@@ -24,6 +24,7 @@ import { validateNewRoot } from '../src/main/sandbox.js';
 
 const NATIVE = 'g-p-0123456789abcdef0123456789abcdef';
 const OTHER_NATIVE = 'g-p-fedcba9876543210fedcba9876543210';
+const FIRST_ENTRY_CHAT = '6a000001-0000-83ed-8000-000000000001';
 const ENTRY_CHAT = '6a000006-0000-83ed-8000-000000000006';
 const workerSource = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
 
@@ -71,7 +72,10 @@ describe('the app side of the mapping', () => {
   it('links one native Project to at most one Eve project, by exact id only', async () => {
     const first = await addProject(path.join(approved, 'first'));
     const second = await addProject(path.join(approved, 'second'));
-    expect(await linkNativeProject(first.id, `https://chatgpt.com/g/${NATIVE}-first/project`)).toMatchObject({ nativeProjectId: NATIVE });
+    const firstEntry = await createSession({ title: 'Native Project entry', conversationId: FIRST_ENTRY_CHAT });
+    expect(await linkNativeProject(first.id, `https://chatgpt.com/g/${NATIVE}-first/c/${FIRST_ENTRY_CHAT}`))
+      .toMatchObject({ nativeProjectId: NATIVE, nativeEntryConversationId: FIRST_ENTRY_CHAT });
+    expect((await getSession(firstEntry.id))?.projectId).toBe(first.id);
     await expect(linkNativeProject(second.id, NATIVE)).rejects.toThrow(/already linked/);
     await expect(linkNativeProject(second.id, 'first')).rejects.toThrow(/ChatGPT Project link/);
     await expect(linkNativeProject(second.id, 'https://chatgpt.com/g/g-abc123-gpt/c/x')).rejects.toThrow(/ChatGPT Project link/);
