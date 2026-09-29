@@ -3102,6 +3102,27 @@ describe('delivering a bootstrap', () => {
     expect((await request('POST', '/commands/redeem', { body: { id: command.id, client: 'tab-4' } })).status).toBe(409);
   });
 
+  it('does not let a durable pre-Send resume block a same-version Companion build reload', async () => {
+    await pair();
+    const { sessionId, token } = await compactedSession('99999999-8888-7777-6666-555555555557', 'reload-safe brief');
+    const command = queueResume(sessionId, token)!;
+
+    // The app owns this command durably, but nothing irreversible has happened in the browser.
+    // Older Companion generations use `/status.commands === 0` as their permission to reload
+    // into a newly materialized same-version build, so this pre-Send Resume must not deadlock the
+    // very update that knows how to continue it.
+    expect((await request('POST', '/status', { body: { openConversations: [] } })).body.commands).toBe(0);
+    expect((await redeem(command.id, 'reload-safe-tab')).text).toContain('reload-safe brief');
+    expect((await request('POST', '/status', { body: { openConversations: [] } })).body.commands).toBe(0);
+
+    // Once the exact destination page crosses destinationAttempt, interrupting its browser-side
+    // transaction is no longer replay-safe. The same wire field becomes a hard reload fence.
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'reload-safe-tab', destinationAttempt: true }
+    })).body.allowed).toBe(true);
+    expect((await request('POST', '/status', { body: { openConversations: [] } })).body.commands).toBe(1);
+  });
+
   it('offers the brief to a fresh chat once the page proves it lost the draft before Send', async () => {
     // 2026-09-02: the replacement chat opened, the brief landed, and the user's Escape emptied
     // the composer in the same instant. The ticket then sat armed for its six hours, the page

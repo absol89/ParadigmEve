@@ -667,6 +667,27 @@ let companionProtocolMismatchListener: ((actual: number, expected: number) => vo
 let materializedCompanionBuild: string | null = null;
 
 /**
+ * Commands that must keep the currently loaded Companion generation alive.
+ *
+ * A Resume command is durable in the app before the browser sees it. Until its destination Send
+ * checkpoint leaves `not-attempted`, reloading the MV3 worker/content scripts cannot duplicate an
+ * irreversible Send: the same opaque command id is redeemed idempotently by the same marked page,
+ * and every other document is refused. Treating that pre-Send Resume as "busy" deadlocked same-
+ * version Companion updates: the stale page code redeemed the command, then the command itself
+ * prevented the stale generation from reloading into the build that knew how to continue it.
+ *
+ * Every other live command, and any Resume that has crossed destinationAttempt, remains a hard
+ * reload fence.
+ */
+function companionReloadBlockingCommandCount(): number {
+  return commands.filter((command) => {
+    if (command.spec.type !== 'resume') return true;
+    const continuation = continuationByToken(command.spec.token);
+    return continuation?.destinationSend.state !== 'not-attempted';
+  }).length;
+}
+
+/**
  * Publishes the materialized Companion build in `/hello` and `/status`.
  *
  * Same-protocol builds of one version are otherwise indistinguishable, and Chrome keeps running
@@ -2174,7 +2195,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         browserOnly: getConfig().ui.browserOnly === true,
         browserWorkArea: currentBrowserWorkArea(),
         browserWindowBounds: browserWindowBounds(),
-        commands: commands.length,
+        // This field is consumed by older same-version Companion generations too, so keep its
+        // wire name while giving it the narrower meaning the reload gate actually needs: commands
+        // whose in-flight browser action would be unsafe to interrupt. A durable pre-Send Resume
+        // is replay-safe and must not deadlock a required Companion generation refresh.
+        commands: companionReloadBlockingCommandCount(),
         revival,
         placement: pendingBrowserPlacement(null),
         // Missing request-id evidence first repairs the Companion observation path in-place.
