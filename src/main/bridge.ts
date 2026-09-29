@@ -2149,7 +2149,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const repaired = url.searchParams.get('repaired');
     const repairFailed = url.searchParams.get('repairFailed');
     const repairAction = url.searchParams.get('repairAction');
-    const action = repairAction === 'reloaded' || repairAction === 'reopened' ? repairAction : null;
+    const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ? repairAction : null;
     if (repaired) {
       await confirmRepair(repaired.slice(0, 64), action);
     } else if (repairFailed) {
@@ -7996,7 +7996,7 @@ function dropBrowserRepair(conversationId: string, repair: Repair): void {
  * this app is no longer waiting on - an older turn's, or one already re-queued - matches
  * nothing and closes nothing, which is the only safe reading of it.
  */
-async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | null): Promise<void> {
+async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state === 'handed' || repair.state === 'claimed') && repair.token === token) {
       releaseBrowserRepairAuthority(repair);
@@ -8038,7 +8038,7 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | nu
       await updateRepairProgress(
         conversationId,
         repair,
-        `${action === 'reopened' ? 'Reopened' : 'Reloaded'} chat to recover ${repairReason(repair)}.`
+        `${action === 'reopened' ? 'Reopened' : action === 'resumed' ? 'Resumed' : 'Reloaded'} chat to recover ${repairReason(repair)}.`
       );
       return;
     }
@@ -8046,14 +8046,14 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | nu
 }
 
 /** An exact browser action failed; keep the episode queued and replace its one debug row. */
-async function failRepairAttempt(token: string, action: 'reloaded' | 'reopened' | null): Promise<void> {
+async function failRepairAttempt(token: string, action: 'reloaded' | 'reopened' | 'resumed' | null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state !== 'handed' && repair.state !== 'claimed') || repair.token !== token) continue;
     releaseBrowserRepairAuthority(repair);
     await updateRepairProgress(
       conversationId,
       repair,
-      `${action === 'reopened' ? 'Reopen' : 'Reload'} failed while recovering ${repairReason(repair)}; will retry.`
+      `${action === 'reopened' ? 'Reopen' : action === 'resumed' ? 'Resume' : 'Reload'} failed while recovering ${repairReason(repair)}; will retry.`
     );
     repair.state = 'queued';
     repairsInFlight.delete(conversationId);

@@ -812,7 +812,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
    * app does it. `asked` records what a receipt actually quoted, so a test can tell the
    * difference between a pass that reported the repair and one that reported something else.
    */
-  function appWith(repair: string | null, browserOnly = false) {
+  function appWith(repair: string | null, browserOnly = false, reason?: string) {
     const asked: string[] = [];
     const actions: string[] = [];
     const failedActions: string[] = [];
@@ -844,7 +844,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
         if (repaired && repaired === token) outstanding = null;
         if (!outstanding) return response(200, { ok: true, repairs: [] });
         token = `tok-${(minted += 1)}`;
-        return response(200, { ok: true, browserOnly, repairs: [{ conversationId: outstanding, token }] });
+        return response(200, { ok: true, browserOnly, repairs: [{ conversationId: outstanding, token, ...(reason ? { reason } : {}) }] });
       }
       return response(404, {});
     });
@@ -892,6 +892,28 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
     // Reported, so the app has nothing outstanding and nothing here repeats it.
     await worker.fireAlarm();
     expect(worker.tabsReload).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('nudges a responsive compaction source to retry its own ticket instead of reloading it (accepted: %s)', async accepted => {
+    const { fetch, asked, actions, claims } = appWith(CHAT, false, 'compaction');
+    const tabsSendMessage = vi.fn(async (_tabId: number, message: Record<string, unknown>) =>
+      message.type === 'clf-resume-compaction' ? { accepted } : { ok: true });
+    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
+    await worker.registerTab(21);
+    await worker.send({ type: 'bind', conversationId: CHAT }, 21);
+
+    await worker.fireAlarm();
+    expect(claims).toHaveLength(1);
+    expect(tabsSendMessage).toHaveBeenCalledWith(21, { type: 'clf-resume-compaction', conversationId: CHAT }, { documentId: expect.any(String) });
+    if (accepted) {
+      expect(worker.tabsReload).not.toHaveBeenCalled();
+      expect(actions).toEqual(['resumed']);
+    } else {
+      // A stale or unavailable page cannot take the nudge; the reload stays the fallback.
+      expect(worker.tabsReload).toHaveBeenCalledExactlyOnceWith(21);
+      expect(actions).toEqual(['reloaded']);
+    }
+    expect(asked).toContain(`repaired:${CHAT}`);
   });
 
   it('defers an exact-tab repair while the page reports human typing or a draft, then retries without consuming the claim', async () => {

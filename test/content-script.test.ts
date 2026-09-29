@@ -14142,6 +14142,68 @@ describe('the context meter and automatic compaction', () => {
     expect(live.sent.filter((message) => message.type === 'focus_tab')).toHaveLength(1);
   });
 
+  it('lets a claimed browser repair retry a responsive automatic source without reloading it', async () => {
+    let ticketCalls = 0;
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: true, threshold: 200_000 }),
+        automaticTicket('not-attempted')),
+      compact: (message: Record<string, unknown>) => {
+        if (!message.ticket) return { ok: false };
+        ticketCalls++;
+        if (ticketCalls === 1) return { ok: false, error: 'temporary source preparation failure' };
+        return { ok: true, data: {
+          started: false,
+          token: 'tok-auto-repair',
+          prompt: null,
+          sourceSend: { state: 'not-attempted', messageId: null },
+          ...automaticTicket('not-attempted')
+        } };
+      }
+    });
+    live.hook.injectControl();
+    await live.hook.pullActivity();
+    await settle();
+    expect(ticketCalls).toBe(1);
+
+    expect(await live.runtimeMessage({
+      type: 'clf-resume-compaction',
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    })).toEqual({ accepted: true });
+    await settle(400);
+
+    expect(ticketCalls).toBe(2);
+    expect(live.sent.filter((message) => message.type === 'focus_tab')).toHaveLength(2);
+  });
+
+  it('accepts a compaction repair poke without starting a second source attempt while one is busy', async () => {
+    let releaseTicket!: (value: unknown) => void;
+    const ticket = new Promise(resolve => { releaseTicket = resolve; });
+    let ticketCalls = 0;
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: true, threshold: 200_000 }),
+        automaticTicket('not-attempted')),
+      compact: (message: Record<string, unknown>) => {
+        if (!message.ticket) return { ok: false };
+        ticketCalls++;
+        return ticket;
+      }
+    });
+    live.hook.injectControl();
+    const pulling = live.hook.pullActivity();
+    await settle();
+    expect(ticketCalls).toBe(1);
+
+    expect(await live.runtimeMessage({
+      type: 'clf-resume-compaction',
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    })).toEqual({ accepted: true });
+    await settle();
+    expect(ticketCalls).toBe(1);
+
+    releaseTicket({ ok: false, error: 'temporary source preparation failure' });
+    await pulling;
+  });
+
   it.each([true, false])('runs a restart-recovery ticket without ever clicking Stop (generating: %s)', async generating => {
     let sendState = 'not-attempted';
     let filed = false;

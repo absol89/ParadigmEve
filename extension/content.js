@@ -8591,6 +8591,32 @@
    * the click, and a document that died there may or may not have sent. That state ends at
    * ChatGPT's own marker or at an explicit cancel, never at a second Send.
    */
+  /**
+   * A browser compaction repair aimed at this exact, still-responsive source document.
+   *
+   * The repair claim proves only that this document may be nudged. It does not own Stop or Send:
+   * those stay behind startCompact's source identity, settle and durable checkpoints. If an attempt
+   * is already running, merely acknowledge the healthy document so the worker does not reload it
+   * out from under that work. (Ported from upstream chat-on-steroids 6a07106.)
+   */
+  function resumePendingCompactionFromRepair(expectedConversationId) {
+    const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
+    if (!alive || !expectedConversationId || conversationId !== expectedConversationId ||
+        CLF_DOM.conversationId() !== expectedConversationId || !source ||
+        (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved')) return false;
+    if (!nativeBusy) {
+      localError = '';
+      nativePhase = '';
+      pressedAt = 0;
+      const forId = conversationId, forEpoch = epoch;
+      queueMicrotask(() => {
+        if (alive && conversationId === forId && epoch === forEpoch)
+          void maybeResumePendingCompaction(forId, forEpoch);
+      });
+    }
+    return true;
+  }
+
   async function maybeResumePendingCompaction(forId = conversationId, forEpoch = epoch) {
     const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
     if (!source || nativeBusy || localError) return;
@@ -11404,6 +11430,10 @@
       }
       if (message.type === 'clf-input-reuse-state') {
         sendResponse({ safe: inputReuseSafe(), navigationEpoch: epoch });
+        return false;
+      }
+      if (message.type === 'clf-resume-compaction') {
+        sendResponse({ accepted: resumePendingCompactionFromRepair(message.conversationId) });
         return false;
       }
       if (message.type === 'clf-browser-repair-state') {
