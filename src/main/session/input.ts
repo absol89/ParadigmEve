@@ -12,7 +12,7 @@ import { getConfig } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { userTitle } from './title.js';
 import { readDurable, writeDurableNow, writeDurableSoon } from '../durable.js';
-import { getSession, findSessionByConversation, createSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, renameSession } from './store.js';
+import { getSession, findSessionByConversation, createSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, renameSession, sessionFolderExists } from './store.js';
 import { assignSessionProject, projectWorkspace, getSessionProject, getProject } from '../projects.js';
 import { isChatBlocked } from './blocked-chats.js';
 import { wakeBrowserWork } from '../browser-wake.js';
@@ -421,11 +421,23 @@ async function load(): Promise<InputEntry[]> {
     }
     if (row.purpose === 'decision' && row.lifetime !== 'temporary-planner' && row.conversationId && !stamped.has(row.conversationId)) await deliveryHooks?.bindHelper?.(row.conversationId, row.decisionSourceSessionId ?? null);
   }
-  const recovered = entries.map((row): InputEntry => row.purpose === 'decision' && !terminal(row) && !decisionWaiters.has(row.id)
+  // A queued row whose chat folder was deleted can never be delivered, and every browser poll
+  // re-read that missing session. Its text already lives in its real chat, so it is cancelled
+  // once and never resent. Only a missing folder counts: a corrupt one keeps its row.
+  const deletedChats = new Map<string, boolean>();
+  const orphaned = new Set<string>();
+  for (const row of entries) {
+    if (row.state !== 'queued' || !row.sessionId) continue;
+    if (!deletedChats.has(row.sessionId)) deletedChats.set(row.sessionId, !(await sessionFolderExists(row.sessionId)));
+    if (deletedChats.get(row.sessionId)) orphaned.add(row.id);
+  }
+  const recovered = entries.map((row): InputEntry => orphaned.has(row.id) ? { ...row, state: 'cancelled', error: DELETED_CHAT_INPUT }
+    : row.purpose === 'decision' && !terminal(row) && !decisionWaiters.has(row.id)
     ? { ...row, state: 'cancelled' } : row);
   if (recovered.some((row, i) => row !== entries![i])) {
     try { await commit(recovered); }
     catch (error) { entries = null; throw error; }
+    if (orphaned.size) logInfo(`input: cancelled ${orphaned.size} queued message(s) whose chat was deleted; they will not be resent`);
   }
   return expireQueued(entries);
 }
@@ -1083,6 +1095,23 @@ async function publishHistory(): Promise<void> {
     catch { /* the durable delivery receipt remains; canonical retry is idempotent */ }
   }
 }
+const DELETED_CHAT_INPUT = 'Not sent: its chat was deleted.';
+
+/**
+ * Deleting a chat cancels its messages still waiting in the queue. They could never be delivered,
+ * and their text already lives in the real chat, so they are never resent. Rows already handed to
+ * the browser keep their own delivery bound, because they may have been sent.
+ */
+export function cancelDeletedSessionInputs(sessionId: string): Promise<number> {
+  return serial(async () => {
+    const current = await load();
+    const orphaned = new Set(current.filter(row => row.sessionId === sessionId && row.state === 'queued').map(row => row.id));
+    if (!orphaned.size) return 0;
+    await commit(current.map(row => orphaned.has(row.id) ? { ...row, state: 'cancelled', error: DELETED_CHAT_INPUT } : row));
+    return orphaned.size;
+  });
+}
+
 export function cancelInput(id: string): Promise<boolean> {
   return serial(async () => {
     const current = await load();

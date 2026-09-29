@@ -12,7 +12,7 @@ import { stageInputAttachment, type AttachmentSource } from './session/input-att
 import { recordDeliveredInput, recordedInputImage, recordedInputImageThumbnail } from './session/input-history.js';
 import { UI_BASE_ZOOM, titleBarOverlayForTheme } from './window-layout.js';
 import { usageOverview } from './session/usage.js';
-import { inputArgs, listInputs, editQueuedInput, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs } from './session/input.js';
+import { inputArgs, listInputs, editQueuedInput, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs, cancelDeletedSessionInputs } from './session/input.js';
 import { draftOpeningMessage, onGoalChange, nativeGoalFailure } from './goal.js';
 import { cancelTaskRequest, runTaskRequest } from './task-request.js';
 import { randomUUID } from 'node:crypto';
@@ -1425,10 +1425,13 @@ export function registerIpc(
     }
     await deleteSession(id);
     if (archiveRuntime) await archiveRuntime.retireSession(id);
+    // Its still-queued messages can never be delivered now; cancel them instead of leaving every
+    // browser poll to re-read a session that no longer exists. They are never resent.
+    const cancelled = await cancelDeletedSessionInputs(id);
     logInfo(
-      detached.length > 0
+      (detached.length > 0
         ? `session ${id} deleted; ${detached.length} live conversation(s) will start a new session`
-        : `session ${id} deleted`
+        : `session ${id} deleted`) + (cancelled ? `; ${cancelled} queued message(s) cancelled, not sent` : '')
     );
     return true;
   });

@@ -15,7 +15,7 @@ import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js
 import { lineDelta, formatDelta } from '../src/main/diffstat.js';
 import { chunkText } from '../src/main/mcp/tools.js';
 import { emptyEvidence } from '../src/main/mcp/call-context.js';
-import { getLog } from '../src/main/logger.js';
+import { getLog, onLog } from '../src/main/logger.js';
 import {
   closeConversation,
   liveConversations,
@@ -2368,6 +2368,29 @@ describe('canonical recorder 1.8', () => {
  * `Continue the previous ChatGPT ...` and `You are worker agent "worker-1" in a ...`,
  * with nothing to say which run any of them belonged to.
  */
+describe('reading a session whose metadata is missing', () => {
+  it('treats a deleted session folder as absent, not corrupt, and reports real corruption once per run', async () => {
+    const logged: string[] = [];
+    const stop = onLog(entry => logged.push(entry.message));
+    try {
+      const corruptLines = () => logged.filter(line => line.includes('no valid metadata projection'));
+      // Deleted: no folder at all. Pollers may ask for it every few seconds.
+      expect(await getSession('2026-09-22-deadbeef')).toBeNull();
+      expect(await getSession('2026-09-22-deadbeef')).toBeNull();
+      expect(corruptLines()).toEqual([]);
+
+      // Corrupt: the folder exists but no metadata projection parses. Still refused, said once.
+      const corrupt = '2026-09-22-c0ffee00';
+      await fs.mkdir(path.join(sessionsRoot(), corrupt), { recursive: true });
+      await fs.writeFile(path.join(sessionsRoot(), corrupt, 'meta.json'), '{broken', 'utf8');
+      expect(await getSession(corrupt)).toBeNull();
+      expect(await getSession(corrupt)).toBeNull();
+      expect(corruptLines()).toHaveLength(1);
+      expect(corruptLines()[0]).toContain(corrupt);
+    } finally { stop(); }
+  });
+});
+
 describe('naming the chats this app opened', () => {
   const worker: SessionOrigin = {
     kind: 'worker',

@@ -10,8 +10,9 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueChatReviewAttention, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput
+  markRestartRecoveryInput, cancelDeletedSessionInputs
 } from '../src/main/session/input.js';
+import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
 import { noteChatOrigin } from '../src/main/session/recorder.js';
 import { listUsageSessions } from '../src/main/session/store.js';
@@ -25,6 +26,8 @@ const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversa
 vi.mock('../src/main/agents.js', () => ({ selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner) }));
 vi.mock('../src/main/session/store.js', () => ({
   listUsageSessions: vi.fn(async () => []),
+  // Only this id stands for a chat whose folder was deleted.
+  sessionFolderExists: vi.fn(async (id: string) => id !== 'deleted-session'),
   conversationWasSuperseded: vi.fn(async () => false),
   readRecentEvents: vi.fn(async (_id: string, _limit: number, options?: { kinds?: string[] }) => {
     const rows: any[] = binding.end ? [binding.end] : [];
@@ -901,6 +904,43 @@ describe('durable user input ownership', () => {
     expect(result.length).toBeGreaterThan(0);
     expect(Buffer.byteLength(result.map(row => row.text).join(''))).toBeLessThanOrEqual(128000);
     expect((await listInputs()).some(row => row.state === 'queued')).toBe(true);
+  });
+});
+
+describe('messages queued for a deleted chat', () => {
+  it('cancels a queued row whose chat folder is gone once, at load, and never resends it', async () => {
+    const logged: string[] = [];
+    const stop = onLog(entry => logged.push(entry.message));
+    try {
+      const orphan: InputEntry = { ...input({ sessionId: 'deleted-session', text: 'Already in its real chat' }), state: 'queued', owner: null, createdAt: now, conversationId: 'conversation-gone' };
+      const kept: InputEntry = { ...input({ sessionId: 'session-two', text: 'Still waiting' }), state: 'queued', owner: null, createdAt: now, conversationId: 'conversation-b' };
+      await writeDurableNow('session-input', [orphan, kept]);
+      resetInputForTests();
+      const rows = await listInputs();
+      expect(rows.find(row => row.id === orphan.id)).toMatchObject({ state: 'cancelled', error: 'Not sent: its chat was deleted.' });
+      expect(rows.find(row => row.id === kept.id)).toMatchObject({ state: 'queued' });
+      expect((await pendingBrowserInputs()).some(row => row.id === orphan.id)).toBe(false);
+      await listInputs(); await listInputs();
+      expect(logged.filter(line => line.includes('whose chat was deleted'))).toHaveLength(1);
+      // Durable: a restart does not revive it.
+      resetInputForTests();
+      expect((await listInputs()).find(row => row.id === orphan.id)?.state).toBe('cancelled');
+    } finally { stop(); }
+  });
+
+  it('cancels only the deleted chat\'s still-queued messages when the chat is deleted', async () => {
+    const queued = await seedLegacyInput(input({ sessionId: 'session-two', text: 'Queued for the deleted chat' }));
+    const other = await seedLegacyInput(input({ text: 'Queued for another chat' }));
+    const handedOut: InputEntry = { ...input({ sessionId: 'session-two', text: 'Already in the browser' }), state: 'browser', owner: 'document', createdAt: now, conversationId: 'conversation-b', offeredAt: now };
+    await writeDurableNow('session-input', [...await listInputs(), handedOut]);
+    resetInputForTests();
+    expect(await cancelDeletedSessionInputs('session-two')).toBe(1);
+    const rows = await listInputs();
+    expect(rows.find(row => row.id === queued.id)).toMatchObject({ state: 'cancelled', error: 'Not sent: its chat was deleted.' });
+    expect(rows.find(row => row.id === other.id)?.state).toBe('queued');
+    // It may already have been sent, so its own delivery bound decides, not the deletion.
+    expect(rows.find(row => row.id === handedOut.id)?.state).not.toBe('cancelled');
+    expect(await cancelDeletedSessionInputs('session-two')).toBe(0);
   });
 });
 

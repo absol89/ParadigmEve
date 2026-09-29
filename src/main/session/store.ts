@@ -151,6 +151,19 @@ function sessionDir(id: string): string {
   return path.join(root, id);
 }
 
+/**
+ * Whether this session's folder still exists. Only a missing folder means the session was
+ * deleted; an unreadable or corrupt one is still a session and keeps everything bound to it.
+ */
+export async function sessionFolderExists(id: string): Promise<boolean> {
+  try {
+    await fs.stat(sessionDir(id));
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
 /** Ids are generated here and never taken from a caller, so this is a sanity check. */
 function assertSessionId(id: string): void {
   if (!/^[0-9a-z-]{8,64}$/i.test(id)) throw new Error('Invalid session id');
@@ -1913,6 +1926,9 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
   }
 }
 
+/** Sessions already reported as corrupt in this run; pollers re-read them every few seconds. */
+const corruptProjectionWarned = new Set<string>();
+
 async function readMetaCheckpoint(id: string): Promise<MetaCheckpoint | null> {
   const dir = sessionDir(id);
   try {
@@ -1930,7 +1946,13 @@ async function readMetaCheckpoint(id: string): Promise<MetaCheckpoint | null> {
   } catch {
     // No recovery checkpoint.
   }
-  logWarn(`session ${id}: no valid metadata projection; refusing to treat it as an empty session`);
+  // A deleted session is simply absent, not a corrupt projection. Real corruption is reported
+  // once per session per run instead of on every poll that reads it.
+  if (!(await sessionFolderExists(id))) return null;
+  if (!corruptProjectionWarned.has(id)) {
+    corruptProjectionWarned.add(id);
+    logWarn(`session ${id}: no valid metadata projection; refusing to treat it as an empty session`);
+  }
   return null;
 }
 
@@ -3026,6 +3048,7 @@ export function resetSessionStoreForTests(): void {
   attachmentCatalogLoading = null;
   attachmentEpoch = 0;
   sessionProjectionCommitListeners.clear();
+  corruptProjectionWarned.clear();
 }
 
 /** Test seam: puts the store back to never having been told where to write. */
