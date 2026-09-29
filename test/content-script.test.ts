@@ -1352,6 +1352,50 @@ describe('desktop input delivery and helper ownership', () => {
     expect(clicks).toBe(1);
   });
 
+  it('acknowledges a sent resume from the browser-owned route when the authored bubble never mounts', async () => {
+    const commandId = 'cmd-route-only-resume';
+    const sourceConversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const destinationConversationId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    const prompt = '[[CLF-RESUME:0123456789abcdef0123456789abcdef]]\nContinue the compacted session.';
+    let clicks = 0;
+    live = await harness(`https://chatgpt.com/?clf=${commandId}`, {
+      redeem: () => ({ ok: true, command: {
+        id: commandId,
+        type: 'resume',
+        text: prompt,
+        agent: null,
+        sourceConversationId
+      } }),
+      tab_conversation: () => ({ ok: true, conversationId: destinationConversationId }),
+      ack: () => ({ ok: true })
+    }, (document, dom) => {
+      document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+        clicks++;
+        // Live 2026-09-29 failure: ChatGPT accepted the fresh RESUME and Chrome learned the
+        // concrete /c/<id> route, but the authored user bubble never became visible to the
+        // isolated-world DOM/Fiber reader. The browser-owned tab route is still exact evidence
+        // for the already-redeemed, already-sent command.
+        dom.reconfigure({ url: `https://chatgpt.com/c/${destinationConversationId}` });
+        document.querySelector('#prompt-textarea')!.textContent = '';
+      });
+    });
+
+    // chatgpt-dom deliberately waits out its native Send acceptance watchdog when only the
+    // route changed: navigation alone is not proof of acceptance. Cross that macrotask here so
+    // content.js reaches its route-backed ambiguous-send recovery branch.
+    await new Promise(resolve => globalThis.setTimeout(resolve, 0));
+    await settle(400);
+    expect(clicks).toBe(1);
+    expect(live.sent.filter(message => message.type === 'tab_conversation')).not.toHaveLength(0);
+    expect(live.sent.filter(message => message.type === 'ack')).toEqual([
+      expect.objectContaining({
+        id: commandId,
+        status: 'sent',
+        conversationId: destinationConversationId
+      })
+    ]);
+  });
+
   it('reads canonical Markdown for a pending fresh send even when native generation already ended', async () => {
     const prompt = 'Inspect `src/main/bridge.ts` and reply briefly.';
     live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
@@ -17642,16 +17686,35 @@ describe('resume irreversible boundary audit', () => {
   it('does not ACK an unrelated route reached after submit cleared the fresh composer', async () => {
     const commandId = 'cmd-resume-route-after-send';
     const token = '0123456789abcdef0123456789abcdef';
+    const sourceConversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     const unrelated = 'bbbbbbbb-1111-4222-8333-444444444444';
+    const trustedInteractions: EventListener[] = [];
     live = await harness(`https://chatgpt.com/?clf=${commandId}`, {
-      redeem: () => ({ ok: true, command: { id: commandId, type: 'resume', text: `[[CLF-RESUME:${token}]] handoff`, agent: null } }),
+      redeem: () => ({ ok: true, command: {
+        id: commandId,
+        type: 'resume',
+        text: `[[CLF-RESUME:${token}]] handoff`,
+        agent: null,
+        sourceConversationId
+      } }),
+      tab_conversation: () => ({ ok: true, conversationId: unrelated }),
       ack: () => ({ ok: true })
     }, (document, dom) => {
+      const add = document.addEventListener.bind(document);
+      document.addEventListener = ((type: string, listener: EventListener, options: any) => {
+        if (type === 'pointerdown' && options === true) trustedInteractions.push(listener);
+        add(type, listener, options);
+      }) as typeof document.addEventListener;
       document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
         document.querySelector('#prompt-textarea')!.textContent = '';
-        void Promise.resolve().then(() => dom.window.history.pushState({}, '', `/c/${unrelated}`));
+        void Promise.resolve().then(() => {
+          const freshFence = trustedInteractions.find(listener => String(listener).includes('freshCommandUserInteracted'));
+          freshFence?.({ isTrusted: true } as Event);
+          dom.window.history.pushState({}, '', `/c/${unrelated}`);
+        });
       });
     });
+    await new Promise(resolve => globalThis.setTimeout(resolve, 0));
     await settle(200);
     expect(live.sent.filter(message => message.type === 'ack' && message.conversationId === unrelated)).toEqual([]);
   });

@@ -10434,6 +10434,22 @@
       acceptedBootstrap ||= { conversationId: found, epoch, messageId: message.id };
       return found;
     };
+    const resolvedBootstrapConversation = async () => {
+      const exact = bootstrapConversation();
+      if (exact || boot.type !== 'resume') return exact;
+      if (!sendingBootstrap() || freshCommandUserInteracted) return null;
+      // ChatGPT can accept the fresh RESUME send and mint `/c/<id>` in Chrome before React/Fiber
+      // mounts that authored bubble in the isolated-world DOM. The command is already redeemed,
+      // the native Send already succeeded, and the service worker can prove which exact tab URL
+      // this same document owns. Use that browser-owned route as the bounded identity fallback;
+      // never accept the source chat or a third route the page has since navigated to.
+      const route = await ask({ type: 'tab_conversation', sourceConversationId: boot.sourceConversationId });
+      const found = route?.ok === true && typeof route.conversationId === 'string' ? route.conversationId : null;
+      if (!found || found === boot.sourceConversationId) return null;
+      const page = CLF_DOM.conversationId();
+      if (page && page !== found && page !== boot.sourceConversationId) return null;
+      return found;
+    };
     if (boot.type === 'resume') {
       if (!resumeMarker || resumeMarker[1] !== 'RESUME') {
         return void (await fail('the resume bootstrap had no valid continuation marker'));
@@ -10468,8 +10484,21 @@
       // Once send() was invoked, a missing/cleared draft cannot prove that no click
       // happened. Only the exact pre-click check above may release the dispatch.
       if (boot.type === 'resume') {
-        // Retain the armed ticket and journal gate for exact marker reconciliation; never
-        // replay an ambiguous click or let ordinary events create its shadow session.
+        // A concrete browser-owned successor route turns this otherwise ambiguous click into
+        // exact one-way evidence: this redeemed document left the source chat after native Send.
+        // This is the live 2026-09-29 "Opening a fresh chat" failure — ChatGPT minted B and
+        // cleared the editor but never mounted the authored RESUME bubble, so the older path
+        // retained `dispatched-unresolved` forever despite already being in the successor chat.
+        const found = await resolvedBootstrapConversation();
+        if (found) {
+          rememberResumeGoalPending(found, boot.id);
+          publishBootstrapSelection(found);
+          const acknowledged = await ask({ type: 'ack', id: boot.id, status: 'sent', conversationId: found, agent: null, client: RUN_ID });
+          await clearAcknowledgedBootstrap(acknowledged);
+        }
+        // With no concrete successor route, retain the armed ticket and journal gate for exact
+        // marker reconciliation; never replay an ambiguous click or let ordinary events create
+        // its shadow session.
         return;
       }
       return void (await fail('ChatGPT did not accept the bootstrap send'));
@@ -10489,7 +10518,7 @@
     // is the resume destination — see pullActivity — not here, because this ACK's reply is the
     // outbox's, not the app's.
     if (boot.type === 'resume') {
-      const found = bootstrapConversation();
+      const found = await resolvedBootstrapConversation();
       if (found) rememberResumeGoalPending(found, boot.id);
     }
 
@@ -10513,7 +10542,7 @@
     // clock the app is running, so this page never outlives the command it is working on.
     for (let tries = 0; tries < 80; tries++) {
       await sleep(500);
-      const found = boot.type === 'resume' ? bootstrapConversation() : CLF_DOM.conversationId();
+      const found = boot.type === 'resume' ? await resolvedBootstrapConversation() : CLF_DOM.conversationId();
       if (found) {
         if (boot.type === 'resume') rememberResumeGoalPending(found, boot.id);
         publishBootstrapSelection(found);
