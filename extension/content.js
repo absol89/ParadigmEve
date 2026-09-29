@@ -8696,22 +8696,25 @@
       CLF_DOM.conversationId() === forId;
     let attemptCrossed = false;
     const automaticTicket = job && job.automatic === true;
-    const abandonBeforeSend = async (why, retireAutomatic = false) => {
+    const abandonBeforeSend = async (why, retireTicket = false) => {
       if (!current()) return;
       nativeBusy = false;
       nativePhase = '';
       pressedAt = 0;
       localError = why;
-      // A transient page/DOM failure is not a verdict on an automatic ticket. Keep it on the
-      // continuation WAL so the app's next pickup reload can collect the same work. A composer
-      // already holding another draft is different: ChatGPT restores that draft across reloads,
-      // so the caller can retire this pre-Send ticket instead of scheduling the same refusal.
-      // A manual press keeps its historical immediate-abort behaviour; the user is still present
-      // and can retry it without leaving an invisible job behind.
-      if (!automaticTicket) {
+      // A transient page/DOM failure is not a verdict on the durable ticket, manual or automatic.
+      // This matters especially just after an app/browser restart: the exact source page can be
+      // restored before ChatGPT has mounted its composer, and cancelling here turns a harmless
+      // hydration delay into a permanently aborted Prime migration. Keep the WAL entry so this
+      // exact page (or its safe reload) can collect the same handoff once the DOM is ready.
+      //
+      // A composer already holding another draft is different: ChatGPT restores that user-owned
+      // draft across reloads, so retrying would repeatedly collide with it. Retire only that
+      // provably persistent pre-Send ticket while leaving the draft untouched.
+      if (retireTicket && !automaticTicket) {
         job = null;
         await ask({ type: 'compact', conversationId: forId, cancel: true }).catch(() => undefined);
-      } else if (retireAutomatic) {
+      } else if (retireTicket) {
         // This is not the user-facing Cancel path. The bridge accepts sourceLost only while its
         // durable checkpoint still proves no Send happened (`not-attempted` or
         // `attempted-unresolved`). If another page crossed sourceDispatch meanwhile, this refuses
@@ -8726,8 +8729,8 @@
     };
 
     if (!current()) return;
-    if (!prompt) return void (await abandonBeforeSend('The app did not send the handoff instruction.'));
-    if (!token) return void (await abandonBeforeSend('The app did not send a compaction token, so nothing could be tracked.'));
+    if (!prompt) return void (await abandonBeforeSend('The app did not send the handoff instruction.', true));
+    if (!token) return void (await abandonBeforeSend('The app did not send a compaction token, so nothing could be tracked.', true));
 
     try {
       nativePhase = 'prompting';
@@ -8752,8 +8755,10 @@
       if (!current()) return;
       const composer = CLF_DOM.composer();
       if (!composer || squeeze(composer.textContent) !== squeeze(prompt)) {
+        const occupiedAfterInsert = Boolean(composer && (composer.textContent || '').trim());
         return void (await abandonBeforeSend(
-          'The message box changed before the handoff instruction could be sent. Its draft was preserved; nothing was compacted.'
+          'The message box changed before the handoff instruction could be sent. Its draft was preserved; nothing was compacted.',
+          occupiedAfterInsert
         ));
       }
       // Claiming the prompt. Nothing has been submitted under this state, and the app knows

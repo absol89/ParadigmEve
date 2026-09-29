@@ -10896,6 +10896,78 @@ describe('the Compact & resume control', () => {
     expect(live.document.querySelector('.clf-pill-text')!.textContent).toContain('clear the message box');
   });
 
+  it('keeps a manual ticket recoverable when restart hydration has not mounted the composer yet', async () => {
+    const manualJob = {
+      sessionId: 's-manual-missing-composer',
+      stage: 'handoff-pending',
+      automatic: false,
+      busy: true,
+      handoffId: null,
+      error: null,
+      sourceSend: { state: 'not-attempted', messageId: null }
+    };
+    live = await harness(undefined, {
+      activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, pendingTools: 0, job: null } }),
+      compact: () => ({
+        ok: true,
+        data: {
+          started: true,
+          token: 'tok-manual-missing-composer',
+          prompt: 'write the manual handoff brief',
+          job: manualJob,
+          sourceSend: manualJob.sourceSend
+        }
+      })
+    });
+    live.hook.injectControl();
+    live.document.querySelector('#prompt-textarea')!.remove();
+
+    await live.hook.startCompact(false);
+
+    const compacts = live.sent.filter((message) => message.type === 'compact');
+    expect(compacts[0]).toMatchObject({ ticket: true, automatic: false });
+    expect(compacts.some((message) => message.cancel === true)).toBe(false);
+    expect(compacts.some((message) => message.sourceLost === true)).toBe(false);
+    expect(live.sent.some((message) => message.type === 'compact' && message.sourceAttempt === true)).toBe(false);
+    expect(live.document.querySelector('.clf-pill-text')!.textContent).toContain('clear the message box');
+  });
+
+  it('still retires a manual pre-Send ticket when a real user draft owns the composer', async () => {
+    const manualJob = {
+      sessionId: 's-manual-user-draft',
+      stage: 'handoff-pending',
+      automatic: false,
+      busy: true,
+      handoffId: null,
+      error: null,
+      sourceSend: { state: 'not-attempted', messageId: null }
+    };
+    live = await harness(undefined, {
+      activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, pendingTools: 0, job: null } }),
+      compact: (message) => ({
+        ok: true,
+        data: message.cancel
+          ? { cancelled: true, job: null }
+          : {
+              started: true,
+              token: 'tok-manual-user-draft',
+              prompt: 'write the manual handoff brief',
+              job: manualJob,
+              sourceSend: manualJob.sourceSend
+            }
+      })
+    });
+    live.hook.injectControl();
+    live.document.querySelector('#prompt-textarea')!.textContent = 'my unsent human draft';
+
+    await live.hook.startCompact(false);
+
+    const compacts = live.sent.filter((message) => message.type === 'compact');
+    expect(compacts).toContainEqual(expect.objectContaining({ cancel: true }));
+    expect(compacts.some((message) => message.sourceAttempt === true)).toBe(false);
+    expect(composerText(live.document)).toBe('my unsent human draft');
+  });
+
   it('preserves a stale COS handoff draft including user edits and retires the unsent ticket', async () => {
     const pendingJob = {
       sessionId: 's-auto-stale-draft',
