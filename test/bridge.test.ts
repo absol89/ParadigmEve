@@ -3164,7 +3164,9 @@ describe('delivering a bootstrap', () => {
     const chatB = 'b3b3b3b3-2222-4333-8444-555555555555';
     const { sessionId, token } = await compactedSession(chatA, 'the brief for the delayed route');
     const command = queueResume(sessionId, token)!;
-    expect((await redeem(command.id, 'tab-b3')).text).toContain('the brief for the delayed route');
+    const redeemed = await redeem(command.id, 'tab-b3');
+    expect(redeemed.text).toContain('the brief for the delayed route');
+    expect(redeemed.sourceConversationId).toBe(chatA);
     expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
     expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
 

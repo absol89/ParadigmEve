@@ -536,6 +536,8 @@ export interface BridgeCommand {
   id: string;
   /** Project entry is navigation authority only; the source composer must never receive the brief. */
   projectEntry?: { id: string; sourceConversationId: string };
+  /** Source chat a Compact & Resume replacement must move away from. Null for non-resume commands. */
+  sourceConversationId?: string | null;
   kind: 'open-chat' | 'stop-turn';
   turnId?: string;
   userMessageId?: string;
@@ -8434,6 +8436,7 @@ function describe(command: Command, client: string | null, claimedSummary?: stri
       projectEntry: { id: commandProject(command)!, sourceConversationId: continuationByToken(spec.token)!.from }
     } : {}),
     type: spec.type,
+    ...(spec.type === 'resume' ? { sourceConversationId: continuationByToken(spec.token)?.from ?? null } : {}),
     text,
     agent: spec.type === 'resume' ? null : spec.agent,
     backend: spec.type === 'worker' ? spec.backend : null,

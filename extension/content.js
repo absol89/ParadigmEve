@@ -10452,6 +10452,21 @@
       acceptedBootstrap ||= { conversationId: found, epoch, messageId: message.id };
       return found;
     };
+    const resolvedBootstrapConversation = async () => {
+      const exact = bootstrapConversation();
+      if (exact || boot.type !== 'resume') return exact;
+      // ChatGPT can accept the fresh RESUME send and mint `/c/<id>` in Chrome before React/Fiber
+      // mounts that authored bubble in the isolated-world DOM. The command is already redeemed,
+      // the native Send already succeeded, and the service worker can prove which exact tab URL
+      // this same document owns. Use that browser-owned route as the bounded identity fallback;
+      // never accept the source chat or a third route the page has since navigated to.
+      const route = await ask({ type: 'tab_conversation' });
+      const found = route?.ok === true && typeof route.conversationId === 'string' ? route.conversationId : null;
+      if (!found || found === boot.sourceConversationId) return null;
+      const page = CLF_DOM.conversationId();
+      if (page && page !== found && page !== boot.sourceConversationId) return null;
+      return found;
+    };
     if (boot.type === 'resume') {
       if (!resumeMarker || resumeMarker[1] !== 'RESUME') {
         return void (await fail('the resume bootstrap had no valid continuation marker'));
@@ -10507,7 +10522,7 @@
     // is the resume destination — see pullActivity — not here, because this ACK's reply is the
     // outbox's, not the app's.
     if (boot.type === 'resume') {
-      const found = bootstrapConversation();
+      const found = await resolvedBootstrapConversation();
       if (found) rememberResumeGoalPending(found, boot.id);
     }
 
@@ -10531,7 +10546,7 @@
     // clock the app is running, so this page never outlives the command it is working on.
     for (let tries = 0; tries < 80; tries++) {
       await sleep(500);
-      const found = boot.type === 'resume' ? bootstrapConversation() : CLF_DOM.conversationId();
+      const found = boot.type === 'resume' ? await resolvedBootstrapConversation() : CLF_DOM.conversationId();
       if (found) {
         if (boot.type === 'resume') rememberResumeGoalPending(found, boot.id);
         publishBootstrapSelection(found);

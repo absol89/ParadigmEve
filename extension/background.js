@@ -3224,6 +3224,12 @@ function serializeTab(tab, operation) {
 }
 
 const HANDLERS = {
+  async tab_conversation(_message, _sender, source) {
+    if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
+    const tab = await chrome.tabs.get(source.tab).catch(() => null);
+    if (!tab || !ownsDocument(source)) return { ok: false, error: 'stale_document' };
+    return { ok: true, conversationId: conversationFromUrl(tab.url || tab.pendingUrl) };
+  },
   async plugin_refresh(message, _sender, source) {
     if (!ownsDocument(source) || !/^[a-f0-9-]{36}$/i.test(String(message.id || ''))) return { ok: false };
     const tab = await chrome.tabs.get(source.tab);
@@ -3946,6 +3952,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     'model_catalog',
     'plugin_refresh',
     'usage_observation',
+    'tab_conversation',
     'events',
     'bind',
     'activity',

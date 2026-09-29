@@ -1352,6 +1352,37 @@ describe('desktop input delivery and helper ownership', () => {
     expect(clicks).toBe(1);
   });
 
+  it('acknowledges a fresh resume from the owned Chrome tab route while the new-chat shell has not mounted its user bubble', async () => {
+    const commandId = 'cmd-route-only-resume';
+    const prompt = '[[CLF-RESUME:0123456789abcdef0123456789abcdef]]\nContinue the compacted task.';
+    let clicks = 0;
+    live = await harness(`https://chatgpt.com/?clf=${commandId}`, {
+      redeem: () => ({ ok: true, command: {
+        id: commandId,
+        type: 'resume',
+        text: prompt,
+        agent: null,
+        sourceConversationId: chatA
+      } }),
+      tab_conversation: () => ({ ok: true, conversationId: chatB }),
+      ack: () => ({ ok: true })
+    }, (document) => {
+      document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+        clicks++;
+        document.querySelector('#prompt-textarea')!.textContent = '';
+        // Deliberately leave this document on the id-less "opening new chat" shell and do not
+        // mount the authored bubble. Chrome's tab URL is the only identity proof available.
+      });
+    }, false, true);
+    await settle();
+    await new Promise(resolve => globalThis.setTimeout(resolve, 550));
+    await settle();
+    expect(live.sent.filter(message => message.type === 'ack' && message.status === 'sent')).toEqual([
+      expect.objectContaining({ id: commandId, conversationId: chatB })
+    ]);
+    expect(clicks).toBe(1);
+  });
+
   it('reads canonical Markdown for a pending fresh send even when native generation already ended', async () => {
     const prompt = 'Inspect `src/main/bridge.ts` and reply briefly.';
     live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
