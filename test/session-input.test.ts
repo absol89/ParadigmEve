@@ -22,7 +22,7 @@ import { trackInFlight, emptyEvidence, type CallContext } from '../src/main/mcp/
 const offerToolInput = async (...args: Parameters<typeof offerToolInputBatch>) => (await offerToolInputBatch(...args)).messages;
 vi.mock('../src/main/session/recorder.js', () => ({ noteChatOrigin: vi.fn(async () => undefined) }));
 
-const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
+const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
 vi.mock('../src/main/agents.js', () => ({ selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner) }));
 vi.mock('../src/main/session/store.js', () => ({
   listUsageSessions: vi.fn(async () => []),
@@ -38,7 +38,7 @@ vi.mock('../src/main/session/store.js', () => ({
     return rows;
   }),
   getSession: vi.fn(async (id: string) => ({ id, conversationId: id === 'session-two' ? 'conversation-b' : binding.conversationId, activeTurnId: binding.activeTurnId, endedAt: binding.endedAt,
-    origin: { kind: binding.origin }, lastToolCallAt: binding.lastToolCallAt,
+    origin: { kind: binding.origin }, lastToolCallAt: binding.lastToolCallAt, lastAssistantFinalAt: binding.lastAssistantFinalAt,
     finishTurn: { turnId: binding.activeTurnId, released: binding.finishReleased },
     selectedModel: { conversationId: id === 'session-two' ? 'conversation-b' : binding.conversationId, model: binding.model } })),
   findSessionByConversation: vi.fn(async (id: string) => {
@@ -97,6 +97,7 @@ beforeEach(async () => {
   binding.activeTurnId = null;
   binding.endedAt = null;
   binding.lastToolCallAt = null;
+  binding.lastAssistantFinalAt = null;
   binding.pendingUser = false;
   binding.staleOwnerConversationId = null;
   binding.staleOwnerEnded = true;
@@ -1903,6 +1904,35 @@ it('recovers only an unoffered tool intent after the target is positively settle
   expect(claimed).toMatchObject({ state: 'browser', transportIntent: 'browser' });
   expect(await offerToolInput(sessionId, binding.conversationId, 'competing-tool', now + 2)).toEqual([]);
   expect(await authorizeBrowserInput(row.id, 'recovery-page', binding.conversationId)).toBe(true);
+});
+
+it('moves an unoffered tool intent to the browser once its open turn has quietly published its final answer', async () => {
+  // 2026-09-29: the page went quiet after ChatGPT's final answer, no turn_end ever arrived, and the
+  // user's message waited for a tool result from a turn that was already over.
+  binding.model = 'gpt-5-6-thinking';
+  binding.activeTurnId = 'quiet-turn';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'quiet-turn', time: now - 120_000 };
+  binding.lastToolCallAt = now - 110_000;
+  binding.lastAssistantFinalAt = now - 100_000;
+  const row = await enqueueInput(input({ dueAt: now }));
+  expect(row.transportIntent).toBe('browser');
+  const claimed = await claimBrowserInput(row.id, 'quiet-page', binding.conversationId, true);
+  expect(claimed).toMatchObject({ state: 'browser', transportIntent: 'browser' });
+});
+
+it.each([
+  ['the final answer is still fresh', { final: -30_000, tool: -40_000 }],
+  ['a tool call came after the final answer', { final: -100_000, tool: -90_000 }],
+  ['the final answer predates this turn', { final: -130_000, tool: -100_000 }]
+])('keeps a tool intent in the open turn when %s', async (_why, at) => {
+  binding.model = 'gpt-5-6-thinking';
+  binding.activeTurnId = 'live-turn';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'live-turn', time: now - 120_000 };
+  binding.lastToolCallAt = now + at.tool;
+  binding.lastAssistantFinalAt = now + at.final;
+  const row = await enqueueInput(input({ dueAt: now }));
+  expect(row.transportIntent).toBe('tool');
+  expect(await claimBrowserInput(row.id, 'quiet-page', binding.conversationId, true)).toBeNull();
 });
 
 it('offers one internally stamped restart recovery to the browser while its exact durable turn is still open', async () => {

@@ -279,6 +279,8 @@ let deliveryHooks: InputDeliveryHooks | null = null;
 /** Installed once by IPC before bridge/MCP startup; avoids a Goal/input import cycle. */
 export function configureInputDelivery(hooks: InputDeliveryHooks): void { deliveryHooks = hooks; }
 /** One delivery policy for composer presentation, admission and the final send fence. */
+/** How long a recorded final answer must stand, with no tool call after it, before an unclosed turn counts as over. */
+export const OPEN_TURN_FINAL_QUIET_MS = 60_000;
 export async function sessionInputPolicy(sessionId: string, observedActivity?: InputActivity): Promise<{ queueAtFinish: boolean; canInject: boolean; directTurn: InputEntry['directTurn'] | null; browserAllowed: boolean; settled: boolean }> {
   // A native ChatGPT send is recorded as a user_message before the provider necessarily publishes
   // its turn_start. During that short gap the durable session can still look idle (`activeTurnId`
@@ -303,13 +305,26 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
     !isProModel(selection.model, selection.reasoningEffort) &&
     (session.lastToolCallAt ?? -1) < end.time && inFlightToolCalls(session.conversationId) === 0
     ? { id: end.turnId, startedAt: end.time } : null;
-  const canInject = !stopped && activity.exact && !directTurn;
+  // The open turn can be over even though no turn_end ever reached the app: the page went quiet
+  // after ChatGPT published the final answer (a reload, an app restart, a gated or dead recorder).
+  // Every liveness signal here derives from that same stale open turn, so without this a message
+  // queued for the next tool result waited for a call that would never come — the user's text on
+  // 2026-09-29 sat queued for Eve with the chat idle. A final answer recorded after this exact turn
+  // began, with no tool call after it or in flight and a quiet minute since, is positive terminal
+  // evidence. The Companion still proves the page idle before it types anything.
+  const finalAt = session.lastAssistantFinalAt ?? null;
+  const quietlyFinished = !!session.activeTurnId && end?.kind === 'turn_start' && end.turnId === session.activeTurnId &&
+    finalAt !== null && finalAt >= end.time && (session.lastToolCallAt ?? 0) <= finalAt &&
+    inFlightToolCalls(session.conversationId) === 0 &&
+    Date.now() - finalAt >= OPEN_TURN_FINAL_QUIET_MS;
+  const canInject = !stopped && activity.exact && !directTurn && !quietlyFinished;
   const astra = session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
     session.selectedModel?.conversationId === session.conversationId && isAstraModel(session.selectedModel.model, session.selectedModel.reasoningEffort);
   const terminal = end?.kind === 'turn_end' && !!end.turnId && end.outcome !== 'unknown';
   return { canInject, directTurn, queueAtFinish: astra && canInject && getConfig().ui.finishTool === true,
-    browserAllowed: !awaitingUserTurnStart && !session.activeTurnId && !activity.possible && !activity.exact && (!astra || terminal),
-    settled: terminal && (session.lastToolCallAt ?? 0) <= end.time };
+    browserAllowed: !awaitingUserTurnStart && (!astra || terminal) &&
+      (quietlyFinished || (!session.activeTurnId && !activity.possible && !activity.exact)),
+    settled: (terminal && (session.lastToolCallAt ?? 0) <= end.time) || (!astra && quietlyFinished) };
 }
 async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
   if (entry.mode === 'finish' && entry.sessionId && entry.afterTurn !== true) {
