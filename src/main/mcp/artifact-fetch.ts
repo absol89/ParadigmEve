@@ -10,7 +10,11 @@ const OPENAI_FILE_HOSTS = new Set([
   'files.oaiusercontent.com',
   // Exact image-generation download host in OpenAI's own executed cookbook:
   // https://github.com/openai/openai-cookbook/blob/main/examples/dalle/Image_generations_edits_and_variations_with_DALL-E.ipynb
-  'oaidalleapiprodscus.blob.core.windows.net'
+  'oaidalleapiprodscus.blob.core.windows.net',
+  // Exact regional native-file hosts observed from ChatGPT's injected file values.
+  // Keep Azure exact-only: the account name is the trust boundary.
+  'oaisdmntprpolandcentral.blob.core.windows.net',
+  'oaisdmntprdenmarkeast.blob.core.windows.net'
 ]);
 // A customer-chosen Azure account prefix is not proof of OpenAI ownership. Regional
 // hosts need exact verified entries; never trust a wildcard over that shared namespace.
