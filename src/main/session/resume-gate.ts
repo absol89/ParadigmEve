@@ -33,6 +33,24 @@ export const RESUME_CLAIM_WINDOW_MS = 60_000;
 
 const claims = new Map<string, number>();
 
+/**
+ * Whether a durable continuation has a brief in flight to a chat that has not been named yet.
+ *
+ * The timed claims above are process memory and last one window. A brief that was attempted or
+ * clicked in the replacement page is different: its chat exists (or is about to), the page stays
+ * gated until it reconciles the marked message, and that can be minutes away when the app was
+ * restarted in between and Chrome is still restoring the tab. On 2026-09-29 exactly that page
+ * reported 84 s after a restart, the 60 s window had lapsed, the recorder minted an ordinary
+ * session for it, and the commit one second later was refused as a collision. The continuation
+ * store answers this from its durable state, so it outlives restarts and ends with the move.
+ */
+let durableResumeInFlight: () => boolean = () => false;
+
+/** Installed by the continuation store; see {@link durableResumeInFlight}. */
+export function setDurableResumeProbe(probe: () => boolean): void {
+  durableResumeInFlight = probe;
+}
+
 /** Records that a replacement chat is expected to appear imminently. */
 function noteExpectedResume(token: string): void {
   claims.set(token, Date.now());
@@ -73,10 +91,15 @@ export function resumeOpeningChat(now: number = Date.now()): boolean {
     if (now - at <= RESUME_CLAIM_WINDOW_MS) return true;
     claims.delete(token);
   }
-  return false;
+  try {
+    return durableResumeInFlight();
+  } catch {
+    return false;
+  }
 }
 
 /** Test seam. */
 export function resetResumeGate(): void {
   claims.clear();
+  durableResumeInFlight = () => false;
 }

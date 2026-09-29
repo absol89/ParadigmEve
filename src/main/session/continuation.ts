@@ -68,7 +68,7 @@ import { writeDurableNow, writeDurableSoon } from '../durable.js';
 import { currentAgentConversationId, transferAgentConversation } from '../agent-identity.js';
 import { prepareHandoff, resumeBootstrapMatches } from './handoff.js';
 import { ensureHandoffRecorded, recordHandoff, recordNote, rebindConversation } from './recorder.js';
-import { endResumeClaim, noteResumeClaim, resetResumeGate } from './resume-gate.js';
+import { endResumeClaim, noteResumeClaim, resetResumeGate, setDurableResumeProbe } from './resume-gate.js';
 import {
   ensureCommittedResumeHandoff,
   findSessionByConversation,
@@ -458,6 +458,24 @@ const expired = (entry: Continuation, now = Date.now()): boolean =>
 
 const isOpen = (entry: Continuation): boolean =>
   entry.state !== 'committed' && entry.state !== 'aborted' && !expired(entry);
+
+/**
+ * True while a replacement page has attempted or clicked its brief and the move has not landed.
+ *
+ * Read synchronously by the recorder's resume gate before it mints a session for an unknown
+ * chat. Only claimed, unexpired continuations count: their chat B may already exist while its
+ * gated page waits to reconcile the marked message, which is the one message allowed to name it.
+ */
+function resumeBriefInFlight(): boolean {
+  for (const entry of byToken.values()) {
+    if (entry.state !== 'claimed' || entry.to !== null || !isOpen(entry)) continue;
+    if (entry.destinationSend.state !== 'not-attempted') {
+      return true;
+    }
+  }
+  return false;
+}
+setDurableResumeProbe(resumeBriefInFlight);
 
 function sweep(): void {
   for (const entry of [...byToken.values()]) {
@@ -1696,5 +1714,6 @@ export function resetContinuationsForTests(): void {
   // outlives a cleared transaction by RESUME_CLAIM_WINDOW_MS. Left behind, it makes the
   // *next* test's unrelated new chat wait for a replacement that will never come.
   resetResumeGate();
+  setDurableResumeProbe(resumeBriefInFlight);
   changed();
 }

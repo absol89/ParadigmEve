@@ -1103,6 +1103,28 @@ describe('the window in which a replacement chat is expected', () => {
     expect(resumeOpeningChat()).toBe(false);
   });
 
+  it('stays armed past the window while a brief sent into the replacement is unreconciled', async () => {
+    const { sessionId, token } = await readyContinuation();
+    await claimContinuationNow(token, CHAT_B);
+    expect((await beginContinuationDestinationSendNow(token))?.allowed).toBe(true);
+    expect(await dispatchContinuationDestinationSendNow(token)).toBe(true);
+    // 2026-09-29: the app restarted, Chrome restored the replacement tab 84 s later, and an
+    // expired timed window let that page's first batch mint an ordinary session one second
+    // before its marked message would have committed the move.
+    const later = Date.now() + RESUME_CLAIM_WINDOW_MS + 1;
+    expect(resumeOpeningChat(later)).toBe(true);
+
+    await commitContinuation(token, CHAT_B);
+    expect(await attachedChat(sessionId)).toBe(CHAT_B);
+    expect(resumeOpeningChat(later)).toBe(false);
+  });
+
+  it('does not hold new chats for a claim whose page never attempted the brief', async () => {
+    const { token } = await readyContinuation();
+    await claimContinuationNow(token, CHAT_B);
+    expect(resumeOpeningChat(Date.now() + RESUME_CLAIM_WINDOW_MS + 1)).toBe(false);
+  });
+
   it('is not armed by a durable claim whose write failed', async () => {
     const { token } = await readyContinuation();
     const durable = await import('../src/main/durable.js');
