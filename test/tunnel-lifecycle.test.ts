@@ -179,6 +179,47 @@ describe('OpenAI tunnel process ownership', () => {
    * The same rule the offline caption already follows (see UNREACHABLE_CONFIRM_MS): one failed
    * poll is not a verdict. A genuinely dead client still gets replaced one pass later.
    */
+  it('stops claiming Connected while the client keeps failing to reach this app, and recovers', async () => {
+    vi.useFakeTimers();
+    let probe = 'ok';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/readyz') return new Response('ok');
+      if (url.pathname === '/metrics') {
+        return new Response(`commands_poll_last_successful_timestamp_seconds ${Date.now() / 1000}\ncommands_poll_errors_total 0\n`);
+      }
+      if (url.pathname === '/api/status') {
+        return Response.json({ uptime_seconds: 50, channels: [{ name: 'main', probe_status: probe }] });
+      }
+      return new Response('missing', { status: 404 });
+    }));
+    const reports: Array<{ state: string; detail: string }> = [];
+    const handle = await startTunnel({
+      localUrl: 'http://127.0.0.1:1234/secret',
+      settings,
+      apiKey: 'sk-tunnel-test',
+      report: (status) => reports.push({ state: status.state, detail: status.detail })
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fixture.health.url = 'http://127.0.0.1:34567';
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(reports.at(-1)?.state).toBe('connected');
+
+    // One failed probe is a busy moment, not an outage.
+    probe = 'failed';
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(reports.at(-1)?.state).toBe('connected');
+    // Still failing on the next tick: ChatGPT's calls cannot reach this app, so say so.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(reports.at(-1)).toMatchObject({ state: 'connecting-tunnel' });
+    expect(reports.at(-1)?.detail).toMatch(/cannot reach this app's MCP server/);
+
+    probe = 'ok';
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(reports.at(-1)?.state).toBe('connected');
+    await handle.stop();
+  });
+
   it('replaces the client only after a readiness failure survives a second pass', async () => {
     vi.useFakeTimers();
     let ready = true;

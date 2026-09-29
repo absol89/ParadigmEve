@@ -275,7 +275,9 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
     pollErrors: number;
     healthBase: string | null;
     health: TunnelHealth | null;
-    shown: 'connected' | 'offline' | 'unknown' | null;
+    shown: 'connected' | 'offline' | 'unknown' | 'unreachable-app' | null;
+    /** Consecutive ticks on which the client reported it cannot reach this app's MCP server. */
+    appProbeFailures: number;
   }
 
   let stopped = false;
@@ -320,6 +322,19 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
     opts.report({
       state: 'offline',
       detail: `This PC cannot reach OpenAI — ${run.unreachableReason}. Last verified handshake ${ago(run.lastHandshake)}. ChatGPT cannot use the connector until it is back; the tunnel keeps retrying on its own.`,
+      handshakeAt: run.lastHandshake,
+      health: run.health
+    });
+  };
+
+  const showAppUnreachable = (run: ClientRun, probe: string): void => {
+    if (stopped || current !== run) return;
+    const first = run.shown !== 'unreachable-app';
+    run.shown = 'unreachable-app';
+    if (first) logWarn(`${tag}: reaches OpenAI but cannot reach this app's MCP server (probe: ${probe})`);
+    opts.report({
+      state: 'connecting-tunnel',
+      detail: `The tunnel reaches OpenAI but cannot reach this app's MCP server (probe: ${probe}). ChatGPT's calls will fail until it can; the tunnel keeps checking on its own.`,
       handshakeAt: run.lastHandshake,
       health: run.health
     });
@@ -474,7 +489,14 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
             if (!run.unreachableReason) run.unreachableReason = 'it stopped answering';
             showOffline(run);
           } else if (observation === 'connected') {
-            showConnected(run);
+            // A fresh OpenAI poll proves the link to OpenAI, not the link to this app. When the
+            // client's own probe of our MCP server keeps failing (a stale port after a restart,
+            // a wedged server), ChatGPT gets UNAVAILABLE for every call while "Connected" showed.
+            // Two consecutive ticks, so one slow probe during a busy moment never flips the pill.
+            const probe = run.health?.probe ?? null;
+            run.appProbeFailures = probeFailed(probe) ? run.appProbeFailures + 1 : 0;
+            if (run.appProbeFailures >= 2) showAppUnreachable(run, probe!);
+            else showConnected(run);
           } else {
             showUnknown(run);
           }
@@ -524,6 +546,7 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
       outage: NO_OUTAGE,
       lastHandshake: null,
       unreadySince: 0,
+      appProbeFailures: 0,
       pollErrors: 0,
       healthBase: null,
       health: null,
@@ -662,6 +685,13 @@ interface ProbeResult {
   ok: boolean;
   /** The body tunnel-client returned, which names the reason it is not ready. */
   detail: string;
+}
+
+/** A probe word the tunnel client reports that plainly says it cannot reach our server. */
+export function probeFailed(probe: string | null): boolean {
+  if (probe === null) return false;
+  const word = probe.trim().toLowerCase();
+  return word !== '' && !['ok', 'success', 'healthy', 'unknown', 'pending', 'starting'].includes(word);
 }
 
 async function probe(url: string): Promise<ProbeResult> {
