@@ -279,6 +279,8 @@ let deliveryHooks: InputDeliveryHooks | null = null;
 /** Installed once by IPC before bridge/MCP startup; avoids a Goal/input import cycle. */
 export function configureInputDelivery(hooks: InputDeliveryHooks): void { deliveryHooks = hooks; }
 /** One delivery policy for composer presentation, admission and the final send fence. */
+/** How long a recorded user message may fence browser delivery while its provider turn has not started. */
+export const USER_TURN_START_WAIT_MS = 2 * 60_000;
 /** How long a recorded final answer must stand, with no tool call after it, before an unclosed turn counts as over. */
 export const OPEN_TURN_FINAL_QUIET_MS = 60_000;
 export async function sessionInputPolicy(sessionId: string, observedActivity?: InputActivity): Promise<{ queueAtFinish: boolean; canInject: boolean; directTurn: InputEntry['directTurn'] | null; browserAllowed: boolean; settled: boolean }> {
@@ -290,7 +292,12 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   // its following lifecycle boundary arrives. The provider turn remains the authority once present.
   const recent = await readRecentEvents(sessionId, 8, { kinds: ['user_message', 'turn_start', 'turn_end'] });
   const end = [...recent].reverse().find((event) => event.kind === 'turn_start' || event.kind === 'turn_end');
-  const awaitingUserTurnStart = recent.at(-1)?.kind === 'user_message';
+  // Bounded in time as well as in rows. ChatGPT publishes a sent message's turn within seconds;
+  // one whose turn_start never reached the app (a gated or reloaded page, the Compact & Resume
+  // bootstrap on 2026-09-29) otherwise fenced browser delivery forever, and every reboot's Eve
+  // wake and the user's own messages queued behind it and were never delivered.
+  const lastRecent = recent.at(-1);
+  const awaitingUserTurnStart = lastRecent?.kind === 'user_message' && Date.now() - lastRecent.time < USER_TURN_START_WAIT_MS;
   const session = await getSession(sessionId);
   if (!session?.conversationId || isChatBlocked(session.conversationId)) return { queueAtFinish: false, canInject: false, directTurn: null, browserAllowed: false, settled: false };
   const activity = observedActivity ?? deliveryHooks?.activity?.(session) ?? { possible: !!session.activeTurnId, exact: !!session.activeTurnId };
