@@ -192,6 +192,7 @@ describe('cross-platform packaging targets', () => {
       'node_modules/electron/dist/LICENSE',
       'node_modules/electron/dist/LICENSES.chromium.html',
       'extension',
+      'pets',
       'docs/vault',
       'artwork/icon.png'
     ]);

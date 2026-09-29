@@ -125,6 +125,21 @@ for (const name of sourceVaultPages) {
   }
 }
 
+// Bundled desktop pets ship as exactly their three validated package files, byte for byte.
+const sourcePetsDir = path.join(repository, 'pets');
+const sourcePets = readdirSync(sourcePetsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+const packagedPets = readdirSync(path.join(resourcesDir, 'pets'), { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+if (JSON.stringify(packagedPets) !== JSON.stringify(sourcePets)) {
+  throw new Error(`Packaged pet set ${JSON.stringify(packagedPets)} != source ${JSON.stringify(sourcePets)}`);
+}
+for (const id of sourcePets) {
+  for (const file of ['pet.json', 'atlas.png', 'animations.json']) {
+    if (!readFileSync(required(`pets/${id}/${file}`)).equals(readFileSync(path.join(sourcePetsDir, id, file)))) {
+      throw new Error(`Packaged pet file ${id}/${file} does not match the source bytes`);
+    }
+  }
+}
+
 if (targetPlatform === 'win32') {
   required(`THIRD-PARTY-NOTICES-sharp-win32-${targetArch}.md`);
   required(`app.asar.unpacked/node_modules/@img/sharp-win32-${targetArch}/LICENSE`);

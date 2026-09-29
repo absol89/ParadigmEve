@@ -27,7 +27,7 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-09-28**, including current working-tree changes. App/extension **2.3.1 development**,
+Source alignment: **2026-09-29**, including current working-tree changes. App/extension **2.3.2 development**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -256,6 +256,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Patching/images | `src/main/codex/apply-patch/*`, `codex/{filesystem,read-backend,view-image}.ts`. |
 | ChatGPT downloads | `src/main/mcp/artifact-{download,fetch,target}.ts`: validate native file reference, bounded fetch, exclusive destination publication. |
 | Projects/cwd | `src/main/projects.ts`, `workspace.ts`, `src/shared/projects.ts`: explicit local folder catalog, session binding, inherited/learned workspaces. |
+| Desktop pets | `src/main/pet-library.ts` (the only package authority: validation, import, bundled `resources/pets`), `pet-overlay.ts` (transparent click-through window, activity projection, hit regions), `src/preload/pet-overlay.ts`, `src/renderer/{pet-overlay,pet-machine,pet-choreography,pet,pets}.ts`, `src/shared/{pets,pet-activity,session-activity}.ts`. Packages are three data files, never code; the contract Eve follows to make one is Vault page 15. |
 | Template projects / Expenses | `src/main/expenses-project.ts`, `expenses-ledger.ts`, `mcp/expenses-tool.ts`; `src/shared/{expenses,expenses-template}.ts`: recurring inbox/project binding, canonical structured local ledger, provenance/corrections and optional retained evidence. |
 | Durable history | `src/main/session/{store,recorder,correlation,retention,summarize,progress}.ts`, `src/shared/{session,chronology}.ts`: canonical messages, tool truth, chronology and indexes. |
 | Cross-chat semantic review | `src/main/chat-review-heartbeat.ts`, `src/main/session/input.ts`: durable 22-minute review debt/receipt, exact coordinator selection, browser-only attention and coalescing with other internal attention. |
@@ -1830,22 +1831,22 @@ renderer, so changing a runtime environment variable cannot unlock a driver excl
 installed build. Non-shipping packages append `-debug` or `-dev` to their artifact name; shipping
 keeps the canonical public filenames used by release/update flows.
 
-For the current local **2.3.1** Windows self-test line, the laptop builds **x64 debug
+For the current local **2.3.2** Windows self-test line, the laptop builds **x64 debug
 only** so the implemented GPT Chat agent lane remains available. Preserve prior release and installer
-evidence; do not overwrite archived evidence while qualifying 2.3.1. A private Angel display copy may omit `-debug`
+evidence; do not overwrite archived evidence while qualifying 2.3.2. A private Angel display copy may omit `-debug`
 only when its filename remains visibly non-canonical (for example
 `ParadigmEve-2.2.4-x64-Angel-<hash>.exe`) and its recorded provenance still says the compiled
 flavor is debug. Never rename those bytes to the canonical shipping/update filename.
 Public arm64 artifacts are a separate release workflow and must never be substituted for
 the local debug artifact.
 
-The **2.3.1 line is cumulative over 2.3.0 and the public 2.2.9 release**. Git provenance must say that plainly. Before
-packaging or claiming a 2.3.1 candidate, inspect
+The **2.3.2 line is cumulative over the public 2.3.1 release**. Git provenance must say that plainly. Before
+packaging or claiming a 2.3.2 candidate, inspect
 `git branch --show-current`, `git status`, recent history and the tracked release notes. A final
-release checkpoint must contain the accepted cumulative 2.3.1 work over 2.3.0; package/version
+release checkpoint must contain the accepted cumulative 2.3.2 work over 2.3.1; package/version
 declarations or a stale directory name do not prove ancestry. Do not create/switch a release
 branch from stale HEAD while leaving the real cumulative work only in the working tree.
-`docs/release-notes/v2.3.1.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
+`docs/release-notes/v2.3.2.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
 current. A dirty worktree is allowed during active integration, but it is not immutable release
 evidence and must be described honestly until checkpointed. `scripts/package.mjs` enforces this by
 default: packaging requires a clean target-version branch (or exact version tag) and tracked current

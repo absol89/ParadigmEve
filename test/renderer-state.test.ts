@@ -1566,7 +1566,7 @@ it('keeps coffee/browser chrome fixed to Plans and exposes the Threads settings 
   expect(toggle.getAttribute('aria-label')).toBe('Expand Threads settings');
   expect(items.hidden).toBe(true);
   expect([...doc.querySelectorAll<HTMLButtonElement>('#tabs > button[data-tab]')].map(button => button.dataset.tab)).toEqual([
-    'home', 'usage', 'plugins', 'setup', 'settings', 'activity'
+    'home', 'usage', 'plugins', 'pets', 'setup', 'settings', 'activity'
   ]);
 
   concepts.click();

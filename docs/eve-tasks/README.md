@@ -16,3 +16,4 @@ line, and anything durable she learns goes into the Vault or `AGENTS.md` as usua
 | --- | --- | --- |
 | [Workspace docks: Files, Terminal, Agents, Review](workspace-docks.md) | 2.3.1 | Ready to start |
 | [2.3.1 black-box test checklist](test-plan-2.3.1.md) (shared with Claude) | 2.3.1 | Waiting for a frozen candidate |
+| [Bundled pets: a cat and a dog](bundled-cat-and-dog.md) | 2.3.2 | Ready to start |

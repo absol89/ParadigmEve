@@ -110,6 +110,8 @@
           <button class="btn" id="zoomOut" type="button">Zoom Out <kbd>Ctrl+−</kbd></button>
           <button class="btn" id="zoomActualSize" type="button">Actual Size <span id="zoomReset">100%</span><kbd>Ctrl+0</kbd></button>
           <hr />
+          <button class="btn" id="viewPets" type="button" aria-pressed="false">Desktop Pets</button>
+          <hr />
           <button class="btn" id="openStaticArchiveMenu" type="button">Open static chat archive</button>
         </div></details>
         <button class="workspace-destination" id="pinsDestination" type="button" data-destination="pins">Pins</button>
@@ -157,6 +159,7 @@
         </button>
         <button data-tab="usage" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-pulse" /></svg>Usage</button>
         <button data-tab="plugins" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-plus" /></svg>Plugins</button>
+        <button data-tab="pets" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-image" /></svg>Pets</button>
 <button data-tab="setup" type="button">
           <svg class="ico" viewBox="0 0 24 24"><use href="#i-steps" /></svg>Setup
           <span class="badge" id="setupBadge" hidden></span>
@@ -261,6 +264,29 @@
           <div class="plugin-section-head"><h2>Explore plugins</h2><span class="muted">Made for your workflow</span></div>
           <div id="pluginsExplore" class="plugin-directory"></div>
           <details class="plugin-legal"><summary>Legal Notices / Third-party Licenses</summary><p>ParadigmEve is a private branded build of the upstream Chat On Steroids project. Upstream code and catalog artwork retain Copyright © 2026 Chat On Steroids contributors and the MIT license; see LICENSE and THIRD-PARTY-NOTICES.txt. Integration illustrations are not official product logos or endorsements. Product names belong to their respective owners.</p><p>Installed plugins retain their own licenses. Open a plugin’s details to see its source, version and license. Review the upstream project before installation. Bundled dependency notices and reviewed catalog license texts are included in THIRD-PARTY-NOTICES.txt with the application; external plugins are downloaded separately.</p><button class="btn" id="pluginsLegalOpen" type="button">Open full third-party license texts</button></details>
+          </div>
+        </section>
+        <section class="panel plugins-panel pets-panel" data-panel="pets">
+          <div class="plugins-content">
+            <header class="plugin-page-head"><div><h1>Pets</h1><p>Little desktop companions that react to what Eve is doing.</p></div><div class="plugin-search-actions"><label class="plugin-search"><input id="petsSearch" type="search" placeholder="Search pets" aria-label="Search pets" /></label><button class="btn plugin-add" id="petsImport" type="button" aria-label="Import a pet folder" title="Import a pet folder">+</button></div></header>
+            <div class="plugin-refresh-guide pet-import-guide">
+              <p>Ask Eve to make a pet, or an avatar of herself, then import the folder she saves.</p>
+              <button class="btn" id="petsFormatGuide" type="button">How do I make one?</button>
+            </div>
+            <dialog class="plugin-dialog" id="petFormatDialog" aria-labelledby="petFormatTitle">
+              <div class="plugin-dialog-head"><h2 id="petFormatTitle">Make a pet with Eve</h2><button class="btn" id="petsFormatClose" type="button">Close</button></div>
+              <div class="plugin-dialog-body pet-format-content">
+                <div class="pet-format-guide-head"><p>Copy this prompt into a chat with Eve and describe your pet, or ask for an avatar of her.</p><button class="btn" id="petsCopyPrompt" type="button">Copy prompt</button></div>
+                <pre id="petsPrompt"></pre>
+                <p>Eve follows the packaged manual page <code>15-desktop-pets-and-avatars.md</code> and saves a folder with <code>pet.json</code>, <code>atlas.png</code> and <code>animations.json</code>. Import that folder with the + button. ParadigmEve checks all three files before copying the pet into your library; a pet is only images and settings, never code.</p>
+              </div>
+            </dialog>
+            <section id="petsFavoritesSection" hidden>
+              <div class="plugin-section-head"><h2>Favorites <span id="petsFavoritesCount" class="plugin-count"></span></h2></div>
+              <div id="petsFavorites" class="pet-library-grid" aria-live="polite"></div>
+            </section>
+            <div class="plugin-section-head"><h2>Library <span id="petsCount" class="plugin-count">Loading…</span></h2></div>
+            <div id="petsInstalled" class="pet-library-grid" aria-live="polite"></div>
           </div>
         </section>
         <section class="panel usage-panel" data-panel="usage">

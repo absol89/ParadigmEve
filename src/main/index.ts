@@ -16,6 +16,8 @@ import { initSecretsPath } from './secrets.js';
 import { pluginManager } from './plugins/manager.js';
 import { beginCompanionRecoveryAttempt, beginCompanionRecoveryEvidence, browserChatTabOpen, browserConversationOpen, companionRecoveryReady, onCompanionProtocolMismatch, setBrowserOpener, setCompanionBuild, setBrowserWorkArea, shutdownBridge, startBridge, watchRestartRecovery } from './bridge.js';
 import { companionBuild, extensionDir } from './extension-path.js';
+import { initPetLibrary } from './pet-library.js';
+import { shutdownPetOverlay, startPetOverlay } from './pet-overlay.js';
 import {
   findSessionByConversation,
   flushSessions,
@@ -769,6 +771,10 @@ void app.whenReady().then(async () => {
   // The same quit the tray's Quit performs. It has to go through `quitting` for the window's
   // close-to-tray handler to let go: without it, quitting to install would hide the window and
   // leave the app running, which is exactly the trap the Install button exists to end.
+  // Desktop pets: bundled packages ship read-only in resources/pets. Ready before the renderer
+  // can ask for the library; the overlay itself starts once the window path is established.
+  try { await initPetLibrary(userData, app.isPackaged ? path.join(process.resourcesPath, 'pets') : path.join(app.getAppPath(), 'pets')); }
+  catch (error) { logWarn(`Pet library unavailable: ${error instanceof Error ? error.message : String(error)}`); }
   registerIpc(
     () => window,
     () => {
@@ -790,6 +796,8 @@ void app.whenReady().then(async () => {
   // create a BrowserWindow before Electron is ready. Once the initial window path is established,
   // Dock activation/re-launch can safely recreate or focus it.
   registerNativeWindowActivation(app, windowActivation.request);
+  try { await startPetOverlay(() => window, () => windowActivation.request()); }
+  catch (error) { logWarn(`Desktop pets unavailable: ${error instanceof Error ? error.message : String(error)}`); }
 
   tray = new Tray(trayIcon(false), ...trayGuidArgsForPlatform());
   tray.on('click', windowActivation.request);
@@ -1037,7 +1045,7 @@ app.on('will-quit', (event) => {
       {
         name: 'process cleanup',
         budgetMs: 15_000,
-        run: () => [unifiedExecManager.terminateAllProcesses(), stopComputerHelper(), pluginManager.close()]
+        run: () => [unifiedExecManager.terminateAllProcesses(), stopComputerHelper(), shutdownPetOverlay(), pluginManager.close()]
       },
       // Phase 3: recorder work can enqueue both session projections and named durable state.
       { name: 'recorder flush', budgetMs: 10_000, run: () => [flushRecorder()] },

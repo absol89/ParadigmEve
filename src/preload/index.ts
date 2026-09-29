@@ -4,6 +4,7 @@ import type { BrowserPreferences } from '../shared/browser-preferences.js';
 import type { SessionControlsView } from '../main/bridge.js';
 import type { InputAttachment } from '../shared/input.js';
 import type { UsageOverview } from '../shared/usage.js';
+import type { PetLibraryState, PetOverlayControlState, PetRuntimeAsset } from '../shared/pets.js';
 import type { InputArgs, InputEntry } from '../main/session/input.js';
 import type {
   ArchiveRendererOpenResult,
@@ -141,6 +142,24 @@ const api = {
   },
   attachText: (text: string) => call<InputAttachment>('sessions:attachText', { text }),
   getUsage: () => call<UsageOverview>('usage:get'),
+  petsList: () => call<PetLibraryState>('pets:list'),
+  petsOverlayState: () => call<PetOverlayControlState>('pets:overlayState'),
+  petsSetOverlayVisible: (visible: boolean) => call<PetOverlayControlState>('pets:overlayVisible', { visible }),
+  petsImport: () => call<PetLibraryState | null>('pets:import'),
+  petsSetEnabled: (id: string, enabled: boolean) => call<PetLibraryState>('pets:enabled', { id, enabled }),
+  petsSetFavorite: (id: string, favorite: boolean) => call<PetLibraryState>('pets:favorite', { id, favorite }),
+  petsDelete: (id: string) => call<PetLibraryState>('pets:delete', { id }),
+  petsAsset: (id: string, preview = false) => call<PetRuntimeAsset>('pets:asset', { id, preview }),
+  onPetOverlayStateChanged: (listener: (state: PetOverlayControlState) => void): (() => void) => {
+    const wrapped = (_event: unknown, state: PetOverlayControlState): void => listener(state);
+    ipcRenderer.on('pet-overlay:stateChanged', wrapped);
+    return () => ipcRenderer.removeListener('pet-overlay:stateChanged', wrapped);
+  },
+  onPetOverlayOpenOwner: (listener: (screen: 'chat' | 'pets') => void): (() => void) => {
+    const wrapped = (_event: unknown, screen: 'chat' | 'pets'): void => listener(screen);
+    ipcRenderer.on('pet-overlay:openOwner', wrapped);
+    return () => ipcRenderer.removeListener('pet-overlay:openOwner', wrapped);
+  },
   getState: () => call<AppState>('state:get'),
   repairReadiness: () => call<AppState>('readiness:repair'),
   saveSettings: (patch: SettingsPatch, base: SettingsPatch) => call<AppState>('settings:save', { patch, base }),

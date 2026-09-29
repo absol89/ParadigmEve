@@ -52,6 +52,8 @@ import {
  */
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { deletePet, importPet, loadPetAsset, petLibraryState, setPetEnabled, setPetFavorite } from './pet-library.js';
+import { petOverlayControlState, refreshPetOverlayActivities, refreshPetOverlayAppearance, setPetOverlayVisible } from './pet-overlay.js';
 import { z } from 'zod';
 import {
   CAPABILITIES,
@@ -602,6 +604,38 @@ export function registerIpc(
   let setupTask: Promise<void> | null = null;
   registerPluginIpc(handle, getWindow);
   handle('usage:get', () => usageOverview());
+
+  // Desktop pets. The library validates every package; the overlay only reads it.
+  const petIdArg = z.object({ id: z.string().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/) }).strict();
+  handle('pets:list', async () => petLibraryState());
+  handle('pets:overlayState', async () => petOverlayControlState());
+  handle('pets:overlayVisible', async payload => {
+    const { visible } = z.object({ visible: z.boolean() }).strict().parse(payload);
+    return setPetOverlayVisible(visible);
+  });
+  handle('pets:import', async () => {
+    const window = getWindow();
+    if (!window) throw new Error('No window');
+    const selected = await dialog.showOpenDialog(window, { title: 'Import a pet folder', properties: ['openDirectory'] });
+    if (selected.canceled || !selected.filePaths[0]) return null;
+    return importPet(selected.filePaths[0]);
+  });
+  handle('pets:enabled', async payload => {
+    const { id, enabled } = petIdArg.extend({ enabled: z.boolean() }).strict().parse(payload);
+    const next = setPetEnabled(id, enabled);
+    // Enabling a pet shows the overlay without bringing back pets the user hid on the desktop.
+    if (enabled) await setPetOverlayVisible(true, false);
+    return next;
+  });
+  handle('pets:favorite', async payload => {
+    const { id, favorite } = petIdArg.extend({ favorite: z.boolean() }).strict().parse(payload);
+    return setPetFavorite(id, favorite);
+  });
+  handle('pets:delete', async payload => deletePet(petIdArg.parse(payload).id));
+  handle('pets:asset', async payload => {
+    const { id, preview } = petIdArg.extend({ preview: z.boolean() }).strict().parse(payload);
+    return loadPetAsset(id, preview);
+  });
   handle('state:get', async () => {
     const state = await buildState();
     // Native package smoke uses this as the end-to-end renderer readiness barrier. Unlike
@@ -728,6 +762,7 @@ export function registerIpc(
     // Without this, selecting Dark on macOS left the title bar, menus and file picker in the
     // system theme until restart (and startup still defaulted to system before index.ts applies it).
     nativeTheme.themeSource = next.ui.theme;
+    refreshPetOverlayAppearance();
     if (process.platform === 'win32') getWindow()?.setTitleBarOverlay(titleBarOverlayForTheme(next.ui.theme));
     // BrowserWindow's native backing color is fixed at construction unless updated explicitly.
     // Keep it in lock-step too: the default macOS application menu exposes Reload, and after a
@@ -1387,6 +1422,7 @@ export function registerIpc(
       throw new Error('This session has no valid ChatGPT conversation');
     }
     setChatBlocked(conversationId, blocked);
+    refreshPetOverlayActivities();
     try {
       await reconcileAutomaticCompactionPolicy(conversationId, id);
     } catch (error) {

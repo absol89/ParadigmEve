@@ -3,16 +3,16 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.3.1 source line, what remains the public 2.2.9 baseline, and the acceptance gates to use
+2.3.2 source line, what remains the public 2.3.1 baseline, and the acceptance gates to use
 before packaging, installing, or calling a change complete.
 
 ## Current product state
 
-- Current source package/app line: **2.3.1**, cumulative over **2.3.0** and the public **2.2.9** release.
-- Current public release baseline: **2.2.9**. The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
+- Current source package/app line: **2.3.2**, cumulative over the public **2.3.1** release.
+- Current public release baseline: **2.3.1**. The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.3.1 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.3.1 runtime.
+- A 2.3.2 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.3.2 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.

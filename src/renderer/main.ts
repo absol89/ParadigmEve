@@ -3,6 +3,8 @@ import { paintPluginRefreshReminder } from './plugin-refresh-reminder.js';
 import { initUsage, refreshUsage } from './usage.js';
 import { initSidebarResize } from './sidebar-resize.js';
 import { initPlugins, applyPluginsState } from './plugins.js';
+import { initPet } from './pet.js';
+import { initPets } from './pets.js';
 import { initBrowserPreferences } from './browser-preferences.js';
 /**
  * Renderer. No Node, no filesystem, no network — everything goes through window.api.
@@ -2540,6 +2542,14 @@ buildGroups();
 initSidebarResize();
 initUsage();
 initPlugins(apply);
+// Desktop pets: the overlay is a separate native window; this window only lists and toggles them.
+const pets = initPet(() => showTab('pets'));
+initPets(pets);
+const paintViewPets = (): void => { $('viewPets').setAttribute('aria-pressed', String(pets.isVisible())); };
+pets.onChange(paintViewPets);
+paintViewPets();
+$('viewPets').addEventListener('click', () => pets.toggle());
+api.onPetOverlayOpenOwner(screen => showTab(screen === 'pets' ? 'pets' : 'chat'));
 initBrowserPreferences();
 initWorkspaceNavigation({ screen: 'chat' });
 initChat({ save: () => save(), state: () => state });

@@ -53,7 +53,35 @@
 .plugin-section-head h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.15px; }
 .plugin-count, .plugin-section-head > .muted { color: var(--soft); font-size: 11px; font-weight: 400; letter-spacing: 0; }
 .plugin-section-head .btn { color: var(--ink); font-size: 11.5px; }
-#pluginsInstalled, .plugin-directory, .plugin-catalog { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
+#pluginsInstalled, .plugin-directory, .plugin-catalog, .pet-library-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
+/* Desktop pets library (ported from Chat On Steroids 2.1.20). */
+.pet-library-grid { align-items: stretch; }
+.pet-library-card { position: relative; height: 100%; }
+.pet-library-card .plugin-entry { display: flex; gap: 14px; height: 100%; min-height: 112px; padding: 15px 82px 16px 16px; cursor: default; }
+.pet-import-guide { justify-content: space-between; column-gap: 48px; margin-top: 20px; }
+.pet-import-guide p { flex: 1 1 auto; max-width: 660px; }
+.pet-import-guide .btn { flex: 0 0 auto; white-space: nowrap; }
+.pet-format-guide-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.pet-format-guide-head p { margin: 0; color: var(--soft); }
+.pet-format-content p { color: var(--soft); line-height: 1.55; user-select: text; }
+.pet-format-content code { color: var(--ink); font: 11.5px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.pet-format-content pre { max-height: min(340px, 42dvh); margin: 14px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--sunk); color: var(--soft); font: 11.5px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; user-select: text; cursor: text; }
+.pet-delete-dialog { width: min(500px, calc(100vw - 40px)); }
+.pet-delete-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.pet-library-preview { display: grid; place-items: center; width: 58px; height: 64px; flex: 0 0 58px; overflow: hidden; border-radius: 12px; background: var(--sunk); }
+.pet-library-preview-frame { display: block; width: 52px; height: 52px; background-repeat: no-repeat; background-position: 100% 0; background-size: 800% 1200%; image-rendering: pixelated; }
+.pet-library-preview-frame.is-animated { animation: pet-library-idle 6.6s step-end infinite; }
+.pet-favorite { position: absolute; top: 9px; right: 44px; z-index: 2; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--faint); font-size: 16px; cursor: pointer; }
+.pet-favorite:hover, .pet-favorite:focus-visible { background: var(--hover); color: var(--ink); }
+.pet-favorite[aria-pressed='true'] { color: var(--ink); }
+/* The last four idle frames (4-7) of the preview row, one per step. */
+@keyframes pet-library-idle {
+  0%, 35% { background-position: 57.1429% 0%; }
+  35.01%, 47% { background-position: 71.4286% 0%; }
+  47.01%, 60% { background-position: 85.7143% 0%; }
+  60.01%, 100% { background-position: 100% 0%; }
+}
+@media (prefers-reduced-motion: reduce) { .pet-library-preview-frame.is-animated { animation: none; } }
 .plugin-card { position: relative; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--card); transition: background .14s; }
 .plugin-card:hover, .plugin-card:focus-within { background: var(--hover); }
 .plugin-entry { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 88px; padding: 15px 16px; border: 0; border-radius: inherit; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
@@ -130,7 +158,7 @@
 .plugins-panel :is(button, summary):focus-visible, .plugin-dialog :is(button, summary, input, select):focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 @media (max-width: 860px) {
   .panel.plugins-panel { padding: 32px 24px; }
-  #pluginsInstalled, .plugin-directory { grid-template-columns: minmax(0, 1fr); }
+  #pluginsInstalled, .plugin-directory, .pet-library-grid { grid-template-columns: minmax(0, 1fr); }
   .plugin-page-head h1 { font-size: 27px; }
 }
 @media (max-width: 520px) {

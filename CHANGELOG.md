@@ -13,6 +13,33 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.2] — Desktop pets and Eve avatars
+
+### Added
+
+- Desktop pets, ported from Chat On Steroids 2.1.20: a transparent, always-on-top, click-through overlay window
+  (interactive only over the pets' own hit regions) where enabled pets idle, wander, can be dragged and poked, and
+  react to the projected task state (spawn when work starts, look while waiting, angry on failure or block,
+  celebrate when ready for review). One pet carries a task badge and tray whose rows open the chat.
+- A Pets settings page and a View → Desktop Pets toggle. Pets are validated "cos-pet" packages of exactly
+  pet.json, atlas.png (1280×1920, 96 frames of 160 px) and animations.json; the importer checks sizes, dimensions,
+  the fixed frame layout and hand anchors, rejects symbolic links and re-serializes both JSON files, so a package
+  never carries code. Bundled pets ship read-only in resources/pets and cannot be deleted, only turned off.
+- Hammy (from Chat On Steroids) is bundled; a cat and a dog are assigned to Eve under the new Vault page
+  15-desktop-pets-and-avatars.md, which is also the contract Eve follows when a user asks for a human avatar of her.
+  The Pets page hands users a short prompt for that.
+
+### Changed
+
+- The upstream brand-joke scenes are neutral in ParadigmEve: "Swing at a bug" (Bug → Fixed) and "Toss a TODO".
+- The chat list's working-state rule moved to src/shared/session-activity.ts so the pets and the chat list share
+  one owner.
+
+### Not ported
+
+- Upstream's Windows-only focus return after dragging a pet (needs the native `koffi` module) and the built-in
+  Tur Tur Sahur and Capy pets.
+
 ## [2.3.1] — ChatGPT page fixes from Chat On Steroids 2.1.17
 
 ### Fixed

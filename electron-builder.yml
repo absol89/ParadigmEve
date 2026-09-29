@@ -37,6 +37,13 @@ extraResources:
     filter:
       - '**/*'
       - '!**/*.map'
+  # Bundled desktop pets: exactly the three validated package files per pet.
+  - from: pets
+    to: pets
+    filter:
+      - '*/pet.json'
+      - '*/atlas.png'
+      - '*/animations.json'
   - from: docs/vault
     to: docs/vault
     filter:

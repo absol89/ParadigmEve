@@ -20,14 +20,25 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     define: compileTimeFlavor,
     build: {
-      rollupOptions: { input: resolve(__dirname, 'src/preload/index.ts') }
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          // The desktop pet overlay's own narrow bridge (see src/main/pet-overlay.ts).
+          'pet-overlay': resolve(__dirname, 'src/preload/pet-overlay.ts')
+        }
+      }
     }
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     define: compileTimeFlavor,
     build: {
-      rollupOptions: { input: resolve(__dirname, 'src/renderer/index.html') }
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          'pet-overlay': resolve(__dirname, 'src/renderer/pet-overlay.html')
+        }
+      }
     }
   }
 });

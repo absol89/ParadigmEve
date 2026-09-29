@@ -22,12 +22,15 @@ import { filterSettingsSections } from '../src/renderer/dom.js';
 let document: Document;
 let css = '';
 let chatSource = '';
+/** The chat-activity rule the list shares with the desktop pets. */
+let activitySource = '';
 let mainSource = '';
 let browserPreferencesSource = '';
 let sidebarResizeSource = '';
 
 beforeAll(async () => {
   browserPreferencesSource = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'browser-preferences.ts'), 'utf8');
+  activitySource = await fs.readFile(path.join(process.cwd(), 'src', 'shared', 'session-activity.ts'), 'utf8');
   const [html, styles, chat, main, sidebarResize] = await Promise.all([
     fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8'),
     fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'styles.css'), 'utf8'),
@@ -230,8 +233,8 @@ describe('a session row', () => {
   it('does not call an idle prime active merely because it still owns the run', () => {
     expect(chatSource).toMatch(/else if \(agent && agent\.role !== 'prime'\)/);
     // Idle means idle: generic recording traffic cannot renew the exact tool clock.
-    expect(chatSource).toMatch(/Math\.max\(summary\.lastAssistantFinalAt \?\? 0, summary\.lastTurnEndAt \?\? 0\)/);
-    expect(chatSource).toMatch(/lastActivityAt > finishedAt/);
+    expect(activitySource).toMatch(/Math\.max\(summary\.lastAssistantFinalAt \?\? 0, summary\.lastTurnEndAt \?\? 0\)/);
+    expect(activitySource).toMatch(/lastActivityAt > finishedAt/);
   });
 
   /**
@@ -240,8 +243,8 @@ describe('a session row', () => {
    * one a user most wants to see is still going - as idle.
    */
   it('uses session start and exact calls rather than reload-generated turn boundaries for visible activity', () => {
-    expect(chatSource).toMatch(/Math\.max\(summary\.startedAt, summary\.lastToolCallAt \?\? 0\)/);
-    expect(chatSource).toMatch(/return summary\.endedAt === null && !workerReportedFinish\(summary\) && recentChatActivity\(summary\)/);
+    expect(activitySource).toMatch(/Math\.max\(summary\.startedAt, summary\.lastToolCallAt \?\? 0\)/);
+    expect(activitySource).toMatch(/return summary\.endedAt === null && !workerReportedFinish\(summary\) && recentChatActivity\(summary, now\)/);
     expect(chatSource).toMatch(/if \(workerReportedFinish\(summary\)\) return 'sleeping'/);
     expect(chatSource).toMatch(/if \(sessionWorking\(summary\)\) badges\.push\(AGENT_BADGE\.active\)/);
     expect(chatSource).toMatch(/scheduleToolActivityExpiry/);
