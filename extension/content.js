@@ -11141,8 +11141,11 @@
   const LEGACY_PLUGIN_REFRESH_MARKER = 'cos-plugin-refresh';
   function ownsPluginRefreshPage(id) {
     const url = new URL(location.href);
-    return alive && !generating && !CLF_DOM.generating() && url.pathname === '/' &&
-      /^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash) &&
+    // Either settings route (see background.js pluginSettingsRoute). The newer path-routed page
+    // is owned so that its result is reported, not left as a silent, reopened request.
+    const route = (url.pathname === '/' && /^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash)) ||
+      /^\/settings\/plugins-settings(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.pathname);
+    return alive && !generating && !CLF_DOM.generating() && route &&
       (url.searchParams.get(PLUGIN_REFRESH_MARKER) === id || url.searchParams.get(LEGACY_PLUGIN_REFRESH_MARKER) === id);
   }
   function waitPageView(read, current, milliseconds) {
@@ -11163,6 +11166,12 @@
       const timer = setTimeout(() => finish(null), milliseconds); void check();
     });
   }
+  // The App Id a management page shows, under the old hash or the newer path route (upstream 839716d).
+  function pluginViewAppId(href) {
+    const url = new URL(href);
+    return (url.pathname === '/' && /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(url.hash)?.[1]) ||
+      (!url.hash && /^\/(?:settings\/plugins-settings|plugins)\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(url.pathname)?.[1]) || null;
+  }
   async function refreshManagedPlugin(request) {
     if (pluginRefreshBusy || !request || !/^[a-f0-9-]{36}$/i.test(request.id) || !ownsPluginRefreshPage(request.id)) return false;
     pluginRefreshBusy = true;
@@ -11173,9 +11182,13 @@
     const schemaKey = tools => Array.isArray(tools) ? canonical(tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })).sort((a, b) => a.name.localeCompare(b.name))) : null;
     try {
       const current = () => ownsRequest() && CLF_DOM.pluginManagementIdle();
-      if (new URL(location.href).hash === '#settings/Plugins') {
+      const listUrl = new URL(location.href);
+      const pathList = listUrl.pathname === '/settings/plugins-settings' && !listUrl.hash;
+      if (pathList || (listUrl.pathname === '/' && listUrl.hash === '#settings/Plugins')) {
         if (request.appId) {
-          const url = new URL(location.href); url.hash = `settings/Plugins/plugin_${request.appId}`;
+          const url = new URL(location.href);
+          if (pathList) url.pathname = `/settings/plugins-settings/plugin_${request.appId}`;
+          else url.hash = `settings/Plugins/plugin_${request.appId}`;
           if (!current()) return false;
           location.assign(url.href); return true;
         }
@@ -11187,12 +11200,11 @@
         // already-owned discovery may learn its resulting exact App Id, but cannot
         // claim Refresh until the management document has its marker again.
         const discovered = await waitPageView(async () => {
-          const url = new URL(location.href);
-          const route = /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(url.hash);
+          const href = location.href, appId = pluginViewAppId(href);
           const next = await CLF_DOM.pluginRefreshView(request.connectorName, request.tools);
-          return route && next?.appId === route[1] ? url.href : null;
+          return appId && next?.appId === appId ? href : null;
         }, () => alive && epoch === requestEpoch && !generating && !CLF_DOM.generating() &&
-          new URL(location.href).origin === 'https://chatgpt.com' && location.pathname === '/' && CLF_DOM.pluginManagementIdle(), 8000);
+          new URL(location.href).origin === 'https://chatgpt.com' && CLF_DOM.pluginManagementIdle(), 8000);
         if (!discovered || !alive || epoch !== requestEpoch || location.href !== discovered) return false;
         const url = new URL(discovered);
         url.searchParams.delete(LEGACY_PLUGIN_REFRESH_MARKER);
@@ -11204,14 +11216,14 @@
       // DOM observer and leave an unclaimed request available if hydration times out.
       const view = await waitPageView(async () => {
         const next = await CLF_DOM.pluginRefreshView(request.connectorName, request.tools, request.appId);
-        const route = /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(new URL(location.href).hash);
-        return route && next?.appId === route[1] && Array.isArray(next.tools) && next.tools.length > 0 ? next : null;
+        const appId = pluginViewAppId(location.href);
+        return appId && next?.appId === appId && Array.isArray(next.tools) && next.tools.length > 0 ? next : null;
       }, current, 8000);
       if (!view) return false;
       if (!current()) return false;
       if (request.appId && view.appId !== request.appId) { await fail('Exact connector settings could not be verified'); return false; }
       const ownedEpoch = epoch, appId = view.appId;
-      const stillCurrent = () => current() && epoch === ownedEpoch && new URL(location.href).hash === `#settings/Plugins/plugin_${appId}`;
+      const stillCurrent = () => current() && epoch === ownedEpoch && pluginViewAppId(location.href) === appId;
       const before = schemaKey(view.tools), expected = schemaKey(request.tools);
       if (before === expected) {
         // A prior exact claim already owns the one Refresh click. The matching provider
