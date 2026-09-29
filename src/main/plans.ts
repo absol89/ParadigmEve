@@ -110,6 +110,31 @@ function projectPlan(plan: PlanRecord, audience: PlanAudience = 'human', sourceS
   };
 }
 
+/**
+ * The source chat's own plan.json revision for a record written before `agentRevision` existed,
+ * only while the record still has that exact authored title and step text/order.
+ */
+async function legacyAgentRevision(plan: PlanRecord, sourceTitle: string): Promise<number | undefined> {
+  const sessionId = plan.provenance?.sessionId;
+  if (!sessionId) return undefined;
+  const sourcePlan = await readSessionPlan(sessionId);
+  if (!sourcePlan || !sameAgentSteps(plan, sourcePlan)) return undefined;
+  const sourcePlanTitle = (
+    sourceTitle.trim() ||
+    sourcePlan.plan.find(step => step.status === 'in_progress')?.step ||
+    sourcePlan.plan[0]?.step ||
+    'Chat plan'
+  ).slice(0, 160);
+  return plan.title === sourcePlanTitle ? sourcePlan.updatedAt : undefined;
+}
+
+/** Archive/cancel clears the chat's plan.json; keep a legacy record's report fence on the record first. */
+async function withLegacyAgentRevision(plan: PlanRecord, sourceTitle: string | undefined): Promise<PlanRecord> {
+  if (plan.agentRevision !== undefined || plan.provenance?.kind !== 'plan' || sourceTitle === undefined) return plan;
+  const revision = await legacyAgentRevision(plan, sourceTitle);
+  return revision === undefined ? plan : { ...plan, agentRevision: revision };
+}
+
 async function workerProjection(
   plan: PlanRecord,
   bySession: Map<string, Awaited<ReturnType<typeof indexedSessions>>[number]>,
@@ -161,19 +186,11 @@ async function workerProjection(
   // delivery proof. Fall back to the worker's own session-local Plan revision only when the current
   // Plan still has the exact same authored title + step text/order. Any later scope/title edit keeps
   // the stricter current Plan revision fence and therefore requires a newer worker report.
+  // The record keeps that revision as `agentRevision`, which survives the user archiving the Plan
+  // and clearing the chat's plan.json. Records written before it existed read the chat's plan.json.
   if (!deliveredReport && deliveredReports.length) {
-    const sourcePlan = await readSessionPlan(sourceSessionId);
-    if (sourcePlan && sameAgentSteps(plan, sourcePlan)) {
-      const sourcePlanTitle = (
-        source.title.trim() ||
-        sourcePlan.plan.find(step => step.status === 'in_progress')?.step ||
-        sourcePlan.plan[0]?.step ||
-        'Chat plan'
-      ).slice(0, 160);
-      if (plan.title === sourcePlanTitle) {
-        deliveredReport = deliveredReports.find(report => report.sentAt >= sourcePlan.updatedAt);
-      }
-    }
+    const revision = plan.agentRevision ?? await legacyAgentRevision(plan, source.title);
+    if (revision !== undefined) deliveredReport = deliveredReports.find(report => report.sentAt >= revision);
   }
   return {
     id: workerId,
@@ -475,11 +492,13 @@ export function syncSessionAgentPlan(
     // to archive it. Treat that as a new Live Plan in the same source session.
     const replaceCurrent = current && (!current.items.every(item => item.status === 'done') || sameAgentSteps(current, update));
     if (replaceCurrent) {
+      const revision = nextTimestamp(current.updatedAt);
       const updated: PlanRecord = {
         ...current,
         title,
         items: agentItems(current, update),
-        updatedAt: nextTimestamp(current.updatedAt)
+        updatedAt: revision,
+        agentRevision: revision
       };
       const next = plans.map(plan => plan.id === updated.id ? updated : plan);
       await writeRecords(next);
@@ -499,7 +518,8 @@ export function syncSessionAgentPlan(
       },
       createdAt: now,
       updatedAt: now,
-      archivedAt: null
+      archivedAt: null,
+      agentRevision: now
     };
     await writeRecords([...room, created]);
     return projectPlan(created);
@@ -586,12 +606,18 @@ export function updatePlan(id: string, patch: PlanPatch, expectedUpdatedAt: numb
     const current = plans[index]!;
     if (current.archivedAt !== null) throw new Error('Archived Plans cannot be edited');
     if (current.updatedAt !== expectedUpdatedAt) throw new Error('Plan changed; refresh before editing it again');
-    const updated: PlanRecord = {
+    const edited: PlanRecord = {
       ...current,
       ...(parsedPatch.title === undefined ? {} : { title: parsedPatch.title }),
       ...(parsedPatch.items === undefined ? {} : { items: replacementItems(current, parsedPatch.items) }),
       updatedAt: nextTimestamp(current.updatedAt)
     };
+    // A human scope change (title or step text/order) is no longer the checklist the worker
+    // reported on; only a status/detail change keeps the agent revision's report proof.
+    const sameScope = edited.title === current.title && edited.items.length === current.items.length &&
+      edited.items.every((item, at) => item.text === current.items[at]!.text);
+    const { agentRevision: _dropped, ...withoutAgentRevision } = edited;
+    const updated: PlanRecord = sameScope ? edited : withoutAgentRevision;
     if (parsedPatch.items !== undefined && !(await syncOriginatingSessionPlan(updated))) {
       throw new Error('Plan source changed; refresh before editing it again');
     }
@@ -701,7 +727,8 @@ export async function cancelPlan(id: string): Promise<PlanView> {
       throw new Error('Plan is already archived as finished');
     }
     const at = nextTimestamp(current.updatedAt);
-    const cancelled: PlanRecord = { ...current, archivedAt: at, cancelledAt: at, updatedAt: at };
+    const kept = await withLegacyAgentRevision(current, bySession.get(current.provenance?.sessionId ?? '')?.title);
+    const cancelled: PlanRecord = { ...kept, archivedAt: at, cancelledAt: at, updatedAt: at };
     if (!(await syncOriginatingSessionPlan(cancelled, true))) throw new Error('Plan source changed; refresh before editing it again');
     const next = [...plans];
     next[index] = cancelled;
@@ -730,7 +757,8 @@ export async function archivePlan(id: string): Promise<PlanView> {
         )
       : current.items;
     const archivedAt = nextTimestamp(current.updatedAt);
-    const archived: PlanRecord = { ...current, items, archivedAt, updatedAt: archivedAt };
+    const kept = await withLegacyAgentRevision(current, bySession.get(current.provenance?.sessionId ?? '')?.title);
+    const archived: PlanRecord = { ...kept, items, archivedAt, updatedAt: archivedAt };
     if (!(await syncOriginatingSessionPlan(archived, true))) throw new Error('Plan source changed; refresh before editing it again');
     const next = [...plans];
     next[index] = archived;

@@ -622,6 +622,10 @@ it('archives legacy report-only debt from Eve Activity without requiring that sy
   const handoff = delivered.items.find(item => item.text === 'Report to Prime')!;
   expect(handoff.status).toBe('in_progress');
 
+  // In real use the report is always older than the user's archive click. Archiving clears the
+  // chat's plan.json, so the proof must survive on the Plan record itself (it used to pass only
+  // when the archive happened within the report's future-dated window).
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, finishAt + 20 - Date.now())));
   await archivePlan(delivered.id);
   const archived = (await listPlans()).done.find(plan => plan.id === delivered.id)!;
   expect(archived.items.find(item => item.id === handoff.id)?.status).toBe('done');
