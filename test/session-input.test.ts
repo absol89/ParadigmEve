@@ -22,7 +22,7 @@ import { trackInFlight, emptyEvidence, type CallContext } from '../src/main/mcp/
 const offerToolInput = async (...args: Parameters<typeof offerToolInputBatch>) => (await offerToolInputBatch(...args)).messages;
 vi.mock('../src/main/session/recorder.js', () => ({ noteChatOrigin: vi.fn(async () => undefined) }));
 
-const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
+const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, pendingUserAt: null as number | null, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
 vi.mock('../src/main/agents.js', () => ({ selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner) }));
 vi.mock('../src/main/session/store.js', () => ({
   listUsageSessions: vi.fn(async () => []),
@@ -32,7 +32,7 @@ vi.mock('../src/main/session/store.js', () => ({
   readRecentEvents: vi.fn(async (_id: string, _limit: number, options?: { kinds?: string[] }) => {
     const rows: any[] = binding.end ? [binding.end] : [];
     if (binding.pendingUser && options?.kinds?.includes('user_message')) rows.push({
-      kind: 'user_message', source: 'extension', seq: 999, time: 999,
+      kind: 'user_message', source: 'extension', seq: 999, time: binding.pendingUserAt ?? Date.now(),
       message: { text: 'Is this the prime Eva chat after reboot?', chars: 39, truncated: false }
     });
     return rows;
@@ -99,6 +99,7 @@ beforeEach(async () => {
   binding.lastToolCallAt = null;
   binding.lastAssistantFinalAt = null;
   binding.pendingUser = false;
+  binding.pendingUserAt = null;
   binding.staleOwnerConversationId = null;
   binding.staleOwnerEnded = true;
   binding.brokerOwner = null;
@@ -1713,6 +1714,15 @@ it('holds a chat-review heartbeat behind a native user message whose provider tu
   expect(review).toMatchObject({ purpose: 'attention', mode: 'after-turn', state: 'queued' });
   expect(review.transportIntent).toBeUndefined();
   expect(await pendingBrowserInputs()).toEqual([]);
+});
+
+it('stops fencing browser delivery on a user message whose provider turn never started', async () => {
+  binding.model = 'gpt-5-6-thinking';
+  binding.activeTurnId = null;
+  binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'previous-turn', time: now - 10 * 60_000 };
+  binding.pendingUser = true;
+  binding.pendingUserAt = Date.now() - 10 * 60_000;
+  expect(await sessionInputPolicy(sessionId)).toMatchObject({ browserAllowed: true });
 });
 
 it('delivers authenticated LAN peer text as durable browser-only knowledge, never as user authority', async () => {
