@@ -276,6 +276,20 @@ type InputDeliveryHooks = {
   changed: () => void;
 };
 let deliveryHooks: InputDeliveryHooks | null = null;
+/**
+ * When this process first heard from the Companion, or null before that.
+ *
+ * The browser pickup deadline measures how long a live browser ignored a message. Counting from
+ * enqueue instead failed every message queued during a cold start: on 2026-09-29 the reboot's Eve
+ * wake was queued 10 s before the Companion connected, and expired as "not picked up within 60
+ * seconds" while Chrome was still opening.
+ */
+let browserReadyAt: number | null = null;
+/** How long a message may wait for a Companion that has not connected at all in this process. */
+export const BROWSER_COLD_START_MS = 5 * 60_000;
+export function noteBrowserReady(at = Date.now()): void {
+  if (browserReadyAt === null) browserReadyAt = at;
+}
 /** Installed once by IPC before bridge/MCP startup; avoids a Goal/input import cycle. */
 export function configureInputDelivery(hooks: InputDeliveryHooks): void { deliveryHooks = hooks; }
 /** One delivery policy for composer presentation, admission and the final send fence. */
@@ -487,8 +501,10 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // rows are ambiguous and cannot safely be reclassified from today's activity.
     if (row.state === 'queued' && row.mode === 'auto' && !row.finishOwner && row.purpose !== 'attention' && row.purpose !== 'peer' &&
         (row.transportIntent === 'browser' || (!row.transportIntent && !row.sessionId)) &&
-        Date.now() - Math.max(row.createdAt, row.dueAt) >= 60_000)
-      return { ...row, state: 'failed', error: 'Not sent: the browser did not pick up this message within 60 seconds.' };
+        Date.now() - Math.max(row.createdAt, row.dueAt, browserReadyAt ?? 0) >= (browserReadyAt === null ? BROWSER_COLD_START_MS : 60_000))
+      return { ...row, state: 'failed', error: browserReadyAt === null
+        ? 'Not sent: the browser did not connect within 5 minutes.'
+        : 'Not sent: the browser did not pick up this message within 60 seconds.' };
     // Native preparation bounds include the 60s upload and 15s picker hydration.
     // Once Send is authorized, its 30s receipt + 15s fresh-route wait are the entire tail.
     if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? (row.attachments?.length ? 720_000 : row.images?.length ? 120_000 : 60_000) : 45_000))
@@ -1512,7 +1528,7 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
   });
 }
 
-export function resetInputForTests(): void { entries = null; chain = Promise.resolve(); offered.clear(); decisionWaiters.clear(); }
+export function resetInputForTests(): void { entries = null; chain = Promise.resolve(); offered.clear(); decisionWaiters.clear(); browserReadyAt = null; }
 
 export async function pausedBrowserHelpers(): Promise<Array<{ id: string; sourceSessionId: string }>> {
   return (await listInputs()).filter(row => row.purpose === 'decision' && row.state === 'cancelled' && !row.conversationId && row.decisionSourceSessionId)

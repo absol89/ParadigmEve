@@ -5,7 +5,7 @@ import { prepareSessionPrompt } from './session/prompt.js';
 import { pendingChatModelRequest, observeChatModels, requestChatModels } from './chat-models.js';
 import { isProModel } from '../shared/chat-models.js';
 import type { SessionSummary } from '../shared/session.js';
-import { publishBrowserDecision, authorizeBrowserInput, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
+import { publishBrowserDecision, authorizeBrowserInput, noteBrowserReady, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
 import { pendingPluginRefreshes, claimPluginRefresh, requireManualPluginRefresh, completePluginRefresh, failPluginRefresh } from './plugin-refresh.js';
 import { attachBrowserWake, wakeBrowserWork } from './browser-wake.js';
 import { wakeBrowserUrl } from './browser-startup.js';
@@ -1018,6 +1018,8 @@ function noteExtensionVersion(req: http.IncomingMessage): void {
   if (candidate && (extensionVersion === null || comparison === null || comparison > 0)) {
     extensionVersion = candidate;
     logInfo(`bridge: browser extension ${extensionVersion} connected`);
+    // The browser pickup deadline starts here, not at enqueue (see noteBrowserReady).
+    noteBrowserReady();
     // Even an incompatible peer reports its version before the protocol fence.
     // Publish that evidence without falsely granting compatible browser presence.
     changed();

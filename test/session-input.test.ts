@@ -10,7 +10,7 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueChatReviewAttention, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, BROWSER_COLD_START_MS
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -1422,10 +1422,34 @@ it('expires an unclaimed ordinary initial browser attempt 60 seconds after its d
   expect(row.transportIntent).toBe('browser');
   now += 179999;
   resetInputForTests();
+  // The Companion had long been connected, so only the due time starts the pickup clock.
+  noteBrowserReady(now - 3_600_000);
   expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
   now++;
   expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed', error: expect.stringContaining('60 seconds') });
   expect(await claimBrowserInput(row.id, 'late', null)).toBeNull();
+});
+
+it('starts the pickup clock when the Companion connects, not while Chrome is still starting', async () => {
+  // 2026-09-29: the reboot's Eve wake was queued 10 s before the Companion connected and expired
+  // as "not picked up within 60 seconds" while Chrome was still opening.
+  const row = await enqueueInput(input({ sessionId: null, dueAt: now }));
+  expect(row.transportIntent).toBe('browser');
+  now += 90_000;
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+  noteBrowserReady(now);
+  now += 59_999;
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+  now += 1;
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed', error: expect.stringContaining('60 seconds') });
+});
+
+it('gives up on a Companion that never connects after the cold-start allowance', async () => {
+  const row = await enqueueInput(input({ sessionId: null, dueAt: now }));
+  now += BROWSER_COLD_START_MS - 1;
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+  now += 1;
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed', error: expect.stringContaining('did not connect') });
 });
 it('never times out an intentional after-turn wait or a finish stage', async () => {
   binding.activeTurnId = 'active';
