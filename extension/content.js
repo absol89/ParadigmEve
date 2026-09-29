@@ -11232,6 +11232,10 @@
     }
     return false;
   }
+  function trustedComposerTyping() {
+    return lastTrustedComposerInteractionAt > 0 &&
+      Date.now() - lastTrustedComposerInteractionAt < BROWSER_REPAIR_TYPING_GRACE_MS;
+  }
 
   function inputReuseSafe() {
     const rows = CLF_DOM.messages();
@@ -11240,7 +11244,7 @@
     return alive && !generating && !CLF_DOM.generating() && pendingTools === 0 && !desktopInputBusy &&
       !modelCatalogBusy && !pluginRefreshBusy && !desktopDecision && !commandAttempt && !commandJournalGate &&
       queue.length === 0 && !flushWork && CLF_DOM.composerVisible() && !CLF_DOM.hasComposerAttachments() &&
-      !activeVoiceSession() &&
+      !activeVoiceSession() && !trustedComposerTyping() &&
       !(CLF_DOM.composer()?.textContent || '').trim() &&
       (home ? !rows.length && !marker.has('cos-input') && !marker.has('temporary-chat') :
         !!CLF_DOM.conversationId() && rows.at(-1)?.role === 'assistant');
@@ -11262,8 +11266,7 @@
     }
     const composer = CLF_DOM.composer();
     const draft = Boolean((composer?.textContent || '').trim() || CLF_DOM.hasComposerAttachments());
-    const typing = lastTrustedComposerInteractionAt > 0 &&
-      Date.now() - lastTrustedComposerInteractionAt < BROWSER_REPAIR_TYPING_GRACE_MS;
+    const typing = trustedComposerTyping();
     // Active human input is the stronger signal. Once a trusted edit has taken over this composer,
     // keep that ownership for this document while its draft remains: the user can pause for minutes
     // without their text becoming indistinguishable from ChatGPT's provider-restored home autosave.
@@ -11422,13 +11425,17 @@
       }
       if (message.type === 'clf-recorder-ping') {
         const commandId = typeof message.commandId === 'string' ? message.commandId : '';
+        const draft = Boolean((CLF_DOM.composer()?.textContent || '').trim() || CLF_DOM.hasComposerAttachments());
+        const humanComposer = trustedComposerTyping() || (draft && trustedComposerTakenOver);
         sendResponse({
           ok: true,
           recorderVersion: RECORDER_VERSION,
           // This page is mid-turn or mid-handoff, so the Companion must not reload under it.
           busy: Boolean(generating || CLF_DOM.generating() || pendingTools > 0 || goalBusy || nativeBusy || job?.busy ||
             desktopInputBusy || modelCatalogBusy || pluginRefreshBusy),
-          ...(commandId ? { protectCommandReload: protectedCommandReloads.has(commandId) } : {})
+          ...(commandId ? {
+            protectCommandReload: protectedCommandReloads.has(commandId) || activeVoiceSession() || humanComposer
+          } : {})
         });
         return false;
       }
@@ -11528,7 +11535,8 @@
                 (terminal && expectedTerminal === fiberTerminalMessageId && fiberTurnFor(currentAssistantTurn())?.endMessageId === expectedTerminal)) && !desktopInputBusy && !modelCatalogBusy && !pluginRefreshBusy && !desktopDecision &&
               ((!commandAttempt && !commandJournalGate) || failedBootstrap) && (!message.failedCommand || failedBootstrap) &&
               queue.length === 0 && !flushWork && !!CLF_DOM.composer() &&
-              !(CLF_DOM.composer().textContent || '').trim() && !CLF_DOM.hasComposerAttachments() && !activeVoiceSession() });
+              !(CLF_DOM.composer().textContent || '').trim() && !CLF_DOM.hasComposerAttachments() &&
+              !activeVoiceSession() && !trustedComposerTyping() });
         })().catch(() => sendResponse({ safe: false }));
         return true;
       }

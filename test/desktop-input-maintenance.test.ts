@@ -338,6 +338,18 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     expect(h.windows.update).not.toHaveBeenCalled();
   });
 
+  it('does not select a tab when the page cannot prove its draft and voice state is safe', async () => {
+    const h = await worker([]);
+    const tab = { id: 7, windowId: 80, active: false, url: `https://chatgpt.com/c/${secondId}` };
+    h.tabs.push(tab);
+    h.sendMessage.mockRejectedValue(new Error('Receiving end does not exist'));
+
+    await expect(h.prepareDesktopInputTarget(tab, secondId)).resolves.toBe(false);
+
+    expect(h.update).not.toHaveBeenCalled();
+    expect(h.windows.update).not.toHaveBeenCalled();
+  });
+
   it('still permits an app-owned fresh bootstrap to replace a stale autosaved home draft', async () => {
     const h = await worker([]);
     const tab = { id: 7, windowId: 80, active: false, url: 'https://chatgpt.com/?cos-input=fresh' };

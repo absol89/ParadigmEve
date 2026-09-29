@@ -2057,7 +2057,11 @@ async function desktopInputTargetProtected(tab, conversationId = null) {
     documentId ? { documentId } : undefined,
     750
   );
-  if (reply?.ok !== true || reply?.protect !== true) return false;
+  // Focus is a destructive browser mutation from the user's point of view. If the exact page
+  // cannot prove that it is safe, preserve it rather than guessing that a silent/unreachable
+  // recorder has no draft or active voice/typing state.
+  if (reply?.ok !== true) return true;
+  if (reply.protect !== true) return false;
   // Existing conversations treat any live preservation signal as authoritative. A fresh
   // app-owned bootstrap may legitimately replace ChatGPT's stale autosaved home draft, but a
   // trusted human edit always wins and makes Eve wait for as long as that authored draft remains.
@@ -2915,7 +2919,7 @@ async function performAttributionReconnects(reconnects, observedTabs) {
 }
 
 async function browserRepairProtected(target, conversationId) {
-  if (!target || !Number.isInteger(target.id)) return false;
+  if (!target || !Number.isInteger(target.id)) return true;
   const documentId = typeof tabDocuments[String(target.id)] === 'string'
     ? tabDocuments[String(target.id)]
     : null;
@@ -2931,11 +2935,13 @@ async function browserRepairProtected(target, conversationId) {
     ]);
     // A slow/frozen content script may be sitting on a human draft that it has not had enough CPU
     // to describe yet. Treat that ambiguity as preservation and leave the repair token unclaimed.
-    // An immediate sendMessage rejection is different: Chrome has proved there is no live receiver,
-    // which is one of the failures this bounded reload path exists to repair.
+    // An immediate sendMessage rejection proves only that the Companion cannot currently inspect
+    // the page. It does not prove that the human has no live voice session or unsent draft there.
+    // Browser repair therefore also fails closed on a missing receiver.
     if (outcome?.kind === 'timeout') return true;
-    if (outcome?.kind !== 'reply') return false;
-    return outcome.reply?.ok === true && outcome.reply?.protect === true;
+    if (outcome?.kind !== 'reply') return true;
+    if (outcome.reply?.ok !== true) return true;
+    return outcome.reply.protect === true;
   } finally {
     clearTimeout(timer);
   }
@@ -4261,13 +4267,12 @@ async function placeSuccessorChat(raw, tabId) {
       const documentId = typeof tabDocuments[String(createdTabId)] === 'string'
         ? tabDocuments[String(createdTabId)]
         : null;
-      if (documentId) {
-        try {
-          const recorder = await tabReply(createdTabId, { type: 'clf-recorder-ping', commandId: id }, { documentId });
-          if (recorder?.ok === true && recorder?.protectCommandReload === true) {
-            return fail('the successor Companion deliberately protected page state before redeem; the tab was not reloaded');
-          }
-        } catch { /* A dead/unreachable isolated world is exactly the same-tab reload case. */ }
+      if (!documentId) {
+        return fail('the successor Companion could not prove the page safe to reload; the tab was preserved');
+      }
+      const recorder = await tabReply(createdTabId, { type: 'clf-recorder-ping', commandId: id }, { documentId });
+      if (recorder?.ok !== true || recorder?.protectCommandReload === true) {
+        return fail('the successor Companion did not prove the page safe to reload; the tab was preserved');
       }
       try { await chrome.tabs.reload(createdTabId); }
       catch (err) { return fail(`Chrome could not reload the unredeemed successor tab: ${err && err.message ? err.message : err}`); }
@@ -4331,7 +4336,8 @@ async function placeSuccessorChat(raw, tabId) {
   // isolated world cannot answer in time.
   const sourceConversationId = cleanConversationId(raw.homeConversationId) || conversationForTab(home);
   const sourceProtected = home.audible === true ||
-    (sourceConversationId ? await browserRepairProtected(home, sourceConversationId) : false);
+    !sourceConversationId ||
+    await desktopInputTargetProtected(home, sourceConversationId);
   const create = { url: `${base}?${query.join('&')}#${marker}`, windowId: home.windowId, active: raw.active !== false && !sourceProtected };
   // Directly after the chat it continues, so a handoff reads as one piece of work instead of a
   // tab appended to the far end of a long strip.
@@ -4491,23 +4497,9 @@ async function restoreChatgptTab(id, options = {}) {
     return true;
   } catch {
     if (!allowReload) return false;
-    // A tab object can survive while Windows/Chrome never materializes a runnable renderer — the
-    // monitor-off/occluded-window case seen during unattended recovery. Do not create a second
-    // tab: protect this exact one from discarding and request one browser-native reload. If that
-    // still cannot produce a document, later passes leave it alone until this worker generation
-    // changes or the replacement document registers.
-    if (!recoveryReloadedTabs.has(id)) {
-      recoveryReloadedTabs.add(id);
-      const key = String(id);
-      try {
-        await chrome.tabs.update(id, { autoDiscardable: false });
-        discardProtectedTabs[key] = true;
-        await persistLive();
-      } catch {
-        // Reload remains useful even if Chrome refuses the discard-policy update.
-      }
-      try { await chrome.tabs.reload(id); } catch { /* Exact tab remains the only recovery target. */ }
-    }
+    // Injection failure leaves the human state unknowable. Do not turn an extension/runtime
+    // failure into authority to reload a possibly active voice call or unsent draft. A later
+    // successful injection/page reload performed by the user can recover this same exact tab.
     return false;
   }
 }

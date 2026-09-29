@@ -13715,6 +13715,10 @@ describe('the fresh chat the app opened', () => {
       safe: false,
       conversationId: repairChat
     });
+    await expect(live.runtimeMessage({ type: 'clf-recorder-ping', commandId: 'cmd-live-voice' })).resolves.toMatchObject({
+      ok: true,
+      protectCommandReload: true
+    });
   });
 
   it('treats active dictation as user-owned voice input but not the idle Start Voice affordance', async () => {

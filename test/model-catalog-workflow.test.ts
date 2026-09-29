@@ -17,7 +17,8 @@ it.each([
     startupCommandId: null, RUN_ID: 'document', OPENED_CONVERSATION: null, conversationId: null, commandsHandled: new Set(),
     alive: true, epoch: 1, desktopDecision: null, fiberTerminalMessageId: null, generating: false, pendingTools,
     desktopInputBusy: false, modelCatalogBusy: false, pluginRefreshBusy, commandAttempt: null, commandJournalGate: false,
-    queue: [], flushWork: null, CLF_DOM: { conversationId: () => null, generating: () => false, composer: () => ({ textContent: '' }), hasComposerAttachments: () => false }
+    queue: [], flushWork: null, activeVoiceSession: () => false, trustedComposerTyping: () => false,
+    CLF_DOM: { conversationId: () => null, generating: () => false, composer: () => ({ textContent: '' }), hasComposerAttachments: () => false }
   });
   vm.runInContext(`(function () { ${section} })()`, context);
   expect(await response).toMatchObject({ safe: !pluginRefreshBusy && pendingTools === 0 });

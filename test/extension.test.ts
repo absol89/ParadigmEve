@@ -953,7 +953,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
     expect(asked.filter(item => item !== 'status')).toEqual([]);
   });
 
-  it('keeps bounded repair live when Chrome immediately reports that the content-script receiver is missing', async () => {
+  it('defers browser repair when Chrome cannot prove the page is safe to reload', async () => {
     const { fetch, asked, claims } = appWith(CHAT);
     const worker = loadWorker({
       local: new FakeStorageArea(paired),
@@ -969,9 +969,9 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 
     await worker.fireAlarm();
 
-    expect(claims).toHaveLength(1);
-    expect(worker.tabsReload).toHaveBeenCalledExactlyOnceWith(21);
-    expect(asked).toContain(`repaired:${CHAT}`);
+    expect(claims).toEqual([]);
+    expect(worker.tabsReload).not.toHaveBeenCalled();
+    expect(asked.filter(item => item !== 'status')).toEqual([]);
   });
 
   it('reconnects recorder attribution on the exact existing tab without reloading the generating page', async () => {
@@ -2213,7 +2213,7 @@ describe('worker settings authority', () => {
         expect.objectContaining({
           id: 'cmd-live-no-redeem',
           status: 'failed',
-          error: expect.stringMatching(/deliberately protected page state.*not reloaded/i)
+          error: expect.stringMatching(/did not prove the page safe to reload.*preserved/i)
         })
       ]);
     } finally {
@@ -2463,7 +2463,7 @@ describe('extension command delivery', () => {
     ]);
   });
 
-  it('reloads an exact ChatGPT tab once when monitor-off recovery has no runnable document', async () => {
+  it('preserves an exact ChatGPT tab when monitor-off recovery cannot inspect its document', async () => {
     const worker = loadWorker({
       local: new FakeStorageArea(paired),
       session: new FakeStorageArea(),
@@ -2475,11 +2475,11 @@ describe('extension command delivery', () => {
     await worker.installed('update');
     await worker.installed('update');
 
-    expect(worker.tabsUpdate).toHaveBeenCalledWith(41, { autoDiscardable: false });
-    expect(worker.tabsReload).toHaveBeenCalledTimes(1);
+    expect(worker.tabsUpdate).not.toHaveBeenCalled();
+    expect(worker.tabsReload).not.toHaveBeenCalled();
     await worker.registerTab(41, 'fresh-after-reload');
     await worker.installed('update');
-    expect(worker.tabsReload).toHaveBeenCalledTimes(2);
+    expect(worker.tabsReload).not.toHaveBeenCalled();
   });
 
   it('keeps a live recorder but revalidates the idempotent MAIN-world Fiber helper', async () => {
