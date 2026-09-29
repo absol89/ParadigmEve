@@ -839,6 +839,25 @@
     const source = userMessageSource(message);
     return source !== null && sendText(source.text) === sendText(expected);
   }
+  /**
+   * A fresh worker/Resume bootstrap can come back from ChatGPT with Markdown escaping around
+   * the continuation marker even though the page inserted the original plain text. Keep that
+   * normalization scoped to app-owned bootstraps: ordinary user-input receipts retain the
+   * stricter matchesSubmittedUser contract.
+   */
+  function matchesSubmittedBootstrap(message, expected) {
+    if (matchesSubmittedUser(message, expected)) return true;
+    if (typeof expected !== 'string' || expected.length > 240000) return false;
+    const source = userMessageSource(message);
+    if (source === null) return false;
+    const actualMarker = String(source.text || '').match(CONTINUATION_MARKER);
+    const expectedMarker = expected.match(CONTINUATION_MARKER);
+    return Boolean(
+      actualMarker && expectedMarker &&
+      actualMarker[1] === expectedMarker[1] && actualMarker[2] === expectedMarker[2] &&
+      sendText(String(source.text).slice(actualMarker[0].length)) === sendText(expected.slice(expectedMarker[0].length))
+    );
+  }
   // A first fresh route may await authored evidence. A second route (including an
   // observed return to New Chat) revokes this send; text proof is not its lifetime.
   function submittedSendLifetime(target, startedEpoch = epoch) {
@@ -860,8 +879,8 @@
       return !revoked;
     };
   }
-  function sendSubmittedText(stillCurrent, clearAcceptedDraft = true, beforeSend = null) {
-    return CLF_DOM.send({ stillCurrent, clearAcceptedDraft, beforeSend, matchesUser: matchesSubmittedUser,
+  function sendSubmittedText(stillCurrent, clearAcceptedDraft = true, beforeSend = null, matchesUser = matchesSubmittedUser) {
+    return CLF_DOM.send({ stillCurrent, clearAcceptedDraft, beforeSend, matchesUser,
       observeEvidence: check => { pageViewChecks.add(check); return () => pageViewChecks.delete(check); } });
   }
   const GOAL_MARKER_INSTRUCTION = '\n\nFor this Goal session only: at the end of each final reply, write exactly one separate last line: [[PARADIGMEVE_GOAL:COMPLETE]] if the entire requested task is finished, or [[PARADIGMEVE_GOAL:CONTINUE]] if requested work remains. Do not claim completion for partial work. If user input is required, explain it and omit both markers.';
@@ -10434,7 +10453,7 @@
       if (exactBootstrapDraft()) return false;
       if (boot.type === 'resume' && !squeeze(CLF_DOM.composer()?.textContent)) {
         continuationJournalPending = false;
-        await ask({ type: 'compact', token: resumeMarker[2], destinationLost: true });
+        await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationLost: true });
         return true;
       }
       await fail('the composer changed during bootstrap authorization; the draft was preserved and nothing was sent');
@@ -10447,26 +10466,9 @@
       if (!found || (conversationId && conversationId !== found) ||
           (acceptedBootstrap && (acceptedBootstrap.conversationId !== found || acceptedBootstrap.epoch !== epoch))) return null;
       const message = CLF_DOM.messages().find(message => message.role === 'user' &&
-        matchesSubmittedUser(message, expectedText));
+        matchesSubmittedBootstrap(message, boot.text));
       if (!message || (acceptedBootstrap && acceptedBootstrap.messageId !== message.id)) return null;
       acceptedBootstrap ||= { conversationId: found, epoch, messageId: message.id };
-      return found;
-    };
-    const resolvedBootstrapConversation = async () => {
-      const exact = bootstrapConversation();
-      if (exact || boot.type !== 'resume') return exact;
-      if (!sendingBootstrap() || freshCommandUserInteracted ||
-          typeof boot.sourceConversationId !== 'string' || !boot.sourceConversationId) return null;
-      // ChatGPT can accept the fresh RESUME send and mint `/c/<id>` in Chrome before React/Fiber
-      // mounts that authored bubble in the isolated-world DOM. The command is already redeemed,
-      // the native Send already succeeded, and the service worker can prove which exact tab URL
-      // this same document owns. Use that browser-owned route as the bounded identity fallback;
-      // never accept the source chat or a third route the page has since navigated to.
-      const route = await ask({ type: 'tab_conversation', sourceConversationId: boot.sourceConversationId });
-      const found = route?.ok === true && typeof route.conversationId === 'string' ? route.conversationId : null;
-      if (!found || found === boot.sourceConversationId) return null;
-      const page = CLF_DOM.conversationId();
-      if (page && page !== found && page !== boot.sourceConversationId) return null;
       return found;
     };
     if (boot.type === 'resume') {
@@ -10474,7 +10476,7 @@
         return void (await fail('the resume bootstrap had no valid continuation marker'));
       }
       continuationJournalPending = true;
-      const permit = await ask({ type: 'compact', token: resumeMarker[2], destinationAttempt: true });
+      const permit = await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationAttempt: true });
       if (await rejectChangedBootstrap()) return;
       if (!permit || permit.ok !== true || !permit.data || permit.data.allowed !== true) {
         await bootstrapDraft.clear();
@@ -10482,7 +10484,7 @@
       }
       // As on the source side: the claim above promises nothing was submitted, and this second
       // write is the exclusive cut taken immediately before the click.
-      const armed = await ask({ type: 'compact', token: resumeMarker[2], destinationDispatch: true });
+      const armed = await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationDispatch: true });
       if (await rejectChangedBootstrap()) return;
       if (!armed || armed.ok !== true || !armed.data || armed.data.armed !== true) {
         await bootstrapDraft.clear();
@@ -10499,25 +10501,14 @@
       if (attempt && boot.type === 'worker') attempt.phase = 'dispatching';
       return true;
     };
-    if (!(await sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false, authorizeBootstrapSend))) {
+    if (!(await sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false, authorizeBootstrapSend,
+                                  matchesSubmittedBootstrap))) {
       // Once send() was invoked, a missing/cleared draft cannot prove that no click
       // happened. Only the exact pre-click check above may release the dispatch.
       if (boot.type === 'resume') {
-        // A concrete browser-owned successor route turns this otherwise ambiguous click into
-        // exact one-way evidence: this redeemed document left the source chat after native Send.
-        // This is the live 2026-09-29 "Opening a fresh chat" failure — ChatGPT minted B and
-        // cleared the editor but never mounted the authored RESUME bubble, so the older path
-        // retained `dispatched-unresolved` forever despite already being in the successor chat.
-        const found = await resolvedBootstrapConversation();
-        if (found) {
-          rememberResumeGoalPending(found, boot.id);
-          publishBootstrapSelection(found);
-          const acknowledged = await ask({ type: 'ack', id: boot.id, status: 'sent', conversationId: found, agent: null, client: RUN_ID });
-          await clearAcknowledgedBootstrap(acknowledged);
-        }
-        // With no concrete successor route, retain the armed ticket and journal gate for exact
-        // marker reconciliation; never replay an ambiguous click or let ordinary events create
-        // its shadow session.
+        // A route appearing after the click is not enough to prove which authored message made
+        // it there. Retain the armed ticket and journal gate for the exact marked-message
+        // reconciliation instead of turning a navigation-only observation into a sent receipt.
         return;
       }
       return void (await fail('ChatGPT did not accept the bootstrap send'));
@@ -10537,7 +10528,7 @@
     // is the resume destination — see pullActivity — not here, because this ACK's reply is the
     // outbox's, not the app's.
     if (boot.type === 'resume') {
-      const found = await resolvedBootstrapConversation();
+      const found = bootstrapConversation();
       if (found) rememberResumeGoalPending(found, boot.id);
     }
 
@@ -10561,7 +10552,7 @@
     // clock the app is running, so this page never outlives the command it is working on.
     for (let tries = 0; tries < 80; tries++) {
       await sleep(500);
-      const found = boot.type === 'resume' ? await resolvedBootstrapConversation() : CLF_DOM.conversationId();
+      const found = boot.type === 'resume' ? bootstrapConversation() : CLF_DOM.conversationId();
       if (found) {
         if (boot.type === 'resume') rememberResumeGoalPending(found, boot.id);
         publishBootstrapSelection(found);

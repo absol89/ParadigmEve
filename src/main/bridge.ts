@@ -171,6 +171,7 @@ import {
   commitContinuationResult,
   CONTINUATION_TTL_MS,
   continuationByToken,
+  continuationClaimedBy,
   continuationForSession,
   pendingContinuations,
   supersededSourceConversations,
@@ -2981,19 +2982,34 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     // ChatGPT has not assigned the replacement conversation yet. Its irreversible Send fence
     // is therefore token-addressed; the exact conversation is learned later from the marked
     // server-authored message.
+    const destinationCommand = commands.find(command => command.id === body['commandId'] &&
+      command.spec.type === 'resume' && command.spec.token === checkpointToken);
+    const destinationTransition = async (transition: () => Promise<boolean>): Promise<boolean> => {
+      if (!destinationCommand) return false;
+      return writeCommandTransition(destinationCommand, async () => {
+        if (!commands.includes(destinationCommand) || !destinationCommand.owner ||
+            destinationCommand.owner !== body['client'] || !continuationClaimedBy(checkpointToken, destinationCommand.id)) return false;
+        return transition();
+      });
+    };
     if (body['destinationAttempt'] === true) {
-      const result = await beginContinuationDestinationSendNow(checkpointToken);
-      return result
+      let result: Awaited<ReturnType<typeof beginContinuationDestinationSendNow>> = null;
+      await destinationTransition(async () => {
+        result = await beginContinuationDestinationSendNow(checkpointToken);
+        return !!result;
+      });
+      const accepted = result as Awaited<ReturnType<typeof beginContinuationDestinationSendNow>>;
+      return accepted
         ? json(
             res,
             200,
-            { allowed: result.allowed, destinationSend: result.checkpoint },
+            { allowed: accepted.allowed, destinationSend: accepted.checkpoint },
             origin
           )
         : json(res, 409, { error: 'destination_send_not_available' }, origin);
     }
     if (body['destinationDispatch'] === true) {
-      const armed = await dispatchContinuationDestinationSendNow(checkpointToken);
+      const armed = await destinationTransition(() => dispatchContinuationDestinationSendNow(checkpointToken));
       return json(
         res,
         armed ? 200 : 409,
@@ -3007,7 +3023,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       // not after the quarter-hour the lease was measured for, and for a manual Compact & Resume
       // as much as an automatic one: the ticket exists to land the brief, and Cancel is there
       // for a user who meant the Escape.
-      const released = await releaseContinuationDestinationSendNow(checkpointToken);
+      const released = await destinationTransition(() => releaseContinuationDestinationSendNow(checkpointToken));
       if (released) {
         const entry = continuationByToken(checkpointToken);
         for (const command of commands.filter(

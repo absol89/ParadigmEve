@@ -960,6 +960,11 @@ export async function releaseContinuationDestinationSendNow(token: string): Prom
   });
 }
 
+/** Exact durable claimant for destination checkpoint fencing; not part of the public projection. */
+export function continuationClaimedBy(token: string, claimant: string): boolean {
+  return byToken.get(token)?.claimedBy === claimant;
+}
+
 /** Binds the marked bootstrap to its exact ChatGPT conversation and user-message identity. */
 export async function bindContinuationDestinationMessageNow(
   token: string,

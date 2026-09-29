@@ -1758,13 +1758,13 @@ describe('worker settings authority', () => {
     await worker.send({ type: 'compact', conversationId: CHAT, ticket: true, automatic: true }, 44);
     await worker.send({ type: 'compact', conversationId: CHAT, token, sourceLost: true }, 44);
     await worker.send({ type: 'compact', conversationId: CHAT, token, sourceDispatch: true }, 44);
-    await worker.send({ type: 'compact', conversationId: CHAT, token, destinationDispatch: true }, 44);
+    await worker.send({ type: 'compact', conversationId: CHAT, token, commandId: 'resume-command', client: 'resume-document', destinationDispatch: true }, 44);
 
     expect(posted).toEqual([
       expect.objectContaining({ conversationId: CHAT, ticket: true, automatic: true }),
       expect.objectContaining({ conversationId: CHAT, token, sourceLost: true }),
       expect.objectContaining({ conversationId: CHAT, token, sourceDispatch: true }),
-      expect.objectContaining({ conversationId: CHAT, token, destinationDispatch: true })
+      expect.objectContaining({ conversationId: CHAT, token, commandId: 'resume-command', client: 'resume-document', destinationDispatch: true })
     ]);
   });
 
@@ -1787,14 +1787,14 @@ describe('worker settings authority', () => {
 
     // The page sends this and the app acts on it — it retires the lease and re-offers the brief
     // to a fresh chat at once instead of waiting the lease out. The relay used to drop it.
-    await worker.send({ type: 'compact', conversationId: CHAT, token, destinationLost: true }, 44);
+    await worker.send({ type: 'compact', conversationId: CHAT, token, commandId: 'resume-command', client: 'resume-document', destinationLost: true }, 44);
     // A field nobody named must not ride along on a valid token.
     await worker.send({ type: 'compact', conversationId: CHAT, token, sourceLost: true, invented: true }, 44);
     // And a checkpoint without its token says nothing about any transaction.
     await worker.send({ type: 'compact', conversationId: CHAT, destinationLost: true }, 44);
 
     expect(posted).toHaveLength(3);
-    expect(posted[0]).toMatchObject({ conversationId: CHAT, token, destinationLost: true });
+    expect(posted[0]).toMatchObject({ conversationId: CHAT, token, commandId: 'resume-command', client: 'resume-document', destinationLost: true });
     expect(posted[1]).toMatchObject({ conversationId: CHAT, token, sourceLost: true });
     expect(posted[1]).not.toHaveProperty('invented');
     expect(posted[2]).not.toHaveProperty('destinationLost');
@@ -1826,10 +1826,10 @@ describe('worker settings authority', () => {
     await worker.registerTab(47);
     const token = '0123456789abcdef0123456789abcdef';
 
-    const reply = await worker.send({ type: 'compact', token, destinationAttempt: true }, 47);
+    const reply = await worker.send({ type: 'compact', token, commandId: 'cmd-successor', client: 'successor-document', destinationAttempt: true }, 47);
 
     expect(reply).not.toMatchObject({ error: 'stale_document' });
-    expect(posted).toEqual([expect.objectContaining({ token, destinationAttempt: true })]);
+    expect(posted).toEqual([expect.objectContaining({ token, commandId: 'cmd-successor', client: 'successor-document', destinationAttempt: true })]);
   });
 
   it('redeems a marked successor through the local bridge with POST', async () => {

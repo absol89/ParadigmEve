@@ -3088,11 +3088,15 @@ describe('delivering a bootstrap', () => {
     const second = await request('POST', '/commands/redeem', { body: { id: command.id, client: 'tab-2' } });
     expect(second.status).toBe(200);
 
-    const claimed = await request('POST', '/compact', { body: { token, destinationAttempt: true } });
-    expect(claimed.body.allowed).toBe(true);
+    const claimed = await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-2', destinationAttempt: true }
+    });
+    expect(claimed).toMatchObject({ status: 200, body: { allowed: true } });
     expect((await redeem(command.id, 'tab-3')).text).toContain('the only brief');
 
-    const armed = await request('POST', '/compact', { body: { token, destinationDispatch: true } });
+    const armed = await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-3', destinationDispatch: true }
+    });
     expect(armed.body.armed).toBe(true);
     expect((await request('POST', '/commands/redeem', { body: { id: command.id, client: 'tab-3' } })).status).toBe(409);
     expect((await request('POST', '/commands/redeem', { body: { id: command.id, client: 'tab-4' } })).status).toBe(409);
@@ -3106,12 +3110,18 @@ describe('delivering a bootstrap', () => {
     const { sessionId, token } = await compactedSession('99999999-8888-7777-6666-555555555556', 'the lost brief');
     const command = queueResume(sessionId, token)!;
     expect((await redeem(command.id, 'tab-1')).text).toContain('the lost brief');
-    expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
-    expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-1', destinationAttempt: true }
+    })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-1', destinationDispatch: true }
+    })).body.armed).toBe(true);
     expect((await request('POST', '/commands/redeem', { body: { id: command.id, client: 'tab-2' } })).status).toBe(409);
 
     const before = opened.length;
-    const lost = await request('POST', '/compact', { body: { token, destinationLost: true } });
+    const lost = await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-1', destinationLost: true }
+    });
     expect(lost.status).toBe(200);
     expect(lost.body.released).toBe(true);
     // The lease went with the page that lost the draft, and a fresh chat opens for the same
@@ -3121,7 +3131,9 @@ describe('delivering a bootstrap', () => {
     const reopened = new URL(opened[opened.length - 1]!).searchParams.get('clf')!;
     expect(reopened).not.toBe(command.id);
     expect((await redeem(reopened, 'tab-3')).text).toContain('the lost brief');
-    expect((await request('POST', '/compact', { body: { token: 'ffffffffffffffffffffffffffffffff', destinationLost: true } })).status).toBe(409);
+    expect((await request('POST', '/compact', {
+      body: { token: 'ffffffffffffffffffffffffffffffff', commandId: command.id, client: 'tab-1', destinationLost: true }
+    })).status).toBe(409);
   });
 
   it('aborts a resume whose commit the session layer refused, so chat A is not left waiting on it', async () => {
@@ -3137,8 +3149,12 @@ describe('delivering a bootstrap', () => {
     const { sessionId, token } = await compactedSession(chatA, 'the brief for the refused move');
     const command = queueResume(sessionId, token)!;
     expect((await redeem(command.id, 'tab-b')).text).toContain('the brief for the refused move');
-    expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
-    expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-b', destinationAttempt: true }
+    })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-b', destinationDispatch: true }
+    })).body.armed).toBe(true);
     // The handover is gone while the continuation is live: the swarm preflight will refuse.
     cancelPrimeTransfer(chatA);
 
@@ -3167,8 +3183,12 @@ describe('delivering a bootstrap', () => {
     const redeemed = await redeem(command.id, 'tab-b3');
     expect(redeemed.text).toContain('the brief for the delayed route');
     expect(redeemed.sourceConversationId).toBe(chatA);
-    expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
-    expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-b3', destinationAttempt: true }
+    })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-b3', destinationDispatch: true }
+    })).body.armed).toBe(true);
 
     const stale = await request('POST', '/compact', {
       body: { conversationId: chatA, token, destinationMessageId: 'm-b3-marked-resume' }
@@ -3198,8 +3218,12 @@ describe('delivering a bootstrap', () => {
     const { sessionId, token } = await compactedSession(chatA, 'the brief for the armed move');
     const command = queueResume(sessionId, token)!;
     expect((await redeem(command.id, 'tab-b2')).text).toContain('the brief for the armed move');
-    expect((await request('POST', '/compact', { body: { token, destinationAttempt: true } })).body.allowed).toBe(true);
-    expect((await request('POST', '/compact', { body: { token, destinationDispatch: true } })).body.armed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-b2', destinationAttempt: true }
+    })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-b2', destinationDispatch: true }
+    })).body.armed).toBe(true);
     // Collected as they are written: the log buffer is a 500-entry ring, so an offset into it
     // stops meaning "since here" once earlier tests have filled it.
     const logged: string[] = [];

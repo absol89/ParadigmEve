@@ -3697,6 +3697,8 @@ const HANDLERS = {
         cancel: message.cancel === true,
         ticket: message.ticket === true,
         automatic: message.automatic === true,
+        ...((message.destinationAttempt === true || message.destinationDispatch === true || message.destinationLost === true)
+          ? { commandId: String(message.commandId || ''), client: String(message.client || '') } : {}),
         // The capture. `token` names the transaction the page was given when it marked the
         // compaction turn, and `summary` is that turn's own answer. Both are forwarded
         // verbatim and only together: the app refuses a brief whose token does not name an

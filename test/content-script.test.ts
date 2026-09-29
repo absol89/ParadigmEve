@@ -1352,7 +1352,7 @@ describe('desktop input delivery and helper ownership', () => {
     expect(clicks).toBe(1);
   });
 
-  it('acknowledges a sent resume from the browser-owned route when the authored bubble never mounts', async () => {
+  it('does not acknowledge a sent resume from the browser route alone when the authored bubble never mounts', async () => {
     const commandId = 'cmd-route-only-resume';
     const sourceConversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     const destinationConversationId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
@@ -1366,33 +1366,29 @@ describe('desktop input delivery and helper ownership', () => {
         agent: null,
         sourceConversationId
       } }),
-      tab_conversation: () => ({ ok: true, conversationId: destinationConversationId }),
       ack: () => ({ ok: true })
     }, (document, dom) => {
       document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
         clicks++;
         // Live 2026-09-29 failure: ChatGPT accepted the fresh RESUME and Chrome learned the
         // concrete /c/<id> route, but the authored user bubble never became visible to the
-        // isolated-world DOM/Fiber reader. The browser-owned tab route is still exact evidence
-        // for the already-redeemed, already-sent command.
+        // isolated-world DOM/Fiber reader. The route alone does not identify the authored row,
+        // so it must not become a successful continuation receipt.
         dom.reconfigure({ url: `https://chatgpt.com/c/${destinationConversationId}` });
         document.querySelector('#prompt-textarea')!.textContent = '';
       });
     });
 
     // chatgpt-dom deliberately waits out its native Send acceptance watchdog when only the
-    // route changed: navigation alone is not proof of acceptance. Cross that macrotask here so
-    // content.js reaches its route-backed ambiguous-send recovery branch.
+    // route changed: navigation alone is not proof of acceptance. Cross that macrotask and
+    // verify the continuation remains armed for exact marker reconciliation.
     await new Promise(resolve => globalThis.setTimeout(resolve, 0));
     await settle(400);
     expect(clicks).toBe(1);
-    expect(live.sent.filter(message => message.type === 'tab_conversation')).not.toHaveLength(0);
-    expect(live.sent.filter(message => message.type === 'ack')).toEqual([
-      expect.objectContaining({
-        id: commandId,
-        status: 'sent',
-        conversationId: destinationConversationId
-      })
+    expect(live.sent.filter(message => message.type === 'tab_conversation')).toHaveLength(0);
+    expect(live.sent.filter(message => message.type === 'ack')).toHaveLength(0);
+    expect(live.sent.filter(message => message.type === 'compact' && message.destinationDispatch === true)).toEqual([
+      expect.objectContaining({ commandId, client: expect.any(String) })
     ]);
   });
 
