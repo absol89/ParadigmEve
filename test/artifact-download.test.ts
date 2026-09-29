@@ -93,6 +93,15 @@ describe('artifact file gateway', () => {
       expect(() => validateOpenAIFileUrl(`https://${host}/private/image.png`)).toThrow();
   });
 
+  it.each([
+    'oaisdmntprpolandcentral.blob.core.windows.net',
+    'oaisdmntprdenmarkeast.blob.core.windows.net'
+  ])('accepts the exact ChatGPT native-file Azure host %s', host => {
+    const url = `https://${host}/private/generated.png?sig=test`;
+    expect(validateOpenAIFileUrl(url)).toBe(url);
+    expect(() => validateOpenAIFileUrl(`https://${host}.evil.example/private/generated.png`)).toThrow();
+  });
+
   it('reports only the rejected hostname, never signed URL credentials or file paths', () => {
     let message = '';
     try { validateOpenAIFileUrl('https://secret-user:secret-password@unverified.blob.core.windows.net/private-file-id?sig=secret-signature#secret-fragment'); }
