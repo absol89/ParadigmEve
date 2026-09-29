@@ -537,8 +537,14 @@ describe('the replacement chat', () => {
 
     // Claimed, then gone before the click — the same crash point as the source half, and the
     // same answer: nothing was typed under this state, so the next document may have it.
+    // Destination steps name the command and the exact page holding it (upstream #186): a page
+    // that no longer owns the command cannot move its send fence.
+    const stale = await request('POST', '/compact', {
+      body: { token: continuation, commandId, client: 'page-1', destinationAttempt: true }
+    });
+    expect(stale.status).toBe(409);
     const claimed = await request('POST', '/compact', {
-      body: { token: continuation, destinationAttempt: true }
+      body: { token: continuation, commandId, client: 'page-2', destinationAttempt: true }
     });
     expect(claimed.body.allowed).toBe(true);
     const afterClaim = await redeem(commandId, 'page-3');
@@ -548,13 +554,15 @@ describe('the replacement chat', () => {
     // Armed. This bootstrap may exist in a chat this app cannot yet name, so it is never
     // handed to another document; only the marked message can resolve it.
     const armed = await request('POST', '/compact', {
-      body: { token: continuation, destinationDispatch: true }
+      body: { token: continuation, commandId, client: 'page-3', destinationDispatch: true }
     });
     expect(armed.body.armed).toBe(true);
     expect((await redeem(commandId, 'page-3')).status).toBe(409);
     expect((await redeem(commandId, 'page-4')).status).toBe(409);
     expect(
-      (await request('POST', '/compact', { body: { token: continuation, destinationAttempt: true } })).body.allowed
+      (await request('POST', '/compact', {
+        body: { token: continuation, commandId, client: 'page-3', destinationAttempt: true }
+      })).body.allowed
     ).toBe(false);
   });
 
