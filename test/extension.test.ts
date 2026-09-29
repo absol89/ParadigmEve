@@ -3496,7 +3496,13 @@ describe('extension observation journal', () => {
     const conversationId = '22222222-3333-4444-5555-666666666666';
     const local = new FakeStorageArea({ port: 8765, token: 'paired-token' });
     const session = new FakeStorageArea();
-    const worker = loadWorker({ local, session });
+    const owned = { id: 73, windowId: 9, active: true, url: `https://chatgpt.com/c/${conversationId}` };
+    const worker = loadWorker({
+      local,
+      session,
+      tabsGet: async () => owned,
+      tabsQuery: async () => [owned]
+    });
 
     await worker.registerTab(73);
     await worker.send({ type: 'bind', conversationId }, 73);
@@ -3516,6 +3522,30 @@ describe('extension observation journal', () => {
       error: 'stale_conversation'
     });
     expect(worker.tabsUpdate).toHaveBeenCalledTimes(1);
+    expect(worker.windowsUpdate).not.toHaveBeenCalled();
+    expect(worker.tabsCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not let Goal presentation replace another foreground tab in focused Chrome', async () => {
+    const conversationId = '22222222-3333-4444-5555-666666666666';
+    const owned = { id: 73, windowId: 9, active: false, url: `https://chatgpt.com/c/${conversationId}` };
+    const foreground = { id: 74, windowId: 9, active: true, url: 'https://chatgpt.com/' };
+    const worker = loadWorker({
+      local: new FakeStorageArea({ port: 8765, token: 'paired-token' }),
+      session: new FakeStorageArea(),
+      tabsGet: async () => owned,
+      tabsQuery: async () => [foreground],
+      windowsGet: async () => ({ focused: true })
+    });
+
+    await worker.registerTab(73);
+    await worker.send({ type: 'bind', conversationId }, 73);
+
+    expect(await worker.send({ type: 'focus_tab', conversationId, turnId: 'generation-owned' }, 73)).toMatchObject({
+      ok: false,
+      error: 'foreground_protected'
+    });
+    expect(worker.tabsUpdate).not.toHaveBeenCalled();
     expect(worker.windowsUpdate).not.toHaveBeenCalled();
     expect(worker.tabsCreate).not.toHaveBeenCalled();
   });

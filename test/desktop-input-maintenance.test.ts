@@ -213,7 +213,7 @@ async function worker(inputs: Array<{ id: string; conversationId: string | null;
     const tab = { id: tabs.length + 1, pendingUrl: url, windowId }; tabs.push(tab); return tab;
   });
   const windows = {
-    get: vi.fn(async (id: number) => ({ id })),
+    get: vi.fn(async (id: number) => ({ id, focused: false })),
     create: vi.fn(async ({ url }: { url: string }) => ({ id: 80, tabs: [await create({ url, windowId: 80 })] })),
     update: vi.fn()
   };
@@ -319,6 +319,32 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
 
     expect(h.update).toHaveBeenCalledWith(7, { active: true });
     expect(h.windows.update).not.toHaveBeenCalled();
+  });
+
+  it('does not switch away from the human foreground tab in a focused Chrome window', async () => {
+    const h = await worker([]);
+    const foreground = { id: 6, windowId: 80, active: true, url: 'https://chatgpt.com/c/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+    const target = { id: 7, windowId: 80, active: false, url: `https://chatgpt.com/c/${secondId}` };
+    h.tabs.push(foreground, target);
+    h.windows.get.mockResolvedValue({ id: 80, state: 'normal', focused: true } as never);
+
+    await expect(h.prepareDesktopInputTarget(target, secondId)).resolves.toBe(false);
+
+    expect(h.update).not.toHaveBeenCalled();
+    expect(h.windows.update).not.toHaveBeenCalled();
+  });
+
+  it('may select work inside an unfocused app-owned Chrome window', async () => {
+    const h = await worker([]);
+    h.saved.chatBackgroundWindow = 80;
+    const foreground = { id: 6, windowId: 80, active: true, url: 'https://chatgpt.com/' };
+    const target = { id: 7, windowId: 80, active: false, url: `https://chatgpt.com/c/${secondId}` };
+    h.tabs.push(foreground, target);
+    h.windows.get.mockResolvedValue({ id: 80, state: 'normal', focused: false } as never);
+
+    await expect(h.prepareDesktopInputTarget(target, secondId)).resolves.toBe(true);
+
+    expect(h.update).toHaveBeenCalledWith(7, { active: true });
   });
 
   it('waits before selecting an existing chat while the human is typing', async () => {

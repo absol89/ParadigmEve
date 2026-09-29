@@ -2069,12 +2069,37 @@ async function desktopInputTargetProtected(tab, conversationId = null) {
   return reply.reason !== 'stale_draft';
 }
 
+/**
+ * Refuse a browser tab selection that would replace the tab the human is currently looking at.
+ *
+ * `chrome.tabs.update(..., { active: true })` does not raise Chrome, but inside a focused Chrome
+ * window it still steals the visible page and its keyboard focus. That is just as disruptive as
+ * an OS-level focus change when the user is typing. App-owned background windows remain usable:
+ * selecting a tab there is transport scaffolding and cannot replace the human's foreground tab.
+ *
+ * When the target window is focused, only the already-active tab may proceed. This deliberately
+ * fails closed for non-ChatGPT/personal foreground tabs too; the Companion has no authority to
+ * decide that replacing an unrelated page is harmless merely because it cannot inspect its input.
+ */
+async function foregroundTabAllowsSelection(tab) {
+  // Real chrome.tabs.Tab objects always carry windowId. Keep synthetic/legacy harness rows that
+  // predate that field on their old path; live Chrome still takes the focused-window gate below.
+  if (!tab || !Number.isInteger(tab.id)) return false;
+  if (!Number.isInteger(tab.windowId)) return true;
+  const window = await chrome.windows.get(tab.windowId);
+  if (!window?.focused) return true;
+  const active = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+  const foreground = active.find(candidate => candidate && Number.isInteger(candidate.id));
+  return foreground?.id === tab.id;
+}
+
 async function prepareDesktopInputTarget(tab, conversationId = null) {
   if (!tab || !Number.isInteger(tab.id)) return false;
   try {
     const current = await chrome.tabs.get(tab.id);
     if (!current || current.pendingUrl) return false;
     if (await desktopInputTargetProtected(current, conversationId)) return false;
+    if (!await foregroundTabAllowsSelection(current)) return false;
     await chrome.tabs.update(current.id, { active: true });
     if (Number.isInteger(current.windowId)) {
       const owned = await storedBackgroundWindow();
@@ -2983,9 +3008,12 @@ async function performBrowserRepairs(repairs, policy) {
     if (!claim.ok || claim.data?.ok !== true) continue;
     try {
       // Select the working tab within Chrome without stealing OS focus from the
-      // desktop app. Tab selection and window activation are separate operations.
+      // desktop app. Inside a focused Chrome window, though, tab selection *is* a visible focus
+      // steal, so never replace the human's current foreground tab for recovery presentation.
       if (target && focus) {
-        await chrome.tabs.update(target.id, { active: true });
+        if (await foregroundTabAllowsSelection(target)) {
+          await chrome.tabs.update(target.id, { active: true });
+        }
       }
       if (target && reason === 'unattributed') {
         // An attribution refresh exists to make a live page report again, not to rescue a broken
@@ -3773,6 +3801,10 @@ const HANDLERS = {
       if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
     }
     try {
+      const tab = await chrome.tabs.get(source.tab);
+      if (!tab || !await foregroundTabAllowsSelection(tab)) {
+        return ownsDocument(source) ? { ok: false, error: 'foreground_protected' } : { ok: false, error: 'stale_document' };
+      }
       await chrome.tabs.update(source.tab, { active: true });
     } catch {
       // Focus is a courtesy. The page owns Goal regardless, so browser/UI refusal must not turn
@@ -4340,7 +4372,15 @@ async function placeSuccessorChat(raw, tabId) {
   const sourceProtected = home.audible === true ||
     !sourceConversationId ||
     await desktopInputTargetProtected(home, sourceConversationId);
-  const create = { url: `${base}?${query.join('&')}#${marker}`, windowId: home.windowId, active: raw.active !== false && !sourceProtected };
+  // A source chat can be idle while the human is typing in a different tab in the same focused
+  // Chrome window. Preparing the successor is still fine; making it active is not.
+  let sourceMayYieldForeground = false;
+  try { sourceMayYieldForeground = await foregroundTabAllowsSelection(home); } catch { /* preserve foreground */ }
+  const create = {
+    url: `${base}?${query.join('&')}#${marker}`,
+    windowId: home.windowId,
+    active: raw.active !== false && !sourceProtected && sourceMayYieldForeground
+  };
   // Directly after the chat it continues, so a handoff reads as one piece of work instead of a
   // tab appended to the far end of a long strip.
   if (typeof home.index === 'number') create.index = home.index + 1;
