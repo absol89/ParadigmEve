@@ -2033,7 +2033,8 @@ var CLF_DOM = (() => {
       const timer = setTimeout(() => finish(null), 1500);
       window.addEventListener('message', receive); window.postMessage({ source: 'clf-plugin-ask', nonce }, location.origin);
     });
-    const route = /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.hash);
+    const route = /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.hash) ||
+      (!location.hash ? /^\/(?:settings\/plugins-settings|plugins)\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.pathname) : null);
     // This isolated-world bridge only needs a transport safety bound. The main process owns
     // the exact per-surface cardinality/name/schema check before it can claim a refresh.
     // Keeping a second Core-specific count here made valid upgrades unreadable as soon as Core
@@ -2049,6 +2050,15 @@ var CLF_DOM = (() => {
   }
   function pluginInstalledButtons(connectorName) {
     return safe(() => {
+      // The newer shell lists installed plugins on the /settings/plugins-settings page itself
+      // (ported from upstream chat-on-steroids 839716d).
+      if (location.pathname === '/settings/plugins-settings' && !location.hash) {
+        const main = document.querySelector('main');
+        if (!main) return null;
+        const rows = [...main.querySelectorAll('button')].filter(button => !button.disabled && button.getClientRects().length > 0 &&
+          [...button.querySelectorAll('*')].some(node => !node.children.length && text(node) === connectorName));
+        return rows.length ? rows : null;
+      }
       const panels = [...document.querySelectorAll('[role="tabpanel"]')].filter(panel => panel.getClientRects().length > 0 &&
         panel.getAttribute('aria-labelledby')?.endsWith('-trigger-Plugins'));
       if (panels.length !== 1) return null;

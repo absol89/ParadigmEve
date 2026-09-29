@@ -2428,10 +2428,22 @@ async function releaseModelCatalogTarget(nonce) {
 let pluginRefreshFlight = null;
 const PLUGIN_REFRESH_MARKER = 'eve-plugin-refresh';
 const LEGACY_PLUGIN_REFRESH_MARKER = 'cos-plugin-refresh';
+/**
+ * ChatGPT's Plugins settings, under either route. The older shell kept them in a hash
+ * (`/#settings/Plugins/plugin_<app>`); the newer one redirects that to a real path
+ * (`/settings/plugins-settings/plugin_<app>`), keeping our query. Reading only the old form made
+ * every helper tab unrecognisable once it landed, so each extension restart opened another one
+ * and none was ever reused or closed (ported from upstream chat-on-steroids 534d3ae).
+ */
+function pluginSettingsRoute(url) {
+  return url.origin === 'https://chatgpt.com' && (
+    (url.pathname === '/' && /^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash)) ||
+    /^\/settings\/plugins-settings(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.pathname));
+}
 function pluginRefreshMarker(tab) {
   try {
     const url = new URL(tab?.pendingUrl || tab?.url || '');
-    return url.origin === 'https://chatgpt.com' && url.pathname === '/' && /^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash)
+    return pluginSettingsRoute(url)
       ? (url.searchParams.get(PLUGIN_REFRESH_MARKER) || url.searchParams.get(LEGACY_PLUGIN_REFRESH_MARKER))
       : null;
   } catch { return null; }
@@ -2452,7 +2464,7 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
       if (!current) return; // A user-closed helper is not permission to reopen it every poll.
       if (pluginRefreshMarker(current) !== owner.id) {
         const url = new URL(current.pendingUrl || current.url || '');
-        if (url.origin !== 'https://chatgpt.com' || url.pathname !== '/' || !/^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash)) return;
+        if (!pluginSettingsRoute(url)) return;
         url.searchParams.delete(LEGACY_PLUGIN_REFRESH_MARKER);
         url.searchParams.set(PLUGIN_REFRESH_MARKER, owner.id);
         await chrome.tabs.update(current.id, { url: url.href });
@@ -2474,7 +2486,11 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
     if (!held) {
       if (browserOnly) return;
       try {
-        const tab = await createChatTab(`https://chatgpt.com/?${PLUGIN_REFRESH_MARKER}=${request.id}#settings/Plugins${request.appId ? `/plugin_${request.appId}` : ''}`, background);
+        const tab = await createChatTab(request.appId
+          // The old hash still redirects to the app's page on the newer shell; without an App Id
+          // it now lands on the home page, so the installed list is opened by its own path.
+          ? `https://chatgpt.com/?${PLUGIN_REFRESH_MARKER}=${request.id}#settings/Plugins/plugin_${request.appId}`
+          : `https://chatgpt.com/settings/plugins-settings?${PLUGIN_REFRESH_MARKER}=${request.id}`, background);
         // A newly-created helper is already a fresh provider document. Verification-only
         // recovery can inspect it directly without another navigation.
         await chrome.storage.session.set({ pluginRefreshOwner: { id: request.id, tab: tab.id, ...(request.verifyOnly === true ? { verifyOnly: true } : {}) } });
@@ -2508,7 +2524,7 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
     // from ever turning that reload into permission for a second click.
     if (request.verifyOnly === true && !(owner?.id === request.id && owner?.tab === held.id && owner?.verifyOnly === true)) {
       const heldUrl = new URL(held.pendingUrl || held.url || '');
-      if (heldUrl.origin !== 'https://chatgpt.com' || heldUrl.pathname !== '/' || pluginRefreshMarker(held) !== request.id) return;
+      if (!pluginSettingsRoute(heldUrl) || pluginRefreshMarker(held) !== request.id) return;
       await chrome.storage.session.set({ pluginRefreshOwner: { id: request.id, tab: held.id, verifyOnly: true } });
       await chrome.tabs.update(held.id, { url: heldUrl.href });
       return;

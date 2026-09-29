@@ -175,3 +175,42 @@ it.each(['unpinned', 'pinned', 'pinned-during-proof'])('reuses management tabs a
   if (mode === 'unpinned') expect(remove).toHaveBeenCalledExactlyOnceWith(7);
   else expect(remove).not.toHaveBeenCalled();
 });
+
+// The newer shell redirects `/#settings/Plugins/plugin_<app>` to a real path and keeps our query.
+// Unrecognised there, every Companion reload opened another helper window for the same request and
+// none was ever reused or closed (ParadigmEve 2026-09-29; upstream chat-on-steroids 534d3ae).
+const pathRouted = `https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}`;
+it('reuses and retires helper tabs on the path-routed settings page too', async () => {
+  const background = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
+  const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
+  let requests: object[] = [{ id }];
+  const tabs = [{ id: 7, url: pathRouted, pinned: false }];
+  const create = vi.fn(async () => ({ id: 9 }));
+  const remove = vi.fn();
+  const sendMessage = vi.fn(async (): Promise<object> => ({ ok: true }));
+  const context = vm.createContext({ URL, setTimeout, clearTimeout, CHATGPT_TAB_URLS: ['https://chatgpt.com/*'],
+    call: async () => ({ ok: true, data: { requests } }), createChatTab: create,
+    chrome: { storage: { session: { get: async () => ({}), set: async () => {} } }, tabs: { query: async () => tabs, get: async (tabId: number) => tabs.find(tab => tab.id === tabId), remove, sendMessage, update: vi.fn() } }
+  });
+  vm.runInContext(`${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  const run = () => (context.run as Function)([{ surface: 'core' }], true);
+  // No session owner record (a reloaded Companion): the existing helper is found by its marker, not reopened.
+  await run();
+  expect(create).not.toHaveBeenCalled();
+  expect(sendMessage).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'clf-plugin-refresh' }));
+  requests = [];
+  sendMessage.mockImplementation(async () => ({ safe: true }));
+  await run();
+  expect(remove).toHaveBeenCalledExactlyOnceWith(7);
+});
+
+it('owns the path-routed settings page, so an unreadable card is reported rather than silent', async () => {
+  const ask = vi.fn(async (_message: { action: string; error?: string }) => ({ data: { ok: true } }));
+  const context = vm.createContext({ URL, alive: true, generating: false, epoch: 1, ask,
+    PLUGIN_REFRESH_MARKER: 'eve-plugin-refresh', LEGACY_PLUGIN_REFRESH_MARKER: 'cos-plugin-refresh',
+    location: { pathname: '/settings/plugins-settings/plugin_asdk_app_synthetic', hash: '', href: pathRouted },
+    CLF_DOM: { generating: () => false, pluginManagementIdle: () => true, pluginRefreshView: () => null }
+  });
+  vm.runInContext(`${section}\nwaitPageView = async (read, current) => current() ? read() : null; globalThis.run = refreshManagedPlugin;`, context);
+  expect(await (context.run as Function)({ id, appId: 'asdk_app_synthetic', connectorName: 'Eve', tools })).toBe(false);
+});
