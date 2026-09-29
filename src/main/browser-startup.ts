@@ -50,6 +50,7 @@ export async function wakeBrowserUrl(url: string, retry = false, _backgroundStar
       await restoreParadigmEveChromeSessionForRecovery(authority.exactPrime ? {
         exactRecoveryUrl: url,
         exactConversationOpen: browserConversationOpen,
+        preferRestoredExact: true,
       } : undefined);
       return;
     }

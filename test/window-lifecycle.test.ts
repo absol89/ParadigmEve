@@ -272,8 +272,11 @@ describe('Windows login startup', () => {
     expect(main).toContain('await openParadigmEveChromeProfile(`https://chatgpt.com/c/${encodeURIComponent(exactAgent)}`);');
     expect(main).toContain('startupBrowserRecovery = restoreForegroundCompanionBrowser().catch((error) =>');
     expect(main).toContain('const exactAgent = currentAgentConversationId();');
-    expect(main).toContain('restartRecoveryPlan?.exactPrime ? {');
-    expect(main).toContain('exactRecoveryUrl: restartRecoveryPlan.url');
+    expect(main).toContain('const plan = restartRecoveryPlan;');
+    expect(main).toContain('? wakeBrowserUrl(plan.url, true, getConfig().ui.backgroundChats === true, {');
+    expect(main).toContain('exactPrime: true,');
+    expect(main).toContain('current: () => restartRecoveryPlan === plan && !quitting,');
+    expect(main).toContain(': restoreParadigmEveChromeSessionForRecovery()');
     expect(main).toContain('if (companionBrowserRecoveryRunning) return companionBrowserRecoveryRunning;');
     expect(main).toContain('if (companionBrowserRecoveryCompleted) return Promise.resolve();');
     expect(main).toContain('const recoveryConversationId = plan?.exactPrime ? plan.conversationId : null;');

@@ -160,7 +160,11 @@ it('gives native Chrome session restore first claim for bridge-owned cold starts
 it('reopens an exact proven Prime through dedicated-profile recovery without forwarding it to the OS', async () => {
   const url = 'https://chatgpt.com/c/11111111-1111-4111-8111-111111111111';
   await wakeBrowserUrl(url, true, true, { current: () => true, exactPrime: true });
-  expect(restore).toHaveBeenCalledWith({ exactRecoveryUrl: url, exactConversationOpen: conversationOpen });
+  expect(restore).toHaveBeenCalledWith({
+    exactRecoveryUrl: url,
+    exactConversationOpen: conversationOpen,
+    preferRestoredExact: true,
+  });
   expect(open).not.toHaveBeenCalled();
 });
 

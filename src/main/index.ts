@@ -116,6 +116,7 @@ import { browserWindowIconPath } from './window-icon.js';
 import { editContextMenuTemplate } from './edit-context-menu.js';
 import { startupSplashDocument } from './startup-splash.js';
 import { openParadigmEveChromeProfile, refreshParadigmEveCompanionForMaintenance, restartParadigmEveChromeForInstallerRecovery, restoreParadigmEveBrowser, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
+import { wakeBrowserUrl } from './browser-startup.js';
 import {
   beginRecoveryRun,
   markRecoveryRunClean,
@@ -962,14 +963,17 @@ void app.whenReady().then(async () => {
   if (companionBrowserRecoveryPending) {
     startupBrowserRecovery = runCompanionBrowserRecovery();
   } else if (restartRecoveryRequested(process.argv, previousRunUnclean)) {
-    // Always preserve Chrome's own previous session on an explicit/crash recovery launch. Only an
-    // exact Prime proven by restored swarm + local session authority gets an immediate URL tab;
-    // ambiguous ownership still restores the session but never guesses a coordinator.
-    startupBrowserRecovery = restoreParadigmEveChromeSessionForRecovery(
-      restartRecoveryPlan?.exactPrime ? {
-        exactRecoveryUrl: restartRecoveryPlan.url,
-        exactConversationOpen: browserConversationOpen,
-      } : undefined
+    // Exact Prime startup recovery must join the same browser-startup owner used by bridge repairs.
+    // Otherwise the app-level restart path and a concurrent identity repair can each surface the
+    // same conversation before either sees the other's Chrome tab. Ambiguous recovery still asks
+    // Chrome only to restore its own prior session and never guesses a coordinator.
+    const plan = restartRecoveryPlan;
+    startupBrowserRecovery = (plan?.exactPrime
+      ? wakeBrowserUrl(plan.url, true, getConfig().ui.backgroundChats === true, {
+          exactPrime: true,
+          current: () => restartRecoveryPlan === plan && !quitting,
+        })
+      : restoreParadigmEveChromeSessionForRecovery()
     ).catch((error) =>
       logWarn(`could not restore Chrome session for restart recovery: ${error instanceof Error ? error.message : String(error)}`)
     );
