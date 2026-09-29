@@ -3224,11 +3224,19 @@ function serializeTab(tab, operation) {
 }
 
 const HANDLERS = {
-  async tab_conversation(_message, _sender, source) {
+  async tab_conversation(message, _sender, source) {
     if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
     const tab = await chrome.tabs.get(source.tab).catch(() => null);
     if (!tab || !ownsDocument(source)) return { ok: false, error: 'stale_document' };
-    return { ok: true, conversationId: conversationFromUrl(tab.url || tab.pendingUrl) };
+    const sourceConversationId = cleanConversationId(message.sourceConversationId);
+    const current = conversationFromUrl(tab.url);
+    const pending = conversationFromUrl(tab.pendingUrl);
+    // During the exact "Opening a fresh chat" window Chrome can still report the root page in
+    // `url` while the concrete `/c/<id>` already exists in `pendingUrl`, or briefly retain source
+    // chat A in `url` while B is pending. The caller supplies A only as an exclusion fence; the
+    // exact document/navigation owner is still proven by authorizeDocument().
+    const conversationId = [current, pending].find(id => id && id !== sourceConversationId) || current || pending;
+    return { ok: true, conversationId };
   },
   async plugin_refresh(message, _sender, source) {
     if (!ownsDocument(source) || !/^[a-f0-9-]{36}$/i.test(String(message.id || ''))) return { ok: false };

@@ -1673,19 +1673,24 @@ describe('worker settings authority', () => {
   const CHAT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
   it('reports the browser-owned tab route to the exact fresh command document', async () => {
+    const source = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     const replacement = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
     const worker = loadWorker({
       local: new FakeStorageArea(paired),
       session: new FakeStorageArea(),
-      tabsGet: async () => ({ id: 42, url: `https://chatgpt.com/c/${replacement}` })
+      tabsGet: async () => ({
+        id: 42,
+        url: `https://chatgpt.com/c/${source}`,
+        pendingUrl: `https://chatgpt.com/c/${replacement}`
+      })
     });
     await worker.registerTab(42, 'resume-document');
-    expect(await worker.send({ type: 'tab_conversation' }, 42, 'resume-document')).toEqual({
+    expect(await worker.send({ type: 'tab_conversation', sourceConversationId: source }, 42, 'resume-document')).toEqual({
       ok: true,
       conversationId: replacement
     });
     await worker.registerTab(42, 'new-document');
-    expect(await worker.send({ type: 'tab_conversation' }, 42, 'resume-document')).toMatchObject({
+    expect(await worker.send({ type: 'tab_conversation', sourceConversationId: source }, 42, 'resume-document')).toMatchObject({
       ok: false,
       error: 'stale_document'
     });

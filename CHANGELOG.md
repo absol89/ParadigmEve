@@ -17,6 +17,12 @@ operation.
 
 ### Fixed
 
+- Compact & Resume now completes a replacement-chat handoff when ChatGPT accepts the native Send
+  but delays exposing the new user message to the Companion. The same authorized browser document
+  can use Chrome's concrete successor route as a narrowly fenced fallback, including the transition
+  where source chat A remains in the current URL while replacement chat B is already in `pendingUrl`.
+  The fallback refuses A, stops after trusted user interaction, and never invents a destination
+  message id; unresolved sends remain unresolved rather than being replayed or guessed.
 - App-sent images and files attach again with ChatGPT's current composer: the upload input is elected by kind inside
   the composer form instead of the removed `#upload-photos`/`#upload-files` ids, and the new image tile counts as the
   upload receipt. Delivery errors wrap instead of being cut off.
