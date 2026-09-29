@@ -13696,6 +13696,47 @@ describe('the fresh chat the app opened', () => {
     });
   });
 
+  it('protects an active voice session from repair, reuse and physical tab closure', async () => {
+    const repairChat = '68686868-8989-4aaa-b2b2-e4e4e4e4e4e4';
+    live = await harness(`https://chatgpt.com/c/${repairChat}`, {}, (document) => {
+      const endVoice = document.createElement('button');
+      endVoice.setAttribute('aria-label', 'End voice mode');
+      document.body.append(endVoice);
+    });
+
+    await expect(live.runtimeMessage({ type: 'clf-browser-repair-state', conversationId: repairChat })).resolves.toMatchObject({
+      ok: true,
+      protect: true,
+      reason: 'voice_active',
+      conversationId: repairChat
+    });
+    await expect(live.runtimeMessage({ type: 'clf-input-reuse-state' })).resolves.toMatchObject({ safe: false });
+    await expect(live.runtimeMessage({ type: 'clf-tab-close-check', conversationId: repairChat })).resolves.toMatchObject({
+      safe: false,
+      conversationId: repairChat
+    });
+  });
+
+  it('treats active dictation as user-owned voice input but not the idle Start Voice affordance', async () => {
+    const repairChat = '69696969-8989-4aaa-b2b2-e4e4e4e4e4e4';
+    live = await harness(`https://chatgpt.com/c/${repairChat}`, {}, (document) => {
+      const startVoice = document.createElement('button');
+      startVoice.setAttribute('aria-label', 'Start Voice');
+      document.body.append(startVoice);
+    });
+    await expect(live.runtimeMessage({ type: 'clf-browser-repair-state', conversationId: repairChat })).resolves.toMatchObject({
+      protect: false
+    });
+
+    const dictation = live.document.createElement('button');
+    dictation.setAttribute('aria-label', 'Stop dictation');
+    live.document.body.append(dictation);
+    await expect(live.runtimeMessage({ type: 'clf-browser-repair-state', conversationId: repairChat })).resolves.toMatchObject({
+      protect: true,
+      reason: 'voice_active'
+    });
+  });
+
   it('overwrites a New Chat autosaved draft and sends the worker bootstrap once', async () => {
     live = await harness(
       'https://chatgpt.com/?clf=cmd-9',

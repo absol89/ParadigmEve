@@ -1971,6 +1971,48 @@ describe('worker settings authority', () => {
     expect(worker.windowsUpdate).not.toHaveBeenCalled();
   });
 
+  it('prepares a replacement beside a protected source chat without taking its active tab', async () => {
+    const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
+      const url = new URL(input);
+      if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+      if (url.pathname === '/compact' && init.method === 'POST') {
+        return response(200, { stored: true, commandId: 'cmd-protected-handoff', placement: { id: 'cmd-protected-handoff' } });
+      }
+      return response(404, {});
+    });
+    let worker!: WorkerHarness;
+    worker = loadWorker({
+      local: new FakeStorageArea(paired),
+      session: new FakeStorageArea(),
+      fetch,
+      tabsGet: async () => ({ id: 45, windowId: 9, index: 2, url: `https://chatgpt.com/c/${CHAT}` }) as never,
+      tabsSendMessage: async (_tabId, message) => message.type === 'clf-browser-repair-state'
+        ? { ok: true, protect: true, reason: 'voice_active', conversationId: CHAT }
+        : { ok: true },
+      tabsCreate: async properties => {
+        const opened = String(properties?.url || '');
+        setTimeout(() => {
+          void worker.registerTab(99, 'protected-successor-document', opened).then(() =>
+            worker.send({ type: 'redeem', id: 'cmd-protected-handoff', client: 'successor-client' }, 99, 'protected-successor-document', opened)
+          );
+        }, 0);
+        return { id: 99 };
+      }
+    });
+    await worker.registerTab(45);
+    await worker.send({ type: 'bind', conversationId: CHAT }, 45);
+
+    await worker.send(
+      { type: 'compact', conversationId: CHAT, token: '0123456789abcdef0123456789abcdef', summary: 'the brief' },
+      45
+    );
+
+    expect(worker.tabsCreate).toHaveBeenCalledTimes(1);
+    const created = worker.tabsCreate.mock.calls[0]![0] as Record<string, unknown>;
+    expect(created).toMatchObject({ windowId: 9, index: 3, active: false });
+    expect(worker.tabsUpdate).toHaveBeenCalledWith(99, { autoDiscardable: false });
+  });
+
   it('reloads one exact marked successor when a live Companion never redeems but reports no safety veto', async () => {
     vi.useFakeTimers();
     try {

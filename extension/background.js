@@ -4324,13 +4324,21 @@ async function placeSuccessorChat(raw, tabId) {
   const query = [marker];
   if (model) query.push(`model=${encodeURIComponent(model)}`);
   if (reasoningEffort) query.push(`reasoning_effort=${encodeURIComponent(reasoningEffort)}`);
-  const create = { url: `${base}?${query.join('&')}#${marker}`, windowId: home.windowId, active: raw.active !== false };
+  // Compaction may prepare chat B while the user is still speaking or typing in chat A.
+  // Preserve that source tab as the human-owned foreground surface and create B beside it in
+  // the background. The page probe already covers trusted typing/drafts/app-owned composer
+  // transactions; Chrome's audible bit is an extra fail-safe for live voice/audio if the
+  // isolated world cannot answer in time.
+  const sourceConversationId = cleanConversationId(raw.homeConversationId) || conversationForTab(home);
+  const sourceProtected = home.audible === true ||
+    (sourceConversationId ? await browserRepairProtected(home, sourceConversationId) : false);
+  const create = { url: `${base}?${query.join('&')}#${marker}`, windowId: home.windowId, active: raw.active !== false && !sourceProtected };
   // Directly after the chat it continues, so a handoff reads as one piece of work instead of a
   // tab appended to the far end of a long strip.
   if (typeof home.index === 'number') create.index = home.index + 1;
   try {
     const created = await chrome.tabs.create(create);
-    if (raw.active === false && Number.isInteger(created?.id)) {
+    if (create.active === false && Number.isInteger(created?.id)) {
       await chrome.tabs.update(created.id, { autoDiscardable: false });
       discardProtectedTabs[String(created.id)] = true;
       await persistLive();

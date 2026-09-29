@@ -11217,6 +11217,22 @@
     } catch { await fail('Connector refresh could not be verified'); return false; }
     finally { pluginRefreshBusy = false; }
   }
+  function activeVoiceSession() {
+    // ChatGPT's voice/dictation controls are deliberately detected by *active-state* names,
+    // never by the ordinary "Start Voice"/"Start dictation" affordances that sit idle beside
+    // every composer. Keep this conservative: a false positive merely leaves one tab alone,
+    // while a false negative can tear down the user's live microphone/voice session.
+    const activeNames = /^(?:end|leave|exit|close)\s+(?:the\s+)?(?:voice|voice mode|voice chat|conversation)|^(?:mute|unmute)\s+(?:the\s+)?(?:microphone|mic)|^(?:submit|cancel|stop)\s+dictation$/i;
+    for (const element of document.querySelectorAll('button, [role="button"]')) {
+      const name = String(element.getAttribute('aria-label') || element.getAttribute('title') || '').trim();
+      if (!name || !activeNames.test(name)) continue;
+      const style = typeof getComputedStyle === 'function' ? getComputedStyle(element) : null;
+      if (element.hidden || element.getAttribute('aria-hidden') === 'true' || style?.display === 'none' || style?.visibility === 'hidden') continue;
+      return true;
+    }
+    return false;
+  }
+
   function inputReuseSafe() {
     const rows = CLF_DOM.messages();
     const home = !CLF_DOM.conversationId() && location.pathname === '/';
@@ -11224,6 +11240,7 @@
     return alive && !generating && !CLF_DOM.generating() && pendingTools === 0 && !desktopInputBusy &&
       !modelCatalogBusy && !pluginRefreshBusy && !desktopDecision && !commandAttempt && !commandJournalGate &&
       queue.length === 0 && !flushWork && CLF_DOM.composerVisible() && !CLF_DOM.hasComposerAttachments() &&
+      !activeVoiceSession() &&
       !(CLF_DOM.composer()?.textContent || '').trim() &&
       (home ? !rows.length && !marker.has('cos-input') && !marker.has('temporary-chat') :
         !!CLF_DOM.conversationId() && rows.at(-1)?.role === 'assistant');
@@ -11239,6 +11256,9 @@
     // and may finish sending it normally, while the repair simply remains pending for a later pass.
     if (desktopInputBusy || modelCatalogBusy || pluginRefreshBusy || desktopDecision || commandAttempt || commandJournalGate) {
       return { protect: true, reason: 'app_busy', conversationId: currentConversationId };
+    }
+    if (activeVoiceSession()) {
+      return { protect: true, reason: 'voice_active', conversationId: currentConversationId };
     }
     const composer = CLF_DOM.composer();
     const draft = Boolean((composer?.textContent || '').trim() || CLF_DOM.hasComposerAttachments());
@@ -11508,7 +11528,7 @@
                 (terminal && expectedTerminal === fiberTerminalMessageId && fiberTurnFor(currentAssistantTurn())?.endMessageId === expectedTerminal)) && !desktopInputBusy && !modelCatalogBusy && !pluginRefreshBusy && !desktopDecision &&
               ((!commandAttempt && !commandJournalGate) || failedBootstrap) && (!message.failedCommand || failedBootstrap) &&
               queue.length === 0 && !flushWork && !!CLF_DOM.composer() &&
-              !(CLF_DOM.composer().textContent || '').trim() && !CLF_DOM.hasComposerAttachments() });
+              !(CLF_DOM.composer().textContent || '').trim() && !CLF_DOM.hasComposerAttachments() && !activeVoiceSession() });
         })().catch(() => sendResponse({ safe: false }));
         return true;
       }

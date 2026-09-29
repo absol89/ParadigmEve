@@ -769,6 +769,15 @@ Navigation, a newer question, an occupied draft or a first MCP call during prepa
 revoke delivery. A claimed browser correction never also enters a tool result. After-turn
 entries retain their verified-completion policy and never acquire interruption authority.
 
+Treat visible user composition as user-owned state. Never paste, replace, append, submit or
+otherwise mutate a composer/input that contains unsent user text unless that exact draft is the
+explicit target of the user's request. Before any browser text insertion, recheck that the user
+is not actively typing and that no new unsent text, selection, attachment or editor change has
+appeared since preparation; if any has, leave Eve's input queued instead of stealing the draft.
+Do not move focus, switch tabs/windows or activate another app while the user is actively typing.
+Resume only after a fresh observation proves the user is no longer composing and the intended
+target still owns the action. When typing activity or draft ownership is ambiguous, fail closed.
+
 Prepared text enters the native editor in one native `execCommand('insertHTML')` operation,
 with inline text nodes and BR line breaks, without an extra outer paragraph. Select the replacement/append range and
 recheck editor, focus and selection ownership before insertion. Synthetic clipboard events can
@@ -1723,7 +1732,26 @@ it is not a general browser automation fallback. Browser-owned private chrome is
 surface for Eve/Eva: do not deliberately open, reveal, inspect or operate History, passwords/password
 manager, Bookmarks/Favorites menus, or the bookmarks/favorites bar. Opening an ordinary browser
 application menu is allowed when task-relevant, but do not deliberately choose entries that reveal those
-private areas. In particular, never toggle/show a hidden bookmarks/favorites bar to reveal more user data.
+private areas.
+
+Native control must also preserve foreground user work. Before paste/type/focus/window-switch
+actions, inspect the current foreground/focused editable control when available and treat any
+active typing or unsent text as a hard conflict. Do not paste instructions or code over an
+occupied input, do not clear or replace a user's unsent draft, and do not switch applications,
+windows or tabs out from under an actively typing user. Defer the mutation and re-observe later;
+only proceed when the target and draft state are still the intended ones. Ambiguous ownership is
+not permission to take focus.
+
+Treat an active voice-call browser tab as protected foreground state. Do not close, navigate,
+reload, repurpose, replace, or reuse that tab for workers, setup flows, recovery, fresh-chat
+creation, or cleanup while the voice call is active. Workers and Computer Use must use another
+eligible tab/window instead. Voice conversation itself does not forbid Computer Use elsewhere:
+when the user is hands-off and talking, Eve may type, paste, click, and switch among other
+unprotected windows as authorized, provided the active voice-call tab remains intact and the
+ordinary typing/draft protections above still hold. If call ownership or activity is ambiguous,
+preserve the tab and choose another surface.
+
+In particular, never toggle/show a hidden bookmarks/favorites bar to reveal more user data.
 It may remain incidentally visible in an ordinary screenshot, but automation must ignore it unless the
 user explicitly asks to use a specific already-visible bookmark. Capture/privacy settings
 and platform permission failures remain explicit, with no Linux/helper fallback that bypasses the
