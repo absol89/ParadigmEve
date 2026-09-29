@@ -13,6 +13,17 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.1] — Compact & Resume finishes the move
+
+### Fixed
+
+- Compact & Resume now completes a replacement-chat handoff when ChatGPT accepts the native Send
+  but delays exposing the new user message to the Companion. The same authorized browser document
+  can use Chrome's concrete successor route as a narrowly fenced fallback, including the transition
+  where source chat A remains in the current URL while replacement chat B is already in `pendingUrl`.
+  The fallback refuses A, stops after trusted user interaction, and never invents a destination
+  message id; unresolved sends remain unresolved rather than being replayed or guessed.
+
 ## [2.3.0] — Windows-named installers, a Companion that updates itself when idle
 
 ### Changed

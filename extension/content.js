@@ -10437,7 +10437,8 @@
     const resolvedBootstrapConversation = async () => {
       const exact = bootstrapConversation();
       if (exact || boot.type !== 'resume') return exact;
-      if (!sendingBootstrap() || freshCommandUserInteracted) return null;
+      if (!sendingBootstrap() || freshCommandUserInteracted ||
+          typeof boot.sourceConversationId !== 'string' || !boot.sourceConversationId) return null;
       // ChatGPT can accept the fresh RESUME send and mint `/c/<id>` in Chrome before React/Fiber
       // mounts that authored bubble in the isolated-world DOM. The command is already redeemed,
       // the native Send already succeeded, and the service worker can prove which exact tab URL
