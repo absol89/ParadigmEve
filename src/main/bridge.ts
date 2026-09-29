@@ -7698,8 +7698,17 @@ function pendingSuspects(
   incident: UnattributedIncident | null,
   now = Date.now()
 ): Array<{ conversationId: string; sessionId: string; endedTurns: number }> {
+  // A chat whose compaction brief is already captured has finished its own work: its session is
+  // waiting to move to the replacement, and that replacement page stays silent (no request-id
+  // evidence) until its marked message commits the move. Unattributed calls in that window are
+  // the replacement's, so the source is never the suspect. Reloading it did nothing for the
+  // join and put the user back in the old chat on every compaction of 2026-09-29.
+  const handingOver = new Set(
+    pendingContinuations().filter((entry) => entry.state !== 'awaiting-summary').map((entry) => entry.from)
+  );
   return repairCandidates(now).filter(
     (entry) =>
+      !handingOver.has(entry.conversationId) &&
       !incident?.proven.has(entry.conversationId) &&
       !incident?.dismissed.has(entry.conversationId) &&
       !repairsInFlight.has(entry.conversationId)

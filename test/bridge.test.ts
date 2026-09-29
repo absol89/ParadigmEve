@@ -6476,6 +6476,29 @@ describe('unattributed activity recovery', () => {
     }
   });
 
+  it('never suspects a chat whose compaction brief is captured and waiting for its replacement', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      await events(PRIME, [openTurn('turn-handing-over')]);
+      const sessionId = (await events(PRIME, [
+        { kind: 'user_message', time: Date.now(), text: 'do the work', messageId: 'm-handing-over' }
+      ])).body.sessionId as string;
+      // The brief is stored: this chat's own work is over and its replacement page stays silent
+      // until its marked message commits. Unattributed calls now are that replacement's.
+      await readyContinuation(sessionId, 'carry on', PRIME);
+      await unattributed();
+      await vi.advanceTimersByTimeAsync(UNATTRIBUTED_RECONNECT_GRACE_MS + 60_000);
+
+      const status = await recoveryStatus();
+      expect(status.reconnects).toEqual([]);
+      expect(status.repairs).toEqual([]);
+      expect(reopened(PRIME)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels the last-resort reload when recorder reconnect restores exact attribution', async () => {
     vi.useFakeTimers();
     try {
