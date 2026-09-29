@@ -8,16 +8,16 @@
 Eve can work with folders you choose, keep Plans and saved context, use helper chats for longer jobs, and pick up again after restarts or very long conversations.</p>
 
 <p align="center">
-  <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download 2.2.9</strong></a>
+  <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download 2.3.1</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.2.9.md">First-user guide &amp; release notes</a>
+  <a href="docs/release-notes/v2.3.1.md">First-user guide &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
   <a href="docs/setup.md">Setup reference</a>
 </p>
 
-> **Beta software.** The current public release is **2.2.9**. The builds are still unsigned, so Windows or macOS may show a warning when you install them.
+> **Beta software.** The current public release is **2.3.1**. The builds are still unsigned, so Windows or macOS may show a warning when you install them.
 
 ## Meet Eve
 
@@ -42,14 +42,14 @@ You do **not** have to enable all of that to use Eve.
 
 ## The easiest way to start
 
-1. Download **[ParadigmEve 2.2.9](https://github.com/absol89/ParadigmEve/releases)** for your computer.
+1. Download **[ParadigmEve 2.3.1](https://github.com/absol89/ParadigmEve/releases)** for your computer.
 2. Open **Settings → Workspace → Folders → Add** and give Eve one folder you are comfortable using.
 3. Open **Settings → Setup** and follow the guided connection steps.
 4. Add the included Companion extension when Setup asks you to.
 5. Add Eve in ChatGPT, then open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
-For the friendly walkthrough — including exactly which settings start limited, which ones I recommend turning on, and where they live — read **[Meet Eve: the 2.2.9 first-user guide](docs/release-notes/v2.2.9.md)**.
+For the friendly walkthrough — including exactly which settings start limited, which ones I recommend turning on, and where they live — read **[Meet Eve: the 2.3.1 first-user guide and release notes](docs/release-notes/v2.3.1.md)**.
 
 ## Safe first, then convenient
 
@@ -80,7 +80,7 @@ Once the basic connection works, the setup I like is:
 
 My own setup uses four worker slots. Two is the fresh-install default and is friendlier to accounts that hit ChatGPT rate limits quickly.
 
-The exact switches, paths, and the more permissive options are explained in the **[2.2.9 first-user guide](docs/release-notes/v2.2.9.md)** so this README can stay readable.
+The exact switches, paths, and the more permissive options are explained in the **[2.3.1 first-user guide](docs/release-notes/v2.3.1.md)** so this README can stay readable.
 
 ## Plans stay with the work
 
@@ -143,17 +143,17 @@ You can also keep Eve routines and your own availability together in the Schedul
 
 This is useful for recurring work where “when should Eve do this?” matters as much as the task itself.
 
-## What changed in 2.2.9
+## What changed in 2.3.1
 
-2.2.9 is mostly a reliability release for real, longer-running work:
+2.3.1 is mostly about keeping long-running work attached to the right ChatGPT conversation while the website changes underneath it:
 
-- Eve has better habits for changing code carefully and checking that a fix actually worked.
-- Eve notices long or parallel jobs sooner and reaches for workers instead of doing everything serially.
-- Windows update handling is less brittle about installer naming.
-- The public macOS download list is simpler.
-- The current manual and release guidance have been refreshed to match the app people are actually running.
+- **Compact & Resume now finishes the move when ChatGPT accepts the handoff but delays exposing the new user message to the Companion.** ParadigmEve can use Chrome's own new-chat route as a tightly fenced fallback instead of sitting forever at **Opening a fresh chat**.
+- Attachments work again with ChatGPT's current composer, and new turns no longer get mistaken for the previous answer when ChatGPT remounts old page sections.
+- Chats started by ParadigmEve get better titles, writing blocks render cleanly, and setup guidance matches ChatGPT's current **Plugins → Add → Create MCP App** flow.
+- Goal, Loop, Plans, workers, project mapping, restart recovery, and queued-message cleanup all received fixes from the 2.3.1 dogfood cycle.
+- Windows installers keep the `ParadigmEve-Windows-…` names introduced in 2.3.0, and the built-in updater continues to understand them.
 
-Read the full **[2.2.9 release guide](docs/release-notes/v2.2.9.md)** or browse the **[CHANGELOG](CHANGELOG.md)** for the running history.
+Read the full **[2.3.1 first-user guide and release notes](docs/release-notes/v2.3.1.md)** or browse the **[CHANGELOG](CHANGELOG.md)** for the running history.
 
 ## Requirements
 
@@ -196,6 +196,6 @@ Thanks to everyone testing the awkward edge cases, reporting what breaks, and he
 
 ---
 
-**[Download 2.2.9](https://github.com/absol89/ParadigmEve/releases)** · **[First-user guide](docs/release-notes/v2.2.9.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
+**[Download 2.3.1](https://github.com/absol89/ParadigmEve/releases)** · **[First-user guide & release notes](docs/release-notes/v2.3.1.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
 
 <p align="center"><sub>ParadigmEve is not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>
