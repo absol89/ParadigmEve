@@ -7,7 +7,6 @@ export interface Point { x: number; y: number }
 export interface PetPreference extends Point { visible: boolean }
 export const PET_SIZE = 160;
 export const DRAG_DISTANCE = 6;
-export const SPECIAL_COOLDOWN = 45_000;
 export function clampPosition(p: Point, width: number, height: number): Point {
   return { x: Math.round(Math.max(0, Math.min(Number.isFinite(p.x) ? p.x : 0, Math.max(0,width-PET_SIZE)))),
     y: Math.round(Math.max(0, Math.min(Number.isFinite(p.y) ? p.y : 0, Math.max(0,height-PET_SIZE)))) };
@@ -52,10 +51,7 @@ export class PetMachine {
   pointer: Pointer | null = null;
   reducedMotion = false;
   clock = 0;
-  nextSpecial = SPECIAL_COOLDOWN;
   nextDecision = 2500;
-  nextKind: PetAction = 'bat';
-  private clicks: number[] = [];
   private phases: Phase[] = [];
   private walkOrigin: Point;
   private walkDistance = 0;
@@ -77,13 +73,13 @@ export class PetMachine {
     if(this.scene)return Math.max(0,Math.min(frame,this.phases[this.scene.phase]!.duration-this.elapsed));
     if(this.state==='held')return frame;
     if(this.state!=='idle')return Math.max(0,Math.min(frame,animationDuration(this.state,this.manifest)-this.elapsed));
-    return this.reducedMotion?Infinity:Math.max(0,Math.min(frame,this.nextDecision-this.clock,this.nextSpecial-this.clock));
+    return this.reducedMotion?Infinity:Math.max(0,Math.min(frame,this.nextDecision-this.clock));
   }
   private enter(state: PetAnimation): void { this.state=state; this.elapsed=0; }
   private cancel(): void { this.scene=null; this.phases=[]; this.walkDistance=0; }
   private rest(): void { this.enter('idle'); this.nextDecision=this.clock+2500+this.random()*3500; }
-  show(): void { if(this.visible)return; this.cancel(); this.clicks=[]; this.enter('spawn'); this.nextSpecial=this.clock+SPECIAL_COOLDOWN; }
-  hide(): void { this.cancel(); this.pointer=null; this.clicks=[]; this.state='hidden';this.elapsed=0; }
+  show(): void { if(this.visible)return; this.cancel(); this.enter('spawn'); }
+  hide(): void { this.cancel(); this.pointer=null; this.state='hidden';this.elapsed=0; }
   reset(): void { this.cancel();this.pointer=null;this.position=clampPosition({x:this.width-200,y:this.height-230},this.width,this.height);if(this.visible)this.rest(); }
   resize(width:number,height:number): void { this.width=width;this.height=height;this.position=clampPosition(this.position,width,height);this.cancel();this.pointer=null;if(this.visible)this.rest(); }
   setReducedMotion(value:boolean): void { this.reducedMotion=value;this.cancel();this.pointer=null;if(this.visible)this.rest(); }
@@ -92,42 +88,25 @@ export class PetMachine {
     const pointer=this.pointer;if(pointer?.id!==id)return;
     const dx=p.x-pointer.start.x,dy=p.y-pointer.start.y;
     if(!pointer.dragging && Math.hypot(dx,dy)<DRAG_DISTANCE)return;
-    if(!pointer.dragging){pointer.dragging=true;this.cancel();this.clicks=[];this.enter('held');}
+    if(!pointer.dragging){pointer.dragging=true;this.cancel();this.enter('held');}
     this.position=clampPosition({x:pointer.origin.x+dx,y:pointer.origin.y+dy},this.width,this.height);
   }
   endPointer(id:number,cancelled=false): void {
     const pointer=this.pointer;if(pointer?.id!==id)return;this.pointer=null;
-    if(pointer.dragging){this.enter('landing');this.nextSpecial=this.clock+SPECIAL_COOLDOWN;}
+    if(pointer.dragging){this.enter('landing');}
     else if(!cancelled)this.poke();
   }
   poke(): void {
     if(!this.visible || this.pointer)return;
-    this.cancel();this.clicks=this.clicks.filter(t=>this.clock-t<1600);this.clicks.push(this.clock);
-    this.enter(this.clicks.length>=4?'angry':'poke');if(this.clicks.length>=4)this.clicks=[];
-    this.nextSpecial=this.clock+SPECIAL_COOLDOWN;
+    this.cancel();this.enter('look');
   }
   react(animation: 'spawn' | 'look' | 'angry' | 'celebrate'): void {
     if(!this.visible || this.pointer || this.scene || !['idle','look'].includes(this.state))return;
-    this.cancel();this.clicks=[];this.enter(animation);this.nextSpecial=this.clock+SPECIAL_COOLDOWN;
+    this.cancel();this.enter(animation);
   }
   startAction(kind:PetAction): boolean {
-    if(!this.visible || this.pointer || this.reducedMotion || this.width<420 || this.height<200)return false;
-    this.cancel();this.clicks=[];
-    // All scene geometry is chosen once in viewport coordinates, never retargeted mid-flight.
-    const center=this.position.x+80,right=center<this.width/2;this.facing=right?1:-1;
-    const start=this.position.x;
-    // Adapt the stage to the room on this side. Never teleport the character.
-    const space=right?this.width-center-36:center-36;
-    const stageScale=Math.min(1,space/225);
-    this.scene={kind,phase:0,from:{...this.position},facing:this.facing,
-      target:{x:start+80+this.facing*(kind==='bat'?145:100)*stageScale,y:this.position.y+(kind==='bat'?100:90)},bin:{x:start+80+this.facing*225*stageScale,y:this.position.y+137}};
-    this.phases=kind==='bat'
-      ? [{animation:'walk',duration:1520,distance:55*stageScale},{animation:'angry',duration:animationDuration('angry',this.manifest)},{animation:'punch',duration:animationDuration('punch',this.manifest)},
-        {animation:'heavy',duration:animationDuration('heavy',this.manifest)},{animation:'celebrate',duration:animationDuration('celebrate',this.manifest)+550}]
-      : [{animation:'walk',duration:1520,distance:55*stageScale},{animation:'grab',duration:animationDuration('grab',this.manifest)},
-        {animation:'carry',duration:1760,distance:75*stageScale},{animation:'throw',duration:animationDuration('throw',this.manifest)+550},
-        {animation:'celebrate',duration:animationDuration('celebrate',this.manifest)}];
-    this.enter('walk');this.nextSpecial=this.clock+SPECIAL_COOLDOWN;this.nextKind=kind==='bat'?'toss':'bat';return true;
+    void kind;
+    return false;
   }
   tick(milliseconds:number): void {
     if(!this.visible)return;
@@ -152,10 +131,6 @@ export class PetMachine {
     }
     if(this.state!=='idle') { if(this.elapsed>=animationDuration(this.state as PetAnimation,this.manifest))this.rest();return; }
     if(this.reducedMotion || this.pointer)return;
-    if(this.clock>=this.nextSpecial){
-      this.nextSpecial=this.clock+SPECIAL_COOLDOWN+this.random()*20_000;
-      if(this.startAction(this.nextKind))return;
-    }
     if(this.clock>=this.nextDecision){
       this.mood=(this.mood+1)%3;
       if(this.mood===1)this.enter('look');

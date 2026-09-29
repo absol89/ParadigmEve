@@ -63,7 +63,7 @@ async function flushOverlay(): Promise<void> {
   await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
 }
 
-it('uses one spritesheet body per pet while preserving specials, multi-pet tasks, drag, and click-through', async () => {
+it('uses one spritesheet body per pet while preserving simple movement, multi-pet tasks, drag, and click-through', async () => {
   const library: PetLibraryState = { pets: [
     { id: 'hammy', displayName: 'Hammy', description: '', bundled: true, enabled: true, favorite: false },
     { id: 'willow', displayName: 'Willow', description: '', enabled: true, favorite: true }
@@ -131,12 +131,11 @@ it('uses one spritesheet body per pet while preserving specials, multi-pet tasks
   expect(tur.style.transform).toMatch(/^translate3d\(/);
   tur.dispatchEvent(new dom.window.MouseEvent('contextmenu', { clientX: 220, clientY: 180, bubbles: true }));
   const menuButtons = [...dom.window.document.querySelectorAll<HTMLButtonElement>('.pet-menu button')];
-  expect(menuButtons.map(button => button.textContent)).toContain('Swing at a bug');
+  expect(menuButtons.map(button => button.textContent)).not.toContain('Swing at a bug');
+  expect(menuButtons.map(button => button.textContent)).not.toContain('Toss a TODO');
   expect(menuButtons.map(button => button.textContent)).toContain('Hide pet');
-  menuButtons.find(button => button.textContent === 'Swing at a bug')!.click();
-  expect(tur.dataset.action).toBe('bat');
-  expect(tur.dataset.state).toBe('walk');
-  expect(dom.window.document.querySelector('.pet-target')?.textContent).toBe('Bug');
+  expect(tur.dataset.action).toBe('');
+  expect(dom.window.document.querySelector('.pet-target')).toBeNull();
 
   const [, petX, petY] = tur.style.transform.match(/^translate3d\(([-\d.]+)px, ([-\d.]+)px/) ?? [];
   expect(petX).toBeDefined(); expect(petY).toBeDefined();
@@ -165,7 +164,7 @@ it('uses one spritesheet body per pet while preserving specials, multi-pet tasks
 
   pointer(tur, 'pointerdown', 120, 120, 8);
   pointer(tur, 'pointerup', 120, 120, 8);
-  expect(tur.dataset.state).toBe('poke');
+  expect(tur.dataset.state).toBe('look');
   expect(focusOwner).toHaveBeenCalledOnce();
 
   for (const type of ['pointercancel', 'lostpointercapture']) {
@@ -191,7 +190,7 @@ it('uses one spritesheet body per pet while preserving specials, multi-pet tasks
   expect(dom.window.document.querySelector<HTMLButtonElement>('.pet-shell[data-pet-id="willow"] .pet-badge')?.hidden).toBe(false);
 });
 
-it('sleeps between authored deadlines and uses display frames only for continuous motion', async () => {
+it('sleeps between authored animation deadlines instead of spinning continuously', async () => {
   const library: PetLibraryState = { pets: [
     { id: 'hammy', displayName: 'Hammy', description: '', bundled: true, enabled: true, favorite: true }
   ] };
@@ -230,14 +229,9 @@ it('sleeps between authored deadlines and uses display frames only for continuou
 
   const shell = dom.window.document.querySelector<HTMLElement>('.pet-shell')!;
   shell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { clientX: 220, clientY: 180, bubbles: true }));
-  (dom.window.document.querySelector('.pet-menu button') as HTMLButtonElement).click();
-  expect(timerCallbacks.size).toBe(0);
-  expect(rafCallbacks.size).toBe(1);
-
-  const [movingId, movingFrame] = [...rafCallbacks.entries()][0]!;
-  rafCallbacks.delete(movingId);
-  movingFrame(performance.now() + pending.delay + 16);
-  expect(rafCallbacks.size).toBe(1);
+  const menuButtons = [...dom.window.document.querySelectorAll<HTMLButtonElement>('.pet-menu button')];
+  expect(menuButtons.map(button => button.textContent)).toEqual(expect.arrayContaining(['Reset position', 'Hide pet', 'Open pet library']));
+  expect(menuButtons.map(button => button.textContent)).not.toEqual(expect.arrayContaining(['Swing at a bug', 'Toss a TODO']));
   dom.window.dispatchEvent(new dom.window.Event('pagehide'));
   expect(rafCallbacks.size).toBe(0);
   expect(timerCallbacks.size).toBe(0);

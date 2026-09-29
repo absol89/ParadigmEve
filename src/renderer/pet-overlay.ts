@@ -368,8 +368,6 @@ function menuSeparator(): HTMLDivElement {
 function openMenu(view: PetView, x: number, y: number): void {
   menuTargetId = view.record.id;
   menu.replaceChildren(
-    menuButton('Swing at a bug', target => { target.machine.startAction('bat'); }),
-    menuButton('Toss a TODO', target => { target.machine.startAction('toss'); }),
     menuButton('Reset position', target => { target.machine.reset(); persistPosition(target); paintView(target); }),
     menuSeparator(),
     menuButton('Hide pet', target => { api.hidePet(target.record.id); }),
@@ -566,14 +564,7 @@ function applySnapshot(next: PetOverlaySnapshot): void {
   snapshot = next;
   document.documentElement.dataset.theme = next.theme;
   syncLibrary();
-  if (previous !== undefined && previous !== next.level) {
-    for (const view of views.values()) {
-      if (next.level === 'running') view.machine.react('spawn');
-      else if (next.level === 'waiting') view.machine.react('look');
-      else if (next.level === 'failed') view.machine.react('angry');
-      else if (next.level === 'review') view.machine.react('celebrate');
-    }
-  }
+  void previous;
   renderCards();
   renderBadges();
   scheduleWake();
