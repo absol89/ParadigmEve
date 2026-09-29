@@ -82,7 +82,14 @@ export const planRecordSchema = z.object({
    * Set, together with archivedAt, when the user cancels a Plan that is no longer relevant. Its
    * checklist is kept exactly as it was, so an archived Plan is complete unless it was cancelled.
    */
-  cancelledAt: timestampSchema.optional()
+  cancelledAt: timestampSchema.optional(),
+  /**
+   * The catalog revision written for the source chat's last accepted `update_plan`, kept while
+   * the title and step text/order are unchanged. A worker's finish report at or after it proves
+   * delivery for this checklist, even after the user archives the Plan and the chat's own
+   * plan.json is cleared. A human title or step edit removes it and needs a newer report.
+   */
+  agentRevision: timestampSchema.optional()
 }).strict().refine(plan => plan.updatedAt >= plan.createdAt, 'Plan update time is invalid')
   .refine(plan => plan.archivedAt === null || plan.archivedAt >= plan.createdAt, 'Plan archive time is invalid')
   .refine(plan => plan.cancelledAt === undefined || plan.cancelledAt === plan.archivedAt, 'Plan cancel time is invalid')
