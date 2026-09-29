@@ -12,7 +12,7 @@ import type { PetActivity, PetLibraryState, PetOverlayBounds, PetOverlayControlS
 import { highestPetActivityLevel, petActivityForAgent, petActivityForSession, petTaskSessionId } from '../shared/pet-activity.js';
 import { getConfig } from './config.js';
 import { logWarn } from './logger.js';
-import { onPetLibraryChange, petLibraryState } from './pet-library.js';
+import { loadPetAsset, onPetLibraryChange, petLibraryState } from './pet-library.js';
 import { activeSessionId, onSessionChange, sessionIdForConversation } from './session/recorder.js';
 import { getSession } from './session/store.js';
 import { blockedChatIds } from './session/blocked-chats.js';
@@ -280,6 +280,24 @@ function registerOverlayIpc(): void {
     if (!validSender(event.sender.id) || !value || typeof value !== 'object') return;
     const request = value as Record<string, unknown>;
     setInteractive(request.interactive === true, request.regions);
+  });
+  // The overlay's two reads. The app's own `pets:*` handlers accept only the main ParadigmEve
+  // window, so the overlay has its own channels checked against the overlay's exact webContents.
+  // Routing it through `pets:list`/`pets:asset` refused every read, and no pet ever drew.
+  ipcMain.handle('pet-overlay:list', event => {
+    if (!validSender(event.sender.id)) return { ok: false, error: 'Not the pet overlay.' };
+    return { ok: true, data: petLibraryState() };
+  });
+  ipcMain.handle('pet-overlay:asset', (event, value: unknown) => {
+    if (!validSender(event.sender.id)) return { ok: false, error: 'Not the pet overlay.' };
+    const id = value && typeof value === 'object' ? (value as Record<string, unknown>).id : null;
+    if (typeof id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || id.length > 100) return { ok: false, error: 'Invalid pet id.' };
+    if (!library.pets.some(pet => pet.id === id && pet.enabled)) return { ok: false, error: 'That pet is not enabled.' };
+    try {
+      return { ok: true, data: loadPetAsset(id, false) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
   ipcMain.on('pet-overlay:focusOwner', event => { if (validSender(event.sender.id)) focusOwner(); });
   ipcMain.on('pet-overlay:openLibrary', event => { if (validSender(event.sender.id)) showOwner('pets'); });

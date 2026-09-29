@@ -6,8 +6,8 @@ const call = <T>(channel: string, payload?: unknown): Promise<Reply<T>> => ipcRe
 
 /** The pet overlay's whole authority: read the library, report hit regions, and ask the main window to open. */
 const api = {
-  listPets: () => call<PetLibraryState>('pets:list'),
-  petAsset: (id: string) => call<PetRuntimeAsset>('pets:asset', { id, preview: false }),
+  listPets: () => call<PetLibraryState>('pet-overlay:list'),
+  petAsset: (id: string) => call<PetRuntimeAsset>('pet-overlay:asset', { id }),
   hidePet: (id: string): void => ipcRenderer.send('pet-overlay:hidePet', id),
   setInteractive: (interactive: boolean, regions: PetOverlayHitRegion[] = []): void =>
     ipcRenderer.send('pet-overlay:interactive', { interactive: interactive === true, regions }),

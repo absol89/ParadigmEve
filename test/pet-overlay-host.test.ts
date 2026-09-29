@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   publish: null as ((state: PetLibraryState) => void) | null,
   windows: [] as any[],
   ipc: new Map<string, (...args: any[]) => void>(),
+  handles: new Map<string, (...args: any[]) => any>(),
+  asset: vi.fn((id: string) => ({ id, atlasDataUrl: 'data:image/png;base64,QQ==', manifest: {} })),
   cursor: vi.fn(() => ({ x: 20, y: 20 }))
 }));
 vi.mock('electron', async () => {
@@ -33,7 +35,10 @@ vi.mock('electron', async () => {
   }
   return {
     BrowserWindow: Window,
-    ipcMain: { on: (name: string, listener: (...args: any[]) => void) => mocks.ipc.set(name, listener) },
+    ipcMain: {
+      on: (name: string, listener: (...args: any[]) => void) => mocks.ipc.set(name, listener),
+      handle: (name: string, listener: (...args: any[]) => any) => mocks.handles.set(name, listener)
+    },
     screen: Object.assign(new EventEmitter(), {
       getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 }, scaleFactor: 1 }),
       getCursorScreenPoint: mocks.cursor
@@ -42,6 +47,7 @@ vi.mock('electron', async () => {
 });
 vi.mock('../src/main/pet-library.js', () => ({
   petLibraryState: () => { mocks.read(); return mocks.library; },
+  loadPetAsset: (id: string) => mocks.asset(id),
   onPetLibraryChange: (listener: (state: PetLibraryState) => void) => {
     mocks.publish = listener; return () => { mocks.publish = null; };
   }
@@ -123,4 +129,23 @@ it('starts empty without an overlay and accepts the first published enabled pet'
   expect(mocks.windows[0].isVisible()).toBe(true);
   await shutdownPetOverlay();
   expect(petOverlayControlState().activeCount).toBe(0);
+});
+
+it('serves the library and enabled pet images to the overlay itself and to nothing else', async () => {
+  // Regression: the overlay used the main window's `pets:*` handlers, which refuse every sender
+  // but the main ParadigmEve window, so the installed build drew no pet at all.
+  mocks.library = state('cat', 'dog');
+  await startPetOverlay(() => null, () => undefined);
+  const win = mocks.windows[0];
+  const list = mocks.handles.get('pet-overlay:list')!;
+  const asset = mocks.handles.get('pet-overlay:asset')!;
+  expect(await list({ sender: win.webContents })).toEqual({ ok: true, data: state('cat', 'dog') });
+  expect(await asset({ sender: win.webContents }, { id: 'cat' })).toMatchObject({ ok: true, data: { id: 'cat' } });
+  expect(mocks.asset).toHaveBeenCalledWith('cat');
+
+  const stranger = { sender: { id: 7 } };
+  expect(await list(stranger)).toMatchObject({ ok: false });
+  expect(await asset(stranger, { id: 'cat' })).toMatchObject({ ok: false });
+  expect(await asset({ sender: win.webContents }, { id: 'hammy' })).toMatchObject({ ok: false });
+  expect(await asset({ sender: win.webContents }, { id: '../cat' })).toMatchObject({ ok: false });
 });
