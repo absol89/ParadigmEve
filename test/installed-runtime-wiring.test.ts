@@ -54,7 +54,8 @@ describe('installed schedules + requests production wiring', () => {
     const refresh = index.indexOf('setCompanionBuild(companionBuild(extensionDir()));');
     expect(refresh).toBeGreaterThan(0);
     for (const launch of ['void startBridge();', 'startupBrowserRecovery = runCompanionBrowserRecovery();',
-      'startupBrowserRecovery = restoreParadigmEveChromeSessionForRecovery(', 'startupBrowserRecovery = restoreForegroundCompanionBrowser()']) {
+      '? wakeBrowserUrl(plan.url', ': restoreParadigmEveChromeSessionForRecovery()',
+      'startupBrowserRecovery = restoreForegroundCompanionBrowser().catch(']) {
       expect(index.indexOf(launch)).toBeGreaterThan(refresh);
     }
   });
