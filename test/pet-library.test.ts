@@ -68,6 +68,33 @@ afterEach(() => {
 });
 
 describe('simple compatible pet library', () => {
+  it('starts fresh installs with Luna active and Miso/Pip favorited when those bundled pets exist', async () => {
+    const bundled = path.join(temporary, 'bundled');
+    packagePet('luna', {}, undefined, undefined, bundled);
+    packagePet('cat', { displayName: 'Miso' }, undefined, undefined, bundled);
+    packagePet('dog', { displayName: 'Pip' }, undefined, undefined, bundled);
+    durable.value = null;
+    await initPetLibrary(temporary, bundled);
+
+    const pets = petLibraryState().pets;
+    expect(pets.find(pet => pet.id === 'luna')).toMatchObject({ enabled: true, favorite: false });
+    expect(pets.find(pet => pet.id === 'cat')).toMatchObject({ enabled: false, favorite: true });
+    expect(pets.find(pet => pet.id === 'dog')).toMatchObject({ enabled: false, favorite: true });
+    expect(pets.find(pet => pet.id === BUNDLED_ID)).toMatchObject({ enabled: false, favorite: false });
+  });
+
+  it('preserves saved choices and migrates the old Eve bundled preference to Luna', async () => {
+    const bundled = path.join(temporary, 'bundled');
+    packagePet('luna', {}, undefined, undefined, bundled);
+    packagePet('cat', { displayName: 'Miso' }, undefined, undefined, bundled);
+    durable.value = { version: 1, enabled: ['eve'], favorites: ['cat'] };
+    await initPetLibrary(temporary, bundled);
+
+    const pets = petLibraryState().pets;
+    expect(pets.find(pet => pet.id === 'luna')).toMatchObject({ enabled: true, favorite: false });
+    expect(pets.find(pet => pet.id === 'cat')).toMatchObject({ enabled: false, favorite: true });
+  });
+
   it('imports only a validated pet package into the managed library', () => {
     importPet(packagePet('willow'));
     const state = petLibraryState();

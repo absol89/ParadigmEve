@@ -28,6 +28,8 @@ const STATE_VERSION = 1;
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_ATLAS_BYTES = 12 * 1024 * 1024;
 const MAX_PACKAGES = 100;
+const DEFAULT_ENABLED_BUNDLED_PETS = ['luna'];
+const DEFAULT_FAVORITE_BUNDLED_PETS = ['cat', 'dog'];
 
 interface StoredPetLibraryState {
   version: 1;
@@ -53,6 +55,21 @@ function validPreferenceIds(values: unknown): string[] {
   return [...new Set(values.filter((value): value is string => typeof value === 'string' && PET_ID_PATTERN.test(value)))];
 }
 
+function defaultBundledPreferences(ids: readonly string[]): string[] {
+  const bundled = new Set(bundledIds());
+  return ids.filter(id => bundled.has(id));
+}
+
+function restoredPreferenceIds(values: unknown): string[] {
+  const ids = validPreferenceIds(values);
+  // `eve` was the temporary bundled id before the companion was named Luna. Preserve an
+  // existing user's choice across that package rename without reviving the obsolete id.
+  if (ids.includes('eve') && isBundled('luna') && !isBundled('eve')) {
+    return [...new Set(ids.map(id => id === 'eve' ? 'luna' : id))];
+  }
+  return ids;
+}
+
 function persist(): void {
   writeDurableSoon(STATE_KEY, stored);
 }
@@ -76,8 +93,14 @@ export async function initPetLibrary(userData: string, bundled: string | null = 
   if (restored?.version === STATE_VERSION) {
     stored = {
       version: STATE_VERSION,
-      enabled: validPreferenceIds(restored.enabled),
-      favorites: validPreferenceIds(restored.favorites)
+      enabled: restoredPreferenceIds(restored.enabled),
+      favorites: restoredPreferenceIds(restored.favorites)
+    };
+  } else {
+    stored = {
+      version: STATE_VERSION,
+      enabled: defaultBundledPreferences(DEFAULT_ENABLED_BUNDLED_PETS),
+      favorites: defaultBundledPreferences(DEFAULT_FAVORITE_BUNDLED_PETS)
     };
   }
 }

@@ -31,10 +31,10 @@ afterEach(() => fs.rmSync(temporary, { recursive: true, force: true }));
 
 const shipped = fs.readdirSync(bundled, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
 
-it.each(shipped)('ships %s as a valid bundled pet that is off until enabled', id => {
+it.each(shipped)('ships %s as a valid bundled pet with the intended fresh-install state', id => {
   const displayName = JSON.parse(fs.readFileSync(path.join(bundled, id, 'pet.json'), 'utf8')).displayName;
   const pet = petLibraryState().pets.find(entry => entry.id === id);
-  expect(pet).toMatchObject({ id, displayName, bundled: true, enabled: false });
+  expect(pet).toMatchObject({ id, displayName, bundled: true, enabled: id === 'luna' });
   expect(setPetEnabled(id, true).pets.find(entry => entry.id === id)?.enabled).toBe(true);
   const asset = loadPetAsset(id, false);
   expect(asset.atlasDataUrl.startsWith('data:image/png;base64,')).toBe(true);
