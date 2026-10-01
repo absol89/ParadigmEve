@@ -161,10 +161,10 @@ it('creates the six empty default Threads, including the #Eve how/appdata/claude
   expect(claude).toMatchObject({
     state: 'pinned',
     collectionIds: [eve.id],
-    description: expect.stringContaining('between Eve and Claude'),
-    prompt: expect.stringContaining('Claude must not merge, tag, push, or start CI')
+    description: expect.stringContaining('Talk to Claude'),
+    prompt: expect.stringContaining('Reach Claude through the first route')
   });
-  expect(claude.prompt).toContain('Latest promotion remains a separate user-controlled gate');
+  expect(claude.prompt).toContain('explicit go-ahead in their own words');
 
   resetDurableForTests();
   initDurableStore(directory);
@@ -1218,4 +1218,16 @@ it('does not let the legacy preview migration admit any other invalid Pin field'
   });
 
   await expect(pinsLibrary()).rejects.toThrow('Pins library is invalid');
+});
+
+it('ships a generic %claude starter that reaches Claude by CLI, shared file or the Claude app', () => {
+  const claude = DEFAULT_THREAD_DEFINITIONS.find(thread => thread.starterId === 'claude')!;
+  expect(claude.prompt).toContain('claude -p');
+  expect(claude.prompt).toContain('A shared file');
+  expect(claude.prompt).toContain('claude.ai');
+  // A starter ships to every installation: nothing tied to one installation or one release batch.
+  expect(claude.prompt).not.toMatch(/\b2\.\d+\.\d+\b|Eva\b|batch|clear-to-merge/);
+  // The first shipped prompt is kept only as a fingerprint, so untouched copies still upgrade.
+  expect(claude.supersededPromptSha256).toHaveLength(1);
+  expect(claude.supersededPrompts).toBeUndefined();
 });

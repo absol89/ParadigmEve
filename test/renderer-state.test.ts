@@ -1139,7 +1139,9 @@ it('lets Setup name this installation Eva with Unicode text and carries it into 
 
   name.value = 'Eva Älv';
   name.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
-  await vi.waitFor(() => expect(mounted.calls.at(-1)?.mcp?.connectorName).toBe('Eva Älv'));
+  // The save is queued behind the earlier settings writes and the panel's repaint. A slow CI
+  // runner (macOS publish) needed more than waitFor's default second to reach the fake IPC.
+  await vi.waitFor(() => expect(mounted.calls.at(-1)?.mcp?.connectorName).toBe('Eva Älv'), { timeout: 10_000 });
 });
 
 it('attaches pasted screenshot files with previews while preserving ordinary text paste', async () => {
@@ -1196,7 +1198,7 @@ it('uses the OpenRouter default when opened directly on an unrelated custom depl
   const provider = mounted.window.document.getElementById('goalProvider') as HTMLSelectElement;
   provider.value = 'openrouter';
   provider.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1), { timeout: 10_000 });
   expect(mounted.calls[0].goal).toMatchObject({
     provider: { kind: 'openrouter' },
     models: { openrouter: [DEFAULT_GOAL_MODEL], custom: ['llama3.1'] }
@@ -1209,13 +1211,13 @@ it('saves a custom deployment id and returns to the known OpenRouter model', asy
   const provider = w.document.getElementById('goalProvider') as HTMLSelectElement;
   provider.value = 'custom';
   provider.dispatchEvent(new w.Event('change', { bubbles: true }));
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1), { timeout: 10_000 });
   expect(mounted.calls[0].goal.provider.kind).toBe('custom');
   expect(w.document.getElementById('goalCustomPanel')?.hidden).toBe(false);
   const model = w.document.getElementById('goalCustomModel') as HTMLInputElement;
   model.value = 'llama3.1';
   model.dispatchEvent(new w.Event('change', { bubbles: true }));
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(2));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(2), { timeout: 10_000 });
   expect(mounted.calls[1].goal.models.custom[0]).toBe('llama3.1');
   provider.value = 'openrouter';
   provider.dispatchEvent(new w.Event('change', { bubbles: true }));
@@ -1248,7 +1250,7 @@ it('restores each provider model list immediately without overwriting the other 
   expect(w.document.getElementById('goalCustomPanel')!.hidden).toBe(false);
   expect(customModel.value).toBe('local-primary');
   expect(w.document.querySelector<HTMLInputElement>('[data-goal-fallback-input="1"]')?.value).toBe('local-fallback');
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1), { timeout: 10_000 });
   expect(mounted.calls[0].goal).toMatchObject({
     provider: { kind: 'custom' },
     models: {
@@ -1261,7 +1263,7 @@ it('restores each provider model list immediately without overwriting the other 
   provider.dispatchEvent(new w.Event('change', { bubbles: true }));
   expect(w.document.getElementById('goalModelName')!.textContent).toBe('openrouter/primary');
   expect(fallbacks.textContent).toContain('openrouter/fallback');
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(2));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(2), { timeout: 10_000 });
   expect(mounted.calls[1].goal.models).toEqual({
     openrouter: ['openrouter/primary', 'openrouter/fallback'],
     custom: ['local-primary', 'local-fallback']
@@ -1287,7 +1289,7 @@ it('adds OpenRouter fallbacks from the catalogue and can reorder and remove them
     expect(w.document.querySelector('[data-model="openrouter/new-fallback"]')).not.toBeNull()
   );
   (w.document.querySelector('[data-model="openrouter/new-fallback"]') as HTMLButtonElement).click();
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1), { timeout: 10_000 });
   expect(mounted.calls[0].goal.models.openrouter).toEqual([
     'openrouter/primary',
     'openrouter/old-fallback',
@@ -1295,7 +1297,7 @@ it('adds OpenRouter fallbacks from the catalogue and can reorder and remove them
   ]);
 
   (w.document.querySelector('[data-fallback-action="up"][data-fallback-index="2"]') as HTMLButtonElement).click();
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(2));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(2), { timeout: 10_000 });
   expect(mounted.calls[1].goal.models.openrouter).toEqual([
     'openrouter/primary',
     'openrouter/new-fallback',
@@ -1303,7 +1305,7 @@ it('adds OpenRouter fallbacks from the catalogue and can reorder and remove them
   ]);
 
   (w.document.querySelector('[data-fallback-action="remove"][data-fallback-index="2"]') as HTMLButtonElement).click();
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(3));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(3), { timeout: 10_000 });
   expect(mounted.calls[2].goal.models.openrouter).toEqual([
     'openrouter/primary',
     'openrouter/new-fallback'
@@ -1324,7 +1326,7 @@ it('stores custom fallback model ids exactly as typed in the ordered persistence
   expect(fallback).not.toBeNull();
   fallback.value = 'vendor/model:v2';
   fallback.dispatchEvent(new w.Event('change', { bubbles: true }));
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1), { timeout: 10_000 });
   expect(mounted.calls[0].goal.models).toEqual({
     openrouter: ['openrouter/primary'],
     custom: ['local-primary', 'vendor/model:v2']
@@ -1343,7 +1345,7 @@ it('saves the ChatGPT browser choice from its settings control and restores it o
   expect(extensionsAction.dataset.setupLink).toBe('chrome://extensions/');
   browser.value = 'edge';
   browser.dispatchEvent(new w.Event('change', { bubbles: true }));
-  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1));
+  await vi.waitFor(() => expect(mounted.calls).toHaveLength(1), { timeout: 10_000 });
   expect(mounted.calls[0].ui.chatBrowser).toBe('edge');
   expect(browser.value).toBe('edge');
   expect(extensionsUrl.textContent).toBe('edge://extensions/');

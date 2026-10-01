@@ -53,6 +53,9 @@ operation.
 - A worker's first message that ChatGPT did not accept is cleared from the message box instead of looking like
   something you still have to send; text you typed there stays (upstream 6661b27).
 - A pinned tab stays where you pinned it when background chats are on (upstream 5f051ad).
+- The `%claude` starter is now a general way for Eve to reach Claude, through Claude Code (`claude -p`), a shared
+  file, or the Claude app or claude.ai, instead of instructions written for one installation's release work. An
+  unchanged copy upgrades on its own; a prompt you edited is kept.
 - Agent guidance and the Expenses playbook now require conversation-dependent reminders to retain
   the user's intent, useful non-ledger observations, completed actions and output preferences. The
   scheduled run must recover that context and check current ledger data instead of improvising from

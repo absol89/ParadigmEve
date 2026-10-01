@@ -51,7 +51,7 @@ it('bootstraps starter Threads and a physical AppData Vault mirror on a fresh Ev
 
   const snapshot = await pinsLibrary();
   expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
-  expect(snapshot.quilts.find(thread => thread.title === 'claude')?.prompt).toContain('Eve ↔ Claude coordination');
+  expect(snapshot.quilts.find(thread => thread.title === 'claude')?.prompt).toContain('claude -p');
   expect(snapshot.quilts.find(thread => thread.title === 'how')?.prompt).toContain('current packaged ParadigmEve manual');
   expect(await fs.readFile(path.join(userData, 'docs', 'vault', 'README.md'), 'utf8')).toBe('# Eva bootstrap manual\n');
 });
