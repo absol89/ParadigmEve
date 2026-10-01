@@ -1801,8 +1801,21 @@
     if (!reply?.ok || command?.type !== 'stop' || command.turnId !== expected || command.conversationId !== target) return false;
     const canStop = () => current() && generating && (!unwitnessedGeneration || stopQuestionMatches(command.userMessageId)) && latestNative()?.role === 'assistant' &&
       latestNative()?.id === nativeId && pageTurnIds.get(expected) === nativeId;
+    // ChatGPT already idle while this document still holds the turn open, because nothing proved
+    // how it ended (#864): there is no native control to click, and the open turn is exactly what
+    // Stop asks to end. Record the stop so the quiet path closes this same turn as stopped now,
+    // instead of acking a failure that leaves the chat showing Stop and holding the next message
+    // (upstream chat-on-steroids ed081b1, adapted to this page's turn bookkeeping).
+    const idleOpen = () => current() && generating && !CLF_DOM.generating() && !CLF_DOM.stopButton() &&
+      latestNative()?.role === 'assistant' && latestNative()?.id === nativeId && pageTurnIds.get(expected) === nativeId;
+    const closeIdleTurn = () => {
+      if (!idleOpen()) return false;
+      userStopped = true;
+      observe();
+      return true;
+    };
     // Concurrent redemptions may finish after the first click, before ChatGPT removes Stop.
-    const stopped = stoppedAppCommands.has(commandId) || (canStop() && CLF_DOM.stopGeneration(canStop));
+    const stopped = stoppedAppCommands.has(commandId) || (canStop() && CLF_DOM.stopGeneration(canStop)) || closeIdleTurn();
     if (stopped) {
       stoppedAppCommands.add(commandId);
       if (stoppedAppCommands.size > 100) stoppedAppCommands.delete(stoppedAppCommands.values().next().value);
@@ -10639,6 +10652,11 @@
         // reconciliation instead of turning a navigation-only observation into a sent receipt.
         return;
       }
+      // The command fails either way, which is what keeps a possible click from being replayed.
+      // The draft is separate: left in the box it reads as a message the user still has to send.
+      // Clear only our own unchanged text; anything the user typed stays (upstream
+      // chat-on-steroids 6661b27).
+      await bootstrapDraft.clear();
       return void (await fail('ChatGPT did not accept the bootstrap send'));
     }
     agent = boot.agent || null;
@@ -11473,6 +11491,11 @@
     }
   }
   function catalogPageReady() {
+    // A page carrying an app command marker belongs to that command (a Compact & Resume successor
+    // or a worker bootstrap), even before its redeem answers. Discovery opens the model picker,
+    // and that transition can replace the composer under the bootstrap that owns this page
+    // (upstream chat-on-steroids cfb62e3).
+    if (markerId() || commandAttempt || commandJournalGate) return false;
     return alive && !generating && !CLF_DOM.generating() && !desktopInputBusy && CLF_DOM.composerVisible() &&
       !CLF_DOM.hasComposerAttachments() && (catalogHelper() || !CLF_DOM.composer().textContent?.trim());
   }

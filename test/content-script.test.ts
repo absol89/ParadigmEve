@@ -13917,6 +13917,30 @@ the carried handoff behind a lost reply`;
       })
     ]);
     expect(live.sent.some((message) => message.type === 'ack' && message.status === 'sent')).toBe(false);
+    // The worker failed, so its own unsent text must not sit in the box afterwards (upstream
+    // chat-on-steroids 6661b27, #864).
+    expect(live.document.querySelector('#prompt-textarea')!.textContent).toBe('');
+  });
+
+  it('keeps text the user typed after a worker bootstrap Send was not accepted', async () => {
+    live = await harness(
+      'https://chatgpt.com/?clf=cmd-user-edit',
+      {
+        redeem: () => ({ ok: true, command: { id: 'cmd-user-edit', type: 'worker', text: 'Worker task text.', agent: 'worker-1' } }),
+        ack: () => ({ ok: true })
+      },
+      (document) => {
+        const button = document.querySelector('[data-testid="send-button"]') as HTMLButtonElement;
+        button.disabled = true;
+        button.addEventListener('click', () => undefined);
+      }
+    );
+    await settle(400);
+    const box = live.document.querySelector('#prompt-textarea')!;
+    box.textContent = 'Worker task text. And my own note';
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await settle();
+    expect(box.textContent).toBe('Worker task text. And my own note');
   });
 
   it('types nothing when the marker is stale', async () => {
@@ -18239,6 +18263,21 @@ describe('app Stop command uses current native turn proof', () => {
     let clicks = 0; button.addEventListener('click', () => { clicks++; });
     return { request: { type: 'clf-stop-turn', id: '1111111111111111', turnId, conversationId }, clicks: () => clicks };
   }
+  it('closes a turn that stayed open after ChatGPT went idle, instead of failing for want of a button', async () => {
+    // #864 (upstream chat-on-steroids ed081b1): nothing proved how the turn ended, so the page kept
+    // it open with ChatGPT idle. Stop found no control, acked a failure, and the chat stayed stuck.
+    const h = await setup();
+    stopGenerating(live!.document);
+    live!.hook.observe(); await settle(); await live!.hook.flush();
+    expect(emitted(live!.sent, 'turn_end').some(row => row.event.turnId === h.request.turnId)).toBe(false);
+    expect(await live!.runtimeMessage(h.request)).toEqual({ ok: true });
+    await settle(); await live!.hook.flush();
+    expect(h.clicks()).toBe(0);
+    expect(live!.sent).toContainEqual(expect.objectContaining({ type: 'stop_ack', status: 'sent', turnId: h.request.turnId }));
+    expect(emitted(live!.sent, 'turn_end').filter(row => row.event.turnId === h.request.turnId))
+      .toEqual([expect.objectContaining({ event: expect.objectContaining({ outcome: 'stopped' }) })]);
+  });
+
   it('clicks once and acknowledges duplicate delivery without clicking again', async () => {
     const h = await setup();
     expect(await live!.runtimeMessage(h.request)).toEqual({ ok: true });

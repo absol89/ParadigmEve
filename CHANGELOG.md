@@ -46,6 +46,13 @@ operation.
   seconds, so a turn running long commands compacts instead of growing forever (upstream 18ab425, #825).
 - A session's archive keeps growing after a late-recorded event puts it out of order. Before, everything recorded
   after that point was silently left out.
+- Model discovery never uses a tab a command just opened. It could open ChatGPT's model picker in a Compact &
+  Resume or worker tab while the bootstrap was being typed there, replacing its message box (upstream cfb62e3).
+- Stop closes a turn that stayed open after ChatGPT went idle, instead of failing because there was no Stop control
+  to press and leaving the chat holding the next message (upstream ed081b1, #864).
+- A worker's first message that ChatGPT did not accept is cleared from the message box instead of looking like
+  something you still have to send; text you typed there stays (upstream 6661b27).
+- A pinned tab stays where you pinned it when background chats are on (upstream 5f051ad).
 
 ### Also covered
 

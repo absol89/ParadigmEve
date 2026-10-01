@@ -38,7 +38,7 @@ it.each([false, true])('holds cold discovery until composer hydration without a 
   const clear = vi.fn(() => true);
   const context = vm.createContext({ URL, Date, setTimeout, clearTimeout, pageViewChecks: new Set(), document: dom.window.document,
     MutationObserver: dom.window.MutationObserver, alive: true, epoch: 1, conversationId: null,
-    generating: false, desktopInputBusy: false, modelCatalogBusy: false,
+    generating: false, desktopInputBusy: false, modelCatalogBusy: false, markerId: () => null, commandAttempt: null, commandJournalGate: false,
     location: { pathname: '/', href: `https://chatgpt.com/?cos-model-catalog=${nonce}` }, ask,
     CLF_DOM: { prepareChatModelSurface: async () => true, composerVisible: () => !!dom.window.document.querySelector('textarea'), composer: () => dom.window.document.querySelector('textarea'), generating: () => false,
       turns: () => [], hasComposerAttachments: () => false, clearPromptExact: clear, inspectModelSettings: async () => [{ id: 'observed', label: 'Observed', efforts: ['high'] }] }
@@ -62,7 +62,7 @@ function fixture(text = '', changed = false, conversationId: string | null = nul
   const ask = vi.fn(async () => ({ ok: true }));
   const clear = vi.fn((expected: string) => { if (composer.textContent !== expected) return false; composer.textContent = ''; return true; });
   const inspect = vi.fn(async (current: () => boolean) => { if (changed) composer.textContent = 'new user text'; return current() ? [{ id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', efforts: ['high'] }] : null; });
-  const context = vm.createContext({ URL, Date, alive: true, epoch: 1, conversationId, generating: false, desktopInputBusy: false, modelCatalogBusy: false,
+  const context = vm.createContext({ URL, Date, alive: true, epoch: 1, conversationId, generating: false, desktopInputBusy: false, modelCatalogBusy: false, markerId: () => null, commandAttempt: null, commandJournalGate: false,
     location: { pathname: '/', href: `https://chatgpt.com/?cos-model-catalog=${nonce}` }, ask,
     CLF_DOM: { prepareChatModelSurface: async () => true, composerVisible: () => true, composer: () => composer, generating: () => false, turns: () => [], hasComposerAttachments: () => false, clearPromptExact: clear, inspectModelSettings: inspect } });
   vm.runInContext(`${section}\nglobalThis.run = inspectAppModelCatalog;`, context);
@@ -103,7 +103,7 @@ it('binds discovery to the Chat composer after Work replaces its composer', asyn
   const prepare = vi.fn(async (current: () => boolean) => {
     expect(current()).toBe(true); composer = { textContent: '' }; return current();
   });
-  const context = vm.createContext({ URL, Date, alive: true, epoch: 1, conversationId: null, generating: false, desktopInputBusy: false, modelCatalogBusy: false,
+  const context = vm.createContext({ URL, Date, alive: true, epoch: 1, conversationId: null, generating: false, desktopInputBusy: false, modelCatalogBusy: false, markerId: () => null, commandAttempt: null, commandJournalGate: false,
     location: { pathname: '/', href: 'https://chatgpt.com/' }, ask,
     CLF_DOM: { prepareChatModelSurface: prepare, composerVisible: () => true, composer: () => composer, generating: () => false, turns: () => [], hasComposerAttachments: () => false,
       inspectModelSettings: async (current: () => boolean) => { expect(composer).not.toBe(old); expect(current()).toBe(true); return [{ id: 'observed', label: 'Observed', efforts: ['high'] }]; } }
@@ -118,4 +118,20 @@ it('does not clear existing conversations or publish over text edited during dis
   const edited = fixture('', true);
   expect(await edited.run()).toBe(false); expect(edited.ask).not.toHaveBeenCalled();
   expect(edited.composer.textContent).toBe('new user text');
+});
+it.each(['marker', 'attempt', 'journal'] as const)('never offers a command-owned page for model discovery (%s)', kind => {
+  // A Compact & Resume successor or worker bootstrap owns its page from the first load. The
+  // model picker transition can replace the composer under that bootstrap (upstream cfb62e3).
+  const dom = new JSDOM('<html><body><textarea></textarea></body></html>');
+  const context = vm.createContext({ URL, alive: true, conversationId: null, generating: false, desktopInputBusy: false,
+    markerId: () => kind === 'marker' ? 'cmd-successor' : null, commandAttempt: kind === 'attempt' ? {} : null,
+    commandJournalGate: kind === 'journal',
+    location: { pathname: '/', href: 'https://chatgpt.com/?clf=cmd-successor' },
+    CLF_DOM: { composerVisible: () => true, composer: () => dom.window.document.querySelector('textarea'), generating: () => false,
+      turns: () => [], hasComposerAttachments: () => false }
+  });
+  vm.runInContext(`${section}\nglobalThis.ready = catalogPageReady;`, context);
+  expect((context.ready as Function)()).toBe(false);
+  context.markerId = () => null; context.commandAttempt = null; context.commandJournalGate = false;
+  expect((context.ready as Function)()).toBe(true);
 });
