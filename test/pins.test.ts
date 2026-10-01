@@ -1225,6 +1225,9 @@ it('ships a generic %claude starter that reaches Claude by CLI, shared file or t
   expect(claude.prompt).toContain('claude -p');
   expect(claude.prompt).toContain('A shared file');
   expect(claude.prompt).toContain('claude.ai');
+  expect(claude.prompt).toContain('SUPERSEDED DOES NOT MEAN SAFE TO CLOSE');
+  expect(claude.prompt).toContain('DO NOT FIGHT THE USER\'S ACTIVE INPUT');
+  expect(claude.prompt).toContain('exact conversation identity is authoritative');
   // A starter ships to every installation: nothing tied to one installation or one release batch.
   expect(claude.prompt).not.toMatch(/\b2\.\d+\.\d+\b|Eva\b|batch|clear-to-merge/);
   // The first shipped prompt is kept only as a fingerprint, so untouched copies still upgrade.
