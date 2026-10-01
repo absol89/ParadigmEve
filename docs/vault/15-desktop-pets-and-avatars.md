@@ -256,7 +256,8 @@ The Pets page shows the app's reason. The common ones:
 
 ## Bundled pets
 
-The app ships Hammy (from Chat On Steroids) plus a cat and a dog made with this page. Bundled pets live
-read-only in `pets/<id>/` in the repository and `resources/pets/<id>/` in an installed app, and are off
-until the user enables them. `test/pet-atlas.test.ts` and `test/pet-bundled.test.ts` apply the checks
-above to every bundled pet, so a new bundled pet must pass them before it ships.
+The app ships four bundled pets: **Hammy**, **Luna**, **cat**, and **dog**. They live read-only in
+`pets/<id>/` in the repository and `resources/pets/<id>/` in an installed app. On a fresh pet-library
+state, **Luna is enabled by default**, cat and dog are marked as favorites, and Hammy remains available
+but disabled until the user enables it. `test/pet-atlas.test.ts` and `test/pet-bundled.test.ts` apply
+the checks above to every bundled pet, so a new bundled pet must pass them before it ships.

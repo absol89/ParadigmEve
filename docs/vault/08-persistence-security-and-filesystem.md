@@ -176,6 +176,10 @@ An unfinished historical assistant row remains honest evidence. Once a later aut
 proves that interrupted row is no longer the live streaming frontier, the archive can retain that
 exact partial snapshot and continue with later stable events. The row is still immutable and the
 session remains partial; a later source-store rewrite must not silently replace what was published.
+If the source later discovers an older provider event whose logical chronology belongs before evidence
+that is already published, the archive preserves the published suffix in place, marks the session
+partial, and keeps scanning. New source events that were never published are still appended, so one
+late-recorded event cannot freeze the archive at that point or hide everything recorded afterwards.
 By contrast, a currently streaming assistant row and a recoverable native-image capture remain
 deferred because publishing them early could freeze mutable evidence or discard pixels that can
 still become locally durable.

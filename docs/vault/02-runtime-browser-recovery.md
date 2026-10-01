@@ -49,7 +49,16 @@ Persisted pairing from yesterday cannot satisfy post-install recovery readiness 
 
 ## Browser repair authority
 
-The current 2.3.2 source line and the public 2.3.1 release both use **bridge protocol 15**.
+The current 2.3.3 source line uses **bridge protocol 15**.
+Model discovery excludes command-marked handover and worker tabs. The page also refuses discovery
+while it has a command marker, active command attempt or command journal gate, so opening the model
+picker cannot replace the composer owned by that command. Background-window reconciliation leaves
+pinned tabs in the user's chosen window.
+
+If App Stop targets an exact turn still open locally after ChatGPT is idle and has no native Stop
+control, the Companion records that turn as user-stopped and closes it through the observation path.
+It does not require a native button that no longer exists.
+
 Browser repair includes a final
 `/browser-repair/claim` fence immediately before Chrome mutation. The flow is:
 
@@ -114,6 +123,9 @@ items (`renderItemMessage`) into the same model shape so all downstream identity
 - a context naming another conversation, an unknown `phase`, or empty `content` drops the item;
 - the reply is final only when `phase: 'final_answer'`, `completed: true` **and** its context says
   `isStreaming: false`; anything less is recorded as streaming;
+- a final that was already settled before the current generation began cannot close a later turn if
+  ChatGPT briefly remounts that previous answer around Send; turn ownership also checks whether the
+  assistant section belongs below the current user question before accepting it as this turn's final;
 - rendered HTML is joined by the exact `data-chatgpt-selection-message-id` holder, never by text.
 
 Render items carry no creation time. A reply backfilled from an older exchange is therefore timed when
@@ -168,6 +180,11 @@ newer turn boundary appears. App-internal automation must therefore let it land 
 Compact & Resume is not filed for a session that still owes its restart wake (`restartRecoveryPending`),
 because posting the app's own handoff would open that newer turn itself. A user message still moves the
 conversation on and retires the wake.
+
+That ordering applies before a new automatic handover starts. If Compact & Resume is already replacing
+the source conversation, the old chat is fenced from receiving new queued input. The restart wake stays
+durable and follows the same session to the successor after the continuation commits, instead of being
+typed into the chat that is being replaced.
 
 `RECOVERY.md` in userData is informational policy for the agent. It is not delivery authority; the durable outbox is.
 

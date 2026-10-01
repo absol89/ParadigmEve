@@ -3,16 +3,17 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.3.2 source line, what remains the public 2.3.1 baseline, and the acceptance gates to use
-before packaging, installing, or calling a change complete.
+2.3.3 source line and the acceptance gates to use before packaging, installing, or calling a change
+complete. Public release or installed-runtime status needs its own release/runtime evidence; source
+version alone does not prove either one.
 
 ## Current product state
 
-- Current source package/app line: **2.3.2**, cumulative over the public **2.3.1** release.
-- Current public release baseline: **2.3.1**. The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
+- Current source package/app line: **2.3.3**.
+- The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.3.2 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.3.2 runtime.
+- A 2.3.3 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.3.3 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
@@ -81,8 +82,11 @@ for the mechanics.
   launch, and a Companion loaded from another build reloads itself once, never under a running tool
   call, bridge command or busy ChatGPT page.
 - A pending restart wake for the pinned agent conversation is delivered before automatic Compact &
-  Resume may post its handoff.
+  Resume may begin a new handoff. If a handoff is already in progress, queued input is fenced from the
+  source chat and follows the durable session to the successor after commit.
 - A silent install relaunches ParadigmEve only when it closed a running instance itself.
+- A previous turn's final answer cannot close a newly submitted turn merely because ChatGPT remounts
+  that old assistant section around Send; current-generation ownership must be proved first.
 
 ### Known gaps in the current line
 

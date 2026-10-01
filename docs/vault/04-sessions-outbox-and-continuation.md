@@ -91,6 +91,9 @@ The outbox/session input policy can choose among:
 
 Those choices are evidence based. A stale durable `activeTurnId` after restart is not enough to authorize a stop/send by itself.
 
+If ChatGPT does not accept a worker's bootstrap Send, the command fails without replaying a possible
+click. The Companion clears only its own unchanged bootstrap draft; any text the user changed stays.
+
 ## Heartbeat attention transport
 
 Semantic heartbeat debt has one stable key, but transport idempotency is scoped to the **exact session + conversation target**, not globally to that key.
@@ -138,6 +141,21 @@ Continuation prompts use a four-position checkpoint model:
 - `sent`
 
 The key distinction is whether a retry is provably safe. Once dispatch may have happened, the app refuses to replay merely because it lacks acceptance evidence.
+
+The destination half has explicit browser checkpoints around the actual Send action. The replacement
+page first takes `destinationAttempt`, then `destinationDispatch` immediately before clicking Send. If
+the page can prove the armed draft disappeared while the replacement still has no conversation id,
+`destinationLost` releases that claim so the same handoff can be offered to a fresh replacement chat.
+Once dispatch may have happened, ambiguity remains fenced instead of retyping the brief.
+
+The tab opened for a continuation is owned by that continuation while it carries the app command marker.
+It is not eligible for ordinary chat reuse even before `destinationAttempt`; reusing it could move the
+page away and strand the handoff. The same ownership also blocks incompatible Companion reloads once a
+destination attempt has begun.
+
+Automatic compaction gives an already-running local tool call up to **six minutes** to settle after the
+turn is stopped. A call still running beyond that bound causes the automatic source handoff to be
+refused rather than treating an unknown machine state as safe to compact.
 
 ## Workspace continuity
 
