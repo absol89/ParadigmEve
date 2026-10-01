@@ -148,18 +148,35 @@ public static class CosWindowsCapture {
       }
       using (frame) {
         RECT after = Bounds(window);
-        if (after.Left != bounds.Left || after.Top != bounds.Top || after.Right != bounds.Right || after.Bottom != bounds.Bottom || frame.ContentSize.Width != width || frame.ContentSize.Height != height)
+        int frameWidth = frame.ContentSize.Width, frameHeight = frame.ContentSize.Height;
+        int dwmWidth = bounds.Right - bounds.Left, dwmHeight = bounds.Bottom - bounds.Top;
+        if (after.Left != bounds.Left || after.Top != bounds.Top || after.Right != bounds.Right || after.Bottom != bounds.Bottom)
           throw new InvalidOperationException("STALE_FRAME: window geometry changed during capture");
+        // Windows 11 delivers frames at GraphicsCaptureItem.Size. Windows 10 sizes the item
+        // from the outer window rectangle (invisible resize borders included) but delivers the
+        // visible DWM frame. Either is a stable frame; any other size means the window changed.
+        bool itemSized = frameWidth == width && frameHeight == height;
+        bool dwmSized = frameWidth == dwmWidth && frameHeight == dwmHeight;
+        if (!itemSized && !dwmSized)
+          throw new InvalidOperationException("STALE_FRAME: window geometry changed during capture");
+        width = frameWidth;
+        height = frameHeight;
         using (var surface = frame.Surface)
         using (var software = CopySurface(surface, clock)) {
-          if (software.PixelWidth != width || software.PixelHeight != height) throw new InvalidOperationException("STALE_FRAME: copied surface dimensions changed");
-          byte[] pixels = new byte[checked(width * height * 4)];
+          // The pool buffer can be larger than the delivered content (Windows 10); the content
+          // occupies its top-left corner.
+          if (software.PixelWidth < width || software.PixelHeight < height) throw new InvalidOperationException("STALE_FRAME: copied surface dimensions changed");
+          int sourceWidth = software.PixelWidth, sourceHeight = software.PixelHeight;
+          byte[] pixels = new byte[checked(sourceWidth * sourceHeight * 4)];
           var pixelBuffer = new Windows.Storage.Streams.Buffer((uint)pixels.Length);
           software.CopyToBuffer(pixelBuffer);
           using (var reader = Windows.Storage.Streams.DataReader.FromBuffer(pixelBuffer)) reader.ReadBytes(pixels);
           using (var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb)) {
             var locked = bitmap.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-            try { Marshal.Copy(pixels, 0, locked.Scan0, pixels.Length); }
+            try {
+              for (int row = 0; row < height; row += 1)
+                Marshal.Copy(pixels, row * sourceWidth * 4, IntPtr.Add(locked.Scan0, row * locked.Stride), width * 4);
+            }
             finally { bitmap.UnlockBits(locked); }
             int outputWidth = maxWidth > 0 ? Math.Min(maxWidth, width) : width;
             int outputHeight = Math.Max(1, (int)Math.Round((double)height * outputWidth / width));

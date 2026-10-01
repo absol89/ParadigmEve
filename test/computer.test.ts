@@ -137,10 +137,19 @@ describe.runIf(IS_WINDOWS)('desktop helper', () => {
     const before = (await activeWindow()).window;
     if (!before) return;
     const { windows } = await listWindows();
-    const background = windows.find((window) => window.id !== before.id && window.state !== 'minimized');
-    if (!background) return;
-
-    const shot = await screenshot({ window: background.id, maxWidth: 320 });
+    // Some shell and overlay windows (UWP Settings, the text-input host, tool windows) cannot
+    // be Windows.Graphics.Capture targets on every Windows build. Walk the candidates and use
+    // the first capturable one; any other failure is still a real failure.
+    let shot: Awaited<ReturnType<typeof screenshot>> | null = null;
+    for (const background of windows.filter((window) => window.id !== before.id && window.state !== 'minimized')) {
+      try {
+        shot = await screenshot({ window: background.id, maxWidth: 320 });
+        break;
+      } catch (error) {
+        if (!/The parameter is incorrect/.test(String(error))) throw error;
+      }
+    }
+    if (!shot) return;
     expect(['window', 'screen_fallback']).toContain(shot.captureMode);
     expect((await activeWindow()).window?.id).toBe(before.id);
   });

@@ -11,7 +11,10 @@ const execute = promisify(execFile);
 describe('Windows capture geometry contract', () => {
   it('uses WGC for capture dimensions without requiring DWM dimensions to be identical', () => {
     expect(WINDOWS_CAPTURE_SOURCE).not.toContain('capture and DWM bounds disagree');
-    expect(WINDOWS_CAPTURE_SOURCE).toContain('frame.ContentSize.Width != width || frame.ContentSize.Height != height');
+    // Windows 11 frames match the item; Windows 10 frames match the visible DWM frame.
+    expect(WINDOWS_CAPTURE_SOURCE).toContain('bool itemSized = frameWidth == width && frameHeight == height;');
+    expect(WINDOWS_CAPTURE_SOURCE).toContain('bool dwmSized = frameWidth == dwmWidth && frameHeight == dwmHeight;');
+    expect(WINDOWS_CAPTURE_SOURCE).toContain('if (!itemSized && !dwmSized)');
     expect(WINDOWS_CAPTURE_SOURCE).toContain('after.Left != bounds.Left || after.Top != bounds.Top || after.Right != bounds.Right || after.Bottom != bounds.Bottom');
     expect(WINDOWS_CAPTURE_SOURCE).toContain('return bounds.Left + "," + bounds.Top + "," + width + "," + height');
   });
