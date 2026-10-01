@@ -42,12 +42,22 @@ async function readIfPresent(file) {
   catch (error) { if (error.code !== 'ENOENT') throw error; return undefined; }
 }
 
+// Waits before each retry. A host's transient failure (GitHub's on-demand archive endpoint answered
+// 504 three times inside six seconds during the 2.3.3 release) needs more than a few seconds to
+// clear; a permanent refusal such as 404 or 406 fails at once instead of waiting this out.
+const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 40_000];
+const transientStatus = status => status === 408 || status === 429 || status >= 500;
+
 async function download(source) {
   let failure;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
     try {
       const response = await fetch(source.url, { signal: AbortSignal.timeout(180_000) });
-      if (!response.ok) throw new Error(`Native source download failed: ${source.file}: HTTP ${response.status}`);
+      if (!response.ok) {
+        const error = new Error(`Native source download failed: ${source.file}: HTTP ${response.status}`);
+        if (!transientStatus(response.status)) error.permanent = true;
+        throw error;
+      }
       const chunks = [];
       let size = 0;
       for await (const chunk of response.body) {
@@ -58,8 +68,11 @@ async function download(source) {
       return Buffer.concat(chunks);
     } catch (error) {
       failure = error;
-      if (/exceeds reviewed size/.test(error.message)) throw error;
-      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+      if (error.permanent || /exceeds reviewed size/.test(error.message)) throw error;
+      const delay = RETRY_DELAYS_MS[attempt - 1];
+      if (delay === undefined) break;
+      console.log(`Retrying ${source.file} in ${delay / 1000}s after: ${error.message}`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   throw failure;
