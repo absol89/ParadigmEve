@@ -60,7 +60,10 @@ afterEach(() => {
   }
 });
 
-describe('public-history privacy gate', () => {
+// Every case builds a real repository and runs the gate several times, each a node process that
+// spawns git repeatedly. On the Windows release runner, cold process start-up under a full parallel
+// suite took 31–56 s for one case against vitest's 30 s default; the same case alone takes ~3 s.
+describe('public-history privacy gate', { timeout: 120_000 }, () => {
   it.each(['\\', '\\\\', '/'])('rejects private roots using %s in staged and committed content without echoing them', separator => {
     const repository = makeRepository();
     const privateRoot = ['C:', 'Users', 'developer-name'].join(separator);
