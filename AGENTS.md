@@ -110,6 +110,13 @@ losing the project, history, workers or queued instructions when a chat grows to
 - One meaningful fact has one owner. Other modules may project it, never independently decide it.
 - User corrections extend the original task. Plans and automation must not quietly narrow it to
   whatever the last assistant answer happened to describe.
+- A reminder/routine that depends on the conversation that created it must carry a compact
+  continuation capsule: the user's still-relevant intent, recent decisions/observations that may
+  not live in canonical storage, presentation/output expectations, and references needed to recover
+  source context. At execution, treat that capsule as rehearsal/context, not frozen truth: re-read
+  canonical/live authorities and current information where the task requires them. A fresh
+  schedule-owned chat must not improvise from the bare reminder text when its meaning depended on
+  the originating conversation.
 - Visible progress is truthful: no invented completion, lost attachment disguised as a file
   reference, sent claim based on insertion, or success based on a button click alone.
 - Browser use is economical. Reuse an eligible document; one operation owns one elected tab
