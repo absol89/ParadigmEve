@@ -283,8 +283,22 @@ jobs:
           fake_bin="$(mktemp -d)"
           normal_smoke_root="$(mktemp -d)"
           fallback_smoke_root="$(mktemp -d)"
+          cleanup_path_with_retries() {
+            target="$1"
+            for attempt in 1 2 3 4 5; do
+              rm -rf "$target" 2>/dev/null && return 0
+              sleep 0.2
+            done
+            # Same rule as the DEB smoke above: cleanup is not product evidence. `timeout` signals
+            # xvfb-run, not the tree beneath it, and the browser that startup model discovery wakes
+            # keeps writing into setup-browser-profile, so `rm -rf` failed with "Directory not
+            # empty" after both launches had passed every assertion.
+            rm -rf "$target" 2>/dev/null || true
+          }
           cleanup() {
-            rm -rf "$fake_bin" "$normal_smoke_root" "$fallback_smoke_root"
+            for target in "$fake_bin" "$normal_smoke_root" "$fallback_smoke_root"; do
+              cleanup_path_with_retries "$target"
+            done
           }
           trap cleanup EXIT
           printf '#!/bin/sh\nexit 1\n' > "$fake_bin/unshare"
