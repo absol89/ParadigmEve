@@ -2745,6 +2745,15 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
 
       await chrome.tabs.remove(tab.id);
       remaining = remaining.filter(other => other.id !== tab.id);
+      // A superseded source gets one close. Report the census without it at once, so the app
+      // spends that close before the user can reopen the chat for review and see it closed again.
+      if (retired.has(conversationId) && !remaining.some(other => conversationForTab(other) === conversationId)) {
+        await call('/status', { method: 'POST', body: JSON.stringify({
+          openConversations: [...new Set(remaining.map(conversationForTab).filter(Boolean))],
+          documents: [],
+          openChatTabs: remaining.length
+        }) });
+      }
     } catch { /* Missing document, navigation or unreadable draft state is not close permission. */ }
   }
   return remaining;

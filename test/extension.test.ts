@@ -1592,6 +1592,53 @@ describe('active agent tab discard protection', () => {
     expect(worker.tabsUpdate).toHaveBeenCalledWith(91, { autoDiscardable: false });
   });
 
+  it('re-polls at once after closing a superseded source so the app can spend its one close', async () => {
+    const COMPACTED = 'cccccccc-dddd-4eee-8fff-000000000000';
+    const censuses: string[][] = [];
+    let spent = false;
+    const fetch = vi.fn(async (input: string, init?: { body?: string }) => {
+      const url = new URL(input);
+      if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+      if (url.pathname === '/status') {
+        const open: string[] = JSON.parse(init?.body ?? '{}').openConversations ?? [];
+        censuses.push(open);
+        if (!open.includes(COMPACTED)) spent = true;
+        return response(200, {
+          ok: true,
+          repairs: [],
+          recoveryMonitoring: true,
+          nonDiscardableConversations: [],
+          managedConversations: spent ? [] : [COMPACTED],
+          retiredConversations: spent ? [] : [COMPACTED],
+          closableConversations: spent ? [] : [COMPACTED]
+        });
+      }
+      return response(404, {});
+    });
+    const tabs = [{ id: 93, windowId: 7, url: `https://chatgpt.com/c/${COMPACTED}` }];
+    const worker = loadWorker({
+      local: new FakeStorageArea(paired),
+      session: new FakeStorageArea({ tabDocuments: { 93: 'doc-93' }, tabEpochs: { 93: 0 } }),
+      fetch,
+      tabsQuery: async () => tabs.map(tab => ({ ...tab })),
+      tabsGet: async id => tabs.find(tab => tab.id === id)!,
+      tabsSendMessage: async () => ({ safe: true, navigationEpoch: 0, conversationId: COMPACTED })
+    });
+    worker.tabsRemove.mockImplementation(async (id: number) => { tabs.splice(tabs.findIndex(tab => tab.id === id), 1); });
+
+    await worker.fireAlarm();
+    await vi.waitFor(() => expect(censuses.length).toBeGreaterThanOrEqual(2));
+    expect(worker.tabsRemove.mock.calls.map(call => call[0])).toEqual([93]);
+    // The follow-up census already shows the source gone, so the app can retire the close.
+    expect(censuses[0]).toContain(COMPACTED);
+    expect(censuses[1]).not.toContain(COMPACTED);
+
+    // The user reopens the chat to read it. Once spent, the app no longer lists it as closable.
+    tabs.push({ id: 94, windowId: 7, url: `https://chatgpt.com/c/${COMPACTED}` });
+    await worker.fireAlarm();
+    expect(worker.tabsRemove.mock.calls.map(call => call[0])).toEqual([93]);
+  });
+
   it('does not claim or restore a tab Chrome was already told not to discard', async () => {
     let live = true;
     const fetch = vi.fn(async (input: string) => {

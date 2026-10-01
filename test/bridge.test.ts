@@ -1033,6 +1033,39 @@ describe('active agent tab discard projection', () => {
     } finally { await writeDurableNow('session-input', []); resetInputForTests(); }
   });
 
+  it('closes a compacted source chat once and leaves a reopened copy alone', async () => {
+    await pair();
+    const { resetInputForTests } = await import('../src/main/session/input.js');
+    const from = 'cafe0301-0000-4000-8000-000000000301';
+    const to = 'cafe0302-0000-4000-8000-000000000302';
+    const source = await createSession({ conversationId: from, title: 'Review source' });
+    const continuation = await openContinuationNow(source.id, from);
+    await attachSummary(continuation.token, SAMPLE_BRIEF);
+    await claimContinuationNow(continuation.token, 'review-resume');
+    expect(await commitContinuation(continuation.token, to)).toBe(true);
+    resetInputForTests();
+    const poll = async (open: string[], openChatTabs?: number) =>
+      (await request('POST', '/status', { body: { openConversations: open, ...(openChatTabs === undefined ? {} : { openChatTabs }) } })).body;
+    try {
+      // The close is owed while the source tab is open, however many polls ask.
+      for (let i = 0; i < 3; i++) {
+        const owed = await poll([from, to], 2);
+        expect(owed.retiredConversations).toContain(from);
+        expect(owed.closableConversations).toContain(from);
+      }
+      // A census that is not proven complete never spends it.
+      expect((await poll([to])).closableConversations).not.toContain(to);
+      expect((await poll([from, to], 2)).closableConversations).toContain(from);
+      // The tab is gone: the one close is spent, and the user reopening the chat is theirs.
+      await poll([to], 1);
+      for (let i = 0; i < 3; i++) {
+        const reopened = await poll([from, to], 2);
+        expect(reopened.retiredConversations).not.toContain(from);
+        expect(reopened.closableConversations).not.toContain(from);
+      }
+    } finally { await writeDurableNow('session-input', []); resetInputForTests(); }
+  });
+
   it('projects only the owning prime worker status without task or conversation details', async () => {
     await pair();
     const primeConversation = '11223344-1111-4222-8333-444444444444';

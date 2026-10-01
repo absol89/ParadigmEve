@@ -72,6 +72,7 @@ const {
   restoreContinuations,
   setContinuationRecoveryHooks,
   snapshotContinuations,
+  spendSupersededSourceCloses,
   supersededSourceConversations
 } = await import('../src/main/session/continuation.js');
 const { RESUME_CLAIM_WINDOW_MS, resumeOpeningChat } = await import('../src/main/session/resume-gate.js');
@@ -970,6 +971,44 @@ describe('restart lifetime recovery', () => {
     expect(continuationByToken('first-move-token-0')?.state).toBe('committed');
     expect(supersededSourceConversations()).toContain(CHAT_A);
     expect(await attachedChat(summary.id)).toBe(CHAT_C);
+  });
+
+  it('spends a superseded source chat close once its tab is gone, across restart', async () => {
+    const now = Date.now();
+    const summary = await createSession({ title: 'one close', conversationId: CHAT_A });
+    expect(await store.rebindSession(summary.id, CHAT_A, CHAT_B)).toBe(true);
+    const record = {
+      token: 'one-close-token-00',
+      sessionId: summary.id,
+      from: CHAT_A,
+      to: CHAT_B,
+      openedAt: now - 1_000,
+      state: 'committed' as const,
+      summary: SAMPLE_BRIEF,
+      handoffId: null,
+      claimedBy: CHAT_B,
+      error: null
+    };
+    // A record written before the close was one-shot is still owed its close.
+    await restoreContinuations({ version: 1, savedAt: now, entries: [record] });
+    expect(supersededSourceConversations()).toEqual([CHAT_A]);
+
+    // While the source tab is open the close stays owed; the replacement tab never counts.
+    spendSupersededSourceCloses(new Set([CHAT_A, CHAT_B]));
+    expect(supersededSourceConversations()).toEqual([CHAT_A]);
+
+    spendSupersededSourceCloses(new Set([CHAT_B]));
+    expect(supersededSourceConversations()).toEqual([]);
+    // Reopening the chat later does not re-arm it.
+    spendSupersededSourceCloses(new Set([CHAT_A, CHAT_B]));
+    expect(supersededSourceConversations()).toEqual([]);
+    expect(continuationByToken(record.token)?.state).toBe('committed');
+
+    const saved = snapshotContinuations();
+    expect(saved.entries[0]).toMatchObject({ state: 'committed', sourceClosed: true });
+    resetContinuationsForTests();
+    await restoreContinuations(saved);
+    expect(supersededSourceConversations()).toEqual([]);
   });
 
   it('does not roll an expired pre-commit record back into a fresh transfer', async () => {

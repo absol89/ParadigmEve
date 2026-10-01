@@ -175,6 +175,7 @@ import {
   continuationClaimedBy,
   continuationForSession,
   pendingContinuations,
+  spendSupersededSourceCloses,
   supersededSourceConversations,
   dispatchContinuationDestinationSendNow,
   dispatchContinuationSourceSendNow,
@@ -2108,6 +2109,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const recoveryGeneration = recoveryRequestGeneration;
     let openConversations: string[] = [];
     let documents: Array<{ tab: number; documentId: string }> = [];
+    // Only a census the browser reports as complete may retire a superseded source's one close.
+    let censusProven = false;
     if (req.method === 'POST') {
       const body = await readBody(req) as { openConversations?: unknown; documents?: unknown; openChatTabs?: unknown };
       if (!Array.isArray(body?.openConversations) || body.openConversations.length > 10_000 || body.openConversations.some(id => !conversationId(id))) {
@@ -2135,6 +2138,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           return json(res, 400, { error: 'invalid_open_chat_tabs' }, origin);
         }
         if (noteChatTabCount(body.openChatTabs)) changed();
+        censusProven = true;
       }
       if (documents.length > 0 && peerVersion === APP_VERSION && recoveryEvidenceCurrent) {
         recoveryDocumentVersion = peerVersion;
@@ -2143,6 +2147,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         recoveryDocumentConversationIds = new Set(openConversations);
       }
     }
+    // A source tab that is already gone has had its one close; a tab on it from here on is the
+    // user's, however long the committed record is retained. Spend before the policy lists it.
+    if (censusProven) spendSupersededSourceCloses(new Set(openConversations));
     const tabPolicy = await browserTabPolicy(new Set(openConversations));
     // The extension's maintenance pass, and the whole conversation about repairs: `repaired`
     // reports the one handout it was last given and has now carried out, and `repairs` is every
@@ -6984,7 +6991,8 @@ async function browserTabPolicy(openConversations: Set<string>) {
     idleReuseAfterMs: 120_000,
     idleCloseAfterMs: 300_000,
     cancelledDecisionClaims: cancelledDecisionClaims.map(row => ({ id: row.id, owner: row.owner, conversationId: row.conversationId })),
-    // Only terminal/blocked helpers and superseded sources grant close authority.
+    // Only terminal/blocked helpers and superseded sources grant close authority; a superseded
+    // source grants it once, until its tab is gone (see spendSupersededSourceCloses).
     retiredConversations: [...new Set([...idle, ...supersededSourceConversations()])]
       .filter(id => openConversations.has(id) && !protectedChats.has(id)).sort(),
     conversationActivityAt: Object.fromEntries(lastActivity),

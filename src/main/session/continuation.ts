@@ -224,6 +224,12 @@ interface Continuation {
   sourceSend: ContinuationSendCheckpoint;
   destinationSend: ContinuationDestinationCheckpoint;
   error: string | null;
+  /**
+   * Chat A's one close has been spent. Being superseded only says A is history; it never says
+   * that every later tab on A may be closed. Once the browser census shows A gone, the
+   * authority is gone with it, so a chat the user reopens to read or copy stays open.
+   */
+  sourceClosed: boolean;
 }
 
 /** At most one continuation per session, and at most one open per prime chat. */
@@ -262,6 +268,8 @@ interface ContinuationRecord {
   sourceSend?: ContinuationSendCheckpoint;
   destinationSend?: ContinuationDestinationCheckpoint;
   error: string | null;
+  /** Absent in records written before the source close was one-shot; treated as not yet spent. */
+  sourceClosed?: boolean;
 }
 
 export interface ContinuationSnapshot {
@@ -290,7 +298,8 @@ function durableRecord(entry: Continuation): ContinuationRecord {
     claimedBy: entry.claimedBy,
     sourceSend: { ...entry.sourceSend },
     destinationSend: { ...entry.destinationSend },
-    error: entry.error
+    error: entry.error,
+    sourceClosed: entry.sourceClosed
   };
 }
 
@@ -350,6 +359,7 @@ function publishRecord(entry: Continuation, record: ContinuationRecord): void {
     ? { ...record.destinationSend }
     : { state: 'not-attempted', conversationId: null, messageId: null };
   entry.error = record.error;
+  entry.sourceClosed = entry.sourceClosed || record.sourceClosed === true;
   if (entry.askedAt === null && handoffAsked(entry)) {
     entry.askedAt = typeof record.askedAt === 'number' && Number.isFinite(record.askedAt) ? record.askedAt : Date.now();
   }
@@ -545,20 +555,39 @@ export function anyContinuationOpen(): boolean {
 }
 
 /**
- * Source chats that Compact & Resume has finished replacing.
+ * Source chats that Compact & Resume has finished replacing and whose one close is still owed.
  *
  * Once the commit is durable the old chat is history: its session lives in the replacement,
  * its calls are refused as superseded, and the tab it is still open in only costs memory.
- * Listed for as long as the committed record is retained, so the browser closes it once and
- * a chat the user reopens later on purpose is left alone.
+ * Superseded is a fact about the chat, not permission to close every tab that shows it. The
+ * browser gets exactly one close: {@link spendSupersededSourceCloses} retires it once the tab is
+ * gone, so a chat the user reopens later to read or copy is left alone for good.
  */
 export function supersededSourceConversations(): string[] {
   sweep();
   const out = new Set<string>();
   for (const entry of byToken.values()) {
-    if (entry.state === 'committed' && entry.to && entry.to !== entry.from) out.add(entry.from);
+    if (entry.state === 'committed' && entry.to && entry.to !== entry.from && !entry.sourceClosed) out.add(entry.from);
   }
   return [...out].sort();
+}
+
+/**
+ * Spends the one close of every committed source that no longer has a browser tab.
+ *
+ * Call it only with a proven census of open ChatGPT conversations. A source that is absent was
+ * either closed by the browser, closed by the user, or never open here; in every case the close
+ * has nothing left to do, and any tab that appears afterwards is the user's. A wrongly empty
+ * census can only spend a close early, which leaves a tab open rather than closing one.
+ */
+export function spendSupersededSourceCloses(open: ReadonlySet<string>): void {
+  let spent = false;
+  for (const entry of byToken.values()) {
+    if (entry.state !== 'committed' || !entry.to || entry.to === entry.from || entry.sourceClosed || open.has(entry.from)) continue;
+    entry.sourceClosed = true;
+    spent = true;
+  }
+  if (spent) changed();
 }
 
 /** Compaction tickets still owed a real A -> B commit. */
@@ -749,7 +778,8 @@ function makeContinuation(sessionId: string, fromConversationId: string, automat
     to: null,
     sourceSend: { state: 'not-attempted', messageId: null },
     destinationSend: { state: 'not-attempted', conversationId: null, messageId: null },
-    error: null
+    error: null,
+    sourceClosed: false
   };
 }
 
@@ -1586,7 +1616,8 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
                   : null
             }
           : { state: 'not-attempted', conversationId: null, messageId: null },
-      error: typeof raw.error === 'string' ? raw.error : null
+      error: typeof raw.error === 'string' ? raw.error : null,
+      sourceClosed: raw.sourceClosed === true
     };
     if (handoffAsked(entry)) {
       // A record from before the automatic deadline existed starts its clock at this
