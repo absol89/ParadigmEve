@@ -8,13 +8,13 @@ const mainRoot = fileURLToPath(new URL('../src/main/', import.meta.url));
 describe('installed schedules + requests production wiring', () => {
   it('has a production owner that can turn verified scheduled work into Done', () => {
     const runner = readFileSync(path.join(mainRoot, 'evecron-runner.ts'), 'utf8');
-    const coreTools = readFileSync(path.join(mainRoot, 'mcp', 'tools-core.ts'), 'utf8');
+    const scheduleTool = readFileSync(path.join(mainRoot, 'mcp', 'schedule-tool.ts'), 'utf8');
     const surfaces = readFileSync(path.join(mainRoot, 'mcp', 'surfaces.ts'), 'utf8');
     const inputs = readFileSync(path.join(mainRoot, 'session', 'input.ts'), 'utf8');
     expect(runner).toMatch(/completeEvecronRunFromSessionVerification[\s\S]*return completeEvecronRun\s*\(/u);
-    expect(coreTools).toMatch(/reg\.register\('schedule_complete'[\s\S]*completeEvecronRunFromSessionVerification\s*\(/u);
-    expect(surfaces).toMatch(/['"]schedule_complete['"]/u);
-    expect(inputs).toMatch(/PARADIGMEVE_SCHEDULE_COMPLETION:v1[\s\S]*schedule_complete/u);
+    expect(scheduleTool).toMatch(/reg\.register\('schedule'[\s\S]*completeEvecronRunFromSessionVerification\s*\(/u);
+    expect(surfaces).toMatch(/['"]schedule['"]/u);
+    expect(inputs).toMatch(/PARADIGMEVE_SCHEDULE_COMPLETION:v1[\s\S]*action="complete"/u);
   });
 
   it('has a production owner that accepts an exact user request into Request Trail', () => {

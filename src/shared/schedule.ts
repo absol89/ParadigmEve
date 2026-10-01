@@ -101,12 +101,37 @@ export const scheduleWorkProvenanceSchema = z.object({
   pinId: uuidSchema.optional()
 }).strict().refine(value => Object.keys(value).length > 0, 'Empty schedule provenance is not useful');
 
+const scheduleSourceReferenceSchema = z.object({
+  sessionId: z.string().min(8).max(64),
+  conversationId: z.string().min(8).max(256),
+  messageIds: z.array(z.string().min(1).max(256)).min(1).max(32).optional()
+}).strict();
+
+const contextLineSchema = z.string().trim().min(1).max(2_000);
+const instructionReferenceSchema = z.string().trim().regex(/^%\S{1,79}$/u, 'Use an exact %Thread or %Hotlink reference');
+const dataReferenceSchema = z.string().trim().regex(/^#\S{1,79}$/u, 'Use an exact #Quilt or #Concept reference');
+
+/** Durable purpose captured from the conversation that created or refined scheduled work. */
+export const scheduleTaskContextSchema = z.object({
+  purpose: z.string().trim().min(1).max(8_000),
+  desiredOutcome: z.string().trim().min(1).max(8_000),
+  completionCriteria: z.array(contextLineSchema).max(16).optional(),
+  decisions: z.array(contextLineSchema).max(24).optional(),
+  observations: z.array(contextLineSchema).max(24).optional(),
+  constraints: z.array(contextLineSchema).max(24).optional(),
+  requestedFormat: z.string().trim().min(1).max(4_000).optional(),
+  sources: z.array(scheduleSourceReferenceSchema).min(1).max(16),
+  instructionRefs: z.array(instructionReferenceSchema).max(16).optional(),
+  contextRefs: z.array(dataReferenceSchema).max(16).optional()
+}).strict();
+
 export const frozenScheduleWorkSchema = z.object({
   target: scheduleWorkTargetSchema,
   text: z.string().trim().min(1).max(16_000),
   automation: z.enum(['off', 'goal', 'loop']).optional(),
   objective: z.string().trim().min(1).max(16_000).optional(),
   projectId: uuidSchema.optional(),
+  context: scheduleTaskContextSchema.optional(),
   authority: scheduleAuthoritySchema,
   provenance: scheduleWorkProvenanceSchema.optional()
 }).strict();
@@ -238,6 +263,7 @@ export const scheduleStateSchema = z.object({
 export type ScheduleTrigger = z.infer<typeof scheduleTriggerSchema>;
 export type ScheduleException = z.infer<typeof scheduleExceptionSchema>;
 export type ScheduleAuthority = z.infer<typeof scheduleAuthoritySchema>;
+export type ScheduleTaskContext = z.infer<typeof scheduleTaskContextSchema>;
 export type FrozenScheduleWork = z.infer<typeof frozenScheduleWorkSchema>;
 export type EveCronEntryCreate = z.infer<typeof eveCronEntryCreateSchema>;
 export type EveCronEntryPatch = z.infer<typeof eveCronEntryPatchSchema>;

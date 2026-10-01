@@ -297,7 +297,8 @@ async function renderEveEditor(body: HTMLElement, status: HTMLElement, api: Sche
         text: task.value.trim(),
         automation: automation.value as 'off' | 'goal' | 'loop',
         ...(automation.value !== 'off' && objective.value.trim() ? { objective: objective.value.trim() } : {}),
-        ...(editing?.work.projectId ? { projectId: editing.work.projectId } : {})
+        ...(editing?.work.projectId ? { projectId: editing.work.projectId } : {}),
+        ...(editing?.work.context ? { context: editing.work.context } : {})
       };
       const result = editing
         ? await receive(api.updateEveCronEntry({ id: editing.id, expectedUpdatedAt: editing.updatedAt, patch: { title: title.value.trim(), durationMinutes, trigger, work } } satisfies EveCronUiUpdateRequest), status)
@@ -328,7 +329,11 @@ async function renderEveEditor(body: HTMLElement, status: HTMLElement, api: Sche
       const row = el('article', `schedule-editor-entry${entry.state === 'paused' ? ' is-paused' : ''}`);
       row.setAttribute('aria-label', entry.title);
       const copy = el('div', 'schedule-editor-entry-copy');
-      copy.append(el('strong', '', entry.title), el('span', '', triggerSummary(entry)), el('small', '', () => t(entry.state === 'paused' ? 'Paused' : 'Active')));
+      copy.append(el('strong', '', entry.title), el('span', '', triggerSummary(entry)));
+      if (entry.work.context?.purpose) {
+        copy.append(el('small', 'schedule-editor-entry-purpose', () => `${t('Purpose')}: ${entry.work.context!.purpose}`));
+      }
+      copy.append(el('small', '', () => t(entry.state === 'paused' ? 'Paused' : 'Active')));
       const rowActions = el('div', 'schedule-editor-entry-actions');
       const edit = button(() => t('Edit'), () => { editing = entry; setStatus(status, ''); render(); });
       edit.setAttribute('aria-label', `${t('Edit')} · ${entry.title}`);

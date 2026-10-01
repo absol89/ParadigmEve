@@ -84,7 +84,7 @@ it('refreshes root-sensitive read descriptions without rebuilding unrelated decl
   expect(c.find(tool => tool.name === 'view_image')!.inputSchema.properties).toBe(a.find(tool => tool.name === 'view_image')!.inputSchema.properties);
 });
 
-it('publishes the schedule completion lifecycle hook on the production core surface', async () => {
+it('publishes the compact unified schedule lifecycle hook on the production core surface', async () => {
   const ctx: ToolContext = {
     roots: [],
     caps: { ...DEFAULT_CAPABILITIES },
@@ -96,10 +96,11 @@ it('publishes the schedule completion lifecycle hook on the production core surf
   let tools: PluginToolSchema[] = [];
   const server = buildServer(ctx, 'core', (_name, _version, _instructions, published) => { tools = published; });
   await server.close();
-  const completion = tools.find(tool => tool.name === 'schedule_complete');
-  expect(completion).toBeDefined();
-  expect(completion?.inputSchema.required).toContain('verification_tool_call');
-  expect(completion?.inputSchema.properties).toHaveProperty('result_tool_call');
+  const schedule = tools.find(tool => tool.name === 'schedule');
+  expect(schedule).toBeDefined();
+  expect(schedule?.inputSchema.required).toContain('action');
+  expect(schedule?.inputSchema.properties).toHaveProperty('payload');
+  expect(JSON.stringify(schedule?.inputSchema)).toContain('complete');
 });
 
 it('shares schemas without capturing the preceding request permission snapshot in handlers', async () => {

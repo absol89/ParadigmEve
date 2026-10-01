@@ -3,7 +3,6 @@ import { registerPlanTool } from './plan-tool.js';
 import { registerChatReviewPlanTool } from './chat-review-plan-tool.js';
 import { goalWorkerChat } from '../bridge.js';
 import { announceSessionFinish } from '../session/finish.js';
-import { completeEvecronRunFromSessionVerification } from '../evecron-runner.js';
 import { getConfig } from '../config.js';
 /**
  * The Core connector: reading, changing and running code on this PC.
@@ -161,6 +160,7 @@ import {
 } from './kernel.js';
 import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
 import { registerPinsTool } from './pins-tool.js';
+import { registerScheduleTool } from './schedule-tool.js';
 import { completeChatReviewHeartbeat, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
 import { currentCallMayUseEveAuthority, sharedEveOwnerForCurrentCall } from '../eve-access.js';
 import { lanPeerMessagingStatus, lanPeerRuntimeAvailable, sendLanPeerMessage } from '../lan-peer-runtime.js';
@@ -1179,6 +1179,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     registerSessionSearchReadTool(reg);
     registerPlanTool(reg);
     registerPinsTool(reg);
+    registerScheduleTool(reg);
     registerChatReviewPlanTool(reg);
     reg.register('chat_review_complete', toolDeclaration('chat_review_complete', () => ({
       title: 'Complete chat review heartbeat',
@@ -1338,31 +1339,6 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
       return guard('session_finish', async () => ({ content: [{ type: 'text', text: await announceSessionFinish(caller.sessionId!, summary) }] }));
     });
   }
-
-  reg.register('schedule_complete', toolDeclaration('schedule_complete', () => ({
-    description: 'Complete the one scheduled run owned by this exact schedule chat, only after real task verification. Pass exact durable T… references from session(action="read", include=["tools"]): verification_tool_call must be the successful tool result that proves the postcondition; result_tool_call names the successful task result when it differs. Final prose, elapsed time, browser state, session_finish, Plans, and lifecycle/status tools are not completion evidence. This tool fails closed outside an exact running schedule session.',
-    inputSchema: z.object({
-      verification_tool_call: z.string().regex(/^T[0-9A-Z]+$/i),
-      result_tool_call: z.string().regex(/^T[0-9A-Z]+$/i).optional()
-    }).strict(),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
-  })), async ({ verification_tool_call, result_tool_call }) => {
-    const caller = currentCaller();
-    if (!caller.sessionId || !caller.conversationId) return fail('Exact scheduled session identity is required');
-    return guard('schedule_complete', async () => {
-      const completed = await completeEvecronRunFromSessionVerification({
-        sessionId: caller.sessionId!,
-        conversationId: caller.conversationId!,
-        verificationToolRef: verification_tool_call,
-        ...(result_tool_call ? { resultToolRef: result_tool_call } : {})
-      });
-      return {
-        content: [{ type: 'text' as const, text: 'Scheduled run completed from exact durable task verification.' }],
-        structuredContent: { occurrenceId: completed.occurrence.id, status: completed.execution.status }
-      };
-    });
-  });
-
 
   // ----------------------------------------------------------------- agents
 

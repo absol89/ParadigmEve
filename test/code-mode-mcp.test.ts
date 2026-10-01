@@ -172,7 +172,7 @@ it('rejects missing proof, foreign tools, invalid child arguments and nested lif
   const who = await identity();
   expect(text(await call(who.requestId, 'text([typeof tools.computer,typeof tools.exec])'))).toBe('["undefined","undefined"]');
   expect(text(await call(who.requestId, 'text(await tools.read({paths:1}))'))).toContain('INVALID_ARGUMENTS');
-  for (const code of ['text(await tools.session_finish({summary:"done"}))', 'text(await tools.schedule_complete({verification_tool_call:"T1"}))', 'text(await tools.chat_review_plan({key:"heartbeat:test",plan_id:"plan:test",expected_updated_at:1,classification:"tbd"}))', 'text(await tools.chat_review_complete({key:"heartbeat:test"}))', 'text(await tools.agents({action:"finish",summary:"done"}))']) {
+  for (const code of ['text(await tools.session_finish({summary:"done"}))', 'text(await tools.schedule({action:"complete",payload:{verification_tool_call:"T1"}}))', 'text(await tools.chat_review_plan({key:"heartbeat:test",plan_id:"plan:test",expected_updated_at:1,classification:"tbd"}))', 'text(await tools.chat_review_complete({key:"heartbeat:test"}))', 'text(await tools.agents({action:"finish",summary:"done"}))']) {
     expect(text(await call(who.requestId, code))).toContain('DIRECT_CALL_REQUIRED');
   }
 });

@@ -19,7 +19,8 @@ function editableWork(work: FrozenScheduleWork): EveCronUiWorkInput {
     text: work.text,
     automation: work.automation ?? 'off',
     ...(work.objective ? { objective: work.objective } : {}),
-    ...(work.projectId ? { projectId: work.projectId } : {})
+    ...(work.projectId ? { projectId: work.projectId } : {}),
+    ...(work.context ? { context: work.context } : {})
   };
 }
 
@@ -41,7 +42,8 @@ function authorizedUiWork(input: EveCronUiWorkInput, now: number): FrozenSchedul
     text: input.text,
     automation: input.automation,
     ...(input.objective ? { objective: input.objective } : {}),
-    ...(input.projectId ? { projectId: input.projectId } : {})
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    ...(input.context ? { context: input.context } : {})
   };
   return {
     ...executable,

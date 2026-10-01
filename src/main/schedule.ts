@@ -63,19 +63,20 @@ function nextTimestamp(previous: number, now: number): number {
   return Math.max(now, previous + 1);
 }
 
-function canonicalWorkPayload(work: Pick<FrozenScheduleWork, 'target' | 'text' | 'automation' | 'objective' | 'projectId'>): string {
+function canonicalWorkPayload(work: Pick<FrozenScheduleWork, 'target' | 'text' | 'automation' | 'objective' | 'projectId' | 'context'>): string {
   return JSON.stringify({
     target: work.target,
     text: work.text,
     automation: work.automation ?? 'off',
     objective: work.objective ?? null,
-    projectId: work.projectId ?? null
+    projectId: work.projectId ?? null,
+    context: work.context ?? null
   });
 }
 
 /** Hash only executable work. A Plan/Pin reference is provenance and cannot grant authority. */
 export function eveCronWorkPayloadHash(
-  work: Pick<FrozenScheduleWork, 'target' | 'text' | 'automation' | 'objective' | 'projectId'>
+  work: Pick<FrozenScheduleWork, 'target' | 'text' | 'automation' | 'objective' | 'projectId' | 'context'>
 ): string {
   return createHash('sha256').update(canonicalWorkPayload(work), 'utf8').digest('hex');
 }

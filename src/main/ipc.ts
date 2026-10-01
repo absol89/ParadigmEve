@@ -12,7 +12,7 @@ import { stageInputAttachment, type AttachmentSource } from './session/input-att
 import { recordDeliveredInput, recordedInputImage, recordedInputImageThumbnail } from './session/input-history.js';
 import { UI_BASE_ZOOM, titleBarOverlayForTheme } from './window-layout.js';
 import { usageOverview } from './session/usage.js';
-import { inputArgs, listInputs, editQueuedInput, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs, cancelDeletedSessionInputs } from './session/input.js';
+import { inputArgs, listInputs, editQueuedInput, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs, cancelDeletedSessionInputs, scheduleDeliveryText } from './session/input.js';
 import { draftOpeningMessage, onGoalChange, nativeGoalFailure } from './goal.js';
 import { cancelTaskRequest, runTaskRequest } from './task-request.js';
 import { randomUUID } from 'node:crypto';
@@ -1733,8 +1733,9 @@ export function registerIpc(
       // Only the opening user input owns executor setup. Existing chats, queued
       // checkpoints and automatic continuations already have their instructions.
       if (!entry.sessionId && !entry.conversationId && !entry.finishOwner && entry.mode !== 'finish') {
+        const opening = entry.purpose === 'schedule' ? scheduleDeliveryText({ ...entry, text }) : text;
         const contextual = await injectPinsContext(
-          text,
+          opening,
           limits,
           entry.contextQuiltId ? { quiltId: entry.contextQuiltId } : {}
         );

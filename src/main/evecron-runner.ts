@@ -65,7 +65,7 @@ const NON_TASK_EVIDENCE_TOOLS = new Set([
   'agents',
   'chat_review_plan',
   'chat_review_complete',
-  'schedule_complete',
+  'schedule',
   'session',
   'session_finish',
   'update_plan',
@@ -144,7 +144,8 @@ export async function admitEvecronOccurrence(occurrenceId: string, now = Date.no
     dueAt: claimed.dueAt,
     ...(claimed.work.automation ? { automation: claimed.work.automation } : {}),
     ...(claimed.work.objective ? { objective: claimed.work.objective } : {}),
-    ...(claimed.work.projectId ? { projectId: claimed.work.projectId } : {})
+    ...(claimed.work.projectId ? { projectId: claimed.work.projectId } : {}),
+    ...(claimed.work.context ? { context: claimed.work.context } : {})
   });
   return { occurrence: claimed, input, execution };
 }

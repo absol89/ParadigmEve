@@ -66,7 +66,14 @@ it('uses the Eve entry revision for pause and surfaces a stale conflict instead 
     state: 'enabled' as const,
     durationMinutes: 45,
     trigger: { kind: 'weekly' as const, weekdays: [5], localTime: '09:00', timeZone: 'Europe/Stockholm' },
-    work: { text: 'Review the queue', automation: 'off' as const },
+    work: {
+      text: 'Review the queue', automation: 'off' as const,
+      context: {
+        purpose: 'Prepare the short morning comparison before shopping.',
+        desiredOutcome: 'A today-only decision brief.',
+        sources: [{ sessionId: '2026-10-01-source', conversationId: 'conversation-source' }]
+      }
+    },
     updatedAt: 42
   };
   const setState = vi.fn(async () => ({ ok: false as const, error: 'Schedule changed; refresh before editing it again' }));
@@ -83,6 +90,7 @@ it('uses the Eve entry revision for pause and surfaces a stale conflict instead 
   expect(document.body.textContent).toContain('Edit the recurring and one-time work Eve runs from this schedule.');
   expect(document.body.textContent).toContain('Duration in minutes');
   expect(document.querySelector('.schedule-editor-entry')?.getAttribute('aria-label')).toBe('Morning review');
+  expect(document.body.textContent).toContain('Purpose: Prepare the short morning comparison before shopping.');
   expect(button('Edit').getAttribute('aria-label')).toBe('Edit · Morning review');
   expect(button('Pause').getAttribute('aria-label')).toBe('Pause · Morning review');
   button('Pause').click();

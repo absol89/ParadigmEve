@@ -40,11 +40,24 @@ describe('user-facing Eve schedule mutations', () => {
       title: 'Morning review',
       durationMinutes: 45,
       trigger: { kind: 'weekly', weekdays: [1, 5], localTime: '09:15', timeZone: 'Europe/Stockholm' },
-      work: { text: 'Review the saved morning queue.', automation: 'off' }
+      work: {
+        text: 'Review the saved morning queue.', automation: 'off',
+        context: {
+          purpose: 'Prepare the short daily brief from the shopping conversation.',
+          desiredOutcome: 'A today-only brief that reflects the latest shopping state.',
+          constraints: ['Do not file expenses merely because expense context is present.'],
+          requestedFormat: 'Wedding-invitation visual card.',
+          sources: [{ sessionId: '2026-09-24-44847d07', conversationId: '6ab5284e-671c-83eb-b463-b458d34cc523' }],
+          instructionRefs: ['%morningbrief'], contextRefs: ['#expenses']
+        }
+      }
     }, NOW);
 
     expect(created).toMatchObject({ title: 'Morning review', durationMinutes: 45, state: 'enabled' });
-    expect(created.work).toEqual({ text: 'Review the saved morning queue.', automation: 'off' });
+    expect(created.work).toMatchObject({
+      text: 'Review the saved morning queue.', automation: 'off',
+      context: { purpose: expect.stringContaining('daily brief'), instructionRefs: ['%morningbrief'], contextRefs: ['#expenses'] }
+    });
     expect(created.work).not.toHaveProperty('authority');
     const stored = (await readScheduleState()).entries[0]!;
     expect(stored.work.target).toEqual({ kind: 'installation-agent' });
@@ -64,12 +77,13 @@ describe('user-facing Eve schedule mutations', () => {
     const changed = await updateEveCronFromUi({
       id: created.id,
       expectedUpdatedAt: paused.updatedAt,
-      patch: { work: { text: 'Review the updated queue.', automation: 'off' }, durationMinutes: 60 }
+      patch: { work: { text: 'Review the updated queue.', automation: 'off', context: created.work.context }, durationMinutes: 60 }
     }, NOW + 3);
     const changedStored = (await readScheduleState()).entries[0]!;
     expect(changed.durationMinutes).toBe(60);
     expect(changedStored.work.authority).toMatchObject({ kind: 'ui-user', authorizedAt: NOW + 3 });
     expect(changedStored.work.authority).not.toEqual(stored.work.authority);
+    expect(changedStored.work.context).toEqual(stored.work.context);
   });
 
   it('rejects renderer attempts to inject target, authority, or provenance', async () => {

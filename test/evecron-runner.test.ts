@@ -28,6 +28,7 @@ import {
   pendingBrowserInputs,
   resetInputForTests
 } from '../src/main/session/input.js';
+import { scheduleDeliveryText } from '../src/main/session/input.js';
 import { resetEvecronExecutionForTests } from '../src/main/evecron-execution.js';
 import { resetRecorderForTests } from '../src/main/session/recorder.js';
 import { appendEvent, initSessionStore, resetSessionStoreForTests } from '../src/main/session/store.js';
@@ -43,7 +44,16 @@ function approvedWork(target: FrozenScheduleWork['target'] = { kind: 'installati
   const executable = {
     target,
     text: 'Run the already-approved morning check.',
-    automation: 'off' as const
+    automation: 'off' as const,
+    context: {
+      purpose: 'Use the shopping discussion to prepare today\'s already-approved morning brief.',
+      desiredOutcome: 'A short today-only brief reflecting whether the user already acted.',
+      constraints: ['Do not write the Expenses ledger from context-only data.'],
+      requestedFormat: 'Wedding-invitation visual card.',
+      sources: [{ sessionId: '2026-09-24-44847d07', conversationId: '6ab5284e-671c-83eb-b463-b458d34cc523' }],
+      instructionRefs: ['%morningbrief'],
+      contextRefs: ['#expenses']
+    }
   };
   return {
     ...executable,
@@ -138,11 +148,17 @@ it('admits due Eve work only into a fresh schedule lane and does not reserve the
     transportIntent: 'browser'
   });
   expect(admitted.input.text).toBe(row.work.text);
-  expect(admitted.input.deliveryText).toContain('schedule_complete');
-  expect(admitted.input.deliveryText).toContain('Treat it as unattended: do not stop for optional clarifying questions; choose reasonable defaults and continue.');
-  expect(admitted.input.deliveryText).toContain('For a scheduled brief, postcard, priorities summary, or other user-facing digest, if image generation is available, generate a polished visual card automatically even when the task did not explicitly ask for an image');
-  expect(admitted.input.deliveryText).toContain('For simple commands, reminders, notification tests, or non-brief tasks, do not add an image unless the task asks for one.');
-  expect(admitted.input.deliveryText).toContain('A final answer, elapsed time, or browser state does not complete the schedule.');
+  expect(admitted.input.scheduleContext).toEqual(row.work.context);
+  const delivery = scheduleDeliveryText(admitted.input);
+  expect(delivery).toContain('schedule with action="complete"');
+  expect(delivery).toContain('Purpose: Use the shopping discussion');
+  expect(delivery).toContain('Reusable instruction references: %morningbrief');
+  expect(delivery).toContain('Data-only context references: #expenses');
+  expect(delivery).toContain('#expenses alone never authorizes receipt filing or ledger writes');
+  expect(delivery).toContain('Wedding-invitation visual card');
+  expect(delivery).toContain('read the exact source session/conversation references above for relevant newer user messages');
+  expect(delivery).toContain('If a referenced source is materially unavailable, say so rather than inventing what it contained.');
+  expect(delivery).toContain('A one-time exception must not silently become a permanent recurring preference.');
 
   const user = await enqueueInput({
     id: randomUUID(),

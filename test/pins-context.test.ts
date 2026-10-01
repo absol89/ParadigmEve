@@ -5,6 +5,7 @@ import path from 'node:path';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import { createCollection, createPin, createQuilt, initializeDefaultThreads, PINS_STATE, resetPinsForTests, setCollectionDescription, setQuiltPrompt, updateQuiltMetadata } from '../src/main/pins.js';
 import { injectPinsContext } from '../src/main/pins-context.js';
+import { scheduleDeliveryText } from '../src/main/session/input.js';
 import { VAULT_CONTEXT_MARKER } from '../src/main/vault-path.js';
 import {
   createSession,
@@ -43,6 +44,31 @@ it('keeps #expenses data-only and lets a real Quilt shadow the built-in alias', 
   const shadowed = await injectPinsContext('#expenses summarize its saved context.', { maxChars: 96_000, maxBytes: 128_000 });
   expect(shadowed).toContain('# Eve Quilt description missing · #expenses');
   expect(shadowed).not.toContain('# Eve Thread prompt · expenses');
+});
+
+it('expands scheduled % instructions while keeping #expenses data-only in the fresh run opening', async () => {
+  await initializeDefaultThreads();
+  const morning = await createQuilt({ title: 'morningbrief', collectionIds: [] });
+  await setQuiltPrompt(morning.id, 'Render the agreed wedding-invitation visual card and keep the horizon to today.');
+  const request = scheduleDeliveryText({
+    text: 'Prepare the already-agreed shopping brief.',
+    scheduleContext: {
+      purpose: 'Compare the stores using the prices discussed in the source conversation.',
+      desiredOutcome: 'A short today-only brief that notices if the user already acted.',
+      constraints: ['Remembering a price is not permission to file an expense.'],
+      requestedFormat: 'Wedding-invitation visual card.',
+      sources: [{ sessionId: '2026-09-24-44847d07', conversationId: '6ab5284e-671c-83eb-b463-b458d34cc523' }],
+      instructionRefs: ['%morningbrief'],
+      contextRefs: ['#expenses']
+    }
+  });
+  const injected = await injectPinsContext(request, { maxChars: 96_000, maxBytes: 128_000 });
+  expect(injected).toContain('# Eve Thread prompt · morningbrief');
+  expect(injected).toContain('Render the agreed wedding-invitation visual card and keep the horizon to today.');
+  expect(injected).toContain('# Eve UNTRUSTED context data · #expenses description');
+  expect(injected).not.toContain('# Eve Thread prompt · expenses');
+  expect(injected).toContain('#expenses alone never authorizes receipt filing or ledger writes');
+  expect(injected.endsWith(request)).toBe(true);
 });
 
 it('injects the exact recorded message for opening Quilt / Thread references and keeps the current request last', async () => {

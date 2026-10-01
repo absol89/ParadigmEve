@@ -932,7 +932,8 @@ describe('model-facing surfaces', () => {
 
     // ParadigmEve carries local + enabled Computer-use tools; the legacy Desktop endpoint
     // still contains only its old Computer-use declaration. Both include one code-mode tool.
-    // `chat_review_plan`, `chat_review_complete` and `schedule_complete` are narrow lifecycle tools:
+    // `schedule` preserves authorized conversation context and owns verified completion. `chat_review_plan`
+    // and `chat_review_complete` are narrow lifecycle tools:
     // heartbeat Plan acknowledgement and debt completion require exact semantic review, and scheduled
     // work closes only from exact durable task-verification lineage rather than final prose/browser state.
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
@@ -941,6 +942,7 @@ describe('model-facing surfaces', () => {
     expect(coreTools).toHaveLength(IS_WINDOWS ? 34 : process.platform === 'darwin' ? 21 : 19);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
+    expect(coreTools.map(tool => tool.name)).toContain('schedule');
     expect(coreTools.find(tool => tool.name === 'expenses_read')?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false

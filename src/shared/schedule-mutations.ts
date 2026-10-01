@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   scheduleDurationMinutesSchema,
+  scheduleTaskContextSchema,
   scheduleTriggerSchema,
   type ScheduleTrigger
 } from './schedule.js';
@@ -16,7 +17,8 @@ export const eveCronUiWorkInputSchema = z.object({
   text: z.string().trim().min(1).max(16_000),
   automation: z.enum(['off', 'goal', 'loop']).default('off'),
   objective: z.string().trim().min(1).max(16_000).nullable().optional(),
-  projectId: uuidSchema.nullable().optional()
+  projectId: uuidSchema.nullable().optional(),
+  context: scheduleTaskContextSchema.nullable().optional()
 }).strict();
 
 export const eveCronUiCreateRequestSchema = z.object({

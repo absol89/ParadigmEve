@@ -540,7 +540,7 @@ async function dispatchTracked(
   // mate while a swarm is active. Use the full exact-id window, not the shorter prime window:
   // the live worker failure that motivated IDENTITY_EVIDENCE_MS arrived ~8 seconds late.
   const identitySensitive = needsWorkspaceIdentity(name, args);
-  const exactCallerMutation = name === 'pins' && args !== null && typeof args === 'object' &&
+  const exactCallerMutation = (name === 'pins' || name === 'schedule') && args !== null && typeof args === 'object' &&
     (args as { action?: unknown }).action !== 'list';
   // update_plan always consumes this exact session, even outside a swarm. Resolve it
   // before the shared blocked/superseded checks rather than guessing from selection.
@@ -763,7 +763,7 @@ async function dispatchTracked(
               'CALLER_IDENTITY_REQUIRED: this operation needs this chat’s exact workspace, but the connector could not prove which ChatGPT conversation made the call. Retry after the extension reconnects; no file or command was changed.'
             )
           )
-        : nested && (name === 'exec' || name === 'session_finish' || name === 'schedule_complete' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'lan' || isFinish)
+        : nested && (name === 'exec' || name === 'session_finish' || name === 'schedule' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'lan' || isFinish)
         ? Promise.resolve(fail('DIRECT_CALL_REQUIRED: call this lifecycle tool directly, outside exec. No action was taken.'))
         : invokeHandler()
   );
