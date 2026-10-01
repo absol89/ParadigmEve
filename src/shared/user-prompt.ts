@@ -4,6 +4,16 @@ const CONTEXT_MARKER = 'PARADIGMEVE_CONTEXT';
 const continuation = (text: string): string => /^\[\[CLF-(?:HANDOFF|RESUME):[A-Za-z0-9_-]{16,64}\]\]\n\n/.exec(text)?.[0] ?? '';
 export function userPromptText(text: string): string | null {
   text = text.replace(/\r\n?/g, '\n');
+  const exact = framedUserText(text);
+  if (exact !== null || !/&#x20;/i.test(text)) return exact;
+  // ChatGPT can read an app-sent message back with some spaces serialized as the literal
+  // `&#x20;`, so the declared frame length no longer lands on the closing marker and the whole
+  // internal frame was shown as the user's message (upstream chat-on-steroids #821). Accept the
+  // frame only when decoding that one entity makes the declared length exact.
+  return framedUserText(text.replace(/&#x20;/gi, ' '));
+}
+
+function framedUserText(text: string): string | null {
   const identity = continuation(text);
   const header = /^\[\[(PARADIGMEVE_CONTEXT|COS_CONTEXT):(\d{1,6})\]\]\n/.exec(text.slice(identity.length));
   if (!header) return null;

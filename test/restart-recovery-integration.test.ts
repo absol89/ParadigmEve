@@ -40,7 +40,8 @@ const input = await import('../src/main/session/input.js');
 const { queuePrimeRestartRecovery } = await import('../src/main/session/recovery-memory.js');
 const { restoreAgentIdentity, resetAgentIdentityForTests } = await import('../src/main/agent-identity.js');
 const { resetRecorderForTests } = await import('../src/main/session/recorder.js');
-const { makeTempDir, removeTempDir } = await import('./helpers.js');
+const continuation = await import('../src/main/session/continuation.js');
+const { makeTempDir, removeTempDir, SAMPLE_BRIEF } = await import('./helpers.js');
 
 let chatSeq = 0;
 /** A fresh pair of ChatGPT-shaped ids per test, so one test's durable rebind never meets another's. */
@@ -142,6 +143,49 @@ describe('reboot recovery of the exact Eve conversation', () => {
 
     // The proof that recovery works: the Companion is told to deliver the wake to chat B.
     expect(await handedToBrowser()).toContainEqual(expect.objectContaining({ id: plan!.inputId, conversationId: CHAT_B }));
+  });
+
+  /**
+   * Eva on 2026-10-01: the restart found her still in chat A with its Compact & Resume brief
+   * already asked for. Chat A refuses every local tool until the successor commits, so a wake
+   * typed there starts a turn that can only answer COMPACTION_IN_PROGRESS. The wake waits for
+   * the move and then goes to the successor, the chat that actually owns the session.
+   */
+  it('holds the restart wake while the chat it names is handing over, then delivers it to the successor', async () => {
+    const { a: CHAT_A, b: CHAT_B } = chats();
+    const recorded = await call('POST', '/events', {
+      conversationId: CHAT_A,
+      events: [
+        { kind: 'user_message', time: Date.now() - 120_000, text: 'keep working', messageId: 'm-fence-1' },
+        { kind: 'turn_start', time: Date.now() - 110_000, turnId: 'turn-fence' },
+        { kind: 'turn_end', time: Date.now() - 100_000, turnId: 'turn-fence', outcome: 'completed' }
+      ]
+    });
+    const sessionId = recorded.body.sessionId as string;
+    expect(sessionId).toBeTruthy();
+    resetAgentIdentityForTests();
+    restoreAgentIdentity({ version: 1, conversationId: CHAT_A });
+    const opened = await continuation.openContinuationNow(sessionId, CHAT_A, true);
+    expect((await continuation.beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
+    expect(await continuation.dispatchContinuationSourceSendNow(opened.token)).toBe(true);
+    expect(await continuation.attachSummary(opened.token, `fence brief
+
+${SAMPLE_BRIEF}`)).not.toBeNull();
+    expect(continuation.compactingConversation(CHAT_A)?.token).toBe(opened.token);
+
+    await reboot();
+    const plan = await queuePrimeRestartRecovery(CHAT_A);
+    expect(plan?.entry, 'the wake was not durably queued').toMatchObject({ state: 'queued' });
+    expect(await handedToBrowser(), 'the wake was offered to the fenced source chat').not.toContainEqual(
+      expect.objectContaining({ id: plan!.inputId })
+    );
+
+    expect(await continuation.claimContinuationNow(opened.token, 'successor-command')).not.toBeNull();
+    expect(await continuation.commitContinuation(opened.token, CHAT_B)).toBe(true);
+    expect(continuation.compactingConversation(CHAT_A)).toBeNull();
+    expect(await handedToBrowser(), 'the wake never followed the session to its successor').toContainEqual(
+      expect.objectContaining({ id: plan!.inputId, conversationId: CHAT_B })
+    );
   });
 
   it('delivers the user message typed after the reboot once the wake has gone', async () => {

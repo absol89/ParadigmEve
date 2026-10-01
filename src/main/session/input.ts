@@ -18,6 +18,7 @@ import { isChatBlocked } from './blocked-chats.js';
 import { wakeBrowserWork } from '../browser-wake.js';
 import { logInfo, logWarn } from '../logger.js';
 import { noteChatOrigin } from './recorder.js';
+import { compactingConversation } from './continuation.js';
 import { claimAgentConversation, currentAgentConversationId, replaceAgentConversation } from '../agent-identity.js';
 import { selectedBrokerOwnerConversationId } from '../agents.js';
 import { isAstraModel, isProModel } from '../../shared/chat-models.js';
@@ -354,6 +355,12 @@ async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
     if (selection?.conversationId === session?.conversationId && isAstraModel(selection?.model, selection?.reasoningEffort)) return false;
   }
   if (!entry.sessionId) return entry.transportIntent !== 'tool';
+  // A chat whose Compact & Resume brief has been asked for is being replaced: its tools are
+  // fenced until the successor commits, and a message typed there (a restart wake, a heartbeat,
+  // the user's queued text) would only start a turn that can do nothing and bury the handoff.
+  // The row waits and follows the session to its successor once the move lands.
+  const current = await getSession(entry.sessionId);
+  if (current?.conversationId && compactingConversation(current.conversationId)) return false;
   const policy = await sessionInputPolicy(entry.sessionId);
   if (entry.recoveryTurnId) {
     const session = await getSession(entry.sessionId);

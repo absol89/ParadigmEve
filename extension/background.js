@@ -2257,7 +2257,10 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
         : `https://chatgpt.com/?${input.lifetime === 'temporary-planner' ? 'temporary-chat=true&' : ''}${marker}#${marker}`;
       if (!target && input.lifetime !== 'temporary-planner') {
         const reusable = new Set(reusableConversations);
+        // A tab carrying an app command marker belongs to that command (a Compact & Resume successor
+        // or worker bootstrap) and is never elected for another input; see content.js inputReuseSafe.
         const choices = tabs.filter(candidate => !candidate.pinned && !candidate.pendingUrl && modelCatalogTarget?.tab !== candidate.id &&
+          !commandMarkerFromUrl(candidate.url) &&
           (recoveredReuse ? candidate.id === recoveredReuse.tab :
             (!conversationForTab(candidate) || reusable.has(conversationForTab(candidate)))))
           .sort((a, b) => Number(!!conversationForTab(a)) - Number(!!conversationForTab(b)) || a.id - b.id);
@@ -3031,16 +3034,26 @@ async function performBrowserRepairs(repairs, policy) {
           await chrome.tabs.update(target.id, { active: true });
         }
       }
-      if (target && reason === 'unattributed') {
+      if (target && (reason === 'unattributed' || reason === 'assistant-error')) {
         // An attribution refresh exists to make a live page report again, not to rescue a broken
         // one, and a reload mid-stream ends that stream ("Resume stream unavailable", or "could not
         // be loaded"), losing the turn. A page that answers that it is streaming is alive, and its
         // request ids now reach the app through the stream itself. Stand down and report it so the
         // incident's next pass decides (upstream chat-on-steroids #433). Silence and error recovery
         // exist for pages that look busy and are not, and keep reloading.
-        const status = await tabReply(target.id, { type: 'clf-page-status' });
-        if (status?.ok === true && status.streaming === true) {
+        // Interrupted-response recovery has the same destructive edge once ChatGPT has already
+        // recovered on its own: keep a resumed stream queued for another pass, and retire the
+        // episode without navigation once its transport error has disappeared. A still-visible
+        // error keeps the reload (upstream chat-on-steroids 8b01399, a231d58, c8721d1).
+        const documentId = typeof tabDocuments[String(target.id)] === 'string' ? tabDocuments[String(target.id)] : null;
+        const status = await tabReply(target.id, { type: 'clf-page-status' }, documentId ? { documentId } : undefined);
+        if (status?.ok === true && status.streaming === true &&
+            (reason !== 'assistant-error' || status.assistantError === false)) {
           await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=${repairAction}`);
+          continue;
+        }
+        if (reason === 'assistant-error' && status?.ok === true && status.assistantError === false) {
+          await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=preserved`);
           continue;
         }
       }
@@ -4415,17 +4428,20 @@ async function placeSuccessorChat(raw, tabId) {
   // Directly after the chat it continues, so a handoff reads as one piece of work instead of a
   // tab appended to the far end of a long strip.
   if (typeof home.index === 'number') create.index = home.index + 1;
-  try {
-    const created = await chrome.tabs.create(create);
-    if (create.active === false && Number.isInteger(created?.id)) {
+  let created;
+  try { created = await chrome.tabs.create(create); }
+  catch (err) { return fail(`Chrome could not create the successor tab: ${err && err.message ? err.message : err}`); }
+  // Report a failed placement only when Chrome made no tab. Once it exists it loads its marker and
+  // can still redeem the command; a failed protection write must not retire the command and leave
+  // a blank chat (upstream chat-on-steroids a72e8f0).
+  if (create.active === false && Number.isInteger(created?.id)) {
+    try {
       await chrome.tabs.update(created.id, { autoDiscardable: false });
       discardProtectedTabs[String(created.id)] = true;
       await persistLive();
-    }
-    return guardCreated(created, create.url);
-  } catch (err) {
-    return fail(`Chrome could not create the successor tab: ${err && err.message ? err.message : err}`);
+    } catch { /* The tab exists; protection persistence is not placement failure. */ }
   }
+  return guardCreated(created, create.url);
 }
 
 /** Accepts only the inert app command identity; the browser still decides the target tab. */

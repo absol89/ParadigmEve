@@ -133,3 +133,25 @@ it('hides a provider-prefixed blank paragraph using exact source, retaining stri
     }
   } finally { page.window.close(); }
 });
+
+it('reads the frame back when ChatGPT serialized some spaces as &#x20; (upstream chat-on-steroids #821)', () => {
+  const page = new JSDOM('', { runScripts: 'outside-only' });
+  try {
+    page.window.eval(readFileSync('extension/chatgpt-dom.js', 'utf8'));
+    const api = (page.window as unknown as { CLF_DOM: typeof import('../src/shared/user-prompt.js') }).CLF_DOM;
+    const instructions = 'Guidance\n    indented line\n        deeper line';
+    const authored = 'My follow-up question';
+    const sent = prependUserPrompt(authored, instructions);
+    // ChatGPT's readback: indentation spaces inside the frame come back as the literal entity.
+    const readback = sent.replace('    indented', '&#x20;&#x20;&#x20;&#x20;indented');
+    expect(readback).not.toBe(sent);
+    expect(userPromptText(readback)).toBe(authored);
+    expect(api.userPromptText(readback)).toBe(authored);
+    // A frame that decoding does not make exact stays unrecognised rather than guessed.
+    const broken = readback.replace('deeper line', 'deeper line and more');
+    expect(userPromptText(broken)).toBeNull();
+    expect(api.userPromptText(broken)).toBeNull();
+  } finally {
+    page.window.close();
+  }
+});

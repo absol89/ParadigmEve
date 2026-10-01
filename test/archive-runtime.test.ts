@@ -141,8 +141,57 @@ describe('ArchiveRuntime', () => {
 
     const repaired = await runtime.store.readSession(id);
     expect(errors).toEqual([]);
-    expect(repaired.events).toEqual(published.events);
+    // Published evidence is immutable and keeps its order; the late row is appended, not lost.
+    expect(repaired.events.slice(0, published.events.length)).toEqual(published.events);
+    expect(repaired.events.map(event => event.eventId)).toEqual(['user:user-first', 'assistant:assistant-first', 'user:user-late']);
+    expect(repaired.events.map(event => event.eventSeq)).toEqual([1, 2, 3]);
     expect(repaired.manifest?.captureState).toBe('partial');
+  });
+
+  it('keeps archiving new evidence after source history is reordered instead of freezing at the reorder', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-reorder-keeps-appending';
+    const firstUser = { ...user(1, 'first request'), messageId: 'user-first' } as SessionEvent;
+    const firstAssistant = { ...assistant(2, 'first answer', true), messageId: 'assistant-first' } as SessionEvent;
+    let current: CurrentSessionArchiveSnapshot = { summary: summary(id), events: [firstUser, firstAssistant] };
+    const errors: Error[] = [];
+    const runtime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'runtime-test',
+      source: { listSessionIds: async () => [id], readSession: async () => current, readAsset: async () => null },
+      onError: error => errors.push(error)
+    });
+    await runtime.start();
+    await runtime.drain();
+
+    // A late row sorts before already-published evidence, and new turns keep arriving after it.
+    const late = { ...user(3, 'late historical request'), messageId: 'user-late' } as SessionEvent;
+    const laterUser = { ...user(4, 'second request'), messageId: 'user-second' } as SessionEvent;
+    const laterAssistant = { ...assistant(5, 'second answer', true), messageId: 'assistant-second' } as SessionEvent;
+    current = { summary: { ...summary(id), updatedAt: 300 }, events: [firstUser, late, firstAssistant, laterUser, laterAssistant] };
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+
+    // Every later reconcile must stay stable and keep picking up what is new.
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    const laterTail = { ...assistant(6, 'third answer', true), messageId: 'assistant-third' } as SessionEvent;
+    current = { summary: { ...summary(id), updatedAt: 400 }, events: [...current.events, laterTail] };
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+
+    const result = await runtime.store.readSession(id);
+    expect(errors).toEqual([]);
+    expect(result.events.map(event => event.eventId)).toEqual([
+      'user:user-first',
+      'assistant:assistant-first',
+      'user:user-late',
+      'user:user-second',
+      'assistant:assistant-second',
+      'assistant:assistant-third'
+    ]);
+    expect(result.events.map(event => event.eventSeq)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(result.manifest?.captureState).toBe('partial');
   });
 
   it('retains local bytes before publication, rebuilds search/static projections, and repairs a tampered same-size site asset', async () => {

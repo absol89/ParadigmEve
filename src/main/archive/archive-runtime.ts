@@ -655,28 +655,37 @@ export class ArchiveRuntime {
         break;
       }
     }
+    // Set once the published order and the source order disagree. From then on position no longer
+    // identifies an event, so published evidence is matched by its logical id instead.
+    let publishedIds: Set<string> | null = null;
     for (let index = 0; index < snapshot.events.length; index++) {
       const source = snapshot.events[index]!;
-      const archived = existing.events[index];
       const eventId = sourceEventId(source);
-      if (archived) {
-        if (archived.eventId !== eventId) {
-          // Source history can occasionally gain an older provider event after we have already
-          // published later evidence. Published archive evidence is immutable: never reshuffle or
-          // overwrite it to match a newly observed source order, and do not turn that condition
-          // into a permanent reconcile-error loop. Preserve the published suffix and make the
-          // session visibly partial instead.
+      if (publishedIds === null) {
+        const archived = existing.events[index];
+        if (archived) {
+          if (archived.eventId === eventId) {
+            // Once published, evidence is immutable. A later source-store revision with the same
+            // logical id cannot rewrite the archive; preserve the exact old event and make the
+            // session visibly partial if its source cursor advanced.
+            if (archivedSourceSeq(archived) !== source.seq || archivedAssistantIncomplete(archived)) context.partial = true;
+            events.push(archived);
+            continue;
+          }
+          // Source history can gain an older provider event after we have already published later
+          // evidence: the chronological read order places a late-recorded row inside an earlier
+          // turn. Published archive evidence is immutable: never reshuffle or overwrite it to
+          // match a newly observed source order, and do not turn that condition into a permanent
+          // reconcile-error loop. Keep the whole published suffix and make the session visibly
+          // partial. This must not stop the scan: everything the source holds that is not yet
+          // published still has to be appended, or the archive stays frozen at this point and
+          // silently loses every later event.
           context.partial = true;
           events.push(...existing.events.slice(index));
-          break;
+          publishedIds = new Set(existing.events.map(event => event.eventId));
         }
-        // Once published, evidence is immutable. A later source-store revision with the same
-        // logical id cannot rewrite the archive; preserve the exact old event and make the
-        // session visibly partial if its source cursor advanced.
-        if (archivedSourceSeq(archived) !== source.seq || archivedAssistantIncomplete(archived)) context.partial = true;
-        events.push(archived);
-        continue;
       }
+      if (publishedIds?.has(eventId)) continue;
       if (knownMutableEvent(source)) {
         context.partial = true;
         const historicalInterruptedAssistant = source.kind === 'assistant_message' && index < lastUserMessageIndex;

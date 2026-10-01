@@ -48,6 +48,10 @@ import {
   dispatchContinuationSourceSendNow,
   beginContinuationSourceSendNow,
   openContinuationNow,
+  claimContinuationNow,
+  commitContinuation,
+  beginContinuationDestinationSendNow,
+  dispatchContinuationDestinationSendNow,
   resetContinuationsForTests
 } from '../src/main/session/continuation.js';
 import {
@@ -4107,6 +4111,42 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(textOf(stale)).toContain('CONVERSATION_SUPERSEDED');
     const fresh = await asChat('wfr_compact_b', 'read', { paths: ['/workspace/src/app.ts'] });
     expect(failed(fresh), textOf(fresh)).toBe(false);
+  });
+
+  it('never fences the successor with its source compaction, and clears the source fence exactly once on commit', async () => {
+    // 2026-10-01 (Eva): after a restart the replacement chat received its routed restart wake while
+    // the source compaction was still open. The source must stay fenced; the successor must never
+    // inherit that fence, and ownership confirmation must hand the source over to `superseded`.
+    resetContinuationsForTests();
+    const chatA = 'f0f00017-1111-4111-8111-111111111111';
+    const chatB = 'f0f00018-1111-4111-8111-111111111111';
+    const summary = await createSession({ title: 'compacting owner with live successor', conversationId: chatA });
+    expect(prove('wfr_fence_a', chatA, summary.id)).toBe('stored');
+    const opened = await openContinuationNow(summary.id, chatA, true);
+    expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
+    expect(await dispatchContinuationSourceSendNow(opened.token)).toBe(true);
+    await attachSummary(opened.token, 'SUMMARY\n'.repeat(40));
+
+    // The successor is live and routed before the move has committed: its calls are its own.
+    expect(prove('wfr_fence_b_early', chatB)).toBe('stored');
+    const early = await asChat('wfr_fence_b_early', 'read', { paths: ['/workspace/src/app.ts'] });
+    expect(failed(early), textOf(early)).toBe(false);
+    expect(textOf(early)).not.toContain('COMPACTION_IN_PROGRESS');
+    // The source stays fenced for the whole handoff.
+    const source = await asChat('wfr_fence_a', 'read', { paths: ['/workspace/src/app.ts'] });
+    expect(textOf(source)).toContain('COMPACTION_IN_PROGRESS');
+
+    // Ownership confirmed: the committed move clears the source fence once, as superseded.
+    expect(await claimContinuationNow(opened.token, 'cmd-successor')).not.toBeNull();
+    expect((await beginContinuationDestinationSendNow(opened.token))?.allowed).toBe(true);
+    expect(await dispatchContinuationDestinationSendNow(opened.token)).toBe(true);
+    expect(await commitContinuation(opened.token, chatB)).toBe(true);
+    expect(prove('wfr_fence_b_late', chatB, summary.id)).toBe('stored');
+    const after = await asChat('wfr_fence_b_late', 'read', { paths: ['/workspace/src/app.ts'] });
+    expect(failed(after), textOf(after)).toBe(false);
+    const stale = await asChat('wfr_fence_a', 'read', { paths: ['/workspace/src/app.ts'] });
+    expect(textOf(stale)).toContain('CONVERSATION_SUPERSEDED');
+    expect(textOf(stale)).not.toContain('COMPACTION_IN_PROGRESS');
   });
 
   it('does not let a stale owner inherit a recycled process id during the new exec yield', async () => {

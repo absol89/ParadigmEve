@@ -943,6 +943,10 @@ export async function dispatchContinuationDestinationSendNow(token: string): Pro
   return withCheckpointLock(token, async () => {
     const entry = byToken.get(token);
     if (!entry || !isOpen(entry) || !entry.handoffId || entry.state === 'awaiting-summary') return false;
+    // Repeating the arm is the same arm. The route admits only the leased command's own document
+    // and claimant, and that document clicks once; a page whose first answer was lost in transit
+    // must not read its own successful arm as a refusal and leave the brief unsent.
+    if (entry.destinationSend.state === 'dispatched-unresolved') return true;
     if (entry.destinationSend.state !== 'attempted-unresolved') return false;
     await transitionNow(entry, (current) => ({
       ...current,
@@ -1004,7 +1008,11 @@ export async function bindContinuationDestinationMessageNow(
         entry.destinationSend.messageId === messageId
       );
     }
-    if (!isOpen(entry)) return false;
+    // B's first attributed tool call can commit the transaction before the page reports the
+    // message it typed. Recording that message for the committed destination moves nothing, and
+    // it is the resume boundary the page feed needs (where A's rows stop; upstream ebb67b5).
+    const committedHere = entry.state === 'committed' && entry.to === conversationId;
+    if (!isOpen(entry) && !committedHere) return false;
     if (entry.destinationSend.state !== 'dispatched-unresolved') return false;
     await transitionNow(entry, (current) => ({
       ...current,

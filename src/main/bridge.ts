@@ -86,6 +86,7 @@ import {
   recordAgentMessage,
   recordChatObservations,
   recordRequestEvidence,
+  recordNote,
   recordProgress,
   restoreRecordedConversation,
   setCallAttributionListener,
@@ -2151,7 +2152,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const repaired = url.searchParams.get('repaired');
     const repairFailed = url.searchParams.get('repairFailed');
     const repairAction = url.searchParams.get('repairAction');
-    const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ? repairAction : null;
+    const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ||
+      repairAction === 'preserved' ? repairAction : null;
     if (repaired) {
       await confirmRepair(repaired.slice(0, 64), action);
     } else if (repairFailed) {
@@ -6031,6 +6033,13 @@ export async function reconcileAutomaticCompactionPolicy(conversationId?: string
  * would have closed it is the page that broke.
  */
 const lastAttributedCallAt = new Map<string, number>();
+/**
+ * The turn in which each chat last made an exactly attributed call. A chat whose current turn has
+ * already proved its request-id join is not the owner of an unattributed call arriving later in
+ * that turn, and reloading it interrupted working chats whenever a conversation without a
+ * ParadigmEve page called a tool (ported from upstream chat-on-steroids 614583e).
+ */
+const attributedTurns = new Map<string, string>();
 export const GOAL_QUIET_MS = 60_000;
 /** Conservative unknown-model lifetime retained for compatibility; known Pro has its own policy. */
 export const PRO_SILENCE_RETIRE_MS = 5 * 60_000;
@@ -6613,7 +6622,9 @@ function queueBrowserRecovery(
     reason,
     notBefore,
     token: '',
-    progressId: `browser-repair:${randomBytes(9).toString('base64url')}`
+    // Names the chat it reloads: Compact & Resume moves the session on, and the page paints the
+    // row only in this chat, not before the first message of the chat the session moved to.
+    progressId: `browser-repair:${conversationId}:${randomBytes(9).toString('base64url')}`
   };
   repairsInFlight.set(conversationId, repair);
   // Queue publication owns the pickup notification, just as the input outbox does.
@@ -7166,7 +7177,7 @@ const COMPACTION_PICKUPS: Record<CompactionPhase, { every: number; attempts: num
   writing: { every: 5 * 60_000, attempts: 3 },
   opening: { every: 15 * 60_000, attempts: 3 }
 };
-const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number; backoffs?: number }>();
+const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number; backoffs?: number; told?: boolean }>();
 /** The pause before an automatic pre-Send ticket's next pickup burst. (Ported from chat-on-steroids #391.) */
 const AUTOMATIC_ASKING_RETRY_PAUSE_MS = 10 * 60_000;
 /**
@@ -7185,6 +7196,20 @@ function compactionPhaseOf(entry: ContinuationView): CompactionPhase {
 }
 
 /**
+ * Whether this process owes a ticket its pickups.
+ *
+ * A ticket still asking for its brief predates nothing: the source was never fenced, and a
+ * reload on install would only be this app helping itself to an old chat. Once the brief has
+ * been asked for, though, the source refuses every local tool until the successor commits, and
+ * no page is left to finish a handover the previous process was driving. Skipping it here fenced
+ * Eva's chat after a restart until the automatic deadline (2026-10-01), so an asked ticket keeps
+ * its bounded pickups whichever process opened it.
+ */
+function pickupOwedAcrossRestart(entry: ContinuationView, phase: CompactionPhase): boolean {
+  return compactionWatchFloor !== null && (phase !== 'asking' || entry.openedAt >= compactionWatchFloor);
+}
+
+/**
  * Makes a ticket's next pickup due on the next sweep, within the same bound.
  *
  * The schedule is not otherwise moved by page activity, and this adds no attempts: a pickup
@@ -7193,8 +7218,9 @@ function compactionPhaseOf(entry: ContinuationView): CompactionPhase {
  */
 function expediteCompactionPickup(conversationId: string): boolean {
   const entry = pendingContinuations().find((candidate) => candidate.from === conversationId);
-  if (!entry || compactionWatchFloor === null || entry.openedAt < compactionWatchFloor) return false;
+  if (!entry || compactionWatchFloor === null) return false;
   const phase = compactionPhaseOf(entry);
+  if (!pickupOwedAcrossRestart(entry, phase)) return false;
   const watch = compactionWatch.get(conversationId);
   if (watch && watch.token === entry.token && watch.phase === phase) {
     if (watch.attempts >= COMPACTION_PICKUPS[phase].attempts) return false;
@@ -7349,8 +7375,8 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
       await cancelAutomaticResumesNow(entry.sessionId);
       continue;
     }
-    if (entry.openedAt < compactionWatchFloor) continue;
     const phase = compactionPhaseOf(entry);
+    if (!pickupOwedAcrossRestart(entry, phase)) continue;
     let watch = compactionWatch.get(entry.from);
     if (!watch || watch.phase !== phase) {
       // The clock starts when the phase did, not when this sweep noticed: the ticket's opening
@@ -7363,6 +7389,18 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
     const schedule = COMPACTION_PICKUPS[phase];
     if (now < watch.since + schedule.every) continue;
     if (watch.attempts >= schedule.attempts) {
+      if (phase === 'writing' && !watch.told) {
+        // The sent request stays protected and gets no fourth reload, but whoever is reading the
+        // app is told once that the handoff is stuck rather than left with a silent card
+        // (upstream chat-on-steroids 78c5452).
+        watch.told = true;
+        logWarn(`bridge: compaction ticket ${entry.token.slice(0, 8)} for ${entry.from} is still without its brief after ${schedule.attempts} pickups`);
+        void recordNote(
+          entry.sessionId,
+          `Compact & Resume is still waiting for this chat's handoff: ${schedule.attempts} reloads did not collect it. ` +
+            'The request was already sent, so it is not sent again. Open the chat to let it finish, or cancel compaction to return to it.'
+        ).catch(() => undefined);
+      }
       if (phase !== 'asking') continue;
       if (entry.automatic && (watch.backoffs ?? 0) < AUTOMATIC_ASKING_RETRY_BURSTS) {
         // A threshold-created ticket is durable work, not a ten-minute liveness verdict. Keep the
@@ -7413,6 +7451,11 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
     ) {
       // The brief exists but its fresh-chat transport failed before Send. The destination
       // checkpoint proves opening this same ticket again cannot duplicate the bootstrap.
+      // A claim still naming a command that no longer exists (a restart, an expired lease) can
+      // never reach that checkpoint — it requires the claimant to be a live command — so it is
+      // handed back before the fresh command asks for it.
+      if (entry.destinationSend.state === 'not-attempted' &&
+          !await releaseContinuationDestinationSendNow(entry.token).catch(() => false)) continue;
       queueResumeCommand(entry.sessionId, entry.token);
       void deliver();
       acted = true;
@@ -7591,6 +7634,7 @@ function noteCallAttribution(
     if (currentConversation && filedSession?.id === sessionId && filedSession.conversationId === conversationId)
       noteAgentContextTokens(conversationId, filedSession.contextTokens);
     if (currentConversation && !endsActivity) lastAttributedCallAt.set(conversationId, Date.now());
+    if (currentConversation && filedSession?.activeTurnId) attributedTurns.set(conversationId, filedSession.activeTurnId);
     // The recorder has just withdrawn a completed end the page reported: the same server turn
     // went on calling tools. Whatever Goal was drafting for that end — or had filed as owed —
     // was a reply to an answer that has not been given. The real end, when the page sees it,
@@ -7708,9 +7752,11 @@ function pendingSuspects(
   const handingOver = new Set(
     pendingContinuations().filter((entry) => entry.state !== 'awaiting-summary').map((entry) => entry.from)
   );
+  const liveTurns = new Map(liveConversations().map((entry) => [entry.conversationId, entry.activeTurnId]));
   return repairCandidates(now).filter(
     (entry) =>
       !handingOver.has(entry.conversationId) &&
+      !(liveTurns.get(entry.conversationId) && attributedTurns.get(entry.conversationId) === liveTurns.get(entry.conversationId)) &&
       !incident?.proven.has(entry.conversationId) &&
       !incident?.dismissed.has(entry.conversationId) &&
       !repairsInFlight.has(entry.conversationId)
@@ -7998,9 +8044,18 @@ function dropBrowserRepair(conversationId: string, repair: Repair): void {
  * this app is no longer waiting on - an older turn's, or one already re-queued - matches
  * nothing and closes nothing, which is the only safe reading of it.
  */
-async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | null): Promise<void> {
+async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state === 'handed' || repair.state === 'claimed') && repair.token === token) {
+      // The page recovered on its own: nothing was reloaded, so the turn keeps its one
+      // assistant-error reload for a failure that does need it (upstream c8721d1).
+      if (action === 'preserved' && repair.reason === 'assistant-error') {
+        releaseBrowserRepairAuthority(repair);
+        logInfo(`bridge: the browser preserved the recovered page for ${conversationId} without spending its assistant-error reload`);
+        await updateRepairProgress(conversationId, repair, `Kept the recovered chat open instead of reloading while recovering ${repairReason(repair)}.`);
+        repairsInFlight.delete(conversationId);
+        return;
+      }
       releaseBrowserRepairAuthority(repair);
       repair.state = 'done';
       lastBrowserRecoveryAt.set(conversationId, Date.now());
@@ -8048,7 +8103,7 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'r
 }
 
 /** An exact browser action failed; keep the episode queued and replace its one debug row. */
-async function failRepairAttempt(token: string, action: 'reloaded' | 'reopened' | 'resumed' | null): Promise<void> {
+async function failRepairAttempt(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state !== 'handed' && repair.state !== 'claimed') || repair.token !== token) continue;
     releaseBrowserRepairAuthority(repair);
@@ -9098,6 +9153,7 @@ export function resetBridgeForTests(): void {
   activeUntil.clear();
   awaitingReturn.clear();
   lastAttributedCallAt.clear();
+  attributedTurns.clear();
   goalWatch.clear();
   compactionWatch.clear();
   // Re-armed rather than cleared: the seam stands in for a process that has just started

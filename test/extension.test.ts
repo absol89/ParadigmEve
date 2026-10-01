@@ -2281,6 +2281,50 @@ describe('worker settings authority', () => {
     ]);
   });
 
+  it('leaves a successor tab Chrome did create to its page when protecting it fails', async () => {
+    // Upstream chat-on-steroids a72e8f0: once Chrome made the tab it loads its marker and can still
+    // redeem the command. A failed protection write must not be reported as a failed placement.
+    vi.useFakeTimers();
+    try {
+      const acknowledgements: Record<string, unknown>[] = [];
+      const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
+        const url = new URL(input);
+        if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+        if (url.pathname === '/compact' && init.method === 'POST') {
+          return response(200, { stored: true, commandId: 'cmd-created', placement: { id: 'cmd-created' } });
+        }
+        if (url.pathname === '/commands/ack' && init.method === 'POST') {
+          acknowledgements.push(JSON.parse(String(init.body || '{}')));
+          return response(200, { outcome: 'terminal-failure', committed: false });
+        }
+        return response(404, {});
+      });
+      const worker = loadWorker({
+        local: new FakeStorageArea(paired),
+        session: new FakeStorageArea(),
+        fetch,
+        // An audible source keeps the successor in the background, which is when it is protected.
+        tabsGet: async () => ({ id: 45, windowId: 9, index: 2, audible: true, url: `https://chatgpt.com/c/${CHAT}` }) as never
+      });
+      await worker.registerTab(45);
+      await worker.send({ type: 'bind', conversationId: CHAT }, 45);
+      worker.tabsUpdate.mockImplementationOnce(async () => { throw new Error('synthetic protection failure'); });
+
+      const sending = worker.send(
+        { type: 'compact', conversationId: CHAT, token: '0123456789abcdef0123456789abcdef', summary: 'the brief' },
+        45
+      ).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(worker.tabsCreate).toHaveBeenCalledTimes(1);
+      expect(acknowledgements, 'a created tab was reported as a failed placement').toEqual([]);
+      await vi.advanceTimersByTimeAsync(40_000);
+      await sending;
+      expect(acknowledgements.filter(ack => /could not create the successor tab/i.test(String(ack.error ?? '')))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves a compaction reply that places nothing to the app’s own opener', async () => {
     const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
       const url = new URL(input);
@@ -4710,6 +4754,14 @@ it.each([
   ['unattributed', { ok: true, streaming: true }, 0],
   ['unattributed', { ok: true, streaming: false }, 1],
   ['unattributed', null, 1],
+  // Upstream chat-on-steroids 8b01399, a231d58, c8721d1: interrupted-response recovery keeps a
+  // still-visible error's reload, and retires the episode without navigation once it is gone.
+  ['assistant-error', { ok: true, streaming: true, assistantError: true }, 1],
+  ['assistant-error', { ok: true, streaming: false, assistantError: true }, 1],
+  ['assistant-error', { ok: true, streaming: false, assistantError: false }, 0],
+  ['assistant-error', { ok: true, streaming: true, assistantError: false }, 0],
+  ['assistant-error', { ok: true, streaming: false }, 1],
+  ['assistant-error', null, 1],
   ['silence', { ok: true, streaming: true }, 1]
 ])('an attribution repair for reason %s and page status %j reloads %i time(s)', async (reason, status, reloads) => {
   const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -4719,7 +4771,7 @@ it.each([
   const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
     backgroundSource.indexOf('\nfunction conversationStillOpen('));
   const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
-    tabConversations: { '76': conversationId },
+    tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
     conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
     browserRepairProtected: async () => false,
     createChatTab: vi.fn(), call, tabReply: async () => status,
@@ -4729,5 +4781,11 @@ it.each([
   await repair([{ conversationId, token: `stream-${reason}`, reason, focus: false }], {});
   expect(reload).toHaveBeenCalledTimes(reloads);
   const reported = call.mock.calls.map((args: unknown[]) => String(args[0]));
-  expect(reported.filter((url) => url.includes('repairFailed='))).toHaveLength(1 - reloads);
+  if (reason === 'assistant-error' && status?.ok === true && status.streaming !== true &&
+      'assistantError' in status && status.assistantError === false) {
+    expect(reported.some((url) => url.includes('repaired=') && url.includes('repairAction=preserved'))).toBe(true);
+    expect(reported.filter((url) => url.includes('repairFailed='))).toHaveLength(0);
+  } else {
+    expect(reported.filter((url) => url.includes('repairFailed='))).toHaveLength(1 - reloads);
+  }
 });

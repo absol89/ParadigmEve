@@ -706,6 +706,24 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     expect(h.sendMessage).toHaveBeenCalledWith(7, { type: 'clf-desktop-input', id: firstId, conversationId: null });
     expect((h.localSaved.inputOpenings as any)[firstId].tab).toBe(7);
   });
+  it('never elects a Compact & Resume successor tab for another input, even if its page answers safe', async () => {
+    // 2026-09-30: an idle `/?clf=<command>` successor was elected for a fresh input, which typed that
+    // input into it and moved it to another chat; the resume stayed not-attempted for good.
+    const url = 'https://chatgpt.com/?clf=90a4be7887872f02#clf=90a4be7887872f02';
+    const h = await worker([{ id: firstId, conversationId: null }]);
+    h.tabs.push({ id: 7, url, active: true });
+    await h.authorizeDocument({ tab: { id: 7 }, documentId: 'successor', frameId: 0, url }, { navigationEpoch: 1 });
+    h.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ app: 'chat-on-steroids', product: 'paradigmeve', bridge: BRIDGE_PROTOCOL, compatible: true, paired: true, ok: true, inputs: [{ id: firstId, conversationId: null }], reusableConversations: [] }) });
+    h.sendMessage.mockImplementation(async (_id, message) => {
+      if (message.type === 'clf-input-reuse-state') return { ok: true, safe: true, navigationEpoch: 1 } as never;
+      return { ok: true, ready: true };
+    });
+    await h.maintain(); await h.maintain();
+    expect(h.sendMessage.mock.calls.filter(([tabId, message]) => tabId === 7 &&
+      ['clf-input-reuse-state', 'clf-prepare-desktop-input', 'clf-desktop-input'].includes((message as { type: string }).type))).toEqual([]);
+    expect(h.tabs.find(tab => tab.id === 7)!.url).toBe(url);
+    expect(h.create).toHaveBeenCalledTimes(1);
+  });
   it('hard-navigates a reusable completed conversation before offering a fresh input', async () => {
     const oldUrl = `https://chatgpt.com/c/${secondId}`;
     const freshUrl = `https://chatgpt.com/?cos-input=${firstId}#cos-input=${firstId}`;

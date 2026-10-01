@@ -664,6 +664,16 @@
    * or the Stop control genuinely going away.
    */
   let fiberTerminalMessageId = null;
+  /*
+   * #746: native finals that were already settled before the current generation began. ChatGPT
+   * can briefly hand a new answer's section the previous turn's React branch; its `end_turn`
+   * then closed the new turn about 100 ms after turn_start, and hours of work had no owner.
+   * A final this document already knew when it opened a turn, or one that already ended a turn,
+   * ends no later turn. Adopted turns (reload, late ownership) open nothing here and keep their
+   * own final.
+   */
+  const knownFinals = new Set();
+  const settledFinals = new Set();
 
   /**
    * Recorded tool calls, keyed by the app's sequence number.
@@ -2523,6 +2533,7 @@
       // state the resume exists to keep, since recorder.ts empties `progress`, `pageTools`
       // and the pending sightings on every turn_start.
       emit({ kind: 'turn_start', turnId });
+      for (const known of knownFinals) settledFinals.add(known);
 
       // The compaction binding is made here and only here: the first generation to open
     }
@@ -4294,13 +4305,19 @@
     // button. If the final assistant message says `end_turn:true`, close the exact local
     // generation even if a stale Stop control remains mounted. Final message/activity
     // revisions above have already been emitted, so do not trigger a second Fiber final pass.
+    for (const seen of answer.turns) if (seen?.endMessageId) knownFinals.add(seen.endMessageId);
+    for (const bounded of [knownFinals, settledFinals]) {
+      while (bounded.size > 2000) bounded.delete(bounded.values().next().value);
+    }
     if (
       generating &&
       activeTurnIndex >= 0 &&
       activeLocalTurnId === turnId &&
-      Boolean(answer.turns[activeTurnIndex]?.endMessageId)
+      Boolean(answer.turns[activeTurnIndex]?.endMessageId) &&
+      !settledFinals.has(answer.turns[activeTurnIndex].endMessageId)
     ) {
       fiberTerminalMessageId = answer.turns[activeTurnIndex].endMessageId;
+      settledFinals.add(fiberTerminalMessageId);
       const ended = generationTurn();
       if (ended) {
         const local = endOutcome(ended);
@@ -5684,13 +5701,18 @@
   }
 
   function repairNotice(entry) {
-    return Boolean(
-      entry &&
-        entry.kind === 'progress' &&
-        !entry.turnId &&
-        typeof entry.progressId === 'string' &&
-        entry.progressId.startsWith('browser-repair:')
-    );
+    if (
+      !entry ||
+      entry.kind !== 'progress' ||
+      entry.turnId ||
+      typeof entry.progressId !== 'string' ||
+      !entry.progressId.startsWith('browser-repair:')
+    ) return false;
+    // `browser-repair:<chat>:<id>` names the chat that was reloaded. Compact & Resume moves the
+    // session on to a new chat, whose log then still holds the source chat's reload; it did not
+    // happen here. Older rows name no chat and keep their place (upstream chat-on-steroids ebb67b5).
+    const parts = entry.progressId.split(':');
+    return parts.length < 3 || parts[1] === CLF_DOM.conversationId();
   }
 
   /**
@@ -8531,7 +8553,8 @@
     // summary of a machine state that had already moved on.
     // Automatic runs stop the turn exactly like a press does. They are *started* by a turn
     // being in flight, so refusing to interrupt one would refuse every automatic run.
-    const barrier = await stopAndSettle(forId, forEpoch, forRun, sameTurn, noInterrupt);
+    const barrier = await stopAndSettle(forId, forEpoch, forRun, sameTurn, noInterrupt,
+      automatic ? AUTO_TOOL_SETTLE_MS : TOOL_SETTLE_MS);
     // Every await above can span an SPA navigation. `conversationId` is mutable global
     // state, so continuing after A -> B would otherwise post B to /compact and type A's
     // handoff instruction into B's composer. The new chat's reset already owns its UI state;
@@ -8645,7 +8668,7 @@
    * not hear about it, and the handoff would describe a machine that no longer exists by
    * the time the fresh chat reads it.
    */
-  async function stopAndSettle(forId, forEpoch, forRun, sameTurn, noInterrupt = false) {
+  async function stopAndSettle(forId, forEpoch, forRun, sameTurn, noInterrupt = false, settleMs = TOOL_SETTLE_MS) {
     const current = () =>
       alive &&
       nativeRun === forRun &&
@@ -8701,7 +8724,7 @@
       unanswered = 0;
       pendingTools = count;
       return count === 0;
-    }, TOOL_SETTLE_MS);
+    }, settleMs);
     if (!current()) return 'This chat changed while compaction was waiting for local tools.';
     if (unavailable) {
       return 'Could not verify that local tools had stopped. Nothing was compacted.';
@@ -9621,6 +9644,15 @@
    * headroom without making a genuinely stuck local call wait indefinitely.
    */
   const TOOL_SETTLE_MS = 30_000;
+  /**
+   * The same drain for an automatic compaction. Its whole reason to run is a long turn, and long
+   * turns are the ones with a long local call in flight at Stop: a synchronous exec may run five
+   * minutes, and a write_stdin poll started just before Stop takes up to its own 30 s ceiling.
+   * Thirty seconds refused those turns every time, so the chat kept growing and never compacted
+   * (upstream chat-on-steroids 18ab425, #825). Six minutes spans the longest single call; one
+   * that runs longer is still refused, and the page answers the pickup as resumed meanwhile.
+   */
+  const AUTO_TOOL_SETTLE_MS = 6 * 60_000;
   /** How many silent answers about pending calls to sit through before refusing. */
   const SETTLE_UNKNOWN_TRIES = 3;
 
@@ -10434,10 +10466,11 @@
       return void (await fail(`ChatGPT refused the inserted text${insertionFailure ? ` (${insertionFailure})` : ''}`));
     }
     const sendingBootstrap = submittedSendLifetime(target);
+    let insertedComposer = CLF_DOM.composer();
     // Stop/composer-clear may acknowledge acceptance before the authored row mounts.
     // Keep the original draft lease through that receipt, exactly as desktop delivery does;
     // identical text alone must never erase a later trusted edit or a replacement editor.
-    const bootstrapDraft = CLF_DOM.captureComposerDraft(boot.text, () => !attempt?.cancelled && sendingBootstrap());
+    let bootstrapDraft = CLF_DOM.captureComposerDraft(boot.text, () => !attempt?.cancelled && sendingBootstrap());
     const priorBootstrapUser = CLF_DOM.messages().filter(message => message.role === 'user').at(-1)?.id;
     const clearAcknowledgedBootstrap = async acknowledged => {
       if (acknowledged?.ok !== true || acknowledged.data?.ok === false || !bootstrapDraft.current()) return;
@@ -10464,7 +10497,29 @@
     // approve user text appended after focus moved into this tab.
     const squeeze = (value) => (value || '').replace(/\s+/g, '');
     const expectedText = squeeze(boot.text);
-    if (!composer || squeeze(composer.textContent) !== expectedText) {
+    // A fresh chat's hydration recovery (React #418) can swap the composer for a new, empty one
+    // after the bootstrap was typed and before Send: on 2026-10-01 the handoff flashed into a
+    // Compact & Resume successor, vanished, and was never sent. Nothing was clicked yet, so the
+    // same command may type it once more, but only into a *replacement* editor that is empty:
+    // the same editor emptied, or any text in the new one, is a person's and is left alone.
+    // This stays inside the one document that owns the command, so it never opens another tab.
+    let bootstrapRestores = 0;
+    const restoreRemountedBootstrap = async () => {
+      if (bootstrapRestores >= 2 || attempt?.cancelled || !stillOnTarget()) return false;
+      const current = CLF_DOM.composer();
+      if (current && current === insertedComposer && current.isConnected) return false;
+      const next = await waitForComposer(5_000, stillOnTarget);
+      if (!next || next === insertedComposer || !stillOnTarget() || squeeze(next.textContent) !== '') return false;
+      bootstrapRestores += 1;
+      if (!CLF_DOM.insertPrompt(boot.text, false)) return false;
+      await Promise.resolve();
+      if (!stillOnTarget() || squeeze(CLF_DOM.composer()?.textContent) !== expectedText) return false;
+      insertedComposer = CLF_DOM.composer();
+      bootstrapDraft.dispose();
+      bootstrapDraft = CLF_DOM.captureComposerDraft(boot.text, () => !attempt?.cancelled && sendingBootstrap());
+      return true;
+    };
+    if ((!composer || squeeze(composer.textContent) !== expectedText) && !(await restoreRemountedBootstrap())) {
       return void (await fail('ChatGPT replaced the composer while inserting the bootstrap'));
     }
     // The browser opener can focus this fresh tab while the user is typing elsewhere. The
@@ -10482,6 +10537,10 @@
     const rejectChangedBootstrap = async () => {
       if (await failIfRetargeted()) return true;
       if (exactBootstrapDraft()) return false;
+      if (await restoreRemountedBootstrap()) {
+        if (await failIfRetargeted()) return true;
+        if (exactBootstrapDraft()) return false;
+      }
       if (boot.type === 'resume' && !squeeze(CLF_DOM.composer()?.textContent)) {
         continuationJournalPending = false;
         await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationLost: true });
@@ -10507,33 +10566,71 @@
         return void (await fail('the resume bootstrap had no valid continuation marker'));
       }
       continuationJournalPending = true;
-      const permit = await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationAttempt: true });
-      if (await rejectChangedBootstrap()) return;
+      // The two destination checkpoints are the duplicate-send fence and are never skipped. But a
+      // checkpoint nobody answered (a sleeping service worker, a document the worker no longer
+      // recognises) is not a refusal: on 2026-10-01 the successor held the whole brief beside an
+      // enabled Send while its command sat leased, because one unanswered checkpoint ended this
+      // operation silently. Ask again, re-registering this document, while the typed brief and
+      // the route still prove nothing has changed, and leave a console line when it does stop.
+      const DOCUMENT_REFUSALS = new Set(['document_identity_missing', 'document_unregistered', 'tab_closed', 'stale_navigation', 'worker_unreachable']);
+      const askDestination = async (checkpoint) => {
+        for (let tries = 0; ; tries++) {
+          const reply = await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, [checkpoint]: true });
+          const unanswered = !reply || (reply.ok !== true && (reply.retryable === true || reply.data?.retryable === true ||
+            DOCUMENT_REFUSALS.has(reply.error) || reply.error === 'app_not_found' || reply.error === 'disconnected'));
+          if (!unanswered || tries >= 40 || !stillOnTarget() || attempt?.cancelled || !exactBootstrapDraft()) return reply;
+          if (reply && DOCUMENT_REFUSALS.has(reply.error)) documentReady = null;
+          await sleep(3000);
+        }
+      };
+      const stopResume = (why, reply) => {
+        try { console.warn(`[ParadigmEve] Compact & Resume stopped before Send: ${why}`, reply?.error || reply?.data?.error || reply); } catch { /* console is optional */ }
+      };
+      const permit = await askDestination('destinationAttempt');
+      if (await rejectChangedBootstrap()) return void stopResume('the composer changed during the send checkpoint');
       if (!permit || permit.ok !== true || !permit.data || permit.data.allowed !== true) {
+        stopResume('the send checkpoint was refused', permit);
         await bootstrapDraft.clear();
         return;
       }
       // As on the source side: the claim above promises nothing was submitted, and this second
       // write is the exclusive cut taken immediately before the click.
-      const armed = await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationDispatch: true });
-      if (await rejectChangedBootstrap()) return;
+      const armed = await askDestination('destinationDispatch');
+      if (await rejectChangedBootstrap()) return void stopResume('the composer changed while arming Send');
       if (!armed || armed.ok !== true || !armed.data || armed.data.armed !== true) {
+        stopResume('arming Send was refused', armed);
         await bootstrapDraft.clear();
         return;
       }
     }
-    if (!stillOnTarget() || !exactBootstrapDraft()) { await rejectChangedBootstrap(); return; }
+    if ((!stillOnTarget() || !exactBootstrapDraft()) && await rejectChangedBootstrap()) return;
+    if (!stillOnTarget() || !exactBootstrapDraft()) return;
     // The destination Resume prompt is the first authored evidence in a brand-new chat.
     // Record it before send() clicks so reportMessages can open B's turn immediately instead
     // of waiting until Fiber eventually exposes the first connector request.
     rememberUserSend();
     // The instant before the native click: from here a fresh worker's model may call tools.
+    // Set only at the native click's own authorization, the last step before button.click().
+    let bootstrapClickReached = false;
     const authorizeBootstrapSend = () => {
+      bootstrapClickReached = true;
       if (attempt && boot.type === 'worker') attempt.phase = 'dispatching';
       return true;
     };
-    if (!(await sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false, authorizeBootstrapSend,
-                                  matchesSubmittedBootstrap))) {
+    const sendBootstrap = () => sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false, authorizeBootstrapSend,
+                                                  matchesSubmittedBootstrap);
+    let bootstrapSent = await sendBootstrap();
+    // send() waits for ChatGPT to enable Send, which on a fresh chat is the end of hydration; a
+    // composer remounted during that wait ends it with no click at all. That is the 2026-10-01
+    // Compact & Resume successor that went silent until the bridge gave up on it. With the click
+    // provably never reached, the same pre-click rules apply as above: restore into an empty
+    // replacement (or release / preserve as they decide), then ask once more, within the bound.
+    for (let retry = 0; !bootstrapSent && boot.type === 'resume' && !bootstrapClickReached && retry < 2; retry++) {
+      if (await rejectChangedBootstrap()) return;
+      if (!stillOnTarget() || !exactBootstrapDraft()) return;
+      bootstrapSent = await sendBootstrap();
+    }
+    if (!bootstrapSent) {
       // Once send() was invoked, a missing/cleared draft cannot prove that no click
       // happened. Only the exact pre-click check above may release the dispatch.
       if (boot.type === 'resume') {
@@ -11060,6 +11157,13 @@
       if (!CLF_DOM.insertPrompt(input.text, freshDraftReplaceable())) return fail('ChatGPT did not accept the text');
       const sendingTarget = submittedSendLifetime(target, forEpoch);
       draft = CLF_DOM.captureComposerDraft(input.text, () => sendAttempted ? sendingTarget() : onTarget());
+      // A restart recovery's own text survives a composer remount before Send is authorized. The
+      // lease may follow it once; after authorization a lost editor stays a failure (upstream
+      // chat-on-steroids 73f76ab, #744).
+      let authorizing = false;
+      const draftCurrent = () => draft.current() ||
+        (Boolean(recoveryTurnId) && !authorizing && !sendAttempted && !(input.images || []).length &&
+          !(input.attachments || []).length && draft.rebind() && draft.current());
       const files = [];
       for (const attachment of input.attachments || []) {
         const parts = [];
@@ -11076,7 +11180,7 @@
       }
       if (!(await CLF_DOM.uploadImages(input.images, onTarget, draft, files))) return fail('Attachment upload was not confirmed. Check the unsent draft and any file error in ChatGPT before trying again.');
       await Promise.resolve();
-      if (!onTarget() || !draft.current() || sendText(CLF_DOM.composer()?.textContent) !== sendText(input.text)) return fail('The composer changed; your draft was preserved');
+      if (!onTarget() || !draftCurrent() || sendText(CLF_DOM.composer()?.textContent) !== sendText(input.text)) return fail('The composer changed; your draft was preserved');
       const previousUserId = CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id;
       rememberUserSend();
       const submittedText = sendText(CLF_DOM.composer()?.textContent);
@@ -11085,13 +11189,17 @@
         desktopDecision = decision;
       }
       if (input.projectId) desktopProjectInput = { id: input.id, owner: input.owner };
-      if (!(await sendSubmittedText(sendingTarget, false, async sendCurrent => {
+      const nativeSend = () => sendSubmittedText(sendingTarget, false, async sendCurrent => {
         // Preserve the outbox's revocable claim until the actual native Send is ready.
+        authorizing = true;
         const authorized = await ask({ type: 'desktop_input', id: input.id, owner: input.owner, conversationId: target, authorize: true });
         if (!sendCurrent() || authorized?.data?.ok !== true || !onTarget() || !draft.current()) return false;
         sendAttempted = true;
         return true;
-      }))) return false;
+      });
+      // One retry when the editor was replaced before anything asked to send it (#744).
+      if (!(await nativeSend()) &&
+          !(!authorizing && !sendAttempted && !draft.current() && draftCurrent() && await nativeSend())) return false;
       // Composer clear/Stop can prove acceptance before React mounts the user row.
       // Wait for that exact receipt, not merely /c navigation: Temporary Chat never
       // acquires a /c URL and used to discard its live decision during this gap.
@@ -11280,6 +11388,11 @@
       queue.length === 0 && !flushWork && CLF_DOM.composerVisible() && !CLF_DOM.hasComposerAttachments() &&
       !activeVoiceSession() && !trustedComposerTyping() &&
       !(CLF_DOM.composer()?.textContent || '').trim() &&
+      // A page carrying an app command marker (`clf`) belongs to that command — a Compact & Resume
+      // successor or a worker bootstrap — even while no attempt is in flight (its redeem got no
+      // reply). Reusing it for another input typed that input into the successor and moved the
+      // tab to another chat, which stranded the resume before destinationAttempt for good.
+      !markerId() &&
       (home ? !rows.length && !marker.has('cos-input') && !marker.has('temporary-chat') :
         !!CLF_DOM.conversationId() && rows.at(-1)?.role === 'assistant');
   }
@@ -11522,11 +11635,21 @@
       }
       // Popup diagnostics. Ids and counters only — no prose, no transcript, no page text.
       if (message.type === 'clf-page-status') {
+        // Whether ChatGPT still shows a recoverable transport error for the current response.
+        // Unknown ownership is conservative evidence that the page is still broken; only a
+        // concrete different generation proves an old historical failure (upstream
+        // chat-on-steroids 8b01399, a231d58, c8721d1).
+        const assistantError = CLF_DOM.errors().some(error => {
+          if (error.recoverable !== true || isStale(error.node)) return false;
+          const owner = localErrorGeneration(error);
+          return !turnId || owner === null || owner === turnId;
+        });
         sendResponse({
           ok: true,
           // ChatGPT's own account that a response is streaming right now, as opposed to the
           // recorder's `generating`, which also holds while a turn waits on a local tool.
           streaming: CLF_DOM.generating(),
+          assistantError,
           recorderVersion: RECORDER_VERSION,
           runId: RUN_ID,
           conversationId,

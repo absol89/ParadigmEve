@@ -13,6 +13,52 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.3] — Compaction and recovery fixes
+
+### Fixed
+
+- A working chat whose current turn already made an exactly attributed tool call is no longer reconnected or
+  reloaded for an unattributed call that arrives later in that turn (upstream 614583e).
+- A new turn stays open when ChatGPT remounts the previous answer below the new question or hands the page a stale
+  descriptor of the previous final (upstream 4d25a82, #746).
+- A restart recovery is still sent when ChatGPT replaces its composer after the text was typed but before Send was
+  authorized; the draft follows the new editor once (upstream 73f76ab, #744).
+- An interrupted-response repair keeps a chat open once ChatGPT has recovered on its own instead of reloading it,
+  and that does not spend the turn's one error reload (upstream 8b01399, a231d58, c8721d1).
+- A source chat's reload note no longer appears above the first message of the chat Compact & Resume opened, and the
+  replacement's typed message is recorded even when its first tool call committed the move first (upstream ebb67b5).
+- When a sent handoff's three writing-phase reloads are spent, the chat records one visible note instead of going
+  quiet (upstream 78c5452, second half).
+- A Compact & Resume replacement tab that Chrome did create is no longer reported as a failed placement when
+  recording its protection fails (upstream a72e8f0).
+- A context frame read back with spaces serialized as `&#x20;` is recognised again instead of being shown as the
+  user's message (upstream issue #821).
+- A Compact & Resume replacement tab is never reused for another message. Typing an unrelated message into it moved
+  the tab to another chat and left the handover blocked for good.
+- A Compact & Resume that was in flight when the app restarted is finished afterwards. The source chat is no longer
+  left refusing every tool with `COMPACTION_IN_PROGRESS`, and a restart wake waits for the move instead of being typed
+  into the chat being replaced.
+- The replacement chat sends the brief when ChatGPT swaps its message box during page hydration (React #418), before
+  the send check, during it, or while Send is still disabled. Before, the brief vanished and nothing was sent.
+- An unanswered send check on the replacement chat is asked again instead of silently stranding the brief beside an
+  enabled Send button. Every remaining stop before Send names its reason in the tab's console.
+- An automatic compaction waits up to six minutes for a long local call to finish after Stop, instead of thirty
+  seconds, so a turn running long commands compacts instead of growing forever (upstream 18ab425, #825).
+- A session's archive keeps growing after a late-recorded event puts it out of order. Before, everything recorded
+  after that point was silently left out.
+
+### Also covered
+
+- Upstream's tests for the remounted rich composer (c469aa5) pass unchanged against ParadigmEve's own composer lookup.
+
+### Not ported yet
+
+- Opening the replacement in the browser that holds its source and one-browser-only new chats (upstream beb596b,
+  10ecf80) rely on multi-browser plumbing ParadigmEve does not have.
+- Capturing a brief from the recorder when ChatGPT remounts a long answer (first half of 78c5452) and the long
+  silence window for Extra high, Max and Ultra turns (537aafb, which needs 280f3d0) depend on upstream
+  infrastructure that is not in ParadigmEve yet.
+
 ## [2.3.2] — Desktop pets and Eve avatars
 
 ### Added

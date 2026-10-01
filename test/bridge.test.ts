@@ -117,6 +117,7 @@ const {
   attachSummary,
   claimContinuationNow,
   commitContinuation,
+  compactingConversation,
   continuationByToken,
   continuationForSession,
   openContinuationNow,
@@ -2758,6 +2759,104 @@ describe('automatic compaction', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // Upstream chat-on-steroids 78c5452: tell the reader once, rather than going quiet.
+  it('after writing pickup 3/3, records exactly one visible note, performs no fourth recovery, and retains awaiting-summary', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac08';
+      await request('POST', '/events', {
+        body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'generate the huge handoff', messageId: 'm-auto-told' }] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+      const token = filed.body.token as string;
+      const sessionId = filed.body.sessionId as string;
+      expect((await request('POST', '/compact', { body: { conversationId, token, sourceAttempt: true } })).body.allowed).toBe(true);
+      expect((await request('POST', '/compact', { body: { conversationId, token, sourceDispatch: true } })).body.armed).toBe(true);
+
+      const takeRepair = async (): Promise<{ conversationId: string; token: string; reason: string } | null> => {
+        await sweepStaleSwarm(Date.now());
+        return (await request('GET', '/status')).body.repairs?.[0] ?? null;
+      };
+      const stuckNotes = async () => (await readEvents(sessionId, { kinds: ['note'] }))
+        .filter(event => event.kind === 'note' && /still waiting for this chat's handoff/.test(event.message.text));
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        const handout = await takeRepair();
+        expect(handout).toMatchObject({ conversationId, reason: 'compaction' });
+        await request('GET', `/status?repaired=${handout!.token}&repairAction=reloaded`);
+      }
+      expect(await stuckNotes(), 'told before the budget was spent').toHaveLength(0);
+
+      for (let sweep = 0; sweep < 4; sweep += 1) {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(await takeRepair(), `fourth recovery on sweep ${sweep}`).toBeNull();
+      }
+      expect(await stuckNotes()).toHaveLength(1);
+      expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary', sourceSend: { state: 'dispatched-unresolved' } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-drives a handoff that was asked before an app restart, so its successor can commit and lift the source fence', async () => {
+    // Eva, 2026-10-01: the brief had been captured and the successor claimed, but its Send never
+    // happened; after the restart the wake reached the source chat and every local tool call kept
+    // answering COMPACTION_IN_PROGRESS. The pickup schedule ignored tickets opened before this
+    // process, so nothing ever offered the brief to a successor again and the fence held until the
+    // six-hour automatic deadline.
+    await pair();
+    const source = 'a1a1a1a1-0000-4000-8000-00000000ac21';
+    const successor = 'a1a1a1a1-0000-4000-8000-00000000ac22';
+    const recorded = await request('POST', '/events', {
+      body: { conversationId: source, events: [{ kind: 'user_message', time: Date.now(), text: 'long running prime work', messageId: 'm-restart-fence' }] }
+    });
+    const sessionId = recorded.body.sessionId as string;
+    const ticket = (await openContinuationNow(sessionId, source, true)).token;
+    expect((await request('POST', '/compact', { body: { conversationId: source, token: ticket, sourceAttempt: true } })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', { body: { conversationId: source, token: ticket, sourceDispatch: true } })).body.armed).toBe(true);
+    expect(await attachSummary(ticket, `restart brief
+
+${SAMPLE_BRIEF}`)).not.toBeNull();
+    // The successor page claimed the brief and was then lost before its Send (the hijacked tab).
+    const lost = queueResume(sessionId, ticket)!;
+    await redeem(lost.id, 'lost-successor');
+    expect(continuationByToken(ticket)).toMatchObject({ state: 'claimed', destinationSend: { state: 'not-attempted' } });
+
+    await stopBridge();
+    await flushDurable();
+    const snapshot = await readDurable<ContinuationSnapshot>(CONTINUATIONS_STATE);
+    const durableCommands = await readDurable<any>('bridge-commands');
+    durableCommands.commands = durableCommands.commands.filter((entry: any) => entry?.id !== lost.id);
+    await writeDurableNow('bridge-commands', durableCommands);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    resetBridgeForTests();
+    opened.length = 0;
+    await restoreContinuations(snapshot!);
+    setBrowserOpener(async (url) => { opened.push(url); });
+    const restarted = await startBridge();
+    expect(restarted).not.toBeNull();
+    base = `http://127.0.0.1:${restarted}`;
+    await pair();
+
+    // The source stays fenced for the whole handoff: that is the invariant, not the bug.
+    expect(compactingConversation(source)?.token).toBe(ticket);
+    const now = Date.now();
+    await sweepStaleSwarm(now);
+    await sweepStaleSwarm(now + 16 * 60_000);
+    await vi.waitFor(() => expect(opened).toHaveLength(1));
+    const retry = new URL(opened[0]!).searchParams.get('clf')!;
+    expect(retry).not.toBe(lost.id);
+    expect((await redeem(retry, 'fresh-successor')).text).toContain('restart brief');
+    const ack = await request('POST', '/commands/ack', {
+      body: { id: retry, status: 'sent', conversationId: successor, client: 'fresh-successor' }
+    });
+    expect(ack.body.committed).toBe(true);
+    expect(compactingConversation(source)).toBeNull();
+    expect(compactingConversation(successor)).toBeNull();
+    expect((await getSession(sessionId))?.conversationId).toBe(successor);
   });
 });
 
@@ -6499,6 +6598,24 @@ describe('unattributed activity recovery', () => {
     }
   });
 
+  it('leaves alone a working chat whose current turn already proved its tool calls are its own', async () => {
+    // Upstream chat-on-steroids 614583e: a conversation with no ParadigmEve page called a tool,
+    // and a chat that had already made exactly attributed calls in this turn was reloaded anyway.
+    vi.useFakeTimers();
+    try {
+      await pair();
+      await events(PRIME, [openTurn('turn-proven')]);
+      await attributed(PRIME);
+      await unattributed();
+      await vi.advanceTimersByTimeAsync(UNATTRIBUTED_RECONNECT_GRACE_MS + 60_000);
+      const status = await recoveryStatus();
+      expect(status.reconnects).toEqual([]);
+      expect(status.repairs).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels the last-resort reload when recorder reconnect restores exact attribution', async () => {
     vi.useFakeTimers();
     try {
@@ -7129,6 +7246,25 @@ describe('unattributed activity recovery', () => {
     await events(PRIME, [openTurn('real-failure'), { kind: 'chat_error', time: Date.now(),
       text: 'Message delivery timed out. Please try again.', recoverable: true }]);
     expect((await maintenance())?.reason).toBe('assistant-error');
+  });
+
+  it('preserves a recovered assistant-error page without spending the one reload its turn has', async () => {
+    // Upstream chat-on-steroids c8721d1: the browser found the page already recovered and kept it.
+    // Nothing was reloaded, so the same turn's later transport failure still earns its reload.
+    await pair();
+    await events(PRIME, [openTurn('preserved-answer'), { kind: 'chat_error', time: Date.now(), turnId: 'preserved-answer',
+      text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    const repair = await maintenance();
+    expect(repair?.reason).toBe('assistant-error');
+    const preserved = await request('GET', `/status?repaired=${encodeURIComponent(repair!.token)}&repairAction=preserved`);
+    expect(preserved.status).toBe(200);
+    expect(preserved.body.repairs ?? []).toEqual([]);
+    expect(await maintenance()).toBeNull();
+
+    await events(PRIME, [{ kind: 'chat_error', time: Date.now() + 1, turnId: 'preserved-answer',
+      text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    const retry = await maintenance();
+    expect(retry?.reason).toBe('assistant-error');
   });
 
   it('reloads for recognized transport errors, once per user turn', async () => {
