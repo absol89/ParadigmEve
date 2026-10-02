@@ -115,6 +115,7 @@ import { connectorIconPath } from './connector-assets.js';
 import { browserWindowIconPath } from './window-icon.js';
 import { editContextMenuTemplate } from './edit-context-menu.js';
 import { startupSplashDocument } from './startup-splash.js';
+import { readUiLanguage } from './ui-language.js';
 import { openParadigmEveChromeProfile, refreshParadigmEveCompanionForMaintenance, restartParadigmEveChromeForInstallerRecovery, restoreParadigmEveBrowser, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
 import { wakeBrowserUrl } from './browser-startup.js';
 import {
@@ -353,7 +354,7 @@ function createStartupSplash(): void {
   });
   // Do not await this decorative load. The real renderer starts independently below and owns
   // readiness; a slow or failed splash can never delay the workspace.
-  void splash.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(startupSplashDocument(theme))}`)
+  void splash.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(startupSplashDocument(theme, readUiLanguage(app.getPath('userData'))))}`)
     .catch((error) => {
       logWarn(`startup splash failed to load: ${error instanceof Error ? error.message : String(error)}`);
       if (startupSplash === splash) closeStartupSplash();

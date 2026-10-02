@@ -4391,7 +4391,7 @@ export function initChat(next: Deps): void {
     const button = $<HTMLButtonElement>('startExpenses'); button.disabled = true;
     const generation = selectionGeneration;
     try {
-      const result = await run(api.startExpenses(document.documentElement.lang === 'sv-SE' ? 'sv-SE' : 'en'));
+      const result = await run(api.startExpenses(document.documentElement.lang === 'sv-SE' || document.documentElement.lang === 'es-419' ? document.documentElement.lang : 'en'));
       if (!result) return;
       const { project, session } = result;
       ++sessionsLoadGeneration;

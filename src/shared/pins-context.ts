@@ -1,4 +1,5 @@
 import type { Pin, PinsLibrarySnapshot, Quilt, QuiltCollection } from './pins.js';
+import { canonicalReference, referenceAliasLanguage, type ReferenceDisplayLanguage } from './reference-aliases.js';
 
 /**
  * Human-facing Pins references.
@@ -33,6 +34,8 @@ export interface PinsContextSelection {
   references: string[];
   /** Syntactically valid authored references that had no unique exact durable match. */
   unresolvedReferences: string[];
+  /** Localized spellings (`%utgifter`) that were routed to the canonical starter (`%expenses`). */
+  aliasedReferences: Array<{ reference: string; canonical: string; language: ReferenceDisplayLanguage | null }>;
   /** Exact wider Quilts selected by authored #quilt references. */
   quiltGroups: QuiltCollection[];
   quilts: Quilt[];
@@ -115,8 +118,22 @@ export function pinsContextReferences(text: string): string[] {
   return mentioned;
 }
 
-/** Resolve one product reference to one durable id. Duplicate legacy names deliberately abstain. */
+/**
+ * Resolve one product reference to one durable id. Duplicate legacy names deliberately abstain.
+ * An exact durable name always wins; only when there is none does a localized alias of a shipped
+ * starter (`%utgifter`, `#planes`) route to its canonical name.
+ */
 export function resolvePinsReference(
+  snapshot: PinsLibrarySnapshot,
+  reference: string
+): PinsReferenceResolution | null {
+  const exact = resolveExactReference(snapshot, reference);
+  if (exact) return exact;
+  const canonical = canonicalReference(reference);
+  return canonical ? resolveExactReference(snapshot, canonical) : null;
+}
+
+function resolveExactReference(
   snapshot: PinsLibrarySnapshot,
   reference: string
 ): PinsReferenceResolution | null {
@@ -165,6 +182,7 @@ export function selectPinsContext(
   const dataOnlyIds = new Set<string>();
   const references: string[] = [];
   const unresolvedReferences: string[] = [];
+  const aliasedReferences: Array<{ reference: string; canonical: string; language: ReferenceDisplayLanguage | null }> = [];
   const select = (quilt: Quilt, activate = false, suppressPrompt = false, dataOnly = false): void => {
     if (!selectedIds.has(quilt.id)) {
       selectedIds.add(quilt.id);
@@ -193,12 +211,18 @@ export function selectPinsContext(
   }
 
   for (const reference of mentioned) {
-    const resolved = resolvePinsReference(snapshot, reference) ?? (() => {
-      const alias = options.activationAliases?.find(row => normalized(row.reference) === normalized(reference));
+    const canonical = canonicalReference(reference);
+    const exact = resolveExactReference(snapshot, reference);
+    const routed = !exact && canonical ? resolveExactReference(snapshot, canonical) : null;
+    const resolved = exact ?? routed ?? (() => {
+      const names = (row: { reference: string }): boolean =>
+        normalized(row.reference) === normalized(reference) ||
+        (canonical !== null && normalized(row.reference) === normalized(canonical));
+      const alias = options.activationAliases?.find(names);
       if (alias && snapshot.quilts.some(row => row.id === alias.threadId)) {
         return { kind: 'thread' as const, id: alias.threadId };
       }
-      const dataAlias = options.dataOnlyAliases?.find(row => normalized(row.reference) === normalized(reference));
+      const dataAlias = options.dataOnlyAliases?.find(names);
       return dataAlias && snapshot.quilts.some(row => row.id === dataAlias.threadId)
         ? { kind: 'data-thread' as const, id: dataAlias.threadId }
         : null;
@@ -207,6 +231,7 @@ export function selectPinsContext(
       unresolvedReferences.push(reference);
       continue;
     }
+    if (!exact && canonical) aliasedReferences.push({ reference, canonical, language: referenceAliasLanguage(reference) });
     if (resolved.kind === 'quilt') {
       const collection = snapshot.collections.find(row => row.id === resolved.id)!;
       references.push(reference);
@@ -257,5 +282,5 @@ export function selectPinsContext(
       return leftTime - rightTime || left.createdAt - right.createdAt;
     });
 
-  return { references, unresolvedReferences, quiltGroups, quilts, activatedThreads, promptSuppressedThreads, dataOnlyThreads, pins };
+  return { references, unresolvedReferences, aliasedReferences, quiltGroups, quilts, activatedThreads, promptSuppressedThreads, dataOnlyThreads, pins };
 }

@@ -177,7 +177,7 @@ function renderPluginTools(parent: HTMLElement, plugin: PluginView): void {
     parent.replaceChildren();
     if (plugin.status === 'needs-auth' || plugin.status === 'authenticating') {
       const auth = el('div', 'plugin-auth');
-      auth.append(el('p', '', () => plugin.status === 'authenticating' ? t("Finish signing in through your browser.") : t("Sign in to {0} to connect your account.", [plugin.name])));
+      auth.append(el('p', '', () => plugin.status === 'authenticating' ? t("Finish signing in through Eve browser.") : t("Sign in to {0} to connect your account.", [plugin.name])));
       auth.append(plugin.status === 'authenticating'
         ? button(() => t("Cancel sign-in"), async () => { await mutate(window.api.pluginsCancelAuthentication(plugin.id), false); })
         : button(() => t("Sign in"), async () => { await mutate(window.api.pluginsAuthenticate(plugin.id), false); }, true));

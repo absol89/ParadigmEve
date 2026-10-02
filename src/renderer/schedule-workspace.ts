@@ -38,7 +38,7 @@ function minuteFromLocalTime(value: string): number {
 }
 
 function clockAt(at: number, timeZone: string): string {
-  return new Intl.DateTimeFormat(currentLanguage() === 'sv-SE' ? 'sv-SE' : 'en', {
+  return new Intl.DateTimeFormat(currentLanguage(), {
     timeZone,
     hour: '2-digit',
     minute: '2-digit',

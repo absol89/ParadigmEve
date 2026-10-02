@@ -169,8 +169,13 @@ asset as retained.
 Its conversation list defaults to newer-first using each archive session's canonical `updatedAt`.
 The compact order control switches between `Newer first` and `Older first`; a Swedish browser uses
 `Nyare först` and `Äldre först`. Reordering only moves sidebar links: chat hash tokens, the active
-conversation and the current search filter stay intact. The app can open this same recovery view from
-the Archive workspace or View menu without exposing its filesystem path to the renderer.
+conversation and the current search filter stay intact. The sidebar search hides non-matching chats with
+the `hidden` attribute, which only works while the generated CSS keeps `.chat-link[hidden]{display:none}`
+after the `.chat-link` rule. The app can open this same recovery view from
+the Archive workspace or View menu (**Open Archive Browser**, shown as **Opening Archive Browser…** while it
+rebuilds and opens) without exposing its filesystem path to the renderer. The main process hands the verified
+file to the system's default browser, then on Windows brings the window that shows the page's
+`ParadigmEve Archive` title to the front (`src/main/archive/archive-focus.ts`), best effort and never an error.
 
 An unfinished historical assistant row remains honest evidence. Once a later authored user message
 proves that interrupted row is no longer the live streaming frontier, the archive can retain that

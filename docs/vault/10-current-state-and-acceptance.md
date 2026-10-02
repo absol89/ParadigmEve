@@ -3,20 +3,39 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.3.3 source line and the acceptance gates to use before packaging, installing, or calling a change
+2.3.4 source line and the acceptance gates to use before packaging, installing, or calling a change
 complete. Public release or installed-runtime status needs its own release/runtime evidence; source
 version alone does not prove either one.
 
 ## Current product state
 
-- Current source package/app line: **2.3.3**.
+- Current source package/app line: **2.3.4**.
 - The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.3.3 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.3.3 runtime.
+- A 2.3.4 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.3.4 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
+
+## Languages and localization
+
+- The app ships in English, Svenska (`sv-SE`) and Español (Latinoamérica, `es-419`). English is the
+  source text in code; `sv-SE.json` and `es-419.json` are keyed by that exact English string. A missing
+  key shows English, and tests require the two catalogs to have the same keys and placeholders.
+- The language is chosen in Setup or Settings → Appearance and stored as `cos.ui.language`.
+- The installation's agent name (`config.mcp.connectorName`, default `Eve`) replaces `Eve` in catalog
+  text, with the right possessive per language. `Eve Browser` and `Eve Plugins` never change.
+- The localhost setup guide opens in the app language, has its own three-language picker, shows Eve's
+  coffee cup and translates the connector description users paste into ChatGPT. Third-party UI labels
+  stay in English.
+- Localized spellings of the built-in names (`%utgifter`, `%gastos`, `%hur`, `%cómo`, `%organisera`,
+  `%organizar`, `plan`/`planer`/`planes`) route to `%expenses`, `%how`, `%organize` and `#plans` through the
+  shared resolver. An exact user-created name wins, and Eve is told the alias and, when the rest of the
+  message is in the alias's language, to answer in that language.
+- `%Hotlink` is now `%Instruction` (a Thread with a prompt and no Pins). Pets can be renamed (display
+  name only) and ship per-language descriptions.
+- Details and the evidence checklist: [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md).
 
 ## Knowledge and work model
 
@@ -31,7 +50,7 @@ version alone does not prove either one.
 - Plans are first-class durable objects. Completing checklist items does not archive a Plan;
   explicit archive moves it from Live to Done.
 - Pins → Create is a local unsaved editor, not a chat. Save requires a non-empty unique name and the
-  object kind follows content: Pins → Thread, prompt without Pins → Hotlink, no prompt/Pins → Concept.
+  object kind follows content: Pins → Thread, prompt without Pins → Instruction, no prompt/Pins → Concept.
   Link and description do not classify the object.
 - Plans → Create is conversational: it resolves the durable `plans` starter identity, opens
   a fresh Thread chat, and starts with `Make me a 3 step plan to get started with %plans` so the user
@@ -185,7 +204,7 @@ Prove the installed package contains the current main/renderer bundle and packag
 - View / Pins / Plans visible;
 - Pin opens the mandatory Thread chooser;
 - Pins → Create opens the local blank editor without creating a durable placeholder; Back leaves no
-  new object, blank/duplicate names keep Save disabled, and content determines Concept/Hotlink/Thread.
+  new object, blank/duplicate names keep Save disabled, and content determines Concept/Instruction/Thread.
 - Plans → Create resolves the durable Plans starter and opens a fresh conversational Plan-creation chat
   whose authored onboarding message is `Make me a 3 step plan to get started with %plans`.
 - `%thread` and `#quilt` resolve according to the current model;

@@ -3,5 +3,9 @@
   "version": 1,
   "id": "luna",
   "displayName": "Luna",
-  "description": "A calm chibi companion with ivory hair, aqua streaks, glossy teal eyes, a round earpiece, cream-and-teal robe, and little leaf-emblem book."
+  "description": "A calm chibi companion with ivory hair, aqua streaks, glossy teal eyes, a round earpiece, cream-and-teal robe, and little leaf-emblem book.",
+  "descriptions": {
+    "sv-SE": "En lugn chibi-följeslagare med elfenbensvitt hår, akvamarina slingor, blanka blågröna ögon, en rund hörsnäcka, en krämvit och blågrön mantel och en liten bok med bladsymbol.",
+    "es-419": "Una tranquila compañera chibi con cabello color marfil, mechones aguamarina, ojos turquesa brillantes, un auricular redondo, una túnica crema y turquesa, y un pequeño libro con un emblema de hoja."
+  }
 }

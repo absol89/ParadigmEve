@@ -3,5 +3,9 @@
   "version": 1,
   "id": "hammy",
   "displayName": "Hammy",
-  "description": "A tiny hamster with a big pre-workout attitude."
+  "description": "A tiny hamster with a big pre-workout attitude.",
+  "descriptions": {
+    "sv-SE": "En pytteliten hamster med stor pepp inför träningspasset.",
+    "es-419": "Un hámster diminuto con mucha energía de antes de entrenar."
+  }
 }

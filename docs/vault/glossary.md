@@ -32,7 +32,7 @@ Thread can belong to several Quilts and a Quilt can contain several Threads. `#`
 
 **Goal** — Driver mode that asks a second model whether requested work is complete and can stop when it is.
 
-**Hotlink** — A saved Pins item with zero Pins and a non-empty Thread prompt. Link and description are optional metadata and do not change the kind.
+**Instruction** — (formerly Hotlink; `%instruktion` in Swedish, `%instrucción` in Spanish.) A saved Pins item with zero Pins and a non-empty Thread prompt. Link and description are optional metadata and do not change the kind.
 
 **Loop** — Driver mode that keeps producing the next in-scope user message and does not decide to stop on its own.
 
@@ -55,12 +55,19 @@ broker. It is not a separate user-facing persona or overseer.
 **Projection** — Derived/cache/UI state that reflects an authority but must not replace it.
 
 **Thread / `%topic`** — The Pins kind with one or more Pins, and the durable backing/home model shared
-by Concepts and Hotlinks. A `%thread` reference activates that exact backing object/binding for
+by Concepts and Instructions. A `%thread` reference activates that exact backing object/binding for
 fresh-conversation context, including its standing prompt and saved Pins. A template project may
 link to a Thread for continuity without making the Thread a duplicate structured-data store.
 
 **Reference sigils** — `%` addresses one Thread and `#` addresses one Quilt. These are the complete
 user-facing Pins reference sigils; `@` is reserved for plugins/connectors.
+
+**Localized alias** — A Swedish or Spanish spelling of a built-in `%`/`#` name (`%utgifter`, `%gastos`,
+`%hur`, `%planer`) that the shared resolver routes to the stored English name. It never replaces an exact
+user-created name, and a routed alias tells Eve which language it is.
+
+**Agent name** — `config.mcp.connectorName`, default `Eve`. It replaces `Eve` in interface text, with the
+language's possessive; `Eve Browser` and `Eve Plugins` are product names and stay.
 
 **Thread prompt** — One editable piece of standing guidance owned by a Thread. When that Thread is
 activated directly through `%thread` or an explicit Start chat from that Thread, its prompt is injected

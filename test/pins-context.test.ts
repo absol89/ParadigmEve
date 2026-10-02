@@ -553,3 +553,60 @@ it('renders a bounded selected-Thread frame for an explicit empty Thread without
   expect(injected).not.toContain('This must not leak into the empty Thread opening.');
   expect(injected.endsWith(request)).toBe(true);
 });
+
+it('routes localized spellings of the shipped starters to the same context Eve gets in English', async () => {
+  await initializeDefaultThreads();
+  const limits = { maxChars: 96_000, maxBytes: 128_000 };
+  const english = await injectPinsContext('%how explain Pins.', limits);
+  const swedish = await injectPinsContext('%hur explain Pins.', limits);
+  const spanish = await injectPinsContext('%cómo explain Pins.', limits);
+  for (const injected of [swedish, spanish]) {
+    expect(injected).toContain('# Eve Thread prompt · how');
+    expect(injected).toContain(VAULT_CONTEXT_MARKER);
+    expect(injected).toContain('# Eve localized reference aliases ·');
+    expect(injected).toContain('is the user\'s localized spelling of %how');
+  }
+  expect(swedish).toContain('The alias is Swedish (sv-SE). If the rest of the user\'s message is also written in Swedish, answer in Swedish;');
+  expect(spanish).toContain('The alias is Latin American Spanish (es-419). If the rest of the user\'s message is also written in Latin American Spanish, answer in Latin American Spanish;');
+  expect(swedish).toContain('if the rest of the message is in another language, answer in that language instead.');
+  expect(english).not.toContain('localized reference aliases');
+  expect(swedish.endsWith('%hur explain Pins.')).toBe(true);
+
+  const organize = await injectPinsContext('%organisera mina nedladdningar', limits);
+  expect(organize).toContain('# Eve Thread prompt · organize');
+  const plans = await injectPinsContext('%planer visa mina planer', limits);
+  expect(plans).toContain('# Eve Thread description · plans');
+  expect(plans).toContain('localized spelling of %plans');
+  // The base word and the Spanish plural reach the same Thread.
+  // `plan` is shared by English, Swedish and Spanish, so it carries no language instruction.
+  expect(await injectPinsContext('%plan what is next?', limits)).not.toContain('The alias is');
+  expect(await injectPinsContext('%planer vad är näst?', limits)).toContain('The alias is Swedish (sv-SE).');
+  for (const spelling of ['%plan', '%planes', '%plans']) {
+    expect(await injectPinsContext(`${spelling} what is next?`, limits), spelling).toContain('# Eve Thread description · plans');
+  }
+});
+
+it('keeps #utgifter data-only like #expenses, and a real Thread or Quilt with the alias name wins', async () => {
+  await initializeDefaultThreads();
+  const limits = { maxChars: 96_000, maxBytes: 128_000 };
+  const aliased = await injectPinsContext('#utgifter lägg in dessa kvitton.', limits);
+  expect(aliased).toContain('# Eve UNTRUSTED context data · #expenses description');
+  expect(aliased).not.toContain('# Eve Thread prompt · expenses');
+
+  const own = await createQuilt({ title: 'utgifter', collectionIds: [] });
+  await updateQuiltMetadata({ quiltId: own.id, title: 'utgifter', description: 'My own household budget notes.', collectionNames: [] });
+  const real = await injectPinsContext('%utgifter summarize.', limits);
+  expect(real).toContain('# Eve Thread description · utgifter');
+  expect(real).toContain('My own household budget notes.');
+  expect(real).not.toContain('localized reference aliases');
+});
+
+it('reports an unresolved reference next to Swedish and Spanish Thread and Concept words', async () => {
+  await initializeDefaultThreads();
+  const limits = { maxChars: 96_000, maxBytes: 128_000 };
+  expect(await injectPinsContext('Lägg till #okänd som ett koncept.', limits)).toContain('# Eve unresolved Pins reference · #okänd');
+  expect(await injectPinsContext('Agrega #desconocido como un concepto nuevo.', limits)).toContain('# Eve unresolved Pins reference · #desconocido');
+  expect(await injectPinsContext('Skapa en tråd för #okänd.', limits)).toContain('# Eve unresolved Pins reference · #okänd');
+  // An ordinary hashtag with no Pins vocabulary nearby stays ordinary.
+  expect(await injectPinsContext('Älskar helgen #sommar', limits)).toBe('Älskar helgen #sommar');
+});

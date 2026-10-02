@@ -49,7 +49,7 @@ export const pinsToolSchema = z.discriminatedUnion('action', [
     action: z.literal('create_thread'),
     title: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(1_000).optional(),
-    // The exact standing prompt the user approved. With no Pins this makes a %Hotlink.
+    // The exact standing prompt the user approved. With no Pins this makes a %Instruction.
     prompt: z.string().trim().min(1).max(16_000).optional(),
     quilt_names: z.array(z.string().trim().min(1).max(80)).max(50).default([])
   }).strict(),
@@ -177,7 +177,7 @@ export function registerPinsTool(reg: SurfaceRegistrar): void {
     title: 'Pins, Threads and Quilts',
     description:
       'Pins. list exact %Thread/#Quilt. pin exact event/Plan to thread_id; unpin. create_thread: approved Thread+Quilts, optional approved ' +
-      'prompt (0 Pins+prompt=%Hotlink). set_thread_prompt: set/clear (empty) exact Thread prompt, user-approved text only. ' +
+      'prompt (0 Pins+prompt=%Instruction). set_thread_prompt: set/clear (empty) exact Thread prompt, user-approved text only. ' +
       'set_pin_sticky: Heart on exact Prompt/Message/Plan Pin. create_concept: exact 0-Pin promptless %Thread, no same-name Quilt. ' +
       'set_quilt_description: approved Quilt text. associate_quilt: exact Thread/Quilt; create_if_missing only if approved. Never fuzzy-route.',
     inputSchema: pinsToolSchema,

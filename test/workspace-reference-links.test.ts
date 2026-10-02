@@ -70,6 +70,26 @@ it('resolves reference names exactly and fails closed on missing or ambiguous le
   expect(workspaceReferenceNavigation(snapshot, 'https://example.test/#Eve')).toBeNull();
 });
 
+it('links a localized alias of a shipped starter to the same Thread and lets a real name win', () => {
+  const starters: PinsLibrarySnapshot = {
+    version: 1,
+    quilts: [
+      { id: 'thread-expenses', title: 'expenses', state: 'pinned', collectionIds: [], createdAt: 1, updatedAt: 1 },
+      { id: 'thread-plans', title: 'plans', state: 'pinned', collectionIds: [], createdAt: 1, updatedAt: 1 },
+      { id: 'thread-utgifter', title: 'utgifter', state: 'pinned', collectionIds: [], createdAt: 1, updatedAt: 1 }
+    ],
+    pins: [],
+    collections: []
+  };
+  expect(workspaceReferenceNavigation(starters, '%expenses')).toEqual({ screen: 'pins', quiltId: 'thread-expenses' });
+  expect(workspaceReferenceNavigation(starters, '%planer')).toEqual({ screen: 'pins', quiltId: 'thread-plans' });
+  expect(workspaceReferenceNavigation(starters, '%planes')).toEqual({ screen: 'pins', quiltId: 'thread-plans' });
+  // The user's own Thread named like the alias is exact, so it is not rerouted.
+  expect(workspaceReferenceNavigation(starters, '%utgifter')).toEqual({ screen: 'pins', quiltId: 'thread-utgifter' });
+  expect(workspaceReferenceNavigation(starters, '%gastos')).toEqual({ screen: 'pins', quiltId: 'thread-expenses' });
+  expect(workspaceReferenceNavigation(starters, '%okänd')).toBeNull();
+});
+
 it('keeps a linked #Concept inside its backing Concept workspace instead of following the destination URL', () => {
   const conceptSnapshot: PinsLibrarySnapshot = {
     version: 1,

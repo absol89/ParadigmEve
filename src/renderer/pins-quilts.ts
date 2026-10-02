@@ -1,5 +1,6 @@
 import { el, icon } from './dom.js';
-import { t } from './i18n.js';
+import { currentLanguage, t } from './i18n.js';
+import { localizedReferenceName } from '../shared/reference-aliases.js';
 import {
   CONCEPT_PIN_PREVIEW_DENSITIES,
   DEFAULT_CONCEPT_PREVIEW_SETTINGS,
@@ -162,15 +163,15 @@ export interface PinsQuiltsLabels {
 function defaultLabels(): PinsQuiltsLabels {
   return {
     title: t('Pins'),
-    subtitle: t('Gather useful things into groups so they stay connected to what they came from.\n%Threads have message pins, %Hotlinks have no pins, #Concepts use no prompt.'),
+    subtitle: t('Gather useful things into groups so they stay connected to what they came from.\n%Threads have message pins, %Instructions have no pins, #Concepts use no prompt.'),
     pinned: `%${t('Threads')}`,
-    hotlink: `%${t('Hotlinks')}`,
+    hotlink: `%${t('Instructions')}`,
     concept: t('#Concepts'),
     archived: t('Archived'),
     allCollections: t('All Quilts'),
     noPinnedTitle: t('No Threads yet'),
-    noPinnedBody: t('Pin a message, result, or plan and choose the Thread where it belongs.'),
-    noHotlinkTitle: t('No Hotlinks yet'),
+    noPinnedBody: t('Pin a message, plan, or result and choose the Thread where it belongs.'),
+    noHotlinkTitle: t('No Instructions yet'),
     noHotlinkBody: t('Prompted shortcuts without Pins live here for quick reuse.'),
     noConceptTitle: t('No Concepts yet'),
     noConceptBody: t('Promptless items without Pins collect here as lightweight concepts and labels.'),
@@ -227,10 +228,10 @@ function defaultLabels(): PinsQuiltsLabels {
     saveRequiresName: t('Save requires name'),
     requiresUniqueName: t('Requires unique name'),
     saveThread: t('Save Thread'),
-    saveHotlink: t('Save Hotlink'),
+    saveHotlink: t('Save Instruction'),
     saveConcept: t('Save Concept'),
     threadPrompt: t('Prompt'),
-    threadPromptHelp: t('What should Eve know or do when chatting about this? Filling this in will turn the save button to Save Hotlink.'),
+    threadPromptHelp: t('What should Eve know or do when chatting about this? Filling this in will turn the save button to Save Instruction.'),
     threadPromptPlaceholder: t('What should Eve know or do when chatting about this?'),
     savePrompt: t('Save prompt'),
     unpin: t('Unpin'),
@@ -341,12 +342,17 @@ function quiltReferenceLabel(label: string): string {
   return label.startsWith('#') ? label : `#${label}`;
 }
 
+/** A shipped starter shows its localized name (`expenses` is `utgifter` in Swedish); other titles are untouched. */
+function displayReferenceName(title: string): string {
+  return localizedReferenceName(title.replace(/^[%#]/u, ''), currentLanguage());
+}
+
 function threadTitleLabel(title: string): string {
-  return `%${title.replace(/^[%#]/u, '')}`;
+  return `%${displayReferenceName(title)}`;
 }
 
 function pinsObjectTitleLabel(title: string, pinCount: number, prompt?: string): string {
-  const bare = title.replace(/^[%#]/u, '');
+  const bare = displayReferenceName(title);
   return pinsObjectKind(pinCount, prompt) === 'concept' ? `#${bare}` : `%${bare}`;
 }
 
@@ -1008,7 +1014,7 @@ export function createPinsCreateView(props: PinsCreateViewProps): HTMLElement {
   const link = document.createElement('input');
   link.type = 'text';
   link.maxLength = 8_192;
-  link.placeholder = t('Thread edit view by default · add https://… or C:\\… to override');
+  link.placeholder = t('Opens Thread edit view by default · add https://… or C:\\… to override');
   linkField.append(link);
 
   const collectionsField = el('label', 'quilt-metadata-field quilt-metadata-collections') as HTMLLabelElement;
@@ -1156,7 +1162,7 @@ export function createQuiltDetail(props: QuiltDetailProps): HTMLElement {
     link.type = 'text';
     link.maxLength = 8_192;
     link.value = props.quilt.link ?? '';
-    link.placeholder = t('Thread edit view by default · add https://… or C:\\… to override');
+    link.placeholder = t('Opens Thread edit view by default · add https://… or C:\\… to override');
     linkField.append(link);
 
     const collectionsField = el('label', 'quilt-metadata-field quilt-metadata-collections') as HTMLLabelElement;

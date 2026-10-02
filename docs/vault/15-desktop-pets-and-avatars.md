@@ -71,11 +71,12 @@ only these three files and ignores anything else.
   "version": 1,
   "id": "eve-avatar",
   "displayName": "Eve",
-  "description": "A short, friendly description."
+  "description": "A short, friendly description.",
+  "descriptions": { "sv-SE": "En kort, vänlig beskrivning.", "es-419": "Una descripción breve y amable." }
 }
 ```
 
-`displayName` must be non-empty (100 characters are shown); `description` is a string (500 shown).
+`displayName` must be non-empty (100 characters are shown); `description` is a string (500 shown). `descriptions` is optional: a map from app language to a translation of `description`, shown when the app is set to that language (`en`, `sv-SE`, `es-419`). Invalid entries are ignored. Users can also rename a pet inside ParadigmEve; that only changes the name the app shows, never the folder or these files.
 
 ### atlas.png
 
@@ -253,6 +254,15 @@ The Pets page shows the app's reason. The common ones:
 | `The folder needs a valid pet.json manifest …` | Check `format`, `version`, `id` pattern and a non-empty `displayName`. |
 | `That pet id is reserved for a bundled pet.` / `… is already imported.` | Choose another id, or ask the user to delete the old one first. |
 | `Pet packages may not use symbolic links.` | Save real files, not links. |
+
+## Renaming and descriptions in other languages
+
+Users can rename any pet, bundled or imported, from its menu (**Rename**). The name is a display
+override kept in the pet library state; the folder, `id` and `pet.json` stay untouched, **Reset** restores
+the package's own name, and deleting an imported pet forgets its override. A pet that has been renamed
+shows its original name on the card. When you author a pet, you may add per-language `descriptions` to
+`pet.json` (see above); the Pets page shows the one matching the app language and falls back to
+`description`. The four bundled pets carry Swedish and Spanish descriptions.
 
 ## Bundled pets
 

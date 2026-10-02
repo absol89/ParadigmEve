@@ -35,6 +35,7 @@ import { registerPluginIpc } from './plugins-ipc.js';
 import { readScheduleProjection } from './schedule-projection.js';
 import type { ArchiveRuntime } from './archive/archive-runtime.js';
 import { verifiedArchiveStaticIndex } from './archive/archive-open.js';
+import { focusOpenedArchiveBrowser } from './archive/archive-focus.js';
 import {
   archiveRebuildForRenderer,
   archiveStatusForRenderer,
@@ -52,7 +53,8 @@ import {
  */
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
-import { deletePet, importPet, loadPetAsset, petLibraryState, setPetEnabled, setPetFavorite } from './pet-library.js';
+import { writeUiLanguage } from './ui-language.js';
+import { deletePet, importPet, loadPetAsset, petLibraryState, setPetEnabled, setPetFavorite, setPetName } from './pet-library.js';
 import { petOverlayControlState, refreshPetOverlayActivities, refreshPetOverlayAppearance, setPetOverlayVisible } from './pet-overlay.js';
 import { z } from 'zod';
 import {
@@ -632,6 +634,16 @@ export function registerIpc(
     return setPetFavorite(id, favorite);
   });
   handle('pets:delete', async payload => deletePet(petIdArg.parse(payload).id));
+  // The renderer owns the language; this only tells the main process for the next startup splash.
+  handle('ui:setLanguage', async payload => {
+    const { language } = z.object({ language: z.enum(['en', 'sv-SE', 'es-419']) }).strict().parse(payload);
+    writeUiLanguage(app.getPath('userData'), language);
+    return true;
+  });
+  handle('pets:rename', async payload => {
+    const { id, name } = petIdArg.extend({ name: z.string().max(200) }).strict().parse(payload);
+    return setPetName(id, name);
+  });
   handle('pets:asset', async payload => {
     const { id, preview } = petIdArg.extend({ preview: z.boolean() }).strict().parse(payload);
     return loadPetAsset(id, preview);
@@ -905,7 +917,7 @@ export function registerIpc(
   const chooseProject = async (expenses: boolean, language = 'en') => {
     const window = getWindow();
     if (!window) throw new Error('No window');
-    const result = await dialog.showOpenDialog(window, { title: expenses ? (language === 'sv-SE' ? 'Välj en tom mapp för utgifter' : 'Choose an empty folder for Expenses') : 'Choose a project folder for ChatGPT', properties: ['openDirectory', 'createDirectory'] });
+    const result = await dialog.showOpenDialog(window, { title: expenses ? (language === 'sv-SE' ? 'Välj en tom mapp för utgifter' : language === 'es-419' ? 'Elige una carpeta vacía para Gastos' : 'Choose an empty folder for Expenses') : 'Choose a project folder for ChatGPT', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return null;
     const folder = result.filePaths[0];
     try { await resolvePath(getConfig().roots, folder); }
@@ -920,7 +932,7 @@ export function registerIpc(
   };
   handle('projects:add', () => chooseProject(false));
   handle('projects:startExpenses', async payload => {
-    const { language } = z.object({ language: z.enum(['en', 'sv-SE']).default('en') }).strict().parse(payload ?? {});
+    const { language } = z.object({ language: z.enum(['en', 'sv-SE', 'es-419']).default('en') }).strict().parse(payload ?? {});
     const linked = (await listProjects()).filter(project => project.template?.id === 'expenses');
     if (linked.length > 1) throw new Error('Choose one Expenses project');
     const project = linked[0]
@@ -969,6 +981,8 @@ export function registerIpc(
       logInfo('archive open ' + traceId + ': static index verified');
       const error = await shell.openPath(indexPath);
       logInfo('archive open ' + traceId + ': open returned ' + (error ? 'error' : 'success'));
+      // Bring the browser that took the page to the front; best effort and never an error to the user.
+      if (!error) logInfo('archive open ' + traceId + ': browser focus ' + ((await focusOpenedArchiveBrowser()) ? 'done' : 'skipped'));
       return error
         ? { ok: false as const, error: sanitizeArchiveRendererError(error, 'Static archive could not be opened.') }
         : { ok: true as const } satisfies ArchiveRendererOpenResult;
@@ -1554,7 +1568,8 @@ export function registerIpc(
     shell.showItemInFolder(icon);
     return true;
   });
-  handle('setup:start', async () => {
+  handle('setup:start', async payload => {
+    const { language } = z.object({ language: z.enum(['en', 'sv-SE', 'es-419']).default('en') }).strict().parse(payload ?? {});
     if (!setupTask && !setupAssistantSnapshot().running) {
       const core = surfaceDefinition('core', getConfig().mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME);
       const icon = connectorIconPath() ?? '';
@@ -1564,6 +1579,7 @@ export function registerIpc(
         coreConnectorDescription: core.description,
         connectorIconPath: icon,
         browser: getConfig().ui.chatBrowser ?? 'chrome',
+        language,
         // The setup run owns this await so Stop and a repeated Start can cancel/fence partial
         // startup before any guide server or Chrome process exists. Remember whether setup was
         // the operation that made the bridge live; only that temporary lifetime is eligible for

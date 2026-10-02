@@ -86,8 +86,13 @@ export const COS_PET_LOOPING: Readonly<Record<PetAnimationName, boolean>> = {
 
 export interface PetRecord {
   id: string;
+  /** The name shown in the app: the user's own name when they renamed the pet, else the package's. */
   displayName: string;
+  /** The package's own name. Only present while a user rename is hiding it. */
+  originalName?: string;
   description: string;
+  /** Optional translations of `description`, keyed by app language (for example "sv-SE"). */
+  descriptions?: Record<string, string>;
   enabled: boolean;
   favorite: boolean;
   /** Ships with the app: read-only, can be turned off but not deleted. */

@@ -369,7 +369,7 @@ describe('model-facing Pins tool', () => {
     expect((await pinsLibrary()).collections).toHaveLength(0);
   });
 
-  it('creates a %Hotlink with its approved standing prompt in one call', async () => {
+  it('creates a %Instruction with its approved standing prompt in one call', async () => {
     // The %claude request stayed blocked because the tool could not set a prompt at all.
     const prompt = 'Eve and Claude collaborate through exact evidence: Eve reports live findings, Claude fixes and tests.';
     const created = await run({ action: 'create_thread', title: '%claude', prompt, quilt_names: ['#Eve'] });

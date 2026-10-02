@@ -446,7 +446,7 @@ It should provide:
 - selected-chat transcript;
 - local image viewer;
 - source links back to live Plans/Pins/Threads when available;
-- `Open static archive`;
+- `Open Archive Browser`;
 - `Export conversation`;
 - `Rebuild archive index`;
 - storage/integrity status.

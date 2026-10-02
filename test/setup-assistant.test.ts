@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { JSDOM } from 'jsdom';
+import { surfaceDefinition } from '../src/main/mcp/surfaces.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => ({ spawn: vi.fn(), listWindows: vi.fn(), findUi: vi.fn(), act: vi.fn(), extensionDir: vi.fn() }));
@@ -1232,7 +1233,7 @@ describe('ParadigmEve setup browser', () => {
     expect(html.indexOf('id="openBrowserExtensions"')).toBeLessThan(html.indexOf('id="openTunnels"'));
     expect(html).toContain('https://chatgpt.com/#settings/Security?section=developer-mode');
     expect(html).toContain('https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins');
-    expect(html).toContain('data-paradigmeve-art="goddess-emblem"');
+    expect(html).toContain('data-paradigmeve-art="coffee-cup"');
     expect(html.match(/data-guide-step="[1-6]"/g)).toHaveLength(6);
     expect(html).toContain('click steps 1–6 at any time to preview what comes next or revisit an earlier step');
     expect(html).toContain('Future-step controls stay locked until the required earlier actions are complete.');
@@ -1342,6 +1343,111 @@ describe('ParadigmEve setup browser', () => {
     expect(html).toContain('Hide it again before recording, streaming, screen sharing');
     expect(html).toContain('the ParadigmEve app owns encrypted credential storage and local permission enforcement.');
     expect(html).toContain("for(const input of document.querySelectorAll('[data-secret-label]'))input.type='password'");
+
+    await guideAction(guideUrl, { action: 'stop' });
+    await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);
+  });
+
+  it('takes every guide string from the shared Swedish catalog', async () => {
+    const { guideKeysMissingFromCatalog } = await import('../src/main/setup-guide-i18n.js');
+    expect(guideKeysMissingFromCatalog()).toEqual([]);
+  });
+
+  it('opens in the Eve language, switches with the header dropdown and leaves no English behind', async () => {
+    const setup = await modulePromise;
+    const pending = setup.startSetupAssistant({ ...baseOptions, language: 'sv-SE' });
+    const guideUrl = await waitForGuideUrl();
+    const response = await fetch(guideUrl);
+    expect(response.headers.get('content-security-policy')).toContain('img-src data:');
+    const html = await response.text();
+    const english = new JSDOM(html.replace(/let lang="sv-SE"/, 'let lang="en"'), { runScripts: 'dangerously', url: guideUrl });
+    const swedish = new JSDOM(html, { runScripts: 'dangerously', url: guideUrl });
+    try {
+      const textOf = (dom: JSDOM): string[] => {
+        const out: string[] = [];
+        const walker = dom.window.document.createTreeWalker(dom.window.document.body, 4);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const parent = node.parentElement!;
+          const value = (node.nodeValue ?? '').replace(/\s+/g, ' ').trim();
+          if (value && !parent.closest('script,.lang')) out.push(value);
+        }
+        return out;
+      };
+      const before = textOf(english);
+      const after = textOf(swedish);
+      expect(after).toHaveLength(before.length);
+      // Only app-owned copy may differ; OpenAI/ChatGPT labels and values stay verbatim.
+      const verbatim = new Set(['Developer mode', 'Load unpacked', 'Create Tunnel', '+ Create New Secret Key', 'Create MCP App', 'Allow low risk actions', 'Allow all actions', baseOptions.coreConnectorDescription, path.dirname(baseOptions.connectorIconPath)]);
+      const untranslated = before.filter((value, index) => after[index] === value && !verbatim.has(value) && /[A-Za-z]{4,} [A-Za-z]{3,}/.test(value));
+      expect(untranslated).toEqual([]);
+      expect(swedish.window.document.documentElement.lang).toBe('sv');
+      expect(swedish.window.document.querySelector('.brand span')?.textContent).toBe('ParadigmEve · Guidad konfiguration');
+      expect(swedish.window.document.querySelector('[data-secret-toggle="tunnelId"]')?.getAttribute('aria-label')).toBe('Visa Tunnel ID');
+      expect(swedish.window.document.getElementById('guideLanguage')).not.toBeNull();
+      expect(swedish.window.document.querySelectorAll('[data-guide-step]')).toHaveLength(6);
+
+      const picker = swedish.window.document.getElementById('guideLanguage') as HTMLSelectElement;
+      picker.value = 'en';
+      picker.dispatchEvent(new swedish.window.Event('change'));
+      expect(textOf(swedish)).toEqual(before);
+      expect(swedish.window.document.querySelector('[data-secret-toggle="tunnelId"]')?.getAttribute('aria-label')).toBe('Show Tunnel ID');
+    } finally {
+      english.window.close();
+      swedish.window.close();
+    }
+
+    await guideAction(guideUrl, { action: 'stop' });
+    await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);
+  });
+
+  it('offers the same guide in Latin American Spanish and switches between all three languages', async () => {
+    const setup = await modulePromise;
+    const pending = setup.startSetupAssistant({ ...baseOptions, language: 'es-419', coreConnectorName: 'Eva', coreConnectorDescription: surfaceDefinition('core', 'Eva').description });
+    const guideUrl = await waitForGuideUrl();
+    const html = await fetch(guideUrl).then((response) => response.text());
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: guideUrl });
+    try {
+      const document = dom.window.document;
+      const picker = document.getElementById('guideLanguage') as HTMLSelectElement;
+      expect([...picker.options].map((option) => option.value)).toEqual(['en', 'sv-SE', 'es-419']);
+      expect(document.documentElement.lang).toBe('es-419');
+      expect(document.title).toBe('ParadigmEve · Configuración guiada');
+      expect(document.querySelector('.brand span')?.textContent).toBe('ParadigmEve · Configuración guiada');
+      expect(document.querySelector('[data-secret-toggle="tunnelId"]')?.getAttribute('aria-label')).toBe('Mostrar Tunnel ID');
+      expect(document.getElementById('tunnelDescription')?.textContent).toMatch(/^Sigue usando ChatGPT como ya lo haces/);
+      expect(document.getElementById('tunnelDescription')?.textContent).toContain('de Eva');
+      expect(document.querySelectorAll('[data-guide-step]')).toHaveLength(6);
+      for (const [value, title] of [['sv-SE', 'ParadigmEve · Guidad konfiguration'], ['en', 'ParadigmEve · Guided setup'], ['es-419', 'ParadigmEve · Configuración guiada']] as const) {
+        picker.value = value;
+        picker.dispatchEvent(new dom.window.Event('change'));
+        expect(document.title).toBe(title);
+        expect(document.querySelector('.brand span')?.textContent).toBe(title);
+      }
+
+      const textOf = (): string[] => {
+        const out: string[] = [];
+        const walker = document.createTreeWalker(document.body, 4);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const value = (node.nodeValue ?? '').replace(/\s+/g, ' ').trim();
+          if (value && !node.parentElement!.closest('script,.lang')) out.push(value);
+        }
+        return out;
+      };
+      picker.value = 'en';
+      picker.dispatchEvent(new dom.window.Event('change'));
+      const english = textOf();
+      picker.value = 'es-419';
+      picker.dispatchEvent(new dom.window.Event('change'));
+      const spanish = textOf();
+      expect(spanish).toHaveLength(english.length);
+      const verbatim = new Set(['Developer mode', 'Load unpacked', 'Create Tunnel', '+ Create New Secret Key', 'Create MCP App', 'Allow low risk actions', 'Allow all actions', 'Restricted', 'Tunnels: Read', 'Tunnels: Use', 'None', 'No authentication', baseOptions.coreConnectorDescription, path.dirname(baseOptions.connectorIconPath)]);
+      expect(english.filter((value, index) => spanish[index] === value && !verbatim.has(value) && /[A-Za-z]{4,} [A-Za-z]{3,}/.test(value))).toEqual([]);
+      picker.value = 'en';
+      picker.dispatchEvent(new dom.window.Event('change'));
+      expect(textOf()).toEqual(english);
+    } finally {
+      dom.window.close();
+    }
 
     await guideAction(guideUrl, { action: 'stop' });
     await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);

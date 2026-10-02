@@ -185,7 +185,7 @@ function dateAtNoon(dateKey: string): Date {
 }
 
 function locale(): string {
-  return currentLanguage() === 'sv-SE' ? 'sv-SE' : 'en';
+  return currentLanguage();
 }
 
 function weekdayLabel(day: ScheduleDayView, style: 'long' | 'short' = 'long'): string {
