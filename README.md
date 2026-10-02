@@ -142,6 +142,9 @@ You can also keep Eve routines and your own availability together in the Schedul
 </p>
 
 This is useful for recurring work where “when should Eve do this?” matters as much as the task itself.
+If you create or change a reminder in conversation, Eve can keep the reason, relevant decisions and
+observations, preferred format, and exact reusable context references with the schedule so a fresh
+scheduled chat does not have to guess what the reminder originally meant.
 
 ## Desktop companions
 
@@ -158,6 +161,7 @@ On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso a
 - Your agent's own name (and its possessive) replaces "Eve" throughout the interface.
 - Localized names such as `%utgifter` or `%planes` reach the same built-in Threads and Concepts, and Eve answers in your language when you write them.
 - `%Hotlink` is now `%Instruction`, avatars can be renamed, and the static archive search works again.
+- Conversational reminders and routines can carry a compact continuation of the chat that created them, so later runs can recover the purpose and check what changed instead of improvising from a bare reminder.
 
 Read the full **[2.3.4 first-user guide and release notes](docs/release-notes/v2.3.4.md)** or browse the **[CHANGELOG](CHANGELOG.md)** for the running history.
 

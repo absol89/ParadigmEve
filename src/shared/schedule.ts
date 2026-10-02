@@ -108,7 +108,7 @@ const scheduleSourceReferenceSchema = z.object({
 }).strict();
 
 const contextLineSchema = z.string().trim().min(1).max(2_000);
-const instructionReferenceSchema = z.string().trim().regex(/^%\S{1,79}$/u, 'Use an exact %Thread or %Hotlink reference');
+const instructionReferenceSchema = z.string().trim().regex(/^%\S{1,79}$/u, 'Use an exact %Thread or %Instruction reference');
 const dataReferenceSchema = z.string().trim().regex(/^#\S{1,79}$/u, 'Use an exact #Quilt or #Concept reference');
 
 /** Durable purpose captured from the conversation that created or refined scheduled work. */

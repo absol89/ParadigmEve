@@ -30,6 +30,10 @@ operation.
 - The Schedule screen's "Chat about" shortcuts are `#schedule` (also `#schedules`), `#myweek` and `#routines`, with
   Swedish and Spanish spellings routed to the same names. A localized spelling reaches Eve as the Schedule shortcut
   even when no Quilt exists, instead of being ignored.
+- Conversational reminders and routines now persist a bounded continuation capsule with their purpose, desired
+  outcome, relevant decisions/observations, constraints, requested format and exact source references. Core's unified
+  `schedule` tool can list/create/update/pause/resume those Eve routines from an exact current chat and uses the same
+  action surface for evidence-backed completion of a running scheduled chat.
 - Pets can be renamed from their menu (display name only; the package folder and `pet.json` are untouched) and
   `pet.json` accepts optional per-language `descriptions`.
 

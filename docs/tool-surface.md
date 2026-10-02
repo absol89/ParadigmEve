@@ -204,11 +204,11 @@ Plan items use `text`, `status` (`todo | in_progress | done`), optional `priorit
 
 #### Schedule / Eve routines
 
-Schedule editing is currently an app renderer/preload API. The model-facing Core surface exposes
-`schedule_complete` only for closing one already-running scheduled chat from exact durable tool
-evidence. Therefore an ordinary Eve/Eva chat currently has no schedule-specific MCP/API call to
-read or mutate user availability or Eve routines directly. With Computer use enabled it can operate
-the visible Schedule UI like a user, but that does not close the model-facing API gap.
+Schedule editing is available through the app renderer/preload API. The model-facing Core surface also
+exposes a unified `schedule` tool for Eve routines: `list`, `create`, `update`, `set_state` and
+`complete`. Conversational mutations require exact current chat identity and bind source provenance
+inside the app; the model cannot supply source session/conversation ids. User availability remains a
+renderer/preload API concern rather than a Core schedule mutation.
 
 The app methods and IPC channels are:
 
@@ -269,13 +269,16 @@ The `expectedUpdatedAt` value is `null` only when creating the first user schedu
 carry the current revision. Missing weekdays are unknown. A day with `availability: 'unknown'` does
 not carry free-time windows.
 
-For a scheduled run, `schedule_complete` accepts only exact `T…` references obtained from
-`session(action="read", include=["tools"])`:
+For a scheduled run, `schedule` with `action="complete"` accepts only exact `T…` references obtained
+from `session(action="read", include=["tools"])`:
 
 ```json
 {
-  "verification_tool_call": "T2F",
-  "result_tool_call": "T2E"
+  "action": "complete",
+  "payload": {
+    "verification_tool_call": "T2F",
+    "result_tool_call": "T2E"
+  }
 }
 ```
 
@@ -292,7 +295,7 @@ storage/navigation fields; their user-facing meanings are Thread and Quilt respe
 
 The same provenance split explains the two reference alphabets: `E<number>` identifies a recorded
 session event and supplies the numeric `eventSeq` for Pin/source navigation, while `T…` identifies a
-recorded tool call and is the evidence reference accepted by `schedule_complete`.
+recorded tool call and is the evidence reference accepted by `schedule` action `complete`.
 
 ### `agents`
 

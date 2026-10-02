@@ -43,7 +43,7 @@ The complete possible Core family includes:
 - exact Pins / `%Thread` / `#Quilt` catalog and mutations through `pins`;
 - live `update_plan` display;
 - `chat_review_complete` receipt;
-- `schedule_complete` receipt for one exact running scheduled chat;
+- unified `schedule` lifecycle for listing and conversationally changing Eve routines, plus exact completion of one running scheduled chat;
 - worker broker `agents`;
 - `session_finish` where enabled;
 - `work_context`;
@@ -56,14 +56,15 @@ See [`docs/tool-surface.md`](../tool-surface.md) for schemas and permission deta
 
 Schedule is the durable workspace for the user's availability (`%schedule`) and Eve's routines
 (`%evecron`). Its `#schedule` (also `#schedules`), `#myweek`, and `#routines` chat shortcuts are ordinary Quilt
-references when those Quilts exist; they are context, not schedule authority. General schedule
-read/edit operations currently belong to the desktop preload/IPC API. Using that workspace/API does
-not activate either Thread's standing prompt; explicit `%schedule` or `%evecron` Thread opening
-remains a separate context action.
+references when those Quilts exist; they are context, not schedule authority. User availability
+read/edit operations belong to the desktop preload/IPC API. Eve-routine state can also be listed and
+changed conversationally through Core MCP's unified `schedule` tool when exact current chat identity
+is proven. That tool binds source session/conversation identity itself and persists a bounded
+continuation capsule with the routine. Using either API does not activate either Thread's standing
+prompt; explicit `%schedule` or `%evecron` Thread opening remains a separate context action.
 
-Core MCP currently exposes `schedule_complete` only for the lifecycle of the exact running
-schedule-owned chat. It does not expose general schedule CRUD or availability mutation tools, so a
-model must not claim a schedule edit merely from reading state. See
+The same `schedule` tool owns exact running-chat completion through `action="complete"` and durable
+`T…` evidence. It does not mutate the user's availability document directly. See
 [Schedule workspace and Eve routines](13-schedules-and-routines.md) for the current API, availability,
 duration and Started/Done evidence contract.
 
