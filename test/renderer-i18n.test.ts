@@ -67,16 +67,16 @@ describe('localized app interface', () => {
     expect(document.getElementById('eveBrowserTab')?.getAttribute('title')).toBe('Öppna en ny flik i Eve Browser');
     expect(document.getElementById('sidebarBrandLink')?.getAttribute('title')).toBe('Öppna ParadigmEve på GitHub');
     expect(document.getElementById('sidebarBrandLink')?.getAttribute('aria-label')).toBe('Öppna ParadigmEve på GitHub');
-    expect(document.getElementById('openStaticArchiveMenu')?.textContent).toBe('Öppna statiskt chattarkiv');
+    expect(document.getElementById('openStaticArchiveMenu')?.textContent).toBe('Öppna kopia av chattarkiv');
     expect(document.querySelector('.sidebar-service-label')?.textContent?.trim()).toBe('Chatgpt.com');
     expect(document.getElementById('addProject')?.textContent?.trim()).toBe('Projekt');
     expect(document.getElementById('chatRefresh')?.textContent?.trim()).toBe('');
     expect(document.getElementById('chatRefresh')?.getAttribute('title')).toBe('Uppdatera konversationer');
     expect(document.getElementById('chatRefresh')?.getAttribute('aria-label')).toBe('Uppdatera konversationer');
     expect(document.getElementById('conceptsSettingsNav')?.textContent).toBe('# Koncept');
-    expect(document.getElementById('conceptsSettingsNav')?.getAttribute('aria-label')).toBe('Öppna inställningar för Koncept');
+    expect(document.getElementById('conceptsSettingsNav')?.getAttribute('aria-label')).toBe('Inställningar för Koncept');
     expect(document.getElementById('conceptsSettingsTitle')?.textContent).toBe('# Koncept');
-    expect(document.getElementById('threadSettingsToggle')?.textContent).toBe('% Threads  +');
+    expect(document.getElementById('threadSettingsToggle')?.textContent).toBe('% Trådar +');
     expect(document.getElementById('threadSettingsEntries')?.textContent).not.toContain('% How');
     expect(document.getElementById('threadSettingsEntries')?.textContent).not.toContain('% appdata');
     expect(document.getElementById('threadSettingsEntries')?.textContent).not.toContain('% organize');
@@ -84,7 +84,7 @@ describe('localized app interface', () => {
     expect(document.querySelector('#timelineEmpty span')?.textContent).toBe('Vad kan jag göra åt dig idag?');
     expect(document.querySelector('.setup-heading h1')!.textContent).toBe(svSE.Setup);
     expect(document.querySelector('[data-panel="setup"] .lede > p')!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
-      'Sex steg, en gång. ParadigmEve aktiverar sina vanliga lokala verktyg som standard, inklusive kommandokörning. ChatGPT styr fortfarande åtkomsten till anpassade appar och kan begära godkännande eller blockera åtgärder med högre risk.'
+      'Sex steg, en konfiguration. ParadigmEve aktiverar sina vanliga lokala verktyg som standard, inklusive kommandokörning. ChatGPT styr fortfarande åtkomsten till anpassade appar och kan begära godkännande eller blockera åtgärder med högre risk.'
     );
     expect(window.localStorage.getItem('cos.ui.language')).toBe('sv-SE');
     settings.value = 'en';
@@ -219,7 +219,7 @@ describe('localized app interface', () => {
     expect(detail.querySelector('.quilt-detail-chat-button')?.textContent).toBe(svSE['Chat about this']);
     expect(detail.querySelector('.quilt-detail-chat-button')?.getAttribute('aria-label')).toBe('Starta en chatt om Eva Å notes');
     expect(detail.querySelector('.quilt-archive-button')?.textContent).toBe(svSE['Archive']);
-    expect(detail.querySelector('.quilt-archive-button')?.getAttribute('aria-label')).toBe('Arkivera Thread Eva Å notes');
+    expect(detail.querySelector('.quilt-archive-button')?.getAttribute('aria-label')).toBe('Arkivera Tråd Eva Å notes');
 
     const create = createPinsCreateView({ onBack: () => undefined, onSave: () => undefined });
     const createSave = create.querySelector<HTMLButtonElement>('.pins-create-save')!;
@@ -234,7 +234,7 @@ describe('localized app interface', () => {
     const createTitle = create.querySelector<HTMLInputElement>('.quilt-metadata-title input')!;
     createTitle.value = 'Min länk';
     createTitle.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    expect(createSave.textContent).toBe('Spara Concept');
+    expect(createSave.textContent).toBe('Spara Koncept');
     expect(createSave.disabled).toBe(false);
     const createPrompt = create.querySelector<HTMLTextAreaElement>('.thread-prompt-input')!;
     createPrompt.value = 'Prompt';
@@ -253,11 +253,11 @@ describe('localized app interface', () => {
     expect(duplicateSave.textContent).toBe('Kräver unikt namn');
     expect(duplicateSave.disabled).toBe(true);
 
-    expect(t('ParadigmEve setup has not started.')).toBe(svSE['ParadigmEve setup has not started.']);
-    expect(t('Hide tunnel details')).toBe('Dölj tunneldetaljer');
-    expect(t('Show tunnel details')).toBe('Visa tunneldetaljer');
-    expect(t('Hide API key details')).toBe('Dölj API-nyckeldetaljer');
-    expect(t('Show API key details')).toBe('Visa API-nyckeldetaljer');
+    expect(t('ParadigmEve setup is not started.')).toBe(svSE['ParadigmEve setup is not started.']);
+    expect(t('Hide tunnel details')).toBe('Dölj tunnel ID');
+    expect(t('Show tunnel details')).toBe('Visa tunnel ID');
+    expect(t('Hide API key details')).toBe('Dölj API-nyckel');
+    expect(t('Show API key details')).toBe('Visa API-nyckel');
     const setupTemplate = 'Companion connected. Create the {0} tunnel in Eve Browser, then paste its Tunnel ID into the guide.';
     expect(t(setupTemplate, ['Eva Å']))
       .toBe(svSE[setupTemplate].replace('{0}', 'Eva Å'));
@@ -273,10 +273,10 @@ describe('localized app interface', () => {
   it('uses natural Swedish for worker, plan and model-status chrome', async () => {
     const { setLanguage, t } = await import('../src/renderer/i18n.js');
     setLanguage('sv-SE');
-    expect(t('No worker evidence yet. Completed audits and verification will collect here.'))
-      .toBe('Inga resultat från underagenter ännu. Slutförda granskningar och verifieringar samlas här.');
-    expect(t('No live Eve activity. Worker execution plans appear here when they are active.'))
-      .toBe('Ingen pågående Eve-aktivitet. Underagenternas arbetsplaner visas här när de är aktiva.');
+    expect(t('No worker agent results yet. Completed audits and verifications will collect here.'))
+      .toBe('Inga resultat från jobbagenter ännu. Slutförda granskningar och verifieringar samlas här.');
+    expect(t('No live Eve activity. Worker activity plans appear here when they are active.'))
+      .toBe('Ingen pågående Eve-aktivitet. Jobbagenternas aktivitetsplaner visas här när de är aktiva.');
     expect(t('No checklist items yet')).toBe('Inga punkter i checklistan ännu');
     expect(t('{0} of {1} complete', [2, 3])).toBe('2 av 3 klara');
     expect(t('Available in your ChatGPT account · checked {0}', ['nyss']))
@@ -289,6 +289,62 @@ describe('localized app interface', () => {
     expect(t('Helper')).toBe('Hjälpare');
   });
 
+  it('pins the newly renamed English keys to their current Swedish clarity copy', async () => {
+    const { setLanguage, t } = await import('../src/renderer/i18n.js');
+    setLanguage('sv-SE');
+    const cases: Record<string, string> = {
+      'Browse the local chat traces Eve has retained. The static HTML browser is a recovery view, not the archive authority.': 'Öppna en browser med dina lokalt sparade chattar. Arkivbrowsern är för att läsa chattar lokalt, den ändrar inte auktoritära källor.',
+      'The static archive browser is available through your local archive data.': 'Den statiska arkivbrowsern är tillgänglig genom din lokala arkivdata.',
+      'The static archive browser will be available after it is done syncing.': 'Den statiska arkivbrowsern blir tillgänglig när arkivet har synkat klart.',
+      'Archive browser': 'Arkivbrowser',
+      'Archive browser opened.': 'Arkivbrowsern öppnades.',
+      'Archive actions use ParadigmEve’s own archive runtime. This screen never asks for a filesystem path and never embeds local files.': 'Arkivåtgärder använder ParadigmEves egna arkivkörning. Den här skärmen frågar aldrig efter en filsökväg och bäddar aldrig in lokala filer.',
+      "Edit Eve's routines": 'Ändra Eves rutiner',
+      'View and edit your availability and Eve’s routines in one place, with the times you are both free presented.': 'Se och redigera din tillgänglighet och Eves rutiner på samma ställe, med tiderna när ni båda är lediga tydligt presenterade.',
+      'Edit Eve schedule here': 'Ändra Eves schema här',
+      'Let this same ParadigmEve app see supported windows, use the mouse and keyboard, and work with the clipboard.': 'Låt samma ParadigmEve-app se fönster som stöds, använda mus och tangentbord samt arbeta med det du kopierat.',
+      'Open Chromium extensions': 'Öppna Chromium-tillägg',
+      '#Quilt tag rows': '#Quilt tagg-rader',
+      'Ask Eve to search account history and draft a concept description.': 'Be Eve söka i kontots historik och skriva ett utkast till konceptbeskrivning.',
+      'Opens Thread edit view by default · add https://… or C:\\… to override': 'Öppnar Tråd-redigering som standard · lägg till https://… eller C:\\… för att ändra',
+      'Pin a message, plan, or result and choose where it belongs.': 'Fäst ett meddelande, en plan, eller resultat och välj vilken Quilt det hör hemma i.',
+      'Pin a message, plan, or result and choose the Thread where it belongs.': 'Fäst ett meddelande, en plan, eller resultat och välj vilken Tråd det hör hemma i.',
+      'Use a different name, such as Eva, to separate different computers.': 'Använd ett annat namn, till exempel Eva, för att skilja på olika datorer.',
+      'ParadigmEve setup is not started.': 'ParadigmEve-guiden är inte startad.',
+      'View version': 'Visa versionen',
+      'Models and the work recorded in this workspace. This is a comparison, not a bill.': 'Modeller och det arbete som registrerats i denna arbetsyta. Detta är en jämförelse, inte en faktura.',
+      'Value estimate per day': 'Värdeuppskattning per dag',
+      'Edit value formula': 'Redigera värdeformel',
+      'Set per-model cached-input rates to compare value.': 'Ställ in cachelagrade indata per modell för att jämföra värde.',
+      'Six steps, one configuration. ParadigmEve enables its ordinary local tools by default, including command execution. ChatGPT still controls custom-app access and may ask for approval or block higher-risk actions.': 'Sex steg, en konfiguration. ParadigmEve aktiverar sina vanliga lokala verktyg som standard, inklusive kommandokörning. ChatGPT styr fortfarande åtkomsten till anpassade appar och kan begära godkännande eller blockera åtgärder med högre risk.',
+      'Preview step 1: Pick a folder to work in': 'Förhandsvisa steg 1: Välj en mapp att jobba i',
+      'Preview step 2: Create a tunnel ID': 'Förhandsvisa steg 2: Skapa en tunnel ID',
+      'Pick a folder to work in': 'Välj en mapp att jobba i',
+      'Nothing outside the folders you approve is reachable. Do this first — the tunnel will not start with no folder set.': 'Ingenting utanför de mappar du godkänner går att nå utan kommandon. Gör detta först — tunneln startar inte om det inte finns någon mapp.',
+      '. Leave everything else as': '. Lämna allt annat som',
+      '. Copy it right away — the platform will not show it again.': '. Kopiera det med en gång – plattformen kommer inte att visa det igen.',
+      "Your endpoint's model ID, typed exactly as it serves it.": 'Endpointens modell ID, skrivet exakt som servern anger det.',
+      'Default lets the provider decide, which is right for nearly every model. The rest wear out more and take longer.': 'Som standard kan leverantören bestämma, vilket är rätt för nästan alla modeller. Resten tröttnar fortare och tar längre tid.',
+      'Sub-agents/workers': 'Underagenter/jobb',
+      'Finish signing in through Eve browser.': 'Slutför inloggningen via Eve Browser.',
+      'Desktop Avatar': 'Skrivbordsavatar',
+      'Avatar': 'Avatar',
+      'Make an avatar with Eve': 'Gör en avatar med Eve',
+      'Search avatar': 'Sök avatar',
+      'Import a folder': 'Importera en mapp',
+      'Avatar operation failed': 'Åtgärden för avatar misslyckades',
+      'This removes the avatar from your local library. You can import it again later.': 'Det här tar bort avataren från ditt lokala bibliotek. Du kan importera den igen senare.',
+      'Delete avatar': 'Ta bort avatar',
+      'All matching avatars are in Favorites.': 'Alla matchande avatarer finns i Favoriter.',
+      'No avatars match your search.': 'Inga avatarer matchar sökningen.',
+      '{0} avatar': '{0} avatar',
+      '{0} avatars': '{0} avatarer'
+    };
+    for (const [english, swedish] of Object.entries(cases)) {
+      expect(t(english), english).toBe(swedish);
+    }
+  });
+
   it('keeps connector as kontakt and connection as anslutning in Swedish setup copy', async () => {
     const { setLanguage, t } = await import('../src/renderer/i18n.js');
     setLanguage('sv-SE');
@@ -296,7 +352,7 @@ describe('localized app interface', () => {
     expect(t('Load the ParadigmEve Companion in this dedicated Eve Browser profile before creating the connector.'))
       .toContain('skapar kontakten');
     expect(t('Open {0} extensions', ['Microsoft Edge'])).toBe('Öppna tillägg i Microsoft Edge');
-    expect(t('Name this connection')).toBe('Namnge den här anslutningen');
+    expect(t('Name this connection')).toBe('Namnge den här kontakten');
     expect(t('Choose what ChatGPT can access and keep your connection healthy.'))
       .toContain('håll anslutningen fungerande');
   });

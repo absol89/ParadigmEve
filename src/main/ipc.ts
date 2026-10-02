@@ -1554,7 +1554,8 @@ export function registerIpc(
     shell.showItemInFolder(icon);
     return true;
   });
-  handle('setup:start', async () => {
+  handle('setup:start', async payload => {
+    const { language } = z.object({ language: z.enum(['en', 'sv-SE']).default('en') }).strict().parse(payload ?? {});
     if (!setupTask && !setupAssistantSnapshot().running) {
       const core = surfaceDefinition('core', getConfig().mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME);
       const icon = connectorIconPath() ?? '';
@@ -1564,6 +1565,7 @@ export function registerIpc(
         coreConnectorDescription: core.description,
         connectorIconPath: icon,
         browser: getConfig().ui.chatBrowser ?? 'chrome',
+        language,
         // The setup run owns this await so Stop and a repeated Start can cancel/fence partial
         // startup before any guide server or Chrome process exists. Remember whether setup was
         // the operation that made the bridge live; only that temporary lifetime is eligible for

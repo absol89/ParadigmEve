@@ -169,7 +169,7 @@ function defaultLabels(): PinsQuiltsLabels {
     archived: t('Archived'),
     allCollections: t('All Quilts'),
     noPinnedTitle: t('No Threads yet'),
-    noPinnedBody: t('Pin a message, result, or plan and choose the Thread where it belongs.'),
+    noPinnedBody: t('Pin a message, plan, or result and choose the Thread where it belongs.'),
     noHotlinkTitle: t('No Hotlinks yet'),
     noHotlinkBody: t('Prompted shortcuts without Pins live here for quick reuse.'),
     noConceptTitle: t('No Concepts yet'),
@@ -1008,7 +1008,7 @@ export function createPinsCreateView(props: PinsCreateViewProps): HTMLElement {
   const link = document.createElement('input');
   link.type = 'text';
   link.maxLength = 8_192;
-  link.placeholder = t('Thread edit view by default · add https://… or C:\\… to override');
+  link.placeholder = t('Opens Thread edit view by default · add https://… or C:\\… to override');
   linkField.append(link);
 
   const collectionsField = el('label', 'quilt-metadata-field quilt-metadata-collections') as HTMLLabelElement;
@@ -1156,7 +1156,7 @@ export function createQuiltDetail(props: QuiltDetailProps): HTMLElement {
     link.type = 'text';
     link.maxLength = 8_192;
     link.value = props.quilt.link ?? '';
-    link.placeholder = t('Thread edit view by default · add https://… or C:\\… to override');
+    link.placeholder = t('Opens Thread edit view by default · add https://… or C:\\… to override');
     linkField.append(link);
 
     const collectionsField = el('label', 'quilt-metadata-field quilt-metadata-collections') as HTMLLabelElement;

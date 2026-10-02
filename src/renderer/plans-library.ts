@@ -389,7 +389,7 @@ function verifiedWorkSection(plans: readonly PlanViewModel[]): HTMLElement {
   );
   root.append(head);
   if (!plans.length) {
-    root.append(el('div', 'plans-empty', () => t('No worker evidence yet. Completed audits and verification will collect here.')));
+    root.append(el('div', 'plans-empty', () => t('No worker agent results yet. Completed audits and verifications will collect here.')));
     return root;
   }
 

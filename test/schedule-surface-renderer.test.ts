@@ -237,10 +237,10 @@ it('localizes schedule chrome into natural Swedish while preserving authored sch
   expect(host.querySelector('.schedule-title-block h1')?.textContent).toBe('Schema');
   expect(host.querySelector("[data-mode='today']")?.textContent).toBe('I dag');
   expect(host.querySelector('.schedule-overlap-label')?.textContent).toBe('BÅDA LEDIGA');
-  expect(host.querySelector("[data-entry-id='eve-expenses'] .schedule-status")?.textContent).toContain('Pågår');
+  expect(host.querySelector("[data-entry-id='eve-expenses'] .schedule-status")?.textContent).toContain('Pågående');
   expect(host.querySelector("[data-entry-id='eve-review'] .schedule-event-title")).toBe(authoredTitle);
   expect(authoredTitle?.textContent).toBe('Morning review');
   expect(host.querySelector('.schedule-surface')?.getAttribute('aria-label')).toBe('Schema');
-  expect(host.textContent).toContain('Redigera din tillgänglighet');
-  expect(host.textContent).toContain('Redigera Eves rutiner');
+  expect(host.textContent).toContain('Ändra din tillgänglighet');
+  expect(host.textContent).toContain('Ändra Eves rutiner');
 });

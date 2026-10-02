@@ -110,7 +110,7 @@
           <button class="btn" id="zoomOut" type="button">Zoom Out <kbd>Ctrl+−</kbd></button>
           <button class="btn" id="zoomActualSize" type="button">Actual Size <span id="zoomReset">100%</span><kbd>Ctrl+0</kbd></button>
           <hr />
-          <button class="btn" id="viewPets" type="button" aria-pressed="false">Desktop Pets</button>
+          <button class="btn" id="viewPets" type="button" aria-pressed="false">Desktop Avatar</button>
           <hr />
           <button class="btn" id="openStaticArchiveMenu" type="button">Open static chat archive</button>
         </div></details>
@@ -159,7 +159,7 @@
         </button>
         <button data-tab="usage" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-pulse" /></svg>Usage</button>
         <button data-tab="plugins" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-plus" /></svg>Plugins</button>
-        <button data-tab="pets" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-image" /></svg>Pets</button>
+        <button data-tab="pets" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-image" /></svg>Avatar</button>
 <button data-tab="setup" type="button">
           <svg class="ico" viewBox="0 0 24 24"><use href="#i-steps" /></svg>Setup
           <span class="badge" id="setupBadge" hidden></span>
@@ -228,7 +228,7 @@
         <svg class="ico" viewBox="0 0 24 24"><use href="#i-bolt" /></svg>
         <span id="updateText"></span>
         <button class="btn btn-quiet" id="updateInstall" type="button" hidden>Install now</button>
-        <button class="btn btn-quiet" id="updateRelease" type="button" hidden>View release</button>
+        <button class="btn btn-quiet" id="updateRelease" type="button" hidden>View version</button>
         <button class="btn btn-quiet" id="updateExtension" type="button" hidden>Update extension</button>
       </div>
       <div class="notice" id="pluginRefreshReminder" role="status" hidden>
@@ -268,13 +268,13 @@
         </section>
         <section class="panel plugins-panel pets-panel" data-panel="pets">
           <div class="plugins-content">
-            <header class="plugin-page-head"><div><h1>Pets</h1><p>Little desktop companions that react to what Eve is doing.</p></div><div class="plugin-search-actions"><label class="plugin-search"><input id="petsSearch" type="search" placeholder="Search pets" aria-label="Search pets" /></label><button class="btn plugin-add" id="petsImport" type="button" aria-label="Import a pet folder" title="Import a pet folder">+</button></div></header>
+          <header class="plugin-page-head"><div><h1>Avatar</h1><p>Little desktop companions that react to what Eve is doing.</p></div><div class="plugin-search-actions"><label class="plugin-search"><input id="petsSearch" type="search" placeholder="Search avatar" aria-label="Search avatar" /></label><button class="btn plugin-add" id="petsImport" type="button" aria-label="Import a folder" title="Import a folder">+</button></div></header>
             <div class="plugin-refresh-guide pet-import-guide">
               <p>Ask Eve to make a pet, or an avatar of herself, then import the folder she saves.</p>
               <button class="btn" id="petsFormatGuide" type="button">How do I make one?</button>
             </div>
             <dialog class="plugin-dialog" id="petFormatDialog" aria-labelledby="petFormatTitle">
-              <div class="plugin-dialog-head"><h2 id="petFormatTitle">Make a pet with Eve</h2><button class="btn" id="petsFormatClose" type="button">Close</button></div>
+              <div class="plugin-dialog-head"><h2 id="petFormatTitle">Make an avatar with Eve</h2><button class="btn" id="petsFormatClose" type="button">Close</button></div>
               <div class="plugin-dialog-body pet-format-content">
                 <div class="pet-format-guide-head"><p>Copy this prompt into a chat with Eve and describe your pet, or ask for an avatar of her.</p><button class="btn" id="petsCopyPrompt" type="button">Copy prompt</button></div>
                 <pre id="petsPrompt"></pre>
@@ -290,17 +290,17 @@
           </div>
         </section>
         <section class="panel usage-panel" data-panel="usage">
-          <div class="settings-heading"><span class="eyebrow">YOUR ACTIVITY</span><h1>Usage</h1><p>Model availability and the work recorded in this workspace. This is a comparison, not a bill.</p></div>
+          <div class="settings-heading"><span class="eyebrow">YOUR ACTIVITY</span><h1>Usage</h1><p>Models and the work recorded in this workspace. This is a comparison, not a bill.</p></div>
           <p class="muted usage-status" id="usageStatus" role="status">Calculating recorded tool usage…</p><div class="usage-summary" id="usageSummary"></div>
           <section class="usage-section"><h2>Token activity per day</h2><div id="usageHeatmap" class="usage-heatmap"></div><p class="muted">Estimated context processed per tool call · last 52 weeks</p></section>
-          <section class="usage-section"><h2>Cost estimate per day</h2>
-            <details id="usageFormulaDetails"><summary>Edit cost formula</summary>
+          <section class="usage-section"><h2>Value estimate per day</h2>
+            <details id="usageFormulaDetails"><summary>Edit value formula</summary>
             <p id="usageFormula" class="muted"></p>
-            <p class="muted">Automatic baselines use Standard short-context cached-input prices, checked 7 September 2026: <a href="https://developers.openai.com/api/docs/models/gpt-5.6-sol" target="_blank" rel="noopener noreferrer">GPT-5.6 Sol</a>, <a href="https://developers.openai.com/api/docs/models/gpt-5.6-terra" target="_blank" rel="noopener noreferrer">GPT-5.6 Terra</a>, <a href="https://developers.openai.com/api/docs/models/gpt-5.6-luna" target="_blank" rel="noopener noreferrer">GPT-5.6 Luna</a>, <a href="https://developers.openai.com/api/docs/models/gpt-6-astra" target="_blank" rel="noopener noreferrer">GPT-6 Astra</a>, <a href="https://developers.openai.com/api/docs/models/gpt-5.5" target="_blank" rel="noopener noreferrer">GPT-5.5</a>. These are editable cost comparisons, not actual bills.</p>
+            <p class="muted">Automatic baselines use Standard short-context cached-input prices, checked 7 September 2026: <a href="https://developers.openai.com/api/docs/models/gpt-5.6-sol" target="_blank" rel="noopener noreferrer">GPT-5.6 Sol</a>, <a href="https://developers.openai.com/api/docs/models/gpt-5.6-terra" target="_blank" rel="noopener noreferrer">GPT-5.6 Terra</a>, <a href="https://developers.openai.com/api/docs/models/gpt-5.6-luna" target="_blank" rel="noopener noreferrer">GPT-5.6 Luna</a>, <a href="https://developers.openai.com/api/docs/models/gpt-6-astra" target="_blank" rel="noopener noreferrer">GPT-6 Astra</a>, <a href="https://developers.openai.com/api/docs/models/gpt-5.5" target="_blank" rel="noopener noreferrer">GPT-5.5</a>. These are editable value comparisons, not actual bills.</p>
             <label class="setting"><span class="setting-text"><b>Context times unique tool calls, divided by</b><em>Changes estimated tokens and costs.</em></span><input id="usageDivisor" aria-label="Usage token divisor" type="number" min="0.01" step="0.01" value="2" /></label>
             <label class="setting"><span class="setting-text"><b>Cached-input cost multiplier</b><em>Applied after each model's cached-input rate.</em></span><input id="usageMultiplier" aria-label="Cached-input cost multiplier" type="number" min="0" step="0.01" value="1.2" /></label>
             <div id="usageRates"></div></details>
-            <p id="usageCost" class="muted">Set per-model cached-input rates to compare costs.</p><div id="usageDays"></div>
+            <p id="usageCost" class="muted">Set per-model cached-input rates to compare value.</p><div id="usageDays"></div>
           </section>
           <section class="usage-section"><h2>Remaining usage per model <button class="btn" id="refreshUsage" type="button">Refresh</button></h2><p class="muted">Reported by ChatGPT. Shared pools and feature quotas are listed separately. Missing data means not reported.</p><div id="modelUsage"></div></section>
         </section>
@@ -360,7 +360,7 @@
                 <div id="rootList"></div>
                 <p class="empty" id="rootsEmpty">
                   Nothing shared yet. Press Add or drop a folder here. ChatGPT sees short names
-                  like <code>/project</code> — your real system paths are never sent.
+                  like <code>/project</code> — your real system paths are not sent when these are used.
                 </p>
               </div>
             </section>
@@ -427,7 +427,7 @@
               </div>
             </div>
             <div class="lede">
-              <p>Six steps, once. ParadigmEve enables its ordinary local tools by default, including command execution. ChatGPT still controls custom-app access and may ask for approval or block higher-risk actions.</p>
+              <p>Six steps, one configuration. ParadigmEve enables its ordinary local tools by default, including command execution. ChatGPT still controls custom-app access and may ask for approval or block higher-risk actions.</p>
               <div class="step-actions">
                 <button class="btn btn-solid" id="guidedSetup" type="button">Start guided browser setup</button>
                 <span class="chosen" id="guidedSetupStatus" role="status">ParadigmEve can guide the browser steps in one dedicated Eve Browser profile.</span>
@@ -445,7 +445,7 @@
                   autocomplete="off"
                   placeholder="Eve"
                 />
-                <p class="hint">Use a different name, such as Eva, when another computer has its own ParadigmEve connection.</p>
+                <p class="hint">Use a different name, such as Eva, to separate different computers.</p>
               </div>
               <span class="chosen setup-preview-status" id="setupPreviewStatus" role="status">Click a step number to preview any step without changing your setup progress.</span>
               <button class="btn" id="wizExpand" type="button" hidden>Show all steps</button>
@@ -454,15 +454,15 @@
             <ol class="wizard" id="wizard">
               <!-- 1 -->
               <li class="step" data-step="folder">
-                <button class="step-mark" type="button" data-preview-step="folder" aria-pressed="false" aria-label="Preview step 1: Pick a folder to share" title="Preview step 1: Pick a folder to share">
+                <button class="step-mark" type="button" data-preview-step="folder" aria-pressed="false" aria-label="Preview step 1: Pick a folder to work in" title="Preview step 1: Pick a folder to work in">
                   <span class="step-number" aria-hidden="true">1</span>
                   <svg class="ico tick" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                 </button>
                 <div class="step-body">
-                  <h3>Pick a folder to share</h3>
+                  <h3>Pick a folder to work in</h3>
                   <p>
                     Nothing outside the folders you approve is reachable. Do this first — the tunnel
-                    will not start with nothing to serve.
+                    will not start with no folder set.
                   </p>
                   <div class="step-actions">
                     <button class="btn btn-solid" id="wizAddFolder" type="button">
@@ -475,7 +475,7 @@
                     <input id="setupComputerUse" type="checkbox" aria-labelledby="setupComputerUseLabel" aria-describedby="setupComputerUseHelp setupComputerUseState" />
                     <span>
                       <strong id="setupComputerUseLabel">Computer use <span class="tag">optional</span></strong>
-                      <small id="setupComputerUseHelp">Let this same ParadigmEve app see supported windows, use the mouse and keyboard, and work with the clipboard. No second tunnel or API key.</small>
+                      <small id="setupComputerUseHelp">Let this same ParadigmEve app see supported windows, use the mouse and keyboard, and work with the clipboard.</small>
                       <small id="setupComputerUseState" role="status">off</small>
                     </span>
                   </label>
@@ -505,7 +505,7 @@
 
               <!-- 2 -->
               <li class="step" data-step="tunnel">
-                <button class="step-mark" type="button" data-preview-step="tunnel" aria-pressed="false" aria-label="Preview step 2: Create a tunnel" title="Preview step 2: Create a tunnel">
+                <button class="step-mark" type="button" data-preview-step="tunnel" aria-pressed="false" aria-label="Preview step 2: Create a tunnel ID" title="Preview step 2: Create a tunnel ID">
                   <span class="step-number" aria-hidden="true">2</span>
                   <svg class="ico tick" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check" /></svg>
                 </button>
@@ -558,9 +558,9 @@
                   <p>
                     Create one key of type <strong>Restricted</strong> and give it only
                     <strong>Tunnels: Read</strong> and <strong>Tunnels: Use</strong>. Leave
-                    everything else on <em>None</em>. Computer use is part of the same
+                    everything else as <em>None</em>. Computer use is part of the same
                     <strong>ParadigmEve</strong> connection, so there is no second tunnel or API key.
-                    Copy the key once — the platform will not show it again.
+                    Copy the key right away — the platform will not show it again.
                   </p>
                   <div class="step-actions">
                     <button
@@ -629,7 +629,7 @@
                     <strong>Required for exact chat identity:</strong> stateful Computer use, session
                     recording and sub-agents use the live Companion to prove which ChatGPT
                     conversation issued a request. ParadigmEve does not treat an installed extension
-                    card as proof that this connection is working.
+                    as proof that this connection is working.
                   </p>
                   <div class="step-actions">
                     <button class="btn btn-solid" id="browserExtensionsAction" type="button" data-setup-link="chrome://extensions/">
@@ -912,7 +912,7 @@
                     <p class="hint">https, or http on localhost. <code>/chat/completions</code> and <code>/models</code> are called under it.</p>
                     <label for="goalCustomModel">Primary model</label>
                     <input id="goalCustomModel" type="text" spellcheck="false" placeholder="llama3.1" autocomplete="off" />
-                    <p class="hint">Your endpoint's own model id, typed exactly as it serves it.</p>
+                    <p class="hint">Your endpoint's model ID, typed exactly as it serves it.</p>
                     <label for="goalCustomKey">Endpoint API key (optional)</label>
                     <input id="goalCustomKey" type="password" spellcheck="false" placeholder="leave empty for a keyless local server" autocomplete="off" />
                     <p class="hint" id="goalCustomKeyState"></p>
@@ -964,7 +964,7 @@
                   <label class="setting" for="goalReasoning">
                     <span class="setting-text">
                       <b>Reasoning</b>
-                      <em>Default lets the provider decide, which is right for nearly every model. The rest cost more and take longer.</em>
+                      <em>Default lets the provider decide, which is right for nearly every model. The rest wear out more and take longer.</em>
                     </span>
                     <select id="goalReasoning">
                       <option value="default">Default</option>
@@ -1034,7 +1034,7 @@
                 <div class="pane">
                   <label class="setting" for="maWorkers">
                     <span class="setting-text">
-                      <b>Sub-agent workers</b>
+                      <b>Sub-agents/workers</b>
                       <em>Requires the Companion extension to be loaded and connected. This sets the most worker chats one run may open.</em>
                     </span>
                     <input id="maWorkers" class="num" type="number" min="1" max="8" step="1" />

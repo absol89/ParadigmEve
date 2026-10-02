@@ -1527,7 +1527,7 @@ it('keeps coffee/browser chrome fixed to Plans and exposes the Threads settings 
   staticArchive.click();
   await settle();
   expect(archiveOpenStatic).toHaveBeenCalledTimes(1);
-  expect(doc.querySelector('.toast')?.textContent).toBe('Static recovery browser opened.');
+  expect(doc.querySelector('.toast')?.textContent).toBe('Archive browser opened.');
 
   expect(doc.documentElement.dataset.theme).toBe('light');
   theme.click();
@@ -1670,10 +1670,10 @@ it('keeps coffee/browser chrome fixed to Plans and exposes the Threads settings 
   expect(doc.getElementById('eveAllowOtherChats')?.parentElement?.textContent)
     .toContain('Tillåt Eve i andra ChatGPT-chattar och på andra enheter');
   expect(concepts.textContent).toBe('# Koncept');
-  expect(concepts.getAttribute('aria-label')).toBe('Öppna inställningar för Koncept');
+  expect(concepts.getAttribute('aria-label')).toBe('Inställningar för Koncept');
   expect(doc.getElementById('conceptsSettingsTitle')?.textContent).toBe('# Koncept');
-  expect(doc.querySelector('label[for="conceptQuiltRows"] .setting-text b')?.textContent).toBe('Rader med #Quilt-val');
-  expect(toggle.getAttribute('aria-label')).toBe('Fäll ihop inställningar för Threads');
+  expect(doc.querySelector('label[for="conceptQuiltRows"] .setting-text b')?.textContent).toBe('#Quilt pill rows');
+  expect(toggle.getAttribute('aria-label')).toBe('Fäll ihop Trådinställningar');
   expect(doc.querySelector('.thread-settings-child')?.textContent).toBe('% Utgifter  -');
   expect(doc.getElementById('expensesFolderLabel')?.textContent).toBe('Receipts 2026');
   expect(sidebar.style.getPropertyValue('--top-nav-anchor-x')).toBe(anchor);

@@ -16,7 +16,7 @@ function button(label: string | (() => string), work: () => void | Promise<void>
   node.type = 'button';
   node.addEventListener('click', async () => {
     node.disabled = true;
-    try { await work(); } catch (error) { toast(error instanceof Error ? error.message : t('Pet operation failed')); }
+    try { await work(); } catch (error) { toast(error instanceof Error ? error.message : t('Avatar operation failed')); }
     finally { if (node.isConnected) node.disabled = false; }
   });
   return node;
@@ -46,10 +46,10 @@ function confirmDelete(pet: PetRecord, remove: () => Promise<boolean>): void {
   dialog.setAttribute('aria-labelledby', title.id);
   head.append(title, button(() => t('Close'), () => dialog.close()));
   const body = el('div', 'plugin-dialog-body');
-  body.append(el('p', '', () => t('This removes the pet from your local library. You can import it again later.')));
+  body.append(el('p', '', () => t('This removes the avatar from your local library. You can import it again later.')));
   const actions = el('div', 'pet-delete-actions');
   const cancel = button(() => t('Cancel'), () => dialog.close());
-  const confirm = button(() => t('Delete pet'), async () => { if (await remove()) dialog.close(); });
+  const confirm = button(() => t('Delete avatar'), async () => { if (await remove()) dialog.close(); });
   confirm.classList.add('plugin-destructive');
   actions.append(cancel, confirm);
   body.append(actions);
@@ -127,8 +127,8 @@ export function initPets(runtime: PetController): void {
     ui($('petsFavoritesCount'), 'textContent', () => t(favoriteCount === 1 ? '{0} pet' : '{0} pets', [favoriteCount]));
     for (const pet of favorites) favoritesList.append(renderCard(pet));
     for (const pet of library) libraryList.append(renderCard(pet));
-    if (!library.length && visible.length) libraryList.append(el('p', 'plugin-no-results muted', () => t('All matching pets are in Favorites.')));
-    if (!visible.length) libraryList.append(el('p', 'plugin-no-results muted', () => t('No pets match your search.')));
+    if (!library.length && visible.length) libraryList.append(el('p', 'plugin-no-results muted', () => t('All matching avatars are in Favorites.')));
+    if (!visible.length) libraryList.append(el('p', 'plugin-no-results muted', () => t('No avatars match your search.')));
   };
 
   $('petsSearch').addEventListener('input', render);

@@ -107,6 +107,12 @@ describe('static archive HTML', () => {
     dom.window.close();
   });
 
+  it('keeps the chat-link display rule from overriding hidden so search filtering removes entries', () => {
+    const html = renderArchiveHtml(fixture());
+    expect(html).toMatch(/\.chat-link\[hidden\]\{display:none\}/u);
+    expect(html.indexOf('.chat-link[hidden]')).toBeGreaterThan(html.indexOf('.chat-link{display:block'));
+  });
+
   it('navigates chats and retained local assets directly from a file URL with back/forward-friendly hashes', async () => {
     const dom = new JSDOM(renderArchiveHtml(fixture()), {
       url: 'file:///C:/ParadigmEve/archive/site/index.html',

@@ -477,7 +477,7 @@ function paintPins(): void {
       if (!thread) return;
       const reference = `%${thread.title.replace(/^%/u, '')}`;
       startWorkspaceChatDraft(t(
-        'Generate a concise durable description for {0}. Search durable session history and related #Concepts first. Update only this exact Thread description; do not change its title, prompt, Pins, Quilts, or Link.',
+        'Generate a concise durable description for {0}. Search account session history and related #Concepts first. Update only this exact Thread description; do not change its title, prompt, Pins, Quilts, or Link.',
         [reference]
       ));
     }

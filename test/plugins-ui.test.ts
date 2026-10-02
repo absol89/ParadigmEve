@@ -170,7 +170,7 @@ it('waits for explicit sign-in and updates the same detail with a cancellable au
   expect(api.pluginsAuthenticate).toHaveBeenCalledWith('one');
   expect(document.querySelector('.toast')).toBeNull();
   state.plugins[0]!.status = 'authenticating'; await refreshPlugins();
-  expect(document.querySelector('.plugin-auth')!.textContent).toContain('Finish signing in through your browser.');
+  expect(document.querySelector('.plugin-auth')!.textContent).toContain('Finish signing in through Eve browser.');
   document.querySelector<HTMLButtonElement>('.plugin-auth button')!.click(); await tick();
   expect(api.pluginsCancelAuthentication).toHaveBeenCalledWith('one');
   state.plugins[0]!.status = 'ready'; await refreshPlugins();
