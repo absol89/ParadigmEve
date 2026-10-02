@@ -27,6 +27,9 @@ operation.
   `plan`/`planer`/`planen`/`planes`) route to `%expenses`, `%how`, `%organize` and `#plans` for context injection, the
   Expenses project binding and in-chat links. A routed alias tells Eve which language it is and to answer in it when
   the rest of the message agrees.
+- The Schedule screen's "Chat about" shortcuts are `#schedule` (also `#schedules`), `#myweek` and `#routines`, with
+  Swedish and Spanish spellings routed to the same names. A localized spelling reaches Eve as the Schedule shortcut
+  even when no Quilt exists, instead of being ignored.
 - Pets can be renamed from their menu (display name only; the package folder and `pet.json` are untouched) and
   `pet.json` accepts optional per-language `descriptions`.
 
