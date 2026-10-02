@@ -81,7 +81,7 @@ it('bootstraps Eve-native workflow on a fresh unfiled chat without relying on pr
   expect(text).toContain('delegate them with agents');
   expect(text).toContain('Pins, Threads and Quilts are ParadigmEve\'s durable curation layer');
   expect(text).toContain('Schedule is a first-class ParadigmEve workspace.');
-  expect(text).toContain('`#schedules`, `#myweek`, and `#routines` are ordinary Quilt references');
+  expect(text).toContain('`#schedule` (also spelled `#schedules`; the app also accepts Swedish and Spanish spellings), `#myweek`, and `#routines` are ordinary Quilt references');
   expect(text).toContain('user\'s availability (`%schedule`) and Eve\'s routines (`%evecron`)');
   expect(text).not.toContain('# Eve Thread prompt · how');
   expect(text).toContain('local Vault/manual');

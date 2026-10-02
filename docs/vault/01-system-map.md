@@ -112,7 +112,7 @@ the agent's name as `{0}`. See [16 — Languages, localization and aliases](16-l
 Pins, Plans and Schedule are not separate projects. The conversation list remains visible so the user
 can move between live chat, harvested knowledge, live work and schedule/routine state without hunting
 for which chat owns an item. Schedule remains a first-class durable workspace rather than a Thread
-activation; its `#myweek`, `#routines` and `#schedules` shortcuts are context only.
+activation; its `#myweek`, `#routines` and `#schedule` shortcuts are context only.
 
 ## Important authority patterns
 

@@ -39,7 +39,7 @@ state lives, and what to check when something breaks**. See [Self-reliant AI and
 | [10 — Current state and acceptance](10-current-state-and-acceptance.md) | What is true in the current 2.3.4 source, and what must be proved before packaging or calling a change complete? |
 | [11 — Debugging playbooks](11-debugging-playbooks.md) | What evidence should be collected first for the recurring hard failure classes? |
 | [12 — Self-reliant AI and the manual](12-self-reliant-ai-and-the-manual.md) | How should Eve use the manual and current evidence without exposing internal documentation mechanics unless they help? |
-| [13 — Schedule workspace and Eve routines](13-schedules-and-routines.md) | How do Schedule, `#schedules`, `#myweek`, `#routines`, `%schedule`, `%evecron` and evidence-backed Started/Done fit together? |
+| [13 — Schedule workspace and Eve routines](13-schedules-and-routines.md) | How do Schedule, `#schedule`, `#myweek`, `#routines`, `%schedule`, `%evecron` and evidence-backed Started/Done fit together? |
 | [14 — Coding skills](14-coding-skills.md) | Which checklist should Eve open for a code review, a bug, a refactor, security, performance, a dependency upgrade, docs, accessibility or SQL? |
 | [15 — Desktop pets and Eve avatars](15-desktop-pets-and-avatars.md) | How does Eve make a desktop pet or a human avatar of herself that the user can import on the Pets page? |
 | [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md) | How do the three app languages, the agent's own name, the setup guide and localized `%`/`#` names work? |

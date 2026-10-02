@@ -55,7 +55,7 @@ See [`docs/tool-surface.md`](../tool-surface.md) for schemas and permission deta
 ## Schedule workspace versus Core MCP
 
 Schedule is the durable workspace for the user's availability (`%schedule`) and Eve's routines
-(`%evecron`). Its `#schedules`, `#myweek`, and `#routines` chat shortcuts are ordinary Quilt
+(`%evecron`). Its `#schedule` (also `#schedules`), `#myweek`, and `#routines` chat shortcuts are ordinary Quilt
 references when those Quilts exist; they are context, not schedule authority. General schedule
 read/edit operations currently belong to the desktop preload/IPC API. Using that workspace/API does
 not activate either Thread's standing prompt; explicit `%schedule` or `%evecron` Thread opening

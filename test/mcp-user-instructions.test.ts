@@ -156,7 +156,7 @@ describe('the user’s own connector instructions', () => {
     expect(text).toContain('`#Quilt` contributes member Threads\' saved Pins as broad context without activating their prompts');
     expect(text).toContain('`#` is the Quilt sigil');
     expect(text).toContain('Schedule is a first-class ParadigmEve workspace.');
-    expect(text).toContain('`#schedules`, `#myweek`, and `#routines` are ordinary Quilt references');
+    expect(text).toContain('`#schedule` (also spelled `#schedules`; the app also accepts Swedish and Spanish spellings), `#myweek`, and `#routines` are ordinary Quilt references');
     expect(text).toContain('user\'s availability (`%schedule`) and Eve\'s routines (`%evecron`)');
     expect(text).toContain('do not treat either Thread or any Quilt as authority over current durable schedule state');
     expect(text).toContain('require an explicit Eve task duration before claiming shared free time');

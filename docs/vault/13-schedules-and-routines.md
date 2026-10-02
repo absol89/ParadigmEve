@@ -6,8 +6,11 @@ Back to [vault index](README.md).
 
 Schedule is ParadigmEve's first-class workspace for the user's availability (`%schedule`) and Eve's
 recurring/one-time routines (`%evecron`). Its chat shortcuts use normal Quilt syntax:
-`#myweek` for the user's week, `#routines` for Eve's routine context, and `#schedules` for the
-broader combined topic. Those Quilts contribute saved Pins context when they exist; they do not
+`#myweek` for the user's week, `#routines` for Eve's routine context, and `#schedule` (also written
+`#schedules`) for the broader combined topic. Each also has Swedish and Spanish spellings (`#schema`/`#scheman`,
+`#minvecka`, `#rutiner`; `#agenda`/`#agendas`, `#mi-semana`, `#rutinas`) that the app routes to the same shortcut,
+so the localized "Chat about" chips mean the same thing to Eve in every language; see
+[16 — Languages, localization and aliases](16-languages-localization-and-aliases.md). Those Quilts contribute saved Pins context when they exist; they do not
 replace durable schedule state or activate either Thread's standing prompt. Explicitly opening
 `%schedule`, `%evecron`, or starting a chat from either Thread is a separate Thread activation.
 
@@ -28,10 +31,10 @@ activation and it should be understandable without knowing the storage model fir
 | **Edit your availability** | The explicit mutation path for the user's availability. | `%schedule` durable availability through the revision-fenced Schedule API. |
 | **Edit Eve's routines** | The explicit mutation path for Eve's recurring and one-time routines. | `%evecron` routine definitions/state through the authorized Schedule API. |
 | **Chat about `#myweek`** | Human-facing context for “what does my week look like?” | Starts/prepares a contextual chat only; it does not edit schedule state. |
-| **Chat about `#schedules`** | Broader context for the scheduling domain: user schedule + Eve routines + related saved context. | Starts/prepares a contextual chat only; it does not edit schedule state. |
+| **Chat about `#schedule`** | Broader context for the scheduling domain: user schedule + Eve routines + related saved context. | Starts/prepares a contextual chat only; it does not edit schedule state. |
 | **Chat about `#routines`** | Context focused on Eve's routines. | Starts/prepares a contextual chat only; it does not edit schedule state. |
 
-The mental model is therefore: **`#myweek` is what the user experiences; `#schedules` is the broader
+The mental model is therefore: **`#myweek` is what the user experiences; `#schedule` is the broader
 scheduling domain; `%schedule` and `%evecron` are specialized Thread contexts; the Schedule workspace
 is where the current durable state is viewed and explicitly edited.** Quilts remain context, not
 mutation authority.

@@ -3624,7 +3624,7 @@ describe('delivering a bootstrap', () => {
       expect(command.text).toContain('real synced Plan with update_plan');
       expect(command.text).toContain('Pins, Threads and Quilts are ParadigmEve\'s durable curation layer');
       expect(command.text).toContain('Schedule is a first-class ParadigmEve workspace.');
-      expect(command.text).toContain('`#schedules`, `#myweek`, and `#routines` are ordinary Quilt references');
+      expect(command.text).toContain('`#schedule` (also spelled `#schedules`; the app also accepts Swedish and Spanish spellings), `#myweek`, and `#routines` are ordinary Quilt references');
       expect(command.text).not.toContain('# Eve Thread prompt · how');
       expect(command.text).toContain('SCOPED_AGENTS_HEAD');
       expect(command.text).toContain('Read AGENTS.md yourself');

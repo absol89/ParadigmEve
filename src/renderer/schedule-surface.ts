@@ -122,7 +122,7 @@ export interface ScheduleSurfaceCallbacks {
   onModeChange?: (mode: ScheduleViewMode) => void;
   onSelectDay?: (dateKey: string) => void;
   onEditSchedule?: (owner: ScheduleOwner) => void;
-  onChatAbout?: (reference: '#schedules' | '#myweek' | '#routines') => void;
+  onChatAbout?: (reference: '#schedule' | '#myweek' | '#routines') => void;
   onOpenChat?: () => void;
   onReceiptAction?: (action: ScheduleReceiptActionView, receipt: ScheduleReceiptView, entry: ScheduleEntryView) => void;
 }
@@ -538,7 +538,7 @@ function paint(root: HTMLElement, view: ScheduleViewData, callbacks: ScheduleSur
   if (callbacks.onChatAbout) {
     const chat = el('div', 'schedule-chat-about');
     chat.append(el('span', 'schedule-chat-about-label', () => t('Chat about')));
-    for (const reference of ['#schedules', '#myweek', '#routines'] as const) {
+    for (const reference of ['#schedule', '#myweek', '#routines'] as const) {
       chat.append(appButton('schedule-chat-pill', () => t(reference), () => callbacks.onChatAbout?.(reference)));
     }
     toolbar.append(chat);

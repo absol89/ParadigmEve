@@ -1,7 +1,13 @@
 import type { Pin } from '../shared/pins.js';
 import { selectPinsContext, type PinsContextOptions } from '../shared/pins-context.js';
 import { authoredPinsReferences } from '../shared/pins-intent.js';
-import { canonicalReference, PRODUCT_REFERENCE_WORD_PATTERN, REFERENCE_LANGUAGE_NAMES } from '../shared/reference-aliases.js';
+import {
+  canonicalReference,
+  PRODUCT_REFERENCE_WORD_PATTERN,
+  REFERENCE_LANGUAGE_NAMES,
+  referenceAliasLanguage,
+  SCHEDULE_SHORTCUT_REFERENCES
+} from '../shared/reference-aliases.js';
 import { pinsLibrary, starterThreadEntry } from './pins.js';
 import { listProjects } from './projects.js';
 import { getSession, readEvents, readOverflowText } from './session/store.js';
@@ -119,7 +125,18 @@ export async function injectPinsContext(
   const hasActivatedThread = selected.activatedThreads.length > 0;
   const hasDataOnlyThread = selected.dataOnlyThreads.length > 0;
   const hasSelectedQuilt = selected.quiltGroups.length > 0;
+  // A localized spelling of a Schedule shortcut (`#agendas`, `#minvecka`, `#schedules`) means something
+  // even with no saved Quilt behind it, because Eve's instructions define the shortcut. Explain the
+  // spelling instead of reporting a missing Quilt.
+  const scheduleAliases = selected.unresolvedReferences.flatMap(reference => {
+    const canonical = canonicalReference(reference);
+    return canonical && SCHEDULE_SHORTCUT_REFERENCES.includes(canonical.normalize('NFKC').toLocaleLowerCase())
+      ? [{ reference, canonical, language: referenceAliasLanguage(reference), unresolved: true as const }]
+      : [];
+  });
+  const scheduleAliasReferences = new Set(scheduleAliases.map(row => row.reference));
   const unresolvedProductReferences = selected.unresolvedReferences.flatMap(reference => {
+    if (scheduleAliasReferences.has(reference)) return [];
     if (reference.startsWith('%')) return [{ reference, sameNameThread: null }];
     const key = normalizedReferenceName(reference);
     const exactThread = snapshot.quilts.find(thread => normalizedThreadName(thread.title) === key) ?? null;
@@ -130,7 +147,7 @@ export async function injectPinsContext(
       : [];
   });
   if ((!selected.references.length || (!options.quiltId && !selected.pins.length && !hasActivatedThread && !hasSelectedQuilt && !hasDataOnlyThread && !selected.promptSuppressedThreads.length)) &&
-      unresolvedProductReferences.length === 0) return text;
+      unresolvedProductReferences.length === 0 && scheduleAliases.length === 0) return text;
 
   const sessionTitles = new Map<string, string>();
   const sourceTitle = async (sessionId: string): Promise<string | null> => {
@@ -203,11 +220,15 @@ export async function injectPinsContext(
   if (selected.activatedThreads.some((quilt) => quilt.title.replace(/^%/u, '').normalize('NFKC').toLocaleLowerCase() === 'how')) {
     chunks.push(VAULT_CONTEXT_MARKER);
   }
-  if (selected.aliasedReferences.length) chunks.push(
-    '# Eve localized reference aliases · ' + selected.aliasedReferences.map(row => row.reference).join(', '),
-    selected.aliasedReferences
+  const aliasRows: Array<{ reference: string; canonical: string; language: ReturnType<typeof referenceAliasLanguage>; unresolved?: true }> =
+    [...selected.aliasedReferences, ...scheduleAliases];
+  if (aliasRows.length) chunks.push(
+    '# Eve localized reference aliases · ' + aliasRows.map(row => row.reference).join(', '),
+    aliasRows
       .map(row => {
-        const base = `${row.reference} is the user's localized spelling of ${row.canonical}; it names the same Thread or Concept.`;
+        const base = row.unresolved
+          ? `${row.reference} is the user's spelling of the Schedule workspace shortcut ${row.canonical}; no Quilt with that name is needed. Treat it as that shortcut and follow your Schedule instructions.`
+          : `${row.reference} is the user's localized spelling of ${row.canonical}; it names the same Thread or Concept.`;
         if (!row.language) return base;
         // The spelling is evidence of the language the person chose to write this reference in.
         // Follow it only when the rest of the message agrees; never force a language on a message

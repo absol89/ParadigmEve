@@ -224,7 +224,7 @@ function paint(): void {
       paint();
     },
     onEditSchedule(owner: 'user' | 'eve') { void showScheduleEditor({ owner }); },
-    onChatAbout(reference: '#schedules' | '#myweek' | '#routines') {
+    onChatAbout(reference: '#schedule' | '#myweek' | '#routines') {
       navigateWorkspace({ screen: 'chat' });
       const input = document.getElementById('chatInput') as HTMLTextAreaElement | null;
       if (!input) return;
