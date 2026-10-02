@@ -3722,6 +3722,40 @@ export function commitPrimeTransfer(fromConversationId: string, toConversationId
   return true;
 }
 
+export type PrimeMoveOutcome =
+  | { status: 'moved'; from: string; workers: number; active: boolean }
+  | { status: 'none' }
+  | { status: 'refused'; reason: string };
+
+/**
+ * Moves the prime family to `toConversationId` on an explicit user request, without any
+ * cooperation from the old prime chat.
+ *
+ * Compact & Resume needs the old chat to hand over, because it is replacing that chat. A prime
+ * whose chat is deleted, or stuck behind a usage limit, can never take part in that handshake,
+ * so this is the same commit with the handshake supplied by the caller: the source family is
+ * named, frozen against concurrent change and committed in one synchronous step. Workers, their
+ * histories and the prime's queue stay in the family; only the owning conversation changes.
+ * `fromConversationId` is the installation's recorded owner, or null when that chat was deleted,
+ * in which case the broker's own current-Prime selection names the family.
+ */
+export function movePrimeOnUserRequest(fromConversationId: string | null, toConversationId: string): PrimeMoveOutcome {
+  const source = fromConversationId ?? currentPrimeConversationId;
+  if (!source || !toConversationId || source === toConversationId) return { status: 'none' };
+  const active = [...runs.values()].find(run => run.primeConversationId === source) ?? null;
+  const owner = active ?? dormantRunForPrime(source);
+  if (!owner) return { status: 'none' };
+  if (active && unpublishedRuns.has(active)) return { status: 'refused', reason: 'the worker family is still being created' };
+  if (owner.transfer) return { status: 'refused', reason: 'a Compact & Resume handover of that chat is in progress' };
+  owner.transfer = { from: source, at: Date.now(), frozen: true };
+  if (!commitPrimeTransfer(source, toConversationId)) {
+    owner.transfer = null;
+    return { status: 'refused', reason: 'this chat already belongs to another worker family' };
+  }
+  const workers = [...owner.agents.values()].filter(agent => agent.info.role === 'worker').length;
+  return { status: 'moved', from: source, workers, active: Boolean(active) };
+}
+
 /** No prime transfer may land on a worker conversation or another prime owner's history. */
 function conversationOwnedOutside(ownerAgents: Map<string, Agent>, fromConversationId: string, toConversationId: string): boolean {
   if (toConversationId === fromConversationId) return false;

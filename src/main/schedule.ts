@@ -81,10 +81,30 @@ export function eveCronWorkPayloadHash(
   return createHash('sha256').update(canonicalWorkPayload(work), 'utf8').digest('hex');
 }
 
+/**
+ * Schedules authorized before 2.3.4 were hashed without a `context` key. The key was added to the
+ * canonical payload later, which silently invalidated every stored schedule. Work without context
+ * is byte-identical in meaning to what the user authorized, so also accept the legacy digest for it.
+ */
+export function eveCronWorkAuthorityMatches(
+  work: Pick<FrozenScheduleWork, 'target' | 'text' | 'automation' | 'objective' | 'projectId' | 'context' | 'authority'>
+): boolean {
+  const recorded = work.authority.payloadHash;
+  if (recorded === eveCronWorkPayloadHash(work)) return true;
+  if (work.context) return false;
+  const legacy = JSON.stringify({
+    target: work.target,
+    text: work.text,
+    automation: work.automation ?? 'off',
+    objective: work.objective ?? null,
+    projectId: work.projectId ?? null
+  });
+  return recorded === createHash('sha256').update(legacy, 'utf8').digest('hex');
+}
+
 function assertFrozenWorkAuthority(work: FrozenScheduleWork): void {
   const parsed = frozenScheduleWorkSchema.parse(work);
-  const actual = eveCronWorkPayloadHash(parsed);
-  if (parsed.authority.payloadHash !== actual) {
+  if (!eveCronWorkAuthorityMatches(parsed)) {
     throw new Error('Scheduled work authority does not match its executable payload');
   }
 }

@@ -8627,6 +8627,17 @@
    * the click, and a document that died there may or may not have sent. That state ends at
    * ChatGPT's own marker or at an explicit cancel, never at a second Send.
    */
+  /** The current generation's still-visible recoverable transport error. */
+  function currentAssistantError() {
+    return CLF_DOM.errors().some(error => {
+      if (error.recoverable !== true || isStale(error.node)) return false;
+      const owner = localErrorGeneration(error);
+      // Unknown ownership is conservative evidence that the current page is still broken.
+      // Only a concrete different generation proves this is an old historical failure.
+      return !turnId || owner === null || owner === turnId;
+    });
+  }
+
   /**
    * A browser compaction repair aimed at this exact, still-responsive source document.
    *
@@ -8635,11 +8646,31 @@
    * is already running, merely acknowledge the healthy document so the worker does not reload it
    * out from under that work. (Ported from upstream chat-on-steroids 6a07106.)
    */
+  /**
+   * When a pickup first found the source answer broken while ChatGPT still showed Stop.
+   *
+   * ChatGPT can come back from "Connection interrupted. Waiting for the complete answer" on its
+   * own while Stop stays up, so the first such pickup still trusts the page. In the field Stop
+   * stayed beside that card for over half an hour while the model kept working on the server, so
+   * a later pickup that finds it still broken declines and gets its reload.
+   * (Ported from upstream chat-on-steroids 4a91a685.)
+   */
+  const BROKEN_STREAM_PICKUP_MS = 60_000;
+  let brokenStreamSince = 0;
   function resumePendingCompactionFromRepair(expectedConversationId) {
     const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
     if (!alive || !expectedConversationId || conversationId !== expectedConversationId ||
         CLF_DOM.conversationId() !== expectedConversationId || !source ||
         (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved')) return false;
+    // A source answer ChatGPT broke off ("Connection interrupted. Waiting for the complete
+    // answer") never settles in this document, so the ticket cannot be sent from it. Declining
+    // hands the pickup to its reload instead of leaving a ticket unsent behind that card.
+    // (Ported from upstream chat-on-steroids 1928e304.)
+    if (currentAssistantError()) {
+      if (!CLF_DOM.generating()) return false;
+      if (!brokenStreamSince) brokenStreamSince = Date.now();
+      else if (Date.now() - brokenStreamSince >= BROKEN_STREAM_PICKUP_MS) return false;
+    } else brokenStreamSince = 0;
     if (!nativeBusy) {
       localError = '';
       nativePhase = '';
@@ -11662,11 +11693,7 @@
         // Unknown ownership is conservative evidence that the page is still broken; only a
         // concrete different generation proves an old historical failure (upstream
         // chat-on-steroids 8b01399, a231d58, c8721d1).
-        const assistantError = CLF_DOM.errors().some(error => {
-          if (error.recoverable !== true || isStale(error.node)) return false;
-          const owner = localErrorGeneration(error);
-          return !turnId || owner === null || owner === turnId;
-        });
+        const assistantError = currentAssistantError();
         sendResponse({
           ok: true,
           // ChatGPT's own account that a response is streaming right now, as opposed to the

@@ -370,7 +370,7 @@ still checks live policy. Schema visibility is never the security boundary.
 
 | Surface | Advertised operations under current eligibility |
 | --- | --- |
-| Core — `paradigmeve-core` | `read`, `view_image`, `find` when command execution is off, `apply_patch`, `exec_command`/`write_stdin`, `download_artifact`, recorded `session`, `update_plan`, exact-source `pins`, `agents`, `lan`, guarded `self_settings`, `session_finish`, `work_context`, `expenses`, code-mode `exec`. |
+| Core — `paradigmeve-core` | `read`, `view_image`, `find` when command execution is off, `apply_patch`, `exec_command`/`write_stdin`, `download_artifact`, recorded `session`, `update_plan`, exact-source `pins`, `agents`, `lan`, guarded `self_settings`, `move_eve_here`, `session_finish`, `work_context`, `expenses`, code-mode `exec`. |
 | Desktop — `paradigmeve-desktop` | Windows: 13 Window2 operations, separately permissioned `read_clipboard`/`write_clipboard`, and `exec` with `sky`. macOS: `observe`, `computer`, `exec`. Relevant live capabilities are required. |
 | Plugins — `paradigmeve-plugins` | Enabled external tools with their upstream names and schemas, plus code-mode `exec` when that composition name is available. |
 
@@ -1478,6 +1478,14 @@ quiet minutes and page closure after five (§14), while remaining available for 
 exact conversation id. Compact & Resume rebinds a prime within its
 family; it does not merge families or move a terminal process to another principal.
 
+`move_eve_here` (`src/main/eve-handover.ts`) is the explicit-user-request counterpart for a Prime
+whose chat is deleted or usage-locked and so cannot take part in Compact & Resume. Called from the
+destination chat, it moves the durable agent identity and, through `movePrimeOnUserRequest`, the
+whole worker family (workers, histories, queue) to that exact conversation, saves both before it
+reports success, and rolls both back on failure. It needs no approval from the old chat. It refuses
+workers/helpers, blocked or superseded chats, a chat that already leads another family, and an old
+Prime with an open turn updated in the last five minutes. It never closes or reloads any tab.
+
 The app's configurable worker capacity is distinct from the coding agent's delegation policy
 in §19. Do not infer permission to launch development subagents from a product feature toggle.
 Agent execution selection is also distinct from capacity: `shared/agent-backends.ts` owns the
@@ -1662,7 +1670,9 @@ addon on an Electron worker. The packaged Electron app is the macOS permission s
 standalone CLI probe does not prove Screen Recording/Accessibility permission for the app.
 
 `computer/index.ts` owns native actions, capture frames/accessibility refs, batching and
-postconditions. Registrars own live capability checks. Windows `windows-api.ts` implements the
+postconditions. Routine helper/queue/screenshot timing logs require the explicit `CLF_DEBUG=1`
+environment flag; the debug build flavor alone does not enable them. Failure diagnostics stay active.
+Registrars own live capability checks. Windows `windows-api.ts` implements the
 13 Window2 methods: `list_windows`, `get_window`, `list_apps`, `launch_app`, `get_window_state`,
 `click`, `press_key`, `type_text`, `scroll`, `set_value`, `drag`, `perform_secondary_action`,
 `activate_window`. The old `observe`/`computer` wrapper is macOS-only. Windows observation state

@@ -3663,6 +3663,34 @@ describe('simultaneous independent prime families', () => {
     expect(() => spawn({ caller: primeB, workers: [{ task: 'B next' }] })).not.toThrow();
   });
 
+  it('moves a prime family on an explicit user request with no handover from the old chat', async () => {
+    const { movePrimeOnUserRequest } = await import('../src/main/agents.js');
+    const a = recruit(prime, 2);
+    const outcome = movePrimeOnUserRequest(PRIME_CHAT, 'fresh-chat-for-eve');
+    expect(outcome).toEqual({ status: 'moved', from: PRIME_CHAT, workers: 2, active: true });
+    expect(currentRunId(PRIME_CHAT)).toBeNull();
+    expect(currentRunId('fresh-chat-for-eve')).toBe(a.runId);
+    expect(swarmState(a.runId).agents.every(row => row.primeConversationId === 'fresh-chat-for-eve')).toBe(true);
+    // The move is its own undo.
+    expect(movePrimeOnUserRequest('fresh-chat-for-eve', PRIME_CHAT).status).toBe('moved');
+    expect(currentRunId(PRIME_CHAT)).toBe(a.runId);
+  });
+
+  it('refuses to move a prime family onto a chat that already owns another family', async () => {
+    const { movePrimeOnUserRequest } = await import('../src/main/agents.js');
+    const a = recruit(prime, 1);
+    recruit(primeB, 1);
+    expect(movePrimeOnUserRequest(PRIME_CHAT, primeB.conversationId!)).toEqual({
+      status: 'refused', reason: 'this chat already belongs to another worker family'
+    });
+    expect(currentRunId(PRIME_CHAT)).toBe(a.runId);
+  });
+
+  it('has nothing to move when the old owner has no worker family', async () => {
+    const { movePrimeOnUserRequest } = await import('../src/main/agents.js');
+    expect(movePrimeOnUserRequest('c-no-family', 'fresh-chat-for-eve')).toEqual({ status: 'none' });
+  });
+
   it('publishes a staged finish only into A even when B is cleared and replaced during persistence', async () => {
     const a = recruit(prime, 1), b = recruit(primeB, 1);
     bindConversation('worker-1', 'parallel-worker-a', a.runId);

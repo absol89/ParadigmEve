@@ -939,7 +939,7 @@ describe('model-facing surfaces', () => {
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
     // queries, while `expenses` contains mutations only. Debug builds also expose one narrow
     // authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 34 : process.platform === 'darwin' ? 21 : 19);
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 35 : process.platform === 'darwin' ? 22 : 20);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');
@@ -956,13 +956,13 @@ describe('model-facing surfaces', () => {
     // surface measures today (Windows Core ~39.5 KB after the Expenses read/mutation split plus
     // the 2.2.3 Pins/Thread, plan-continuity and heartbeat lifecycle additions, ~40.45 KB after the
     // 2.2.8 Pins prompt/Heart actions, ~41.16 KB after publishing the Expenses facts field contract,
-    // without which record callers cannot form a valid facts object; Desktop 10,116
+    // without which record callers cannot form a valid facts object, ~41.64 KB after `move_eve_here`; Desktop 10,116
     // bytes on 2026-09-10) rather than at a
     // round number well above it: a budget with room to spare is a budget that never
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 41_250 : 41_050);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 41_750 : 41_550);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget

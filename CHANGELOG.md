@@ -49,6 +49,27 @@ operation.
 - The static chat archive's search box hides non-matching chats again (the chat-link `display` rule overrode `hidden`).
 - Connector card text that embeds the per-install name, and the Avatar count labels, are translated instead of
   falling back to English.
+- Plans from a chat that went through Compact & Resume can be checked, cancelled and archived again; the Plan follows
+  the session's current conversation while the source still holds the same checklist, and still refuses to overwrite
+  a genuinely different one.
+- Saving state no longer fails when Windows briefly locks the target file (`EPERM`/`EACCES` on rename), which had
+  surfaced as "Plan source changed" or a failed save. The write retries for about a second before giving up.
+- Schedules created before 2.3.4 run again: 2.3.4 added `context` to the hashed schedule payload, so every earlier
+  schedule failed "Scheduled work authority does not match its executable payload". The old digest is accepted for
+  work that has no context.
+- Project rows in the chat list no longer reserve room for their hidden + / delete / link buttons, so long project
+  names truncate only as much as chat titles do (#8).
+- A compaction pickup no longer waits behind a chat whose answer ChatGPT broke off ("Connection interrupted. Waiting
+  for the complete answer"): the page declines it and the pickup reloads the chat, immediately when Stop is gone and
+  after a minute when Stop stays up (upstream 1928e304, 4a91a685).
+
+### Added
+
+- `move_eve_here`: on the user's explicit request, any ordinary working chat can become the Eve/Eva (Prime) chat
+  even when the old one was deleted or is locked behind a usage limit. The durable owner and the whole worker family
+  move together, are saved before success is reported, and roll back on failure. The old chat takes no part. It is
+  refused for workers, blocked or superseded chats, chats that already lead another family, and an old Prime that is
+  working right now.
 
 ## [2.3.3] — Compaction and recovery fixes
 

@@ -14577,6 +14577,60 @@ describe('the context meter and automatic compaction', () => {
     expect(live.sent.filter((message) => message.type === 'focus_tab')).toHaveLength(2);
   });
 
+  it.each(['broken', 'streaming'] as const)('leaves a compaction pickup to the reload while the source answer is broken (%s)', async state => {
+    // 2026-10-02, live: an automatic ticket waited behind "Connection interrupted. Waiting for the
+    // complete answer". Every pickup asked the page first, the page said it would retry its own
+    // ticket, and it could not: its source answer never settled behind that card. Only a reload
+    // clears it, and the reload is exactly what a declined pickup gets.
+    let ticketCalls = 0;
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: true, threshold: 200_000 }),
+        automaticTicket('not-attempted')),
+      compact: (message: Record<string, unknown>) => {
+        if (message.ticket) ticketCalls++;
+        return { ok: false, error: 'temporary source preparation failure' };
+      }
+    });
+    live.hook.injectControl();
+    await live.hook.pullActivity();
+    await settle();
+    const before = ticketCalls;
+    alertBanner(live.document, 'Connection interrupted. Waiting for the complete answer');
+    if (state === 'streaming') startGenerating(live.document, { send: false });
+    live.hook.observe(); await settle();
+
+    expect(await live.runtimeMessage({
+      type: 'clf-resume-compaction',
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    })).toEqual({ accepted: state === 'streaming' });
+    await settle(400);
+    // Declined means untouched: no source attempt from this document.
+    if (state === 'broken') expect(ticketCalls).toBe(before);
+  });
+
+  it('declines the next pickup when the stream is still broken behind Stop a minute later (#825)', async () => {
+    // 2026-10-02, field log: Stop stayed beside "Connection interrupted" for over half an hour
+    // while the model kept working on the server. Each pickup was accepted and nothing was sent
+    // until the chat reached 100%. The first pickup still trusts the page; a later one reloads.
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: true, threshold: 200_000 }), automaticTicket('not-attempted')),
+      // The page's own attempt stays open, waiting for results the broken stream never shows.
+      compact: (message: Record<string, unknown>) => message.ticket ? new Promise(() => {}) : { ok: false }
+    });
+    live.hook.injectControl();
+    void live.hook.pullActivity(); await settle();
+    alertBanner(live.document, 'Connection interrupted. Waiting for the complete answer');
+    startGenerating(live.document, { send: false });
+    live.hook.observe(); await settle();
+    const pickup = () => live!.runtimeMessage({ type: 'clf-resume-compaction', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
+    expect(await pickup()).toEqual({ accepted: true });
+    await settle(400);
+    live.advance(30_000);
+    expect(await pickup()).toEqual({ accepted: true });
+    live.advance(31_000);
+    expect(await pickup()).toEqual({ accepted: false });
+  });
+
   it('accepts a compaction repair poke without starting a second source attempt while one is busy', async () => {
     let releaseTicket!: (value: unknown) => void;
     const ticket = new Promise(resolve => { releaseTicket = resolve; });

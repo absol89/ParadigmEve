@@ -94,7 +94,7 @@ export interface SurfaceDefinition {
  * `find` and the exec pair are mutually exclusive — `find` exists only when command
  * execution is off — so not all declarations are exposed together.
  */
-const CORE_TOOLS = ['read', 'view_image', 'find', 'apply_patch', 'exec_command', 'write_stdin', 'download_artifact', 'session', 'update_plan', 'pins', 'schedule', 'chat_review_plan', 'chat_review_complete', 'agents', 'lan', 'self_settings', 'session_finish', 'work_context', 'expenses_read', 'expenses'] as const;
+const CORE_TOOLS = ['read', 'view_image', 'find', 'apply_patch', 'exec_command', 'write_stdin', 'download_artifact', 'session', 'update_plan', 'pins', 'schedule', 'chat_review_plan', 'chat_review_complete', 'agents', 'lan', 'self_settings', 'move_eve_here', 'session_finish', 'work_context', 'expenses_read', 'expenses'] as const;
 const COMPUTER_USE_TOOLS = [...WINDOWS_COMPUTER_METHODS, 'read_clipboard', 'write_clipboard', 'observe', 'computer'] as const;
 
 function coreSurface(connectorName: string): SurfaceDefinition {

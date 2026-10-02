@@ -147,6 +147,29 @@ export async function replaceAgentConversation(
   });
 }
 
+/**
+ * Explicit user-requested move of the identity to this exact conversation.
+ *
+ * Unlike every other transition this does not need the previous owner to exist or cooperate: the
+ * owner may be deleted or locked behind a usage limit, which is exactly when the user asks. Returns
+ * the owner it replaced (null when there was none), or undefined for an invalid id.
+ */
+export async function assignAgentConversation(toConversationId: string): Promise<string | null | undefined> {
+  if (!validConversationId(toConversationId)) return undefined;
+  return mutate(async () => {
+    const previous = currentConversationId;
+    if (previous !== toConversationId) await commit(toConversationId);
+    return previous;
+  });
+}
+
+/** Undoes {@link assignAgentConversation} while this conversation still holds the identity. */
+export async function revertAgentConversation(toConversationId: string, previous: string | null): Promise<void> {
+  await mutate(async () => {
+    if (currentConversationId === toConversationId) await commit(previous);
+  });
+}
+
 /** Clears only the exact current owner. Historical chats remain untouched. */
 export async function clearAgentConversation(conversationId: string): Promise<boolean> {
   if (!validConversationId(conversationId)) return false;

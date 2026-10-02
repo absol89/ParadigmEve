@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   claimEveCronOccurrence,
   completeEveCronOccurrence,
-  eveCronWorkPayloadHash,
+  eveCronWorkAuthorityMatches,
   markEveCronOccurrenceRunning,
   readScheduleState
 } from './schedule.js';
@@ -83,7 +83,7 @@ function assertExecutableAuthority(occurrence: EveCronOccurrence): void {
     // Reusing an existing human chat would violate the schedule lane's ownership boundary.
     throw new Error('Session-target scheduled work needs a dedicated non-interactive runner');
   }
-  if (eveCronWorkPayloadHash(occurrence.work) !== occurrence.work.authority.payloadHash) {
+  if (!eveCronWorkAuthorityMatches(occurrence.work)) {
     throw new Error('Scheduled work authority does not match its executable payload');
   }
 }

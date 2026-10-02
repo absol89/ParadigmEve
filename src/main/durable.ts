@@ -126,6 +126,29 @@ function scheduleRetry(name: string): void {
   schedule(name, delay);
 }
 
+/**
+ * Windows refuses to rename over a file another process (antivirus, search indexer, backup
+ * client) has open for a moment, failing with EPERM/EACCES. The hold is transient, so retry
+ * briefly before treating it as a real failure; otherwise a user action that must land durably
+ * (archive, cancel, checkbox) is rejected by a lock that clears in milliseconds.
+ */
+const RENAME_RETRY_DELAYS_MS = [20, 40, 80, 160, 320, 640];
+
+async function renameReplacing(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const transient = code === 'EPERM' || code === 'EACCES';
+      const delay = RENAME_RETRY_DELAYS_MS[attempt];
+      if (!transient || delay === undefined) throw err;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function flushOne(name: string, slot: PendingWrite): Promise<void> {
   if (slot.background && pending.get(name) !== slot) return;
   const target = fileFor(name);
@@ -142,7 +165,7 @@ async function flushOne(name: string, slot: PendingWrite): Promise<void> {
       await fs.rm(target, { force: true });
     } else {
       await fs.writeFile(tmp, JSON.stringify(slot.value), 'utf8');
-      await fs.rename(tmp, target);
+      await renameReplacing(tmp, target);
     }
   } catch (err) {
     logWarn(`could not save ${name} state: ${(err as Error).message}`);

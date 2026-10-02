@@ -59,11 +59,37 @@ async function syncOriginatingSessionPlan(plan: PlanRecord, clear = false): Prom
 
   const current = await readSessionPlan(provenance.sessionId);
   if (!current) return true;
-  const startedAt = Math.max(Date.now(), current.updatedAt + 1);
+  // Compact & Resume rebinds the session to a newer conversation than the one recorded at Plan
+  // creation; always address the session's current binding.
+  const session = (await indexedSessions()).find(row => row.id === provenance.sessionId);
+  const currentConversationId = session?.conversationId ?? provenance.conversationId;
+  const startedAt = current.updatedAt + 1;
   if (clear) {
-    return updateSessionPlan(provenance.sessionId, provenance.conversationId, { plan: [] }, startedAt);
+    // Archive/cancel is a terminal mutation of the first-class Plan, not an edit to the source
+    // chat's checklist. Compact & Resume may legitimately have rebound the durable session from
+    // provenance conversation A to current conversation B after this Plan was created. Do not let
+    // that stale source id block the user's terminal action.
+    //
+    // Clear the session-local card only while it still describes this exact checklist. If the
+    // source has moved on to different work, leave it alone. Use the session's current conversation
+    // binding and an immediate successor revision; a concurrent newer source update then wins the
+    // store fence and cleanup safely becomes a no-op rather than cancelling the archive.
+    if (!sameAgentSteps(plan, current)) return true;
+    await updateSessionPlan(
+      provenance.sessionId,
+      currentConversationId,
+      { plan: [] },
+      startedAt
+    );
+    return true;
   }
 
+  // A Compact & Resume rebind changes the session's current conversation without changing the
+  // Plan itself. Treat that as continuity, not source drift, but only while the session-local
+  // checklist is still the same checklist this first-class Plan represents. If the source has
+  // genuinely moved on to different steps, fail closed and make the Plans surface refresh instead
+  // of overwriting newer work.
+  if (!sameAgentSteps(plan, current)) return false;
   // Preserve the chat-side explanation/details while replacing the checklist and its statuses.
   // Text is the only shared identity available in the legacy AgentPlan schema; consume duplicate
   // text matches in order so repeated step labels remain deterministic.
@@ -74,7 +100,7 @@ async function syncOriginatingSessionPlan(plan: PlanRecord, clear = false): Prom
     values.push(item.details);
     detailsByText.set(item.step, values);
   }
-  return updateSessionPlan(provenance.sessionId, provenance.conversationId, {
+  return updateSessionPlan(provenance.sessionId, currentConversationId, {
     explanation: current.explanation,
     plan: plan.items.map(item => {
       const details = item.details ?? detailsByText.get(item.text)?.shift();

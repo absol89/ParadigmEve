@@ -821,6 +821,117 @@ it('refuses to relabel a Plan archived as finished as cancelled', async () => {
   await expect(cancelPlan(plan.id)).rejects.toThrow('already archived as finished');
 });
 
+it('archives and cancels source-backed Plans after Compact & Resume instead of failing on the stale source conversation', async () => {
+  const archiveSession = await createSession({ title: 'Archive after resume', conversationId: 'archive-before' });
+  expect(await updateSessionPlan(archiveSession.id, 'archive-before', {
+    plan: [{ step: 'Finish the resumed work', status: 'completed' }]
+  }, 10)).toBe(true);
+  const archiveProjection = await syncSessionAgentPlan(
+    archiveSession.id,
+    'archive-before',
+    'Archive after resume',
+    { plan: [{ step: 'Finish the resumed work', status: 'completed' }] }
+  );
+  expect(archiveProjection).not.toBeNull();
+  expect(await rebindSession(archiveSession.id, 'archive-before', 'archive-after')).toBe(true);
+
+  const archived = await archivePlan(archiveProjection!.id);
+  expect(archived.section).toBe('done');
+  expect((await readSessionPlan(archiveSession.id))?.plan).toEqual([]);
+
+  const cancelSession = await createSession({ title: 'Cancel after resume', conversationId: 'cancel-before' });
+  expect(await updateSessionPlan(cancelSession.id, 'cancel-before', {
+    plan: [{ step: 'Stop the resumed work', status: 'pending' }]
+  }, 20)).toBe(true);
+  const cancelProjection = await syncSessionAgentPlan(
+    cancelSession.id,
+    'cancel-before',
+    'Cancel after resume',
+    { plan: [{ step: 'Stop the resumed work', status: 'pending' }] }
+  );
+  expect(cancelProjection).not.toBeNull();
+  expect(await rebindSession(cancelSession.id, 'cancel-before', 'cancel-after')).toBe(true);
+
+  const cancelled = await cancelPlan(cancelProjection!.id);
+  expect(cancelled.section).toBe('done');
+  expect(cancelled.cancelledAt).toBe(cancelled.archivedAt);
+  expect((await readSessionPlan(cancelSession.id))?.plan).toEqual([]);
+});
+
+it('does not clear newer source work while archiving an older finished Plan', async () => {
+  const session = await createSession({ title: 'Source moved on', conversationId: 'source-before' });
+  expect(await updateSessionPlan(session.id, 'source-before', {
+    plan: [{ step: 'Old finished work', status: 'completed' }]
+  }, 30)).toBe(true);
+  const oldPlan = await syncSessionAgentPlan(
+    session.id,
+    'source-before',
+    'Source moved on',
+    { plan: [{ step: 'Old finished work', status: 'completed' }] }
+  );
+  expect(oldPlan).not.toBeNull();
+  expect(await rebindSession(session.id, 'source-before', 'source-after')).toBe(true);
+  expect(await updateSessionPlan(session.id, 'source-after', {
+    plan: [{ step: 'New current work', status: 'in_progress' }]
+  }, 40)).toBe(true);
+
+  await archivePlan(oldPlan!.id);
+  expect((await readSessionPlan(session.id))?.plan).toEqual([
+    expect.objectContaining({ step: 'New current work', status: 'in_progress' })
+  ]);
+});
+
+it('lets checkbox edits follow a Compact & Resume rebind when the source still has the same checklist', async () => {
+  const session = await createSession({ title: 'Checkbox after resume', conversationId: 'checkbox-before' });
+  expect(await updateSessionPlan(session.id, 'checkbox-before', {
+    plan: [
+      { step: 'First checkbox', status: 'pending' },
+      { step: 'Second checkbox', status: 'pending' }
+    ]
+  }, 50)).toBe(true);
+  const projected = await syncSessionAgentPlan(
+    session.id,
+    'checkbox-before',
+    'Checkbox after resume',
+    {
+      plan: [
+        { step: 'First checkbox', status: 'pending' },
+        { step: 'Second checkbox', status: 'pending' }
+      ]
+    }
+  );
+  expect(projected).not.toBeNull();
+  expect(await rebindSession(session.id, 'checkbox-before', 'checkbox-after')).toBe(true);
+
+  const edited = await updatePlan(projected!.id, {
+    items: projected!.items.map((item, index) => index === 0 ? { ...item, status: 'done' } : item)
+  }, projected!.updatedAt);
+  expect(edited.items.map(item => item.status)).toEqual(['done', 'todo']);
+  expect((await readSessionPlan(session.id))?.plan.map(item => item.status)).toEqual(['completed', 'pending']);
+});
+
+it('still refuses checkbox edits when the source session has moved to a different checklist', async () => {
+  const session = await createSession({ title: 'Checkbox source drift', conversationId: 'drift-before' });
+  expect(await updateSessionPlan(session.id, 'drift-before', {
+    plan: [{ step: 'Original checkbox', status: 'pending' }]
+  }, 60)).toBe(true);
+  const projected = await syncSessionAgentPlan(
+    session.id,
+    'drift-before',
+    'Checkbox source drift',
+    { plan: [{ step: 'Original checkbox', status: 'pending' }] }
+  );
+  expect(projected).not.toBeNull();
+  expect(await rebindSession(session.id, 'drift-before', 'drift-after')).toBe(true);
+  expect(await updateSessionPlan(session.id, 'drift-after', {
+    plan: [{ step: 'Different newer work', status: 'in_progress' }]
+  }, 70)).toBe(true);
+
+  await expect(updatePlan(projected!.id, {
+    items: projected!.items.map(item => ({ ...item, status: 'done' }))
+  }, projected!.updatedAt)).rejects.toThrow('Plan source changed; refresh');
+});
+
 it('accepts an incomplete archived Plan only when it was cancelled at its archive time', async () => {
   const record = (extra: Record<string, unknown>) => ({
     version: 1,

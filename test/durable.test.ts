@@ -107,13 +107,25 @@ describe('durable state commit boundary', () => {
     expect(writes).toEqual([{ version: 1 }, { version: 2 }]);
   });
 
-  it('rejects a failed immediate atomic rename and preserves the snapshot for retry', async () => {
+  it('retries a transient rename lock so the commit still lands', async () => {
     await tempStore();
-    const busy = Object.assign(new Error('injected rename contention'), { code: 'EBUSY' });
-    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(busy);
+    const busy = Object.assign(new Error('injected rename contention'), { code: 'EPERM' });
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(busy).mockRejectedValueOnce(busy);
 
-    await expect(writeDurableNow('probe', { generation: 1 })).rejects.toMatchObject({ code: 'EBUSY' });
-    expect(rename).toHaveBeenCalledTimes(1);
+    await expect(writeDurableNow('probe', { generation: 1 })).resolves.toBeUndefined();
+    expect(rename).toHaveBeenCalledTimes(3);
+
+    rename.mockRestore();
+    await expect(readDurable('probe')).resolves.toEqual({ generation: 1 });
+  });
+
+  it('rejects a persistently failing atomic rename and preserves the snapshot for retry', async () => {
+    await tempStore();
+    const busy = Object.assign(new Error('injected rename contention'), { code: 'EPERM' });
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValue(busy);
+
+    await expect(writeDurableNow('probe', { generation: 1 })).rejects.toMatchObject({ code: 'EPERM' });
+    expect(rename).toHaveBeenCalledTimes(7);
 
     rename.mockRestore();
     await flushDurable();

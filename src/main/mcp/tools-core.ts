@@ -33,6 +33,7 @@ import { logInfo, logWarn } from '../logger.js';
 import { SandboxError, isNativeWindowsPath, resolvePath, strayVirtualPath } from '../sandbox.js';
 import { currentWorkspace } from '../workspace.js';
 import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities, type Root } from '../../shared/types.js';
+import { moveEveToConversation } from '../eve-handover.js';
 import type { FileChange } from '../../shared/session.js';
 import { REASONING_EFFORTS } from '../../shared/session.js';
 import { DEFAULT_EXCLUDES, MAX_CONTENT_FILE_BYTES, globToRegExp, search, searchOneFile } from '../search.js';
@@ -1324,6 +1325,30 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     return {
       content: [{ type: 'text' as const, text: 'ParadigmEve self settings updated.' }],
       structuredContent: { action: 'update', settings, roots: { appdata: '/appdata', installation: '/paradigmeve' } }
+    };
+  }));
+  // ---------------------------------------------------------- move Eve here
+
+  reg.register('move_eve_here', toolDeclaration('move_eve_here', () => ({
+    description: `Make this chat the ${getConfig().mcp?.connectorName?.trim() || DEFAULT_CORE_CONNECTOR_NAME} (Prime) chat, with its workers, even if the old chat is gone or locked. Only on the user's explicit request in this chat.`,
+    inputSchema: z.object({
+      user_request: z.string().min(8).max(300).describe('Quote the user request.')
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  })), async () => guard('move_eve_here', async () => {
+    const conversationId = await exactToolConversation('move_eve_here');
+    if (!conversationId) {
+      return fail('MOVE_EVE_IDENTITY_REQUIRED: ParadigmEve could not prove which chat this call came from. Nothing was changed. Try again in a moment.');
+    }
+    const name = getConfig().mcp?.connectorName?.trim() || DEFAULT_CORE_CONNECTOR_NAME;
+    const result = await moveEveToConversation(conversationId);
+    if (!result.ok) return fail(`MOVE_EVE_REFUSED (${result.code}): ${result.message} Nothing was changed.`);
+    const text = !result.changed
+      ? `This chat already is the ${name} conversation. Nothing needed to move.`
+      : `${name} now lives in this chat${result.movedWorkerFamily ? `; ${result.workers} worker(s) and their unfinished work moved with it` : ''}. The change is saved, so it survives a restart. The old chat was not touched and is now an ordinary chat.`;
+    return {
+      content: [{ type: 'text' as const, text }],
+      structuredContent: { action: 'move_eve_here', changed: result.changed, moved_worker_family: result.movedWorkerFamily, workers: result.workers }
     };
   }));
   if (reg.ctx.exposedFinishTool ?? getConfig().ui.finishTool === true) {

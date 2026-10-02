@@ -3302,13 +3302,13 @@ select option { background: var(--card); color: var(--ink); }
 .project-heading { display: flex; align-items: center; gap: 9px; cursor: pointer; padding: 6px 8px; list-style: none; }
 .project-heading::-webkit-details-marker { display: none; }
 .project-name { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.project-new { display: grid; place-items: center; width: 26px; height: 26px; padding: 4px; opacity: 0; }
-.project-heading:hover .project-new, .project-heading:focus-within .project-new { opacity: 1; }
-.project-remove { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; padding: 4px; color: var(--faint); opacity: 0; }
-.project-heading:hover .project-remove, .project-heading:focus-within .project-remove { opacity: 1; }
-.project-native-link { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; padding: 4px; color: var(--faint); opacity: 0; }
-.project-native-link.linked { color: var(--blue); opacity: 0.8; }
-.project-heading:hover .project-native-link, .project-heading:focus-within .project-native-link { opacity: 1; }
+/* Row buttons take no space until the row is hovered/focused, like .sess-actions, so the name only truncates for buttons actually showing. */
+.project-new, .project-remove, .project-native-link { display: none; place-items: center; flex-shrink: 0; width: 26px; height: 26px; padding: 4px; }
+.project-remove, .project-native-link { color: var(--faint); }
+.project-native-link.linked { display: grid; color: var(--blue); opacity: 0.8; }
+.project-heading:hover .project-new, .project-heading:focus-within .project-new,
+.project-heading:hover .project-remove, .project-heading:focus-within .project-remove,
+.project-heading:hover .project-native-link, .project-heading:focus-within .project-native-link { display: grid; opacity: 1; }
 .project-native-dialog form { display: grid; gap: 10px; min-width: min(460px, 80vw); }
 .project-native-dialog label { display: grid; gap: 6px; }
 .project-native-actions { display: flex; justify-content: flex-end; gap: 8px; }
