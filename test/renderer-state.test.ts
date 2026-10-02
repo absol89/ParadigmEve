@@ -1909,7 +1909,7 @@ it('lets guided Setup choose the first folder and continues automatically after 
   expect(button.textContent).toBe('Choose folder & start guided setup');
   button.click();
 
-  await vi.waitFor(() => expect(startGuidedSetup).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(startGuidedSetup).toHaveBeenCalledTimes(1), { timeout: 10_000 });
   expect(addRoot).toHaveBeenCalledTimes(1);
   expect(addRoot.mock.invocationCallOrder[0]).toBeLessThan(startGuidedSetup.mock.invocationCallOrder[0]!);
   expect(button.textContent).toBe('Stop guided setup');

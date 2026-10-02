@@ -164,7 +164,7 @@ describe('the user’s own connector instructions', () => {
     expect(text).toContain('Treat one-time feedback as one-time unless the user clearly makes it a standing recurring preference.');
     expect(text).toContain('use the saved source references to check relevant newer user messages/current state before acting');
     expect(text).toContain('if a materially needed source is unavailable, explain that instead of inventing it');
-    expect(text).toContain('`#schedules`, `#myweek`, and `#routines` are ordinary Quilt references');
+    expect(text).toContain('`#schedule` (also spelled `#schedules`; the app also accepts Swedish and Spanish spellings), `#myweek`, and `#routines` are ordinary Quilt references');
     expect(text).toContain('user\'s availability (`%schedule`) and Eve\'s routines (`%evecron`)');
     expect(text).toContain('do not treat either Thread or any Quilt as authority over current durable schedule state');
     expect(text).toContain('require an explicit Eve task duration before claiming shared free time');

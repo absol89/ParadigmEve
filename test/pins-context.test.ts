@@ -610,3 +610,42 @@ it('reports an unresolved reference next to Swedish and Spanish Thread and Conce
   // An ordinary hashtag with no Pins vocabulary nearby stays ordinary.
   expect(await injectPinsContext('Älskar helgen #sommar', limits)).toBe('Älskar helgen #sommar');
 });
+
+it('explains a localized Schedule shortcut to Eve even when no Quilt exists, and lets a real Quilt win', async () => {
+  await initializeDefaultThreads();
+  const limits = { maxChars: 96_000, maxBytes: 128_000 };
+
+  const spanish = await injectPinsContext('Chatear sobre #agenda', limits);
+  expect(spanish).toContain('# Eve localized reference aliases · #agenda');
+  expect(spanish).toContain('spelling of the Schedule workspace shortcut #schedule');
+  expect(spanish).toContain('The alias is Latin American Spanish (es-419).');
+  expect(spanish).not.toContain('unresolved Pins reference');
+  expect(spanish.endsWith('Chatear sobre #agenda')).toBe(true);
+
+  for (const [message, language] of [
+    ['Chatta om #schema', 'Swedish'],
+    ['Chatta om #scheman', 'Swedish'],
+    ['Chatta om #minvecka', 'Swedish'],
+    ['Chatta om #rutiner', 'Swedish'],
+    ['Chatear sobre #agendas', 'Latin American Spanish'],
+    ['Chatear sobre #mi-semana', 'Latin American Spanish'],
+    ['Chatear sobre #rutinas', 'Latin American Spanish']
+  ] as const) {
+    const injected = await injectPinsContext(message, limits);
+    expect(injected, message).toContain('the Schedule workspace shortcut');
+    expect(injected, message).toContain(`The alias is ${language}`);
+    expect(injected.endsWith(message), message).toBe(true);
+  }
+
+  // The English plural is the same shortcut but carries no language instruction, and the base name alone is unchanged.
+  const plural = await injectPinsContext('Chat about #schedules', limits);
+  expect(plural).toContain('spelling of the Schedule workspace shortcut #schedule');
+  expect(plural).not.toContain('The alias is');
+  expect(await injectPinsContext('Chat about #schedule', limits)).toBe('Chat about #schedule');
+
+  // A real Quilt with the alias name is exact, so it is not rerouted.
+  await createCollection({ name: 'agendas' });
+  const real = await injectPinsContext('#agendas summarize its saved context.', limits);
+  expect(real).toContain('# Eve Quilt description missing · #agendas');
+  expect(real).not.toContain('Schedule workspace shortcut');
+});

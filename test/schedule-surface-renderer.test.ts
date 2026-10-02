@@ -85,10 +85,10 @@ it('renders the accepted two-lane Today view with first-class overlap and eviden
   expect(host.textContent).not.toContain('%evecron');
   expect(host.querySelector('.schedule-title-block')?.textContent).not.toContain('#schedule');
   expect([...host.querySelectorAll<HTMLButtonElement>('.schedule-chat-pill')].map(button => button.textContent))
-    .toEqual(['#schedules', '#myweek', '#routines']);
+    .toEqual(['#schedule', '#myweek', '#routines']);
   const chatButtons = [...host.querySelectorAll<HTMLButtonElement>('.schedule-chat-pill')];
   chatButtons.forEach(button => button.click());
-  expect(onChatAbout.mock.calls.map(call => call[0])).toEqual(['#schedules', '#myweek', '#routines']);
+  expect(onChatAbout.mock.calls.map(call => call[0])).toEqual(['#schedule', '#myweek', '#routines']);
   const editAvailability = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Edit your availability')!;
   const editEve = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Edit Eve’s routines')!;
   editAvailability.click();

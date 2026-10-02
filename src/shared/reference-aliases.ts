@@ -39,12 +39,35 @@ export const REFERENCE_ALIASES: readonly ReferenceAliasEntry[] = [
     display: { 'sv-SE': 'organisera', 'es-419': 'organizar' }
   },
   {
+    // The Schedule workspace's chat shortcuts. `#schedule` is the base: `#schedules`, `#schema`,
+    // `#scheman`, `#agenda` and `#agendas` all mean it, as `%schedule` already names the availability Thread.
+    canonical: 'schedule',
+    aliases: { en: ['schedules'], 'sv-SE': ['schema', 'scheman'], 'es-419': ['agenda', 'agendas'] },
+    display: { 'sv-SE': 'schema', 'es-419': 'agenda' }
+  },
+  {
+    canonical: 'myweek',
+    aliases: { en: ['my-week'], 'sv-SE': ['minvecka', 'min-vecka'], 'es-419': ['mi-semana', 'misemana'] },
+    display: { 'sv-SE': 'minvecka', 'es-419': 'mi-semana' }
+  },
+  {
+    canonical: 'routines',
+    aliases: { en: ['routine'], 'sv-SE': ['rutiner', 'rutin'], 'es-419': ['rutinas', 'rutina'] },
+    display: { 'sv-SE': 'rutiner', 'es-419': 'rutinas' }
+  },
+  {
     // `plan`, `plans`, `planer`, `planen` and `planes` all mean the one Plans Thread / #plans Concept.
     canonical: 'plans',
     aliases: { en: ['plan'], 'sv-SE': ['plan', 'planer', 'planen'], 'es-419': ['plan', 'planes'] },
     display: { 'sv-SE': 'planer', 'es-419': 'planes' }
   }
 ];
+
+/**
+ * The Schedule workspace's chat shortcuts. They need no saved Quilt to mean something: Eve's instructions
+ * define them, so a localized spelling of one is explained to Eve even when no Quilt exists.
+ */
+export const SCHEDULE_SHORTCUT_REFERENCES: readonly string[] = ['#schedule', '#myweek', '#routines'];
 
 /**
  * Words that mark nearby text as being about Pins vocabulary, in every language. A reference that

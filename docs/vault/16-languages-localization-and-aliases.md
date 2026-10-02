@@ -91,6 +91,9 @@ also accepts localized spellings, in any UI language, and routes them to the sto
 | `%hur`, `%como`, `%cómo` | `%how` |
 | `%organisera`, `%organizar`, `%organiza`, `%organise` | `%organize` |
 | `plan`, `plans`, `planer`, `planen`, `planes` after `%` or `#` | the Plans Thread (`%`) or the `#plans` Concept (`#`) |
+| `#schedule`, `#schedules`, `#schema`, `#scheman`, `#agenda`, `#agendas` | the Schedule shortcut `#schedule` (the base name) |
+| `#myweek`, `#minvecka`, `#mi-semana` | `#myweek` |
+| `#routines`, `#routine`, `#rutiner`, `#rutinas` | `#routines` |
 
 Rules:
 
@@ -106,6 +109,10 @@ Rules:
   spelling shared by several languages (`plan`) carries no language instruction, and a message with no
   alias gets none either. Never force a language on a message written in another one, and keep tool
   calls, Thread names and file paths in their canonical form.
+- The three Schedule shortcuts need no saved Quilt. The Schedule screen's "Chat about" chips put the localized
+  spelling (`#agenda`, `#mi-semana`, `#rutinas`) into the chat box; when such a spelling reaches Eve with no Quilt behind
+  it, the context block still explains it as the Schedule shortcut and applies the reply-language rule, instead of
+  reporting a missing Quilt.
 - The Pins screen shows the starters under their localized names in Swedish and Spanish (`%utgifter`,
   `#planes`); the stored title does not change.
 - An unresolved `#name` is reported to Eve only when Pins vocabulary sits nearby. The vocabulary list is
