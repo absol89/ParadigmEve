@@ -28,6 +28,10 @@ const STATE_VERSION = 1;
 const MAX_JSON_BYTES = 64 * 1024;
 const MAX_ATLAS_BYTES = 12 * 1024 * 1024;
 const MAX_PACKAGES = 100;
+const MAX_NAME_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 500;
+const MAX_DESCRIPTION_LANGUAGES = 8;
+const LANGUAGE_TAG_PATTERN = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const DEFAULT_ENABLED_BUNDLED_PETS = ['luna'];
 const DEFAULT_FAVORITE_BUNDLED_PETS = ['cat', 'dog'];
 
@@ -35,6 +39,8 @@ interface StoredPetLibraryState {
   version: 1;
   enabled: string[];
   favorites: string[];
+  /** User-chosen display names by pet id. They never touch the package folder or its pet.json. */
+  names: Record<string, string>;
 }
 
 interface InspectedPet {
@@ -44,7 +50,7 @@ interface InspectedPet {
 }
 
 let directory = '';
-let stored: StoredPetLibraryState = { version: STATE_VERSION, enabled: [], favorites: [] };
+let stored: StoredPetLibraryState = { version: STATE_VERSION, enabled: [], favorites: [], names: {} };
 const listeners = new Set<(state: PetLibraryState) => void>();
 
 /** Read-only pet packages that ship with the app (resources/pets/<id>). */
@@ -53,6 +59,31 @@ let bundledDirectory: string | null = null;
 function validPreferenceIds(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
   return [...new Set(values.filter((value): value is string => typeof value === 'string' && PET_ID_PATTERN.test(value)))];
+}
+
+function validNames(values: unknown): Record<string, string> {
+  const names: Record<string, string> = {};
+  const source = object(values);
+  if (!source) return names;
+  for (const [id, name] of Object.entries(source)) {
+    if (!PET_ID_PATTERN.test(id) || typeof name !== 'string') continue;
+    const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
+    if (trimmed) names[id] = trimmed;
+  }
+  return names;
+}
+
+/** Optional per-language descriptions. Anything malformed is ignored rather than rejecting the pet. */
+function parseDescriptions(value: unknown): Record<string, string> | undefined {
+  const source = object(value);
+  if (!source) return undefined;
+  const descriptions: Record<string, string> = {};
+  for (const [language, text] of Object.entries(source).slice(0, MAX_DESCRIPTION_LANGUAGES)) {
+    if (!LANGUAGE_TAG_PATTERN.test(language) || typeof text !== 'string') continue;
+    const trimmed = text.trim().slice(0, MAX_DESCRIPTION_LENGTH);
+    if (trimmed) descriptions[language] = trimmed;
+  }
+  return Object.keys(descriptions).length ? descriptions : undefined;
 }
 
 function defaultBundledPreferences(ids: readonly string[]): string[] {
@@ -94,13 +125,15 @@ export async function initPetLibrary(userData: string, bundled: string | null = 
     stored = {
       version: STATE_VERSION,
       enabled: restoredPreferenceIds(restored.enabled),
-      favorites: restoredPreferenceIds(restored.favorites)
+      favorites: restoredPreferenceIds(restored.favorites),
+      names: validNames(restored.names)
     };
   } else {
     stored = {
       version: STATE_VERSION,
       enabled: defaultBundledPreferences(DEFAULT_ENABLED_BUNDLED_PETS),
-      favorites: defaultBundledPreferences(DEFAULT_FAVORITE_BUNDLED_PETS)
+      favorites: defaultBundledPreferences(DEFAULT_FAVORITE_BUNDLED_PETS),
+      names: {}
     };
   }
 }
@@ -230,11 +263,13 @@ function inspectPackage(folder: string, expectedId?: string): InspectedPet {
   const authored = parsePetAnimations(readJson(contained(folder, 'animations.json')));
   // Frame 7 (the last idle frame) is the library preview.
   const preview = image.crop({ x: 7 * COS_PET_ATLAS.cellWidth, y: 0, width: COS_PET_ATLAS.cellWidth, height: COS_PET_ATLAS.cellHeight }).resize({ width: 96, height: 96, quality: 'good' });
+  const descriptions = parseDescriptions(metadata['descriptions']);
   return {
     record: {
       id,
-      displayName: displayName.trim().slice(0, 100),
-      description: description.trim().slice(0, 500),
+      displayName: displayName.trim().slice(0, MAX_NAME_LENGTH),
+      description: description.trim().slice(0, MAX_DESCRIPTION_LENGTH),
+      ...(descriptions ? { descriptions } : {}),
       previewDataUrl: preview.toDataURL()
     },
     atlas,
@@ -266,8 +301,10 @@ function exists(id: string): boolean {
 }
 
 function preference(record: Omit<PetRecord, 'enabled' | 'favorite'>): PetRecord {
+  const custom = stored.names[record.id];
   return {
     ...record,
+    ...(custom && custom !== record.displayName ? { displayName: custom, originalName: record.displayName } : {}),
     enabled: stored.enabled.includes(record.id),
     favorite: stored.favorites.includes(record.id)
   };
@@ -308,6 +345,17 @@ export function setPetFavorite(id: string, favorite: boolean): PetLibraryState {
   return changed();
 }
 
+/** Give a pet a name of the user's choosing, or pass an empty name to go back to the package's own. */
+export function setPetName(id: string, name: string): PetLibraryState {
+  if (!exists(id)) throw new Error('Pet is not installed.');
+  const trimmed = name.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME_LENGTH);
+  const names = { ...stored.names };
+  if (trimmed) names[id] = trimmed; else delete names[id];
+  stored = { ...stored, names };
+  persist();
+  return changed();
+}
+
 export function deletePet(id: string): PetLibraryState {
   if (isBundled(id)) throw new Error('Bundled pets cannot be deleted. Turn them off instead.');
   if (!PET_ID_PATTERN.test(id)) throw new Error('Invalid pet id.');
@@ -322,7 +370,8 @@ export function deletePet(id: string): PetLibraryState {
   stored = {
     ...stored,
     enabled: stored.enabled.filter(value => value !== id),
-    favorites: stored.favorites.filter(value => value !== id)
+    favorites: stored.favorites.filter(value => value !== id),
+    names: Object.fromEntries(Object.entries(stored.names).filter(([key]) => key !== id))
   };
   persist();
   return changed();
@@ -344,7 +393,8 @@ export function importPet(sourceFolder: string): PetLibraryState {
       version: 1,
       id: inspected.record.id,
       displayName: inspected.record.displayName,
-      description: inspected.record.description
+      description: inspected.record.description,
+      ...(inspected.record.descriptions ? { descriptions: inspected.record.descriptions } : {})
     }, null, 2));
     fs.writeFileSync(path.join(temporary, 'animations.json'), JSON.stringify(inspected.manifest, null, 2));
     fs.renameSync(temporary, destination);

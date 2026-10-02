@@ -10,7 +10,7 @@ The product idea is:
 Chat = harvest/review surface
 Pins = durable saved moments/results/plans
 Concepts = promptless zero-Pin labels/objects
-Hotlinks = prompted zero-Pin shortcuts
+Instructions = prompted zero-Pin shortcuts
 Threads = one-or-more-Pin work/context fabrics and mandatory homes for Pins
 Quilts = broad thematic/context organization of Threads, addressed with #quilt
 Plans = live first-class work objects independent of the source chat
@@ -41,6 +41,22 @@ same stable recorded-message source identity, so changing classification cannot 
 A Thread can also have one editable **Thread prompt** used as standing opening guidance when a chat
 starts from that Thread. That field belongs to the Thread itself; it is deliberately separate from a
 Prompt Pin, which is a saved authored user message with exact message provenance.
+
+### Localized names for the starters
+
+The starters are stored under their English names, and Eve's own prompts refer to them that way. The
+app also accepts localized spellings, in any UI language, and routes them to the canonical starter:
+`%utgifter` / `%gastos` reach `%expenses`, `%hur` / `%cómo` reach `%how`, `%organisera` / `%organizar`
+reach `%organize`, and `plan`, `plans`, `planer`, `planen` and `planes` all reach the one Plans Thread
+and the `#plans` Concept. Routing happens in the shared resolver (`src/shared/reference-aliases.ts`),
+so context injection, the Expenses project binding and in-chat reference links all agree. An exact
+Thread or Quilt the user created with the alias name always wins, and a routed reference adds a short
+"localized reference aliases" note to the context Eve receives so the mapping is never silent. When the
+spelling belongs to exactly one non-English language, that note also tells Eve to answer in that language
+if the rest of the user's message is written in it (a spelling shared by several languages, such as
+`plan`, carries no language instruction). See [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md). In
+Swedish and Spanish the Pins screen shows the starter under its localized name (for example
+`%utgifter`) while the stored title stays canonical.
 
 On a pristine install, ParadigmEve creates five empty starter Threads with Thread prompts and no Pins:
 
@@ -97,7 +113,7 @@ The saved kind is derived from content, not from Link or description:
 
 ```text
 one or more Pins        -> Thread
-zero Pins + prompt      -> Hotlink
+zero Pins + prompt      -> Instruction
 zero Pins + no prompt   -> Concept
 ```
 
@@ -112,7 +128,7 @@ reference identity used by the backend: surrounding whitespace is ignored, a lea
 Unicode is normalized, and comparison is case-insensitive. The backend duplicate refusal remains the
 final race-safe authority.
 
-Once name validation passes, Save wording follows the content kind: **Save Thread**, **Save Hotlink**
+Once name validation passes, Save wording follows the content kind: **Save Thread**, **Save Instruction**
 or **Save Concept**. First save is one atomic durable write for name, description, prompt, safe Link
 and Quilt associations; there is no create-then-patch partial object.
 

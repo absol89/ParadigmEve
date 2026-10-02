@@ -1,15 +1,41 @@
+import { GUIDE_COFFEE_ICON_DATA_URI } from './setup-guide-icon.js';
+import { SPLASH_PORTRAIT_DATA_URI } from './startup-splash-portrait.js';
+import svSE from '../renderer/locales/sv-SE.json';
+import es419 from '../renderer/locales/es-419.json';
+import type { UiLanguage } from './ui-language.js';
+
 export type StartupSplashTheme = 'light' | 'dark';
+
+const catalogs: Readonly<Record<Exclude<UiLanguage, 'en'>, Readonly<Record<string, string>>>> = { 'sv-SE': svSE, 'es-419': es419 };
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+}
+
+/** The greeting in the app language, from the same catalogs as the rest of the app. */
+function splashText(language: UiLanguage): { title: string; subtitle: string } {
+  const catalog = language === 'en' ? null : catalogs[language];
+  const translate = (source: string): string => (catalog && Object.hasOwn(catalog, source) ? catalog[source]! : source);
+  const warm = `<span class="warmth">${escapeHtml(translate('warm'))}</span>`;
+  return {
+    title: escapeHtml(translate('Welcome back')),
+    subtitle: escapeHtml(translate('Keeping things {0} for you…')).replace('{0}', warm)
+  };
+}
 
 /**
  * Static startup presentation for the short gap while the real renderer loads.
  *
- * This document has no script, preload bridge, remote asset, or state. The main process owns its
- * lifetime and destroys it as soon as the workspace is ready, so it can never become a second UI
- * authority. Keep the CSP here because data: documents do not receive the file renderer's response
- * headers.
+ * Eve's approved portrait fills the left panel; the coffee cup, wordmark and greeting sit beside it.
+ * This document has no script, preload bridge, remote asset, or state. Its two images are inlined
+ * `data:` URIs, which is why the policy admits `img-src data:` and nothing else. The main process
+ * owns its lifetime and destroys it as soon as the workspace is ready, so it can never become a
+ * second UI authority. Keep the CSP here because data: documents do not receive the file renderer's
+ * response headers.
  */
-export function startupSplashDocument(theme: StartupSplashTheme): string {
+export function startupSplashDocument(theme: StartupSplashTheme, language: UiLanguage = 'en'): string {
   const dark = theme === 'dark';
+  const text = splashText(language);
   const palette = dark
     ? {
         page: '#07111f',
@@ -20,6 +46,10 @@ export function startupSplashDocument(theme: StartupSplashTheme): string {
         glow: 'rgba(52, 105, 176, .28)',
         accent: '#c9ad70',
         accentSoft: '#8ca7ca',
+        brand: '#c9d6e8',
+        gold: '#e6c673',
+        bar: 'rgba(201, 173, 112, .22)',
+        fade: 'linear-gradient(90deg, rgba(7, 17, 31, 0) 55%, #07111f 100%)',
         shadow: 'rgba(0, 0, 0, .42)'
       }
     : {
@@ -31,14 +61,19 @@ export function startupSplashDocument(theme: StartupSplashTheme): string {
         glow: 'rgba(221, 172, 116, .24)',
         accent: '#a46f47',
         accentSoft: '#8d765e',
+        brand: '#5b4631',
+        gold: '#b9854f',
+        bar: 'rgba(153, 112, 72, .22)',
+        // The portrait is navy art; on the cream page it keeps a clean edge instead of a muddy fade.
+        fade: 'none',
         shadow: 'rgba(88, 60, 34, .18)'
       };
 
   return `<!doctype html>
-<html lang="en">
+<html lang="${language}">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
   <meta name="color-scheme" content="${dark ? 'dark' : 'light'}">
   <title>ParadigmEve</title>
   <style>
@@ -52,6 +87,9 @@ export function startupSplashDocument(theme: StartupSplashTheme): string {
       --glow: ${palette.glow};
       --accent: ${palette.accent};
       --accent-soft: ${palette.accentSoft};
+      --brand: ${palette.brand};
+      --gold: ${palette.gold};
+      --bar: ${palette.bar};
       --shadow: ${palette.shadow};
     }
     * { box-sizing: border-box; }
@@ -59,11 +97,8 @@ export function startupSplashDocument(theme: StartupSplashTheme): string {
     body {
       position: relative;
       display: grid;
-      place-items: center;
-      background:
-        radial-gradient(circle at 18% 12%, var(--glow), transparent 42%),
-        radial-gradient(circle at 88% 82%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 36%),
-        var(--page);
+      grid-template-columns: 270px minmax(0, 1fr);
+      background: var(--page);
       color: var(--ink);
       font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
       user-select: none;
@@ -71,85 +106,81 @@ export function startupSplashDocument(theme: StartupSplashTheme): string {
     body::after {
       content: "";
       position: absolute;
-      inset: 20px;
+      inset: 0;
       border: 1px solid var(--line);
-      border-radius: 30px;
       pointer-events: none;
+    }
+    .portrait {
+      position: relative;
+      overflow: hidden;
+      background: #07111f;
+    }
+    .portrait img { display: block; width: 270px; height: 360px; object-fit: cover; }
+    .portrait::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: ${palette.fade};
     }
     main {
       position: relative;
-      z-index: 1;
-      display: grid;
-      justify-items: center;
-      width: calc(100% - 64px);
-      min-height: 250px;
-      padding: 34px 44px 30px;
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      background: color-mix(in srgb, var(--card) 91%, transparent);
-      box-shadow: 0 24px 70px var(--shadow);
-      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+      padding: 0 28px 0 4px;
     }
-    .mark {
-      position: relative;
-      display: grid;
-      place-items: center;
-      width: 78px;
-      height: 78px;
-      margin-bottom: 20px;
-      border: 1px solid var(--line);
-      border-radius: 50%;
-      background: radial-gradient(circle, color-mix(in srgb, var(--accent) 16%, transparent), transparent 67%);
-      color: var(--accent);
-      box-shadow: 0 0 44px color-mix(in srgb, var(--accent) 14%, transparent);
-      animation: breathe 2.4s ease-in-out infinite alternate;
+    .brand { display: flex; align-items: center; gap: 10px; height: 34px; }
+    .brand img { display: block; flex: none; width: 34px; height: 34px; }
+    .brand span {
+      color: var(--brand);
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+      line-height: 34px;
+      white-space: nowrap;
     }
-    .mark::before,
-    .mark::after {
-      content: "";
-      position: absolute;
-      border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
-      border-radius: 50%;
+    h1 {
+      margin: 18px 0 0;
+      font: 400 34px/1.1 Georgia, "Times New Roman", serif;
+      letter-spacing: -.015em;
+      white-space: nowrap;
     }
-    .mark::before { inset: 8px; opacity: .55; }
-    .mark::after { inset: 17px; opacity: .32; }
-    svg { width: 42px; height: 42px; fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
-    .coffee-steam { opacity: .72; }
-    .coffee-surface {
-      fill: color-mix(in srgb, var(--accent) 34%, var(--card));
-      stroke: currentColor;
-      stroke-width: 1.05;
-    }
-    .brand {
-      margin: 0 0 8px;
-      color: var(--accent-soft);
-      font-size: 11px;
-      font-weight: 650;
-      letter-spacing: .22em;
-    }
-    h1 { margin: 0; font-size: 27px; font-weight: 600; letter-spacing: -.025em; }
-    p { margin: 9px 0 0; color: var(--soft); font-size: 13px; line-height: 1.55; }
+    p { margin: 10px 0 0; color: var(--soft); font-size: 13px; line-height: 1.5; }
     .warmth { color: var(--accent); }
-    @keyframes breathe {
-      from { transform: translateY(0) scale(.985); box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 11%, transparent); }
-      to { transform: translateY(-2px) scale(1); box-shadow: 0 0 52px color-mix(in srgb, var(--accent) 18%, transparent); }
+    .bar {
+      position: relative;
+      width: 120px;
+      height: 2px;
+      margin-top: 26px;
+      overflow: hidden;
+      border-radius: 1px;
+      background: var(--bar);
     }
-    @media (prefers-reduced-motion: reduce) { .mark { animation: none; } }
+    .bar i {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 46px;
+      height: 2px;
+      border-radius: 1px;
+      background: var(--gold);
+      animation: slide 1.6s ease-in-out infinite alternate;
+    }
+    @keyframes slide { from { transform: translateX(0); } to { transform: translateX(74px); } }
+    @media (prefers-reduced-motion: reduce) { .bar i { animation: none; } }
   </style>
 </head>
 <body>
+  <div class="portrait" aria-hidden="true"><img src="${SPLASH_PORTRAIT_DATA_URI}" alt="" width="270" height="360"></div>
   <main aria-labelledby="welcome-title">
-    <div class="mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24">
-        <path class="coffee-steam" d="M8.2 6.2c-1-1-.5-2 .3-2.8M12 6.2c-1-1-.5-2 .3-2.8"></path>
-        <path class="coffee-cup" d="M5 8.5h11v5.2a5.3 5.3 0 0 1-5.3 5.3h-.4A5.3 5.3 0 0 1 5 13.7Z"></path>
-        <path class="coffee-handle" d="M16 10h1.4a2.6 2.6 0 0 1 0 5.2H16"></path>
-        <ellipse class="coffee-surface" cx="10.5" cy="10.6" rx="4.2" ry="1.25"></ellipse>
-      </svg>
+    <div class="brand">
+      <img src="${GUIDE_COFFEE_ICON_DATA_URI}" alt="" width="34" height="34">
+      <span>ParadigmEve</span>
     </div>
-    <div class="brand">ParadigmEve</div>
-    <h1 id="welcome-title">Welcome back.</h1>
-    <p>Keeping things <span class="warmth">warm</span> for you…</p>
+    <h1 id="welcome-title">${text.title}</h1>
+    <p>${text.subtitle}</p>
+    <div class="bar" aria-hidden="true"><i></i></div>
   </main>
 </body>
 </html>`;

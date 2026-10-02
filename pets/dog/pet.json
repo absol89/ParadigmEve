@@ -3,5 +3,9 @@
   "version": 1,
   "id": "dog",
   "displayName": "Pip",
-  "description": "An adorable chibi corgi with huge upright ears, glossy warm brown eyes, a broad white blaze, fluffy white cheeks, and a blue bandana."
+  "description": "An adorable chibi corgi with huge upright ears, glossy warm brown eyes, a broad white blaze, fluffy white cheeks, and a blue bandana.",
+  "descriptions": {
+    "sv-SE": "En bedårande chibi-corgi med enorma upprätta öron, blanka varmbruna ögon, en bred vit bläs, yviga vita kinder och en blå bandana.",
+    "es-419": "Un adorable corgi chibi con enormes orejas erguidas, ojos marrón cálido y brillantes, una amplia franja blanca en la cara, mejillas blancas esponjosas y un pañuelo azul."
+  }
 }

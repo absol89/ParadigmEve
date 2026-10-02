@@ -65,7 +65,7 @@ it('uses the saved message excerpt as the meaningful Thread mosaic preview', () 
   const tile = root.querySelector<HTMLElement>('.quilt-preview-tile[data-kind="message"]')!;
   expect(root.querySelector('.pins-library-intro p')?.textContent).toBe(
     'Gather useful things into groups so they stay connected to what they came from.\n' +
-    '%Threads have message pins, %Hotlinks have no pins, #Concepts use no prompt.'
+    '%Threads have message pins, %Instructions have no pins, #Concepts use no prompt.'
   );
   const css = readFileSync(path.join(process.cwd(), 'src', 'renderer', 'pins-quilts.css'), 'utf8');
   expect(css).toMatch(/\.pins-library-intro p\s*\{[^}]*white-space:\s*pre-line;/s);
@@ -94,7 +94,7 @@ it('uses the saved message excerpt as the meaningful Thread mosaic preview', () 
   expect(archived).toBe('quilt-a');
 });
 
-it('separates zero-Pin active Threads into Hotlink cards and moves them to Threads when a Pin appears', () => {
+it('separates zero-Pin active Threads into Instruction cards and moves them to Threads when a Pin appears', () => {
   const empty = {
     id: 'quilt-hotlink',
     title: 'handoff',
@@ -140,7 +140,7 @@ it('separates zero-Pin active Threads into Hotlink cards and moves them to Threa
 
   const hotlinks = createPinsLibrary({ ...shared, quilts: [empty, pinned, concept, archived], activeTab: 'hotlink' });
   expect([...hotlinks.querySelectorAll('.pins-tab')].map(node => node.textContent))
-    .toEqual(['%Hotlinks1', '%Threads1', '#Concepts1', 'Archived1']);
+    .toEqual(['%Instructions1', '%Threads1', '#Concepts1', 'Archived1']);
   const card = hotlinks.querySelector<HTMLElement>('[data-quilt-id="quilt-hotlink"]')!;
   expect(card.dataset.libraryTab).toBe('hotlink');
   expect(card.querySelector('.quilt-cover')).toBeNull();
@@ -229,7 +229,7 @@ it('offers one Pins header Create action without a Concept-only chat affordance'
   expect(requested).toBe(1);
 });
 
-it('keeps a new Pins item local until Save and changes Save Concept to Save Hotlink when a prompt appears', async () => {
+it('keeps a new Pins item local until Save and changes Save Concept to Save Instruction when a prompt appears', async () => {
   const saves: unknown[] = [];
   const root = createPinsCreateView({
     existingThreadTitles: ['Existing', '%Duplicate'],
@@ -266,7 +266,7 @@ it('keeps a new Pins item local until Save and changes Save Concept to Save Hotl
   expect(save.disabled).toBe(true);
   title.value = 'handoff';
   title.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  expect(save.textContent).toBe('Save Hotlink');
+  expect(save.textContent).toBe('Save Instruction');
   expect(save.disabled).toBe(false);
   description.value = 'Useful handoff context.';
   link.value = 'https://example.com/handoff';
@@ -290,7 +290,7 @@ it('keeps a new Pins item local until Save and changes Save Concept to Save Hotl
   expect(pinsObjectKind(1, '')).toBe('thread');
 });
 
-it('uses # for Concepts, % for Hotlinks, generic editor copy, and no empty Pins divider', () => {
+it('uses # for Concepts, % for Instructions, generic editor copy, and no empty Pins divider', () => {
   const common = {
     sortKey: 'saved' as const,
     sortDirection: 'desc' as const,
@@ -318,7 +318,7 @@ it('uses # for Concepts, % for Hotlinks, generic editor copy, and no empty Pins 
   expect(savePrompt.textContent).toBe('Save Concept');
   prompt.value = 'Use this context when chatting.';
   prompt.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  expect(savePrompt.textContent).toBe('Save Hotlink');
+  expect(savePrompt.textContent).toBe('Save Instruction');
   expect(concept.querySelector('.quilt-detail-summary')?.classList.contains('is-empty')).toBe(true);
 
   const hotlink = createQuiltDetail({
@@ -610,7 +610,7 @@ it('keeps the Thread-owned prompt above Pins, editable, and available from title
   expect(promptCard.compareDocumentPosition(pinList) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(promptCard.textContent).toContain('Prompt');
   expect(promptCard.textContent).toContain(
-    'What should Eve know or do when chatting about this? Filling this in will turn the save button to Save Hotlink.'
+    'What should Eve know or do when chatting about this? Filling this in will turn the save button to Save Instruction.'
   );
   const input = promptCard.querySelector<HTMLTextAreaElement>('.thread-prompt-input')!;
   const savePrompt = promptCard.querySelector<HTMLButtonElement>('.thread-prompt-save')!;

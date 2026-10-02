@@ -49,7 +49,7 @@ it('renders honest local status and wires rebuild/open through the narrow archiv
 
   dom.window.document.getElementById('archiveOpenStatic')!.click();
   await vi.waitFor(() => expect(archiveOpenStatic).toHaveBeenCalledTimes(1));
-  await vi.waitFor(() => expect(dom.window.document.getElementById('archiveActionStatus')?.textContent).toBe('Static recovery browser opened.'));
+  await vi.waitFor(() => expect(dom.window.document.getElementById('archiveActionStatus')?.textContent).toBe('Archive browser opened.'));
 });
 
 it('shows runtime and open failures without inventing local-file authority', async () => {

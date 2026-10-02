@@ -30,7 +30,8 @@ import {
   loadPetAsset,
   petLibraryState,
   setPetEnabled,
-  setPetFavorite
+  setPetFavorite,
+  setPetName
 } from '../src/main/pet-library.js';
 
 let temporary = '';
@@ -103,6 +104,39 @@ describe('simple compatible pet library', () => {
       expect.objectContaining({ id: 'willow', previewDataUrl: 'data:image/png;base64,cHJldmlldw==' })
     ]));
     expect(fs.readdirSync(path.join(temporary, 'pets', 'willow')).toSorted()).toEqual(['animations.json', 'atlas.png', 'pet.json']);
+  });
+
+  it('lets the user rename a pet without touching its package, and go back to the original name', async () => {
+    importPet(packagePet('willow'));
+    const renamed = setPetName('willow', '  Garfield   the  Cat ');
+    expect(renamed.pets.find(pet => pet.id === 'willow')).toMatchObject({ displayName: 'Garfield the Cat', originalName: 'Willow' });
+    const manifest = JSON.parse(fs.readFileSync(path.join(temporary, 'pets', 'willow', 'pet.json'), 'utf8'));
+    expect(manifest.displayName).toBe('Willow');
+    // Bundled packages are read-only, but their display name can still be changed.
+    expect(setPetName(BUNDLED_ID, 'Odie').pets.find(pet => pet.id === BUNDLED_ID)).toMatchObject({ displayName: 'Odie', originalName: 'Buddy' });
+    // A name survives a restart, and asking for the original (an empty name) clears it.
+    await initPetLibrary(temporary, path.join(temporary, 'bundled'));
+    expect(petLibraryState().pets.find(pet => pet.id === 'willow')?.displayName).toBe('Garfield the Cat');
+    const reset = setPetName('willow', '   ');
+    const willow = reset.pets.find(pet => pet.id === 'willow')!;
+    expect(willow.displayName).toBe('Willow');
+    expect(willow.originalName).toBeUndefined();
+    expect(() => setPetName('missing', 'Nobody')).toThrow('not installed');
+    // Deleting a pet forgets its name so a later import with the same id starts clean.
+    setPetName('willow', 'Garfield');
+    deletePet('willow');
+    importPet(packagePet('willow'));
+    expect(petLibraryState().pets.find(pet => pet.id === 'willow')?.displayName).toBe('Willow');
+  });
+
+  it('keeps optional per-language descriptions and ignores malformed ones', () => {
+    importPet(packagePet('luna', { descriptions: { 'sv-SE': ' En lugn vän ', 'es-419': 'Una amiga tranquila', 'not a tag': 'x', fr: 42, de: '' } }));
+    const luna = petLibraryState().pets.find(pet => pet.id === 'luna')!;
+    expect(luna.description).toBe('luna friend');
+    expect(luna.descriptions).toEqual({ 'sv-SE': 'En lugn vän', 'es-419': 'Una amiga tranquila' });
+    expect(JSON.parse(fs.readFileSync(path.join(temporary, 'pets', 'luna', 'pet.json'), 'utf8')).descriptions).toEqual(luna.descriptions);
+    importPet(packagePet('plain', { descriptions: 'nope' }));
+    expect(petLibraryState().pets.find(pet => pet.id === 'plain')?.descriptions).toBeUndefined();
   });
 
   it('allows several active pets and keeps favorites as presentation order only', () => {

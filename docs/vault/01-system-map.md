@@ -105,6 +105,10 @@ View / Chat  <---->  Pins  <---->  Plans  <---->  Schedule
                     same session sidebar
 ```
 
+All user-facing text goes through one localization layer (`src/renderer/i18n.ts` with the English-keyed
+catalogs in `src/renderer/locales/`); the main process only hands it English source text or templates with
+the agent's name as `{0}`. See [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md).
+
 Pins, Plans and Schedule are not separate projects. The conversation list remains visible so the user
 can move between live chat, harvested knowledge, live work and schedule/routine state without hunting
 for which chat owns an item. Schedule remains a first-class durable workspace rather than a Thread

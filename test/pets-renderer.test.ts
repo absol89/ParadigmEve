@@ -45,7 +45,7 @@ it('renders the library and wires import, multi-enable, favorite, delete, previe
   initPets(runtime);
 
   await vi.waitFor(() => expect(w.document.querySelectorAll('.pet-library-card')).toHaveLength(2));
-  expect(w.document.getElementById('petsCount')!.textContent).toContain('2 pets');
+  expect(w.document.getElementById('petsCount')!.textContent).toContain('2 avatars');
   // A bundled pet can be turned off but never deleted.
   expect(w.document.querySelector('[data-pet-id="hammy"] .plugin-destructive')).toBeNull();
 

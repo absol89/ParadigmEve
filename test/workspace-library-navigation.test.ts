@@ -299,7 +299,7 @@ it('keeps per-Thread preview privacy across renderer repaints as a local UI pref
   const library = await import('../src/renderer/workspace-library.js');
   await library.refreshPinsSurface();
   expect(w.document.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-    .toContain('%Hotlinks');
+    .toContain('%Instructions');
   const threadsTab = [...w.document.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     .find(button => button.textContent?.startsWith('%Threads'))!;
   threadsTab.click();

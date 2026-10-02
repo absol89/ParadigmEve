@@ -989,7 +989,7 @@ describe('model-facing surfaces', () => {
                 // 2.2.3 exposes the complete strict Pins/Thread/Concept/Quilt mutation contract in
                 // one tool instead of splitting related durable operations across extra schemas.
                 // 2.2.8 adds the Thread prompt and Pin Heart mutations the app already owned
-                // (4,848 bytes), so Eve can maintain %Hotlinks without editing pins.json.
+                // (4,848 bytes), so Eve can maintain %Instructions without editing pins.json.
                 ? 4_900
               : tool.name === 'exec_command'
                 // Windows carries `WINDOWS_SHELL_GUIDANCE` in the same description, and that text

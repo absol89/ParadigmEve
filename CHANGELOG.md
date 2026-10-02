@@ -13,6 +13,36 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.4] — Speaking your language
+
+### Added
+
+- Latin American Spanish (`es-419`) alongside English and Swedish: a full app catalog, a language picker in Setup and
+  Settings, and Spanish pet descriptions. Every language shares the same English-keyed catalogs.
+- The localhost setup guide opens in Eve's language, has a three-language picker, shows Eve's coffee cup as its header
+  icon and favicon, and translates the connector description users paste into ChatGPT.
+- The installation's agent name (and its possessive: `'s` in English, `s` in Swedish, `de` in Spanish) now replaces the
+  default "Eve" throughout the interface; "Eve Browser" and "Eve Plugins" stay product names.
+- Localized aliases for the shipped starters (`%utgifter`, `%gastos`, `%hur`, `%cómo`, `%organisera`, `%organizar`,
+  `plan`/`planer`/`planen`/`planes`) route to `%expenses`, `%how`, `%organize` and `#plans` for context injection, the
+  Expenses project binding and in-chat links. A routed alias tells Eve which language it is and to answer in it when
+  the rest of the message agrees.
+- Pets can be renamed from their menu (display name only; the package folder and `pet.json` are untouched) and
+  `pet.json` accepts optional per-language `descriptions`.
+
+### Changed
+
+- `%Hotlink` is now `%Instruction` (`%Instruktion`, `%Instrucción`). Stored data and behavior are unchanged.
+- The Pins screen shows the shipped starters under their localized names in Swedish and Spanish.
+- **Open static archive** is now **Open Archive Browser** (**Opening Archive Browser…** while it works), in every
+  language, and on Windows it brings the browser window it opened to the front.
+
+### Fixed
+
+- The static chat archive's search box hides non-matching chats again (the chat-link `display` rule overrode `hidden`).
+- Connector card text that embeds the per-install name, and the Avatar count labels, are translated instead of
+  falling back to English.
+
 ## [2.3.3] — Compaction and recovery fixes
 
 ### Fixed

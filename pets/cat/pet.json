@@ -3,5 +3,9 @@
   "version": 1,
   "id": "cat",
   "displayName": "Miso",
-  "description": "An adorable orange tabby kitten with huge glossy green eyes, white paws and chest, a fluffy white-tipped curled tail, and a sage green scarf."
+  "description": "An adorable orange tabby kitten with huge glossy green eyes, white paws and chest, a fluffy white-tipped curled tail, and a sage green scarf.",
+  "descriptions": {
+    "sv-SE": "En bedårande orange tabbykattunge med enorma blanka gröna ögon, vita tassar och bröst, en yvig krullad svans med vit spets och en salviagrön halsduk.",
+    "es-419": "Un adorable gatito atigrado naranja con enormes ojos verdes y brillantes, patas y pecho blancos, una cola esponjosa y enroscada con la punta blanca, y una bufanda verde salvia."
+  }
 }

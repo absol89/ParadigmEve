@@ -1,4 +1,4 @@
-import { ui, uiText, t, initLanguage } from './i18n.js';
+import { ui, uiText, t, tNamed, initLanguage, currentLanguage, setAgentName, onLanguageChange } from './i18n.js';
 import { paintPluginRefreshReminder } from './plugin-refresh-reminder.js';
 import { initUsage, refreshUsage } from './usage.js';
 import { initSidebarResize } from './sidebar-resize.js';
@@ -62,6 +62,11 @@ declare global {
 
 const api = window.api;
 initLanguage();
+// Keep the main process's copy of the language current so the next startup splash speaks it.
+const reportLanguage = (): void => { void api.setUiLanguage?.(currentLanguage()); };
+reportLanguage();
+onLanguageChange(reportLanguage);
+onLanguageChange(() => { if (state) $('connectorCards').replaceChildren(...connectorCards(state)); });
 ui($('archiveDestination'), 'textContent', archiveWorkspaceLabel);
 
 /** Product browser choices come from one canonical list, not whatever option nodes a packaged
@@ -495,7 +500,7 @@ $('openStaticArchiveMenu').addEventListener('click', async () => {
   const result = await run(api.archiveOpenStatic());
   if (!result) return;
   toast(result.ok
-    ? t('Static recovery browser opened.')
+    ? t('Archive browser opened.')
     : t('Static archive could not be opened: {0}', [result.error]));
 });
 document.addEventListener('keydown', (event) => {
@@ -1344,6 +1349,7 @@ function apply(next: AppState): void {
   applyPluginsState(next);
   const previousState = state;
   state = next;
+  setAgentName(next.config.mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME);
   applying = true;
   const { config, status } = next;
   const execution = config.execution ?? DEFAULT_AGENT_EXECUTION_SETTINGS;
@@ -1748,7 +1754,7 @@ function connectorCards(next: AppState): HTMLElement[] {
       el('span', 'tag', () => t(surface.optional ? 'optional' : 'required')),
       el('span', `pill is-${surface.state}`, () => t(SURFACE_STATE_TEXT[surface.state]))
     );
-    card.append(head, el('p', 'hint', () => t(surface.cardSummary)));
+    card.append(head, el('p', 'hint', () => tNamed(surface.cardSummary, surface.connectorName)));
 
     if (!surface.available) {
       card.append(el('p', 'hint', surface.detail));
@@ -1756,7 +1762,7 @@ function connectorCards(next: AppState): HTMLElement[] {
     }
 
     card.append(copyRow(() => t("Name"), surface.connectorName, 'Name'));
-    card.append(copyRow(() => t("Description"), surface.description, 'Description'));
+    card.append(copyRow(() => t("Description"), tNamed(surface.description, surface.connectorName), 'Description'));
 
     // On the OpenAI method the connector is picked from a list of tunnels instead of
     // pasted as a URL, so showing a loopback address there would only mislead.
@@ -2424,7 +2430,7 @@ $('guidedSetup').addEventListener('click', async () => {
     }
   }
 
-  const next = await run(api.startGuidedSetup());
+  const next = await run(api.startGuidedSetup(currentLanguage()));
   if (next) {
     paintGuidedSetup(next);
   } else {

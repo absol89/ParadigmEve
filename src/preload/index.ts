@@ -149,6 +149,8 @@ const api = {
   petsSetEnabled: (id: string, enabled: boolean) => call<PetLibraryState>('pets:enabled', { id, enabled }),
   petsSetFavorite: (id: string, favorite: boolean) => call<PetLibraryState>('pets:favorite', { id, favorite }),
   petsDelete: (id: string) => call<PetLibraryState>('pets:delete', { id }),
+  setUiLanguage: (language: 'en' | 'sv-SE' | 'es-419') => call<boolean>('ui:setLanguage', { language }),
+  petsRename: (id: string, name: string) => call<PetLibraryState>('pets:rename', { id, name }),
   petsAsset: (id: string, preview = false) => call<PetRuntimeAsset>('pets:asset', { id, preview }),
   onPetOverlayStateChanged: (listener: (state: PetOverlayControlState) => void): (() => void) => {
     const wrapped = (_event: unknown, state: PetOverlayControlState): void => listener(state);
@@ -205,7 +207,7 @@ const api = {
     call<SessionList>('sessions:list', options ?? {}),
   listProjects: () => call<LocalProject[]>('projects:list'),
   addProject: () => call<LocalProject | null>('projects:add'),
-  startExpenses: (language: 'en' | 'sv-SE') => call<{ project: LocalProject; session: SessionSummary | null } | null>('projects:startExpenses', { language }),
+  startExpenses: (language: 'en' | 'sv-SE' | 'es-419') => call<{ project: LocalProject; session: SessionSummary | null } | null>('projects:startExpenses', { language }),
   removeProject: (id: string) => call<LocalProject>('projects:remove', { id }),
   linkNativeProject: (id: string, value: string | null) => call<LocalProject>('projects:linkNative', { id, value }),
   listPlans: () => call<PlanLibrary>('plans:list'),
@@ -312,7 +314,7 @@ const api = {
   openExtensionFolder: () => call<string>('bridge:openExtensionFolder'),
   setupStatus: () => call<SetupAssistantSnapshot>('setup:status'),
   completeSetup: () => call<AppState>('setup:complete'),
-  startGuidedSetup: () => call<SetupAssistantSnapshot>('setup:start'),
+  startGuidedSetup: (language: 'en' | 'sv-SE' | 'es-419') => call<SetupAssistantSnapshot>('setup:start', { language }),
   stopGuidedSetup: () => call<SetupAssistantSnapshot>('setup:stop'),
   onSetupChanged: (listener: (snapshot: SetupAssistantSnapshot) => void): (() => void) => {
     const wrapped = (_event: unknown, snapshot: SetupAssistantSnapshot): void => listener(snapshot);

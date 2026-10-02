@@ -96,7 +96,7 @@ export interface Quilt {
   id: string;
   title: string;
   description?: string;
-  /** Optional safe URL or absolute local resource destination for this Thread/Hotlink. */
+  /** Optional safe URL or absolute local resource destination for this Thread/Instruction. */
   link?: string;
   /** User-maintained opening guidance for this Thread. It is not an ordinary Pin. */
   prompt?: string;
