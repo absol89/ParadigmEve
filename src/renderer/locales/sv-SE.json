@@ -1836,5 +1836,13 @@
   "Cloud · not added yet": "Moln · inte tillagd än",
   "Can read images": "Kan läsa bilder",
   "No models on this computer. Pull one with ollama pull, or turn Local only off.": "Inga modeller på den här datorn. Hämta en med ollama pull, eller stäng av Endast lokalt.",
-  "No models match.": "Inga modeller matchar."
+  "No models match.": "Inga modeller matchar.",
+  "GPT worker limit": "Gräns för GPT-arbetare",
+  "Maximum GPT workers active at once for one owner. Requires the Companion extension to be loaded and connected.": "Högst så många GPT-arbetare åt gången per ägare. Kräver att Companion-tillägget är laddat och anslutet.",
+  "Local Ollama worker limit": "Gräns för lokala Ollama-arbetare",
+  "Maximum workers using models on this computer.": "Högst så många arbetare som använder modeller på den här datorn.",
+  "Ollama Cloud worker limit": "Gräns för Ollama Cloud-arbetare",
+  "Maximum Ollama Cloud workers active at once.": "Högst så många Ollama Cloud-arbetare åt gången.",
+  "Use tools directly in Ollama chats": "Använd verktyg direkt i Ollama-chattar",
+  "When off, Ollama keeps the conversation but delegates tool work to workers.": "När det är av behåller Ollama samtalet men lämnar verktygsarbete till arbetare."
 }

@@ -1406,7 +1406,7 @@ async function retireFailedCommandTab(entry) {
       failedCommand: { id: entry.id, client: entry.client } }, { documentId: source.documentId });
     const latest = await chrome.tabs.get(source.tab);
     if (proof?.safe === true && proof.conversationId === null && proof.navigationEpoch === source.navigationEpoch &&
-        latest && !latest.pinned && !latest.pendingUrl && latest.url === url && ownsDocument(source)) await closeTabLogged(source.tab, 'failed-command-tab', 'ack-journal custody');
+        latest && !latest.pinned && !latest.pendingUrl && latest.url === url && ownsDocument(source)) await closeTabLogged(source.tab, latest, 'failed-command-tab', 'ack-journal custody');
   } catch { /* A busy, edited, replaced or unreadable page stays open. */ }
 }
 
@@ -1948,16 +1948,18 @@ function tabMarkers(tab) {
   } catch { return ''; }
 }
 function reportTabEvent(action, reason, tab, extra = {}) {
-  try {
-    void call('/tab-event', { method: 'POST', body: JSON.stringify({
-      action, reason, tabId: typeof tab?.id === 'number' ? tab.id : null,
-      conversationId: conversationForTab(tab) || null, markers: tabMarkers(tab), ...extra
-    }) }).catch(() => undefined);
-  } catch { /* diagnostics only */ }
+  // Only once paired: a report never starts discovery or provisioning on its own, and it is sent
+  // after the current step so it never delays or reorders the tab action it describes.
+  if (!token || disconnected) return;
+  const body = { action, reason, tabId: typeof tab?.id === 'number' ? tab.id : null,
+    conversationId: conversationForTab(tab) || null, markers: tabMarkers(tab), ...extra };
+  setTimeout(() => {
+    try { void call('/tab-event', { method: 'POST', body: JSON.stringify(body) }).catch(() => undefined); } catch { /* diagnostics only */ }
+  }, 0);
 }
-async function closeTabLogged(tabId, reason, proof = '') {
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  reportTabEvent('close', reason, tab || { id: tabId }, proof ? { proof } : {});
+/** `tab` is the tab state the caller just checked; it is only read for the report. */
+async function closeTabLogged(tabId, tab, reason, proof = '') {
+  reportTabEvent('close', reason, { ...tab, id: tabId }, proof ? { proof } : {});
   await chrome.tabs.remove(tabId);
 }
 
@@ -2050,7 +2052,7 @@ async function retireTerminalInputMarkers(activeIds, retiredIds) {
     const current = await chrome.tabs.get(tab.id).catch(() => null);
     if (proof?.safe !== true || proof.navigationEpoch !== source.navigationEpoch || !ownsDocument(source) ||
         !current || current.pinned || current.pendingUrl || desktopInputMarker(current) !== id) continue;
-    await closeTabLogged(tab.id, 'terminal-input-marker', 'page close check + same marker');
+    await closeTabLogged(tab.id, current, 'terminal-input-marker', 'page close check + same marker');
     delete inputOpenings[id];
     changed = true;
   }
@@ -2290,7 +2292,7 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
         const helperUrl = String(current.url || '').includes(marker) ||
           (currentUrl.searchParams.get('temporary-chat') === 'true' && /^\/c\/[0-9a-f-]{36}$/i.test(currentUrl.pathname));
         if (proof?.safe === true && ownsDocument(source) && !current.pinned && !current.pendingUrl && helperUrl &&
-            (input.retire === true || (successor && replacements.some(next => matchesInput(next, successor))))) await closeTabLogged(tab.id, 'decision-helper', 'helper marker + page close check');
+            (input.retire === true || (successor && replacements.some(next => matchesInput(next, successor))))) await closeTabLogged(tab.id, current, 'decision-helper', 'helper marker + page close check');
       } catch { /* only the exact still-owned temporary document may close */ }
       continue;
     }
@@ -2365,13 +2367,18 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
       await elect(input.id, { tab: tab.id, stage: 'ready', conversationId: target });
       tabs.push(tab);
       if (!target) {
-        const ready = await waitFreshDesktopInputTarget(tab.id, input.id);
-        if (!ready || !await prepareDesktopInputTarget(ready, null)) continue;
-        offerDesktopInput(ready.id, { type: 'clf-desktop-input', id: input.id, conversationId: null,
-          ...(!target && projectEntryOf(input) ? { projectEntry: projectEntryOf(input) } : {}),
-          ...(input.directTurn ? { directTurn: input.directTurn } : {}),
-          ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}),
-          ...(input.lifetime ? { lifetime: input.lifetime } : {}) });
+        // Detached: the wait for this tab's load must not hold the maintenance flight (other inputs,
+        // pruning and the next wake). The content-side durable claim stays the one delivery fence.
+        const createdId = tab.id;
+        void (async () => {
+          const ready = await waitFreshDesktopInputTarget(createdId, input.id);
+          if (!ready || !await prepareDesktopInputTarget(ready, null)) return;
+          offerDesktopInput(ready.id, { type: 'clf-desktop-input', id: input.id, conversationId: null,
+            ...(projectEntryOf(input) ? { projectEntry: projectEntryOf(input) } : {}),
+            ...(input.directTurn ? { directTurn: input.directTurn } : {}),
+            ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}),
+            ...(input.lifetime ? { lifetime: input.lifetime } : {}) });
+        })().catch(() => undefined);
       }
       continue;
     }
@@ -2542,7 +2549,7 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
       const proof = await Promise.race([chrome.tabs.sendMessage(tab.id, { type: 'clf-plugin-refresh-state', id }).catch(() => null), new Promise(resolve => { timer = setTimeout(() => resolve(null), 3000); })]).finally(() => clearTimeout(timer));
       if (proof?.safe !== true) return;
       const current = await chrome.tabs.get(tab.id).catch(() => null);
-      if (current && !current.pinned && !current.pendingUrl && pluginRefreshMarker(current) === id) await closeTabLogged(tab.id, 'plugin-refresh-helper', 'plugin refresh marker');
+      if (current && !current.pinned && !current.pendingUrl && pluginRefreshMarker(current) === id) await closeTabLogged(tab.id, current, 'plugin-refresh-helper', 'plugin refresh marker');
     }
     if (!requests.length) return;
     const held = tabs.find(tab => requests.some(request => request.id === pluginRefreshMarker(tab)));
@@ -2666,7 +2673,7 @@ function inspectRequestedModels(request) {
           const latest = await chrome.tabs.get(candidate.id);
           if (proof?.safe !== true || proof.conversationId !== null || proof.navigationEpoch !== source.navigationEpoch || !ownsDocument(source) ||
             latest.pinned || latest.pendingUrl || latest.url !== candidate.url) continue;
-          await closeTabLogged(candidate.id, 'model-catalog-helper', 'empty catalog helper page');
+          await closeTabLogged(candidate.id, latest, 'model-catalog-helper', 'empty catalog helper page');
         } catch { /* Busy, drafting or changed documents keep their tab for ordinary maintenance. */ }
       }
     };
@@ -2802,7 +2809,7 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
       const latest = await chrome.tabs.get(tab.id);
       if (latest.pinned || (idlePage && latest.active) || latest.pendingUrl || conversationFromUrl(latest.url) !== conversationId || !ownsDocument(source) || journalCountForConversation(conversationId) > 0) continue;
 
-      await closeTabLogged(tab.id, idlePage ? 'idle-managed-tab' : 'retired-managed-tab', 'app tab policy + page close check');
+      await closeTabLogged(tab.id, latest, idlePage ? 'idle-managed-tab' : 'retired-managed-tab', 'app tab policy + page close check');
       remaining = remaining.filter(other => other.id !== tab.id);
       // A superseded source gets one close. Report the census without it at once, so the app
       // spends that close before the user can reopen the chat for review and see it closed again.
@@ -3487,7 +3494,7 @@ const HANDLERS = {
           const latest = await chrome.tabs.get(source.tab);
           if (proof?.safe === true && proof.conversationId === conversationId && proof.navigationEpoch === source.navigationEpoch &&
               !latest.pinned && !latest.pendingUrl && ownsDocument(source) && conversationFromUrl(latest.url) === conversationId &&
-              journalCountForConversation(conversationId) === 0) await closeTabLogged(source.tab, 'answered-helper', 'accepted answer + page close check');
+              journalCountForConversation(conversationId) === 0) await closeTabLogged(source.tab, latest, 'answered-helper', 'accepted answer + page close check');
         }
       } catch { /* already closed; the accepted app-side answer remains authoritative */ }
     }

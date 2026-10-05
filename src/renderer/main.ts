@@ -835,7 +835,8 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark' } = {}): Prom
     agentRuntime: {
       ollama: {
         endpoint: $<HTMLInputElement>('ollamaWorkerEndpoint').value.trim(),
-        model: $<HTMLInputElement>('ollamaWorkerModel').value.trim()
+        model: $<HTMLInputElement>('ollamaWorkerModel').value.trim(),
+        chatDirectTools: $<HTMLInputElement>('ollamaChatDirectTools').checked
       }
     },
     capabilities,
@@ -1462,6 +1463,14 @@ function apply(next: AppState): void {
     (config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.model,
     (previousState?.config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.model
   );
+  applyChecked(
+    $<HTMLInputElement>('ollamaChatDirectTools'),
+    (config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.chatDirectTools ?? true,
+    (previousState?.config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.chatDirectTools ?? true
+  );
+  applyValue($<HTMLInputElement>('maGptWorkers'), String(config.multiAgent.maxGptWorkers ?? config.multiAgent.maxWorkers), String(previousState?.config.multiAgent.maxGptWorkers ?? previousState?.config.multiAgent.maxWorkers ?? config.multiAgent.maxWorkers));
+  applyValue($<HTMLInputElement>('maOllamaLocalWorkers'), String(config.multiAgent.maxOllamaLocalWorkers ?? config.multiAgent.maxWorkers), String(previousState?.config.multiAgent.maxOllamaLocalWorkers ?? previousState?.config.multiAgent.maxWorkers ?? config.multiAgent.maxWorkers));
+  applyValue($<HTMLInputElement>('maOllamaCloudWorkers'), String(config.multiAgent.maxOllamaCloudWorkers ?? config.multiAgent.maxWorkers), String(previousState?.config.multiAgent.maxOllamaCloudWorkers ?? previousState?.config.multiAgent.maxWorkers ?? config.multiAgent.maxWorkers));
   // Recording is a tool switch like the rest of this list, so it goes through the same
   // dirty-field guard rather than being assigned outright from the Chat panel.
   applyChecked(
@@ -2519,7 +2528,11 @@ for (const id of [
   'agentOrchestratorBackend',
   'agentWorkerBackend',
   'ollamaWorkerEndpoint',
-  'ollamaWorkerModel'
+  'ollamaWorkerModel',
+  'ollamaChatDirectTools',
+  'maGptWorkers',
+  'maOllamaLocalWorkers',
+  'maOllamaCloudWorkers'
 ]) {
   $(id).addEventListener('change', () => void save());
 }

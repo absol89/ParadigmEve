@@ -43,6 +43,8 @@ export interface AgentRuntimeSettings {
   ollama: {
     endpoint: string;
     model: string;
+    /** Direct chat may run Core tools itself; false exposes only worker delegation. */
+    chatDirectTools?: boolean;
   };
 }
 
@@ -53,7 +55,7 @@ export const OLLAMA_CLOUD_ENDPOINT = 'https://ollama.com/v1';
 
 /** A blank Ollama endpoint means the local daemon. */
 export const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
-  ollama: { endpoint: '', model: '' }
+  ollama: { endpoint: '', model: '', chatDirectTools: true }
 };
 
 export function defaultAgentExecutionSettings(flavor: BuildFlavor = BUILD_FLAVOR): AgentExecutionSettings {

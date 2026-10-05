@@ -24,7 +24,7 @@ import { DEFAULT_CORE_CONNECTOR_NAME } from '../shared/types.js';
 import { logInfo, logWarn } from './logger.js';
 import { inheritWorkspace, releasePrimeWorkspace, bindAgentWorkspace } from './workspace.js';
 import { issueLocalAgentExecutionPrincipal, localAgentExecutionPrincipalIssued, revokeLocalAgentExecutionPrincipal, type LocalAgentBackendId, type LocalAgentExecutionPrincipal } from './local-agent-runtime.js';
-import { resolveOllamaEndpoint } from './ollama-client.js';
+import { knownCloudModel, resolveOllamaEndpoint } from './ollama-client.js';
 
 export const PRIME_ID = 'prime';
 
@@ -1139,6 +1139,38 @@ function workingWorkers(run: Run | null): Agent[] {
   );
 }
 
+type WorkerCapacityClass = 'gpt' | 'ollama-local' | 'ollama-cloud' | 'custom';
+
+function ollamaCapacityClass(model: string | null | undefined): WorkerCapacityClass {
+  const configured = model?.trim() || getConfig().agentRuntime.ollama.model.trim();
+  const endpoint = resolveOllamaEndpoint(getConfig().agentRuntime.ollama.endpoint);
+  const cloud = /(?:^|[:-])cloud$/i.test(configured) || knownCloudModel(configured) || (!!endpoint && endpoint.startsWith('https://'));
+  return cloud ? 'ollama-cloud' : 'ollama-local';
+}
+
+function workerCapacityClass(backend: AgentBackendId | null, model?: string | null): WorkerCapacityClass {
+  if (backend === 'ollama') return ollamaCapacityClass(model);
+  if (backend === 'gpt-chat' || backend === 'gpt-work') return 'gpt';
+  return 'custom';
+}
+
+function workerLimitForClass(kind: WorkerCapacityClass): number {
+  const settings = getConfig().multiAgent;
+  if (kind === 'gpt') return settings.maxGptWorkers ?? settings.maxWorkers;
+  if (kind === 'ollama-local') return settings.maxOllamaLocalWorkers ?? settings.maxWorkers;
+  if (kind === 'ollama-cloud') return settings.maxOllamaCloudWorkers ?? settings.maxWorkers;
+  return settings.maxWorkers;
+}
+
+function configuredWorkerClass(): WorkerCapacityClass {
+  const backend = getConfig().execution.worker;
+  return workerCapacityClass(backend, backend === 'ollama' ? getConfig().agentRuntime.ollama.model : null);
+}
+
+function workingWorkersInClass(run: Run | null, kind: WorkerCapacityClass): Agent[] {
+  return workingWorkers(run).filter((agent) => workerCapacityClass(agent.backend, agent.info.model) === kind);
+}
+
 /**
  * How many more workers this run may have awake at once.
  *
@@ -1146,10 +1178,11 @@ function workingWorkers(run: Run | null): Agent[] {
  * seven of them to sleep has seven free slots and eight chats it can go back to, which is the
  * whole shape this mode is now built around.
  */
-export function freeWorkerSlots(runId?: string): number {
+export function freeWorkerSlots(runId?: string, kind: WorkerCapacityClass = configuredWorkerClass()): number {
   const run = scopedRun(runId);
-  if (!run) return runId === undefined && runs.size === 0 ? getConfig().multiAgent.maxWorkers : 0;
-  return Math.max(0, getConfig().multiAgent.maxWorkers - workingWorkers(run).length);
+  const max = workerLimitForClass(kind);
+  if (!run) return runId === undefined && runs.size === 0 ? max : 0;
+  return Math.max(0, max - workingWorkersInClass(run, kind).length);
 }
 
 function recount(agent: Agent): void {
@@ -1595,7 +1628,8 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
       'SPAWN_IN_PROGRESS: another worker spawn is still crossing its durable acceptance barrier. Retry this spawn after that call finishes.'
     );
   }
-  const max = getConfig().multiAgent.maxWorkers;
+  const capacityKind = workerCapacityClass(execution.worker, execution.worker === 'ollama' ? getConfig().agentRuntime.ollama.model : null);
+  const max = workerLimitForClass(capacityKind);
   if (input.workers.length === 0) throw new AgentError('At least one worker is required');
 
   const context = input.context?.trim() ?? '';
@@ -1630,6 +1664,9 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
             'Configure the exact Ollama model in Agent execution settings and omit model/reasoning_effort from this worker.'
         );
       }
+      // Freeze the exact configured Ollama model on admission. Capacity, provenance and the
+      // executor must not change underneath an already-created worker when Settings changes.
+      model = getConfig().agentRuntime.ollama.model.trim() || null;
     }
     // Composed once, here, and stored as *the* task. Everything downstream — the bootstrap
     // the browser types, the repeated-spawn match, the status table, the snapshot — then
@@ -1695,7 +1732,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
 
   // Slot accounting, not membership. Sleeping workers are part of the run and are not counted:
   // a run may own far more of them than it can ever have awake at once, and that is the point.
-  const live = workingWorkers(run);
+  const live = workingWorkersInClass(run, capacityKind);
   // The same request arriving twice is one request. A tool result that never reached
   // ChatGPT leaves a model with no idea its workers exist, and the obvious thing for it to
   // do is ask again; creating a second identical set is how a user ends up with four
@@ -2041,9 +2078,11 @@ function stageMessagesActive(
       // slot is reserved here, synchronously, so two messages to two sleeping workers cannot
       // both be told the same last slot is theirs. Refused rather than queued: a message that
       // sits unread in a chat nobody is going to open is worse than being told to wait.
-      if (!reserved.has(to) && freeWorkerSlots(run?.runId) - reserved.size <= 0) {
+      const targetKind = workerCapacityClass(to.backend, to.info.model);
+      const reservedInClass = [...reserved].filter(agent => workerCapacityClass(agent.backend, agent.info.model) === targetKind).length;
+      if (!reserved.has(to) && freeWorkerSlots(run?.runId, targetKind) - reservedInClass <= 0) {
         throw new AgentError(
-          `NO_FREE_SLOT: ${toId} is asleep and all ${getConfig().multiAgent.maxWorkers} worker slots are busy, so it ` +
+          `NO_FREE_SLOT: ${toId} is asleep and all ${workerLimitForClass(targetKind)} ${targetKind} worker slots are busy, so it ` +
             `cannot be woken right now${where}. Nothing was sent. Wait for a worker to report and try again.`
         );
       }
@@ -2388,13 +2427,15 @@ function planFinish(agent: Agent, result: string): { info: AgentInfo; report: Ag
   // that capacity back to use, because "finished" reads as an ending rather than as capacity
   // coming back. Counting is done against the workers that outlive this one, since `agent`
   // still holds its slot at plan time.
-  const max = getConfig().multiAgent.maxWorkers;
+  const capacityKind = workerCapacityClass(agent.backend, agent.info.model);
+  const max = workerLimitForClass(capacityKind);
   const stillWorking = run
     ? [...run.agents.values()].filter(
         (other) =>
           other.info.role === 'worker' &&
           other.info.id !== agent.info.id &&
-          occupiesSlot(other.info.state)
+          occupiesSlot(other.info.state) &&
+          workerCapacityClass(other.backend, other.info.model) === capacityKind
       ).length
     : 0;
   const free = Math.max(0, max - stillWorking);
@@ -3025,7 +3066,7 @@ export function stageQueuedWorkerRevivals(ids: readonly string[], runId?: string
         message.offeredAt === null &&
         !unpublishedMessages.has(message)
     );
-    if (!hasUnseen || freeWorkerSlots(run.runId) <= 0) continue;
+    if (!hasUnseen || freeWorkerSlots(run.runId, workerCapacityClass(agent.backend, agent.info.model)) <= 0) continue;
     const sleptAt = agent.info.sleptAt;
     beginRevival(agent);
     reserved.push({ agent, sleptAt });

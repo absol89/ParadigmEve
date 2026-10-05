@@ -848,11 +848,15 @@
                   <label class="setting" for="agentOrchestratorBackend"><span class="setting-text"><b>Agent driver</b><em>Used when your agent starts new worker work.</em></span><select id="agentOrchestratorBackend"></select></label>
                   <label class="setting" for="agentWorkerBackend"><span class="setting-text"><b>Worker driver</b><em>Used for newly created workers.</em></span><select id="agentWorkerBackend"></select></label>
                   <label class="setting" for="ollamaWorkerModel"><span class="setting-text"><b>Ollama worker model</b><em>Exact model id for Ollama workers, for example gemma4:cloud. Chats pick their model in the composer.</em></span><input id="ollamaWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="gemma4:cloud" /></label>
+                  <label class="setting" for="maGptWorkers"><span class="setting-text"><b>GPT worker limit</b><em>Maximum GPT workers active at once for one owner. Requires the Companion extension to be loaded and connected.</em></span><input id="maGptWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
+                  <label class="setting" for="maOllamaLocalWorkers"><span class="setting-text"><b>Local Ollama worker limit</b><em>Maximum workers using models on this computer.</em></span><input id="maOllamaLocalWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
+                  <label class="setting" for="maOllamaCloudWorkers"><span class="setting-text"><b>Ollama Cloud worker limit</b><em>Maximum Ollama Cloud workers active at once.</em></span><input id="maOllamaCloudWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
                   <p class="muted">ParadigmEve never falls back to a different driver when the selected one is unavailable.</p>
                 </div>
                 <h2 class="settings-section-title">Ollama</h2>
                 <div class="pane">
                   <label class="setting" for="ollamaWorkerEndpoint"><span class="setting-text"><b>Ollama endpoint</b><em>Leave blank for the Ollama app on this computer. Once you run ollama signin it also serves cloud models (names ending in :cloud). For Ollama Cloud directly, use https://ollama.com/v1 with an API key.</em></span><input id="ollamaWorkerEndpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" /></label>
+                  <label class="setting" for="ollamaChatDirectTools"><span class="setting-text"><b>Use tools directly in Ollama chats</b><em>When off, Ollama keeps the conversation but delegates tool work to workers.</em></span><input id="ollamaChatDirectTools" type="checkbox" /></label>
                   <div class="field">
                     <label for="ollamaKey">Ollama API key (optional)</label>
                     <input id="ollamaKey" type="password" spellcheck="false" placeholder="only for https://ollama.com" autocomplete="off" />
@@ -1052,15 +1056,6 @@
                   </div>
                 <h2 class="settings-section-title">Workers & recovery</h2>
                 <div class="pane">
-                  <label class="setting" for="maWorkers">
-                    <span class="setting-text">
-                      <b>Sub-agents/workers</b>
-                      <em>Requires the Companion extension to be loaded and connected. This sets the most worker chats one run may open.</em>
-                    </span>
-                    <input id="maWorkers" class="num" type="number" min="1" max="8" step="1" />
-                    <span class="unit">max</span>
-                  </label>
-
                   <label class="setting">
                     <span class="setting-text">
                       <b>Allow unattributed calls</b>

@@ -1008,11 +1008,12 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
       return tab;
     });
     await h.maintain();
+    // The offer follows the fresh tab's load on its own, without holding the maintenance flight.
+    await vi.waitFor(() => expect(h.sendMessage).toHaveBeenCalledWith(8, { type: 'clf-desktop-input', id: firstId, conversationId: null }));
     expect(h.create).toHaveBeenCalledTimes(1);
     expect(h.tabs[0]!.url).toBe(url);
     expect(h.tabs[1]!.url).toBe(`https://chatgpt.com/?cos-input=${firstId}#cos-input=${firstId}`);
     expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-prepare-desktop-input')).toBe(false);
-    expect(h.sendMessage).toHaveBeenCalledWith(h.tabs[1]!.id, { type: 'clf-desktop-input', id: firstId, conversationId: null });
   });
   it.each(['explicit-failure', 'ambiguous', 'closed'])('allows a single pre-send fallback only for %s', async reason => {
     const h = await worker([{ id: firstId, conversationId: null }]);

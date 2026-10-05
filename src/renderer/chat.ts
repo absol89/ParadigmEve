@@ -2918,6 +2918,9 @@ export function chatSettingsPatch(current: Config): {
     return Math.min(max, Math.max(min, Math.round(raw)));
   };
   const threshold = number('autoCompactTokens', current.compaction.autoTokens, 10_000, 4_000_000);
+  const maxGptWorkers = number('maGptWorkers', current.multiAgent.maxGptWorkers ?? current.multiAgent.maxWorkers, 1, 8);
+  const maxOllamaLocalWorkers = number('maOllamaLocalWorkers', current.multiAgent.maxOllamaLocalWorkers ?? current.multiAgent.maxWorkers, 1, 8);
+  const maxOllamaCloudWorkers = number('maOllamaCloudWorkers', current.multiAgent.maxOllamaCloudWorkers ?? current.multiAgent.maxWorkers, 1, 8);
   const providerKind = ($<HTMLSelectElement>('goalProvider').value || current.goal.provider?.kind || 'openrouter') as GoalProviderKind;
   const apiModels = goalModelListsForSave();
   return {
@@ -2938,7 +2941,11 @@ export function chatSettingsPatch(current: Config): {
       // The exposure switch lives with every other ChatGPT tool switch, on Home. This
       // panel keeps only the worker count, so it reads the one control that exists.
       enabled: $<HTMLInputElement>('homeMaEnabled').checked,
-      maxWorkers: number('maWorkers', current.multiAgent.maxWorkers, 1, 8),
+      // Legacy field is retained for old snapshots/peers and tracks the broadest configured cap.
+      maxWorkers: Math.max(maxGptWorkers, maxOllamaLocalWorkers, maxOllamaCloudWorkers),
+      maxGptWorkers,
+      maxOllamaLocalWorkers,
+      maxOllamaCloudWorkers,
       allowUnattributedCalls: $<HTMLInputElement>('allowUnattributedCalls').checked,
       recoverAgentTabs: $<HTMLInputElement>('recoverAgentTabs').checked
     },
@@ -3506,7 +3513,6 @@ const CHAT_INPUTS = [
   'sessRetain',
   'autoCompact',
   'autoCompactTokens',
-  'maWorkers',
   'allowUnattributedCalls',
   'recoverAgentTabs',
   'goalBaseUrl',
@@ -3535,7 +3541,6 @@ export function chatApply(state: AppState, previous?: Config): void {
   );
   applyAutoCompactHint(config);
 
-  applyChatValue($<HTMLInputElement>('maWorkers'), String(config.multiAgent.maxWorkers), previous?.multiAgent.maxWorkers);
   applyChatChecked(
     $<HTMLInputElement>('allowUnattributedCalls'),
     config.multiAgent.allowUnattributedCalls,

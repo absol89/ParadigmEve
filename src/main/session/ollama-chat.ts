@@ -24,20 +24,40 @@ import {
 import { appendEvent, createSession, findSessionByConversation, getSession, listAllSessions, setSessionLocalOnly, upsertMessageEvent } from './store.js';
 import { assignSessionProject } from '../projects.js';
 import { userTitle } from './title.js';
-import { getConfig } from '../config.js';
+import { effectiveCapabilities, getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
-import { ensureOllamaModel, ollamaModelCapabilities, streamOllamaChat } from '../ollama-client.js';
+import { ensureOllamaModel, ollamaModelCapabilities, resolveOllamaEndpoint } from '../ollama-client.js';
+import { createOllamaAgentModelRuntime } from '../ollama-agent-runtime.js';
+import { issueLocalAgentExecutionPrincipal, revokeLocalAgentExecutionPrincipal, runLocalAgent, type LocalAgentMessage } from '../local-agent-runtime.js';
+import { localChatCoreTools } from '../local-chat-tools.js';
+import type { ToolContext } from '../mcp/kernel.js';
 import { ollamaConversation, ProviderCapabilityError } from './provider-history.js';
 import { OLLAMA_CONVERSATION_PREFIX, OLLAMA_TURN_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
 
 const OWNER = 'ollama-local';
 const MAX_REPLY_INLINE = 256_000;
-const STREAM_WRITE_MS = 300;
-
-const SYSTEM_PROMPT =
+const SYSTEM_PROMPT_BASE =
   'You are answering one turn of a conversation the user keeps in ParadigmEve. Earlier assistant ' +
-  'messages may have been written by ChatGPT or by other models; treat them as this conversation\'s ' +
-  'own history. Answer the newest user message. You have no tools in this chat.';
+  'messages may have been written by ChatGPT or by other models; treat them as this conversation\'s own history. ';
+
+function chatToolContext(): ToolContext {
+  const config = getConfig();
+  return {
+    roots: config.roots,
+    caps: effectiveCapabilities(config),
+    readOnly: config.readOnly,
+    privacyScreenshots: config.ui.privacyScreenshots,
+    sessionTools: config.sessions.record,
+    agentTools: config.multiAgent.enabled,
+    exposedFinishTool: false
+  };
+}
+
+function chatSystemPrompt(direct: boolean): string {
+  return SYSTEM_PROMPT_BASE + (direct
+    ? 'Use the available ParadigmEve tools whenever they are useful. Tool results are authoritative; never invent a result. Answer the newest user message when the requested work is complete.'
+    : 'You do not have direct filesystem/computer tools. When the request needs tool execution, use delegate_worker and wait for its result. Do not pretend you performed delegated work yourself.');
+}
 
 interface LocalTurn { turnId: string; controller: AbortController }
 const active = new Map<string, LocalTurn>();
@@ -138,7 +158,6 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
   const messageId = `ollama-reply:${entry.id}`;
   let reply = '';
   let written = '';
-  let lastWrite = 0;
   let pending: Promise<unknown> = Promise.resolve();
   const write = (state: 'streaming' | 'final') => {
     const text = reply;
@@ -154,7 +173,6 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
       final: state === 'final'
     })).catch((error: Error) => logWarn(`session ${sessionId}: Ollama reply write failed: ${error.message}`));
     written = text;
-    lastWrite = Date.now();
     return pending;
   };
   try {
@@ -163,16 +181,36 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
     await ensureOllamaModel(provider.model);
     const capabilities = await ollamaModelCapabilities(provider.model);
     const vision = capabilities ? capabilities.includes('vision') : null;
-    const messages = await ollamaConversation(sessionId, vision, SYSTEM_PROMPT);
-    reply = await streamOllamaChat({
-      model: provider.model,
-      messages,
-      signal: controller.signal,
-      onText: (text) => {
-        reply = text;
-        if (Date.now() - lastWrite >= STREAM_WRITE_MS) void write('streaming');
-      }
-    });
+    const settings = getConfig().agentRuntime.ollama;
+    const direct = settings.chatDirectTools !== false;
+    const messages = await ollamaConversation(sessionId, vision, chatSystemPrompt(direct));
+    const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: `chat:${sessionId}`, agentId: turnId });
+    try {
+      const tools = await localChatCoreTools({
+        getContext: chatToolContext,
+        principal,
+        sessionId,
+        conversationId: (await getSession(sessionId))?.conversationId ?? null,
+        mode: direct ? 'direct' : 'delegate'
+      });
+      const result = await runLocalAgent({
+        backend: 'ollama',
+        principal,
+        endpoint: resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
+        model: provider.model,
+        system: '',
+        task: '',
+        initialMessages: messages as LocalAgentMessage[],
+        tools,
+        runtime: createOllamaAgentModelRuntime(),
+        signal: controller.signal,
+        allowNoTools: true
+      });
+      reply = result.final;
+      logInfo(`session ${sessionId}: Ollama ${provider.model} local-agent turn used ${result.toolCalls} tool call(s)`);
+    } finally {
+      revokeLocalAgentExecutionPrincipal(principal);
+    }
     if (!reply.trim()) throw new Error(`${provider.model} returned an empty reply.`);
     await write('final');
     await appendEvent(sessionId, { time: Date.now(), source: 'app', kind: 'turn_end', turnId, outcome: 'completed' });

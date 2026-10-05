@@ -530,7 +530,7 @@ describe('the settings sheet', () => {
   it('asks for a single compaction threshold', () => {
     const pane = document.querySelector('.view[data-view="settings"]')!;
     const numbers = [...pane.querySelectorAll('input[type="number"]')].map((input) => input.id);
-    expect(numbers).toEqual(['sessRetain', 'autoCompactTokens', 'maWorkers']);
+    expect(numbers).toEqual(['maGptWorkers', 'maOllamaLocalWorkers', 'maOllamaCloudWorkers', 'sessRetain', 'autoCompactTokens']);
     for (const id of ['sessAdvisory', 'sessLimit']) {
       expect(document.getElementById(id), `#${id} is back`).toBeNull();
     }

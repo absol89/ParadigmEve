@@ -314,7 +314,7 @@ describe('spawning a run', () => {
     try {
       expect(() => spawn({ workers: [{ task: 'x', model: 'gpt-5.5' }], caller: prime })).toThrow(/omit model\/reasoning_effort/);
       const result = spawn({ workers: [{ task: 'summarize the notes' }], caller: prime });
-      expect(result.created[0]).toMatchObject({ model: null, reasoningEffort: null });
+      expect(result.created[0]).toMatchObject({ model: 'gemma4:cloud', reasoningEffort: null });
       expect(local).toEqual(['worker-1']);
       expect(browser).not.toHaveBeenCalled();
     } finally {
@@ -322,6 +322,41 @@ describe('spawning a run', () => {
       dropBrowser();
       await setEnabled(true);
     }
+  });
+
+  it('enforces separate GPT, local Ollama, and Ollama Cloud worker caps', async () => {
+    const base = defaultConfig();
+
+    await saveConfig({
+      ...base,
+      multiAgent: { ...base.multiAgent, enabled: true, maxWorkers: 8, maxGptWorkers: 1, maxOllamaLocalWorkers: 2, maxOllamaCloudWorkers: 3 },
+      execution: { ...base.execution, worker: 'gpt-chat' }
+    });
+    expect(() => spawn({ caller: prime, workers: [{ task: 'gpt one' }, { task: 'gpt two' }] })).toThrow(/1.*worker slot|limit|worker/i);
+    resetAgentsForTests();
+
+    await saveConfig({
+      ...base,
+      multiAgent: { ...base.multiAgent, enabled: true, maxWorkers: 8, maxGptWorkers: 1, maxOllamaLocalWorkers: 2, maxOllamaCloudWorkers: 3 },
+      execution: { ...base.execution, worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-local-model' } }
+    });
+    const local = spawn({ caller: prime, workers: [{ task: 'local one' }, { task: 'local two' }] });
+    expect(local.created).toHaveLength(2);
+    expect(local.created.every(worker => worker.model === 'fixture-local-model')).toBe(true);
+    expect(() => spawn({ caller: prime, workers: [{ task: 'local three' }] })).toThrow(/2.*worker|slot|limit/i);
+    resetAgentsForTests();
+
+    await saveConfig({
+      ...base,
+      multiAgent: { ...base.multiAgent, enabled: true, maxWorkers: 8, maxGptWorkers: 1, maxOllamaLocalWorkers: 2, maxOllamaCloudWorkers: 3 },
+      execution: { ...base.execution, worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud' } }
+    });
+    const cloud = spawn({ caller: prime, workers: [{ task: 'cloud one' }, { task: 'cloud two' }, { task: 'cloud three' }] });
+    expect(cloud.created).toHaveLength(3);
+    expect(cloud.created.every(worker => worker.model === 'fixture-model:cloud')).toBe(true);
+    expect(() => spawn({ caller: prime, workers: [{ task: 'cloud four' }] })).toThrow(/3.*worker|slot|limit/i);
   });
 
   it('keeps the GPT Chat spawn path unchanged', async () => {

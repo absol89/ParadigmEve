@@ -72,13 +72,14 @@ async function execute(worker: WorkerSpawn): Promise<void> {
 
   try {
     const settings = getConfig().agentRuntime.ollama;
-    await ensureOllamaModel(settings.model);
+    const model = worker.model?.trim() || settings.model;
+    await ensureOllamaModel(model);
     const tools = localAgentCoreTools(coreContext, principal);
     const result = await runLocalAgent({
       backend: 'ollama',
       principal,
       endpoint: resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
-      model: settings.model,
+      model,
       system:
         'You are a bounded ParadigmEve worker. Complete only the task you were given. ' +
         'Use the available local tools when useful, never invent tool results, and return a concise factual result to the owning agent. ' +

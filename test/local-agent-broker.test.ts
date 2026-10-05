@@ -262,7 +262,7 @@ describe('durable Ollama worker settings and readiness fence', () => {
     const legacy = { ...current } as Record<string, unknown>;
     delete legacy.agentRuntime;
     await fs.writeFile(configPath, JSON.stringify(legacy), 'utf8');
-    expect((await loadConfig()).agentRuntime.ollama).toEqual({ endpoint: '', model: '' });
+    expect((await loadConfig()).agentRuntime.ollama).toEqual({ endpoint: '', model: '', chatDirectTools: true });
 
     const configured = getConfig();
     await saveConfig({
@@ -270,7 +270,7 @@ describe('durable Ollama worker settings and readiness fence', () => {
       agentRuntime: { ollama: { endpoint: 'http://localhost:11434/v1', model: 'qwen3:8b' } }
     });
     expect((await loadConfig()).agentRuntime.ollama).toEqual({
-      endpoint: 'http://localhost:11434/v1', model: 'qwen3:8b'
+      endpoint: 'http://localhost:11434/v1', model: 'qwen3:8b', chatDirectTools: true
     });
     expect(ollamaAgentRuntimePrerequisites({
       settings: getConfig().agentRuntime.ollama,

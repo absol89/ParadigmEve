@@ -231,7 +231,8 @@ const settingsPatch = z.object({
   agentRuntime: z.object({
     ollama: z.object({
       endpoint: z.string().max(2048),
-      model: z.string().max(160)
+      model: z.string().max(160),
+      chatDirectTools: z.boolean().optional()
     }).strict()
   }).strict().optional(),
   capabilities: capabilityPatch,
@@ -299,6 +300,9 @@ const settingsPatch = z.object({
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
     maxWorkers: z.number().int().min(1).max(8),
+    maxGptWorkers: z.number().int().min(1).max(8).optional(),
+    maxOllamaLocalWorkers: z.number().int().min(1).max(8).optional(),
+    maxOllamaCloudWorkers: z.number().int().min(1).max(8).optional(),
     allowUnattributedCalls: z.boolean(),
     recoverAgentTabs: z.boolean()
   }),
@@ -410,6 +414,11 @@ function mergeSettings(
           current.agentRuntime.ollama.model,
           base.agentRuntime?.ollama.model ?? current.agentRuntime.ollama.model,
           wanted.agentRuntime.ollama.model
+        ),
+        chatDirectTools: pick(
+          current.agentRuntime.ollama.chatDirectTools,
+          base.agentRuntime?.ollama.chatDirectTools ?? current.agentRuntime.ollama.chatDirectTools,
+          wanted.agentRuntime.ollama.chatDirectTools ?? current.agentRuntime.ollama.chatDirectTools
         )
       }
     } : current.agentRuntime,
@@ -506,6 +515,21 @@ function mergeSettings(
       defaultReasoning: pick(current.multiAgent.defaultReasoning, base.multiAgent.defaultReasoning, wanted.multiAgent.defaultReasoning),
       enabled: pick(current.multiAgent.enabled, base.multiAgent.enabled, wanted.multiAgent.enabled),
       maxWorkers: pick(current.multiAgent.maxWorkers, base.multiAgent.maxWorkers, wanted.multiAgent.maxWorkers),
+      maxGptWorkers: pick(
+        current.multiAgent.maxGptWorkers ?? current.multiAgent.maxWorkers,
+        base.multiAgent.maxGptWorkers ?? base.multiAgent.maxWorkers,
+        wanted.multiAgent.maxGptWorkers ?? wanted.multiAgent.maxWorkers
+      ),
+      maxOllamaLocalWorkers: pick(
+        current.multiAgent.maxOllamaLocalWorkers ?? current.multiAgent.maxWorkers,
+        base.multiAgent.maxOllamaLocalWorkers ?? base.multiAgent.maxWorkers,
+        wanted.multiAgent.maxOllamaLocalWorkers ?? wanted.multiAgent.maxWorkers
+      ),
+      maxOllamaCloudWorkers: pick(
+        current.multiAgent.maxOllamaCloudWorkers ?? current.multiAgent.maxWorkers,
+        base.multiAgent.maxOllamaCloudWorkers ?? base.multiAgent.maxWorkers,
+        wanted.multiAgent.maxOllamaCloudWorkers ?? wanted.multiAgent.maxWorkers
+      ),
       allowUnattributedCalls: pick(
         current.multiAgent.allowUnattributedCalls,
         base.multiAgent.allowUnattributedCalls,

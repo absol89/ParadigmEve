@@ -26,6 +26,11 @@ vi.mock('electron', () => ({
   }
 }));
 vi.mock('../src/main/extension-path.js', () => ({ extensionDir: () => process.cwd() }));
+// The tool loop is under test here, not native Desktop registration: keep it off on every CI host.
+vi.mock('../src/main/platform.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/platform.js')>()),
+  desktopAutomationSupported: () => false
+}));
 vi.mock('../src/main/connection.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/main/connection.js')>();
   return { ...actual, connect: async () => {}, getStatus: () => ({ ...actual.getStatus(), state: 'connected' }) };
@@ -57,6 +62,7 @@ const ollamaRequests: Array<{ url: string; body: any; headers: Record<string, st
 let replyText = 'Hello from Ollama';
 let visionModels = new Set<string>(['llava']);
 let pulled: string[] = [];
+let agentReplies: unknown[] = [];
 /** When set, Ollama's chat answer waits for it: proves a send returned before payload work. */
 let chatGate: Promise<void> | null = null;
 function sse(chunks: string[]): Response {
@@ -65,7 +71,9 @@ function sse(chunks: string[]): Response {
 }
 const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): Promise<Response> => {
   const url = String(resource instanceof Request ? resource.url : resource);
-  if (!url.includes(':11434') && !url.startsWith('https://ollama.com')) return realFetch(resource as never, init);
+  // Fail closed: only the test's own bridge is real; any other unmocked host is a bug, never real network.
+  if (url.startsWith(`http://127.0.0.1:${bridgePort()}/`)) return realFetch(resource as never, init);
+  if (!url.startsWith('http://127.0.0.1:11434/') && !url.startsWith('https://ollama.com/')) throw new Error(`unexpected network request: ${url}`);
   const body = init?.body ? JSON.parse(String(init.body)) : null;
   ollamaRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
   if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: 'gemma4:cloud' }, { id: 'llama3.2' }, { id: 'llava' }] });
@@ -82,6 +90,8 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
   if (url.endsWith('/api/show')) return Response.json({ capabilities: visionModels.has(body.model) ? ['completion', 'vision'] : ['completion'] });
   if (url.endsWith('/v1/chat/completions')) {
     if (chatGate) { const gate = chatGate; ollamaRequests.pop(); await gate; ollamaRequests.push({ url, body, headers: {} }); }
+    if (agentReplies.length) return Response.json(agentReplies.shift());
+    if (body?.stream === false) return Response.json({ choices: [{ message: { content: replyText } }] });
     return sse([replyText.slice(0, 5), replyText.slice(5)]);
   }
   return new Response('not found', { status: 404 });
@@ -125,6 +135,7 @@ beforeEach(async () => {
   input.resetInputForTests();
   ollamaRequests.length = 0;
   pulled = [];
+  agentReplies = [];
   replyText = 'Hello from Ollama';
   await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, enabled: false } });
 });
@@ -160,6 +171,37 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
   expect(chat.headers.authorization).toBeUndefined();
   // The browser transport never sees an Ollama row.
   expect(await input.pendingBrowserInputs()).toEqual([]);
+});
+
+it('lets a direct Ollama chat use an approved local read tool and feeds the result back to the model', async () => {
+  const vault = `${directory}/vault-direct`;
+  await fs.mkdir(vault, { recursive: true });
+  await fs.writeFile(`${vault}/note.md`, 'VAULT TOOL CONTENT\n', 'utf8');
+  const base = defaultConfig();
+  await saveConfig({
+    ...base,
+    roots: [{ name: 'vault', path: vault }],
+    capabilities: { ...base.capabilities, read: true },
+    agentRuntime: { ollama: { ...base.agentRuntime.ollama, chatDirectTools: true } },
+    goal: { ...base.goal, enabled: false }
+  });
+  agentReplies = [
+    { choices: [{ message: { content: '', tool_calls: [{ id: 'read-1', function: { name: 'read', arguments: JSON.stringify({ paths: ['/vault/note.md'] }) } }] } }] },
+    { choices: [{ message: { content: 'I read the Vault note.' } }] }
+  ];
+
+  const id = randomUUID();
+  expect((await send({ id, provider: 'ollama', model: 'llama3.2', text: 'Read the Vault note.' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  const row = (await input.listInputs()).find(entry => entry.id === id)!;
+  const session = (await getSession(row.deliveredSessionId!))!;
+  const events = await finished(session.id, `ollama-turn:${id}`);
+  expect(events.find(event => event.kind === 'assistant_message')).toMatchObject({ message: { text: 'I read the Vault note.' } });
+
+  const chats = ollamaRequests.filter(request => request.url.endsWith('/v1/chat/completions'));
+  expect(chats).toHaveLength(2);
+  const toolMessage = chats[1]!.body.messages.find((message: any) => message.role === 'tool');
+  expect(toolMessage?.content).toContain('VAULT TOOL CONTENT');
 });
 
 it('builds provider-switch consent from canonical messages without scanning the forensic event journal', async () => {

@@ -348,6 +348,10 @@ export interface MultiAgentSettings {
   enabled: boolean;
   /** Upper bound on workers the prime agent may create. */
   maxWorkers: number;
+  /** Backend-specific concurrency limits. `maxWorkers` remains the migration fallback. */
+  maxGptWorkers?: number;
+  maxOllamaLocalWorkers?: number;
+  maxOllamaCloudWorkers?: number;
   /** Permit self-contained calls when browser evidence cannot identify their conversation. */
   allowUnattributedCalls: boolean;
   /**

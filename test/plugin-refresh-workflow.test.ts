@@ -5,6 +5,10 @@ import { expect, it, vi } from 'vitest';
 
 const source = readFileSync(new URL('../extension/content.js', import.meta.url), 'utf8');
 const section = source.slice(source.indexOf('  let pluginRefreshBusy = false;'), source.indexOf('  function catalogPageReady('));
+const background = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
+// The background slices below close tabs through the logged-close helper; an unpaired harness never reports.
+const tabLog = `let token = null; let disconnected = false;
+${background.slice(background.indexOf('function tabMarkers('), background.indexOf('/** Bound waiting for a page'))}`;
 const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const tools = [{ name: 'read', description: 'Read current.', inputSchema: { type: 'object' } }];
 function workflow(options: { unchanged?: boolean; deny?: boolean; navigateDuringClaim?: boolean; refreshAvailable?: boolean; verifyOnly?: boolean } = {}) {
@@ -108,19 +112,17 @@ it('stops automatic retry when a changed schema has no Refresh control', async (
   });
 });
 it('opens an enrolled exact App Id directly in marked settings without name discovery', async () => {
-  const background = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
   const create = vi.fn(async () => ({ id: 9 }));
   const context = vm.createContext({ URL, setTimeout, clearTimeout, CHATGPT_TAB_URLS: ['https://chatgpt.com/*'],
     call: async () => ({ ok: true, data: { requests: [{ id, appId: 'asdk_app_synthetic', surface: 'core' }] } }), createChatTab: create,
     chrome: { storage: { session: { get: async () => ({}), set: async () => {} } }, tabs: { query: async () => [] } }
   });
-  vm.runInContext(`${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   await (context.run as Function)([{ surface: 'core' }], true);
   expect(create).toHaveBeenCalledExactlyOnceWith(`https://chatgpt.com/?eve-plugin-refresh=${id}#settings/Plugins/plugin_asdk_app_synthetic`, true);
 });
 it('migrates an active legacy refresh owner to the Eve marker before reusing its tab', async () => {
-  const background = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
   const tab = { id: 7, url: `https://chatgpt.com/?cos-plugin-refresh=${id}#settings/Plugins`, pinned: false };
   const update = vi.fn(async (_id: number, patch: { url: string }) => { tab.url = patch.url; return tab; });
@@ -131,7 +133,7 @@ it('migrates an active legacy refresh owner to the Eve marker before reusing its
     chrome: { storage: { session: { get: async (key: string) => ({ [key]: saved[key] }), set: async (next: object) => Object.assign(saved, next) } },
       tabs: { query: async () => [tab], get: async () => tab, update, sendMessage, remove: vi.fn() } }
   });
-  vm.runInContext(`${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   await (context.run as Function)([{ surface: 'core' }], true);
   expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/?eve-plugin-refresh=${id}#settings/Plugins` });
   expect(sendMessage).not.toHaveBeenCalled();
@@ -144,7 +146,6 @@ it.each([{ deny: true }, { navigateDuringClaim: true }])('never clicks after den
   expect(h.ask.mock.calls.map(([message]) => message.action)).toEqual(['claim', 'fail']);
 });
 it.each(['unpinned', 'pinned', 'pinned-during-proof'])('reuses management tabs and respects pinning (%s)', async mode => {
-  const background = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
   let requests: object[] = [{ id }];
   const tabs = [{ id: 7, url: `https://chatgpt.com/?eve-plugin-refresh=${id}#settings/Plugins`, pinned: false }, { id: 8, url: 'https://chatgpt.com/c/user-conversation', pinned: false }];
@@ -155,7 +156,7 @@ it.each(['unpinned', 'pinned', 'pinned-during-proof'])('reuses management tabs a
     call: async () => ({ ok: true, data: { requests } }), createChatTab: create,
     chrome: { storage: { session: { get: async () => ({}), set: async () => {} } }, tabs: { query: async () => tabs, get: async (id: number) => tabs.find(tab => tab.id === id), remove, sendMessage } }
   });
-  vm.runInContext(`${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   const run = () => (context.run as Function)([{ surface: 'core' }], true);
   await Promise.all([run(), run()]);
   expect(create).not.toHaveBeenCalled();
@@ -181,7 +182,6 @@ it.each(['unpinned', 'pinned', 'pinned-during-proof'])('reuses management tabs a
 // none was ever reused or closed (ParadigmEve 2026-09-29; upstream chat-on-steroids 534d3ae).
 const pathRouted = `https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}`;
 it('reuses and retires helper tabs on the path-routed settings page too', async () => {
-  const background = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8');
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
   let requests: object[] = [{ id }];
   const tabs = [{ id: 7, url: pathRouted, pinned: false }];
@@ -192,7 +192,7 @@ it('reuses and retires helper tabs on the path-routed settings page too', async 
     call: async () => ({ ok: true, data: { requests } }), createChatTab: create,
     chrome: { storage: { session: { get: async () => ({}), set: async () => {} } }, tabs: { query: async () => tabs, get: async (tabId: number) => tabs.find(tab => tab.id === tabId), remove, sendMessage, update: vi.fn() } }
   });
-  vm.runInContext(`${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   const run = () => (context.run as Function)([{ surface: 'core' }], true);
   // No session owner record (a reloaded Companion): the existing helper is found by its marker, not reopened.
   await run();

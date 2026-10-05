@@ -88,9 +88,14 @@ export interface LocalAgentToolCall {
   arguments: unknown;
 }
 
+export type LocalAgentContent = string | Array<
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+>;
+
 export type LocalAgentMessage =
-  | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls?: LocalAgentToolCall[] }
+  | { role: 'system' | 'user'; content: LocalAgentContent }
+  | { role: 'assistant'; content: LocalAgentContent; toolCalls?: LocalAgentToolCall[] }
   | { role: 'tool'; content: string; toolCallId: string; name: string; isError: boolean };
 
 export type LocalAgentCompletion =
@@ -149,6 +154,7 @@ export function localAgentRuntimePrerequisites(input: {
   endpoint?: string | null;
   model?: string | null;
   tools?: readonly LocalAgentTool[] | null;
+  allowNoTools?: boolean;
 }): LocalAgentRuntimePrerequisites {
   const principal = input.principal;
   if (!localAgentExecutionPrincipalIssued(principal)) {
@@ -180,7 +186,7 @@ export function localAgentRuntimePrerequisites(input: {
   if (!model || model.length > 160) {
     return { ready: false, reason: 'model-missing', detail: 'A concrete local-agent model id is required.' };
   }
-  if (!input.tools?.length) {
+  if (!input.allowNoTools && !input.tools?.length) {
     return {
       ready: false,
       reason: 'tools-unavailable',
@@ -188,7 +194,7 @@ export function localAgentRuntimePrerequisites(input: {
     };
   }
   const names = new Set<string>();
-  for (const tool of input.tools) {
+  for (const tool of input.tools ?? []) {
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(tool.name) || names.has(tool.name)) {
       return {
         ready: false,
@@ -208,11 +214,14 @@ export interface RunLocalAgentOptions {
   model: string;
   system: string;
   task: string;
+  /** Exact prebuilt conversation, used by direct local chat. Worker callers omit this. */
+  initialMessages?: readonly LocalAgentMessage[];
   tools: readonly LocalAgentTool[];
   runtime: LocalAgentModelRuntime;
   signal?: AbortSignal;
   maxTurns?: number;
   maxToolCalls?: number;
+  allowNoTools?: boolean;
 }
 
 export interface LocalAgentRunResult {
@@ -235,10 +244,12 @@ export async function runLocalAgent(options: RunLocalAgentOptions): Promise<Loca
   }
   const maxTurns = Math.max(1, Math.min(128, Math.floor(options.maxTurns ?? 32)));
   const maxToolCalls = Math.max(1, Math.min(512, Math.floor(options.maxToolCalls ?? 64)));
-  const messages: LocalAgentMessage[] = [
-    { role: 'system', content: options.system },
-    { role: 'user', content: options.task }
-  ];
+  const messages: LocalAgentMessage[] = options.initialMessages?.length
+    ? options.initialMessages.map(message => ({ ...message })) as LocalAgentMessage[]
+    : [
+        { role: 'system', content: options.system },
+        { role: 'user', content: options.task }
+      ];
   const tools = new Map(options.tools.map((tool) => [tool.name, tool] as const));
   let toolCalls = 0;
 

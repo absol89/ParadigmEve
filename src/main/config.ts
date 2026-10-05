@@ -328,13 +328,14 @@ const configSchema = z.object({
       ollama: z
         .object({
           endpoint: z.string().trim().max(2048).optional().default(''),
-          model: z.string().trim().max(160).optional().default('')
+          model: z.string().trim().max(160).optional().default(''),
+          chatDirectTools: z.boolean().optional().default(true)
         })
         .optional()
-        .default({ ...DEFAULT_AGENT_RUNTIME_SETTINGS.ollama })
+        .default({ endpoint: '', model: '', chatDirectTools: true })
     })
     .optional()
-    .default({ ollama: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.ollama } }),
+    .default({ ollama: { endpoint: '', model: '', chatDirectTools: true } }),
   // Deliberately no schema default: undefined means a legacy config written before this marker.
   // Fresh installs write false explicitly; completed onboarding is promoted to true by IPC only
   // after the live end-to-end checks have succeeded.
@@ -442,6 +443,9 @@ const configSchema = z.object({
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
       maxWorkers: z.number().int().min(1).max(8).optional().default(DEFAULT_MULTI_AGENT.maxWorkers),
+      maxGptWorkers: z.number().int().min(1).max(8).optional(),
+      maxOllamaLocalWorkers: z.number().int().min(1).max(8).optional(),
+      maxOllamaCloudWorkers: z.number().int().min(1).max(8).optional(),
       allowUnattributedCalls: z.boolean().optional().default(DEFAULT_MULTI_AGENT.allowUnattributedCalls),
       recoverAgentTabs: z.boolean().optional().default(DEFAULT_MULTI_AGENT.recoverAgentTabs)
     })

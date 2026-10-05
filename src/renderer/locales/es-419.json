@@ -1830,5 +1830,13 @@
   "Cloud · not added yet": "Nube · aún no añadido",
   "Can read images": "Puede leer imágenes",
   "No models on this computer. Pull one with ollama pull, or turn Local only off.": "No hay modelos en esta computadora. Descarga uno con ollama pull o desactiva Solo local.",
-  "No models match.": "Ningún modelo coincide."
+  "No models match.": "Ningún modelo coincide.",
+  "GPT worker limit": "Límite de agentes de trabajo GPT",
+  "Maximum GPT workers active at once for one owner. Requires the Companion extension to be loaded and connected.": "Máximo de agentes de trabajo GPT activos a la vez por propietario. Requiere que la extensión Companion esté cargada y conectada.",
+  "Local Ollama worker limit": "Límite de agentes de trabajo de Ollama local",
+  "Maximum workers using models on this computer.": "Máximo de agentes de trabajo que usan modelos en esta computadora.",
+  "Ollama Cloud worker limit": "Límite de agentes de trabajo de Ollama Cloud",
+  "Maximum Ollama Cloud workers active at once.": "Máximo de agentes de trabajo de Ollama Cloud activos a la vez.",
+  "Use tools directly in Ollama chats": "Usar herramientas directamente en los chats de Ollama",
+  "When off, Ollama keeps the conversation but delegates tool work to workers.": "Si está desactivado, Ollama mantiene la conversación pero delega el trabajo con herramientas a agentes de trabajo."
 }

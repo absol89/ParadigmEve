@@ -20,6 +20,11 @@ operation.
 ### Added
 
 - *(in progress)* Interpreter → Plan → orchestrator → workers. See `docs/eve-tasks/interpreter-orchestrator-2.3.6.md`.
+- Ollama chats can use Eve's Core tools directly (Setup → Ollama → *Use tools directly in Ollama chats*, on by
+  default). With it off, the Ollama model keeps the conversation and hands tool work to a worker. Images in the
+  chat reach vision models as image parts.
+- Separate worker limits for GPT, local Ollama and Ollama Cloud workers. An Ollama worker keeps the model it
+  was started with, even if the Setup model changes while it runs.
 - Moving an Ollama-started (or local-only) chat to ChatGPT works again. The ChatGPT catch-up no longer re-uploads
   earlier images into the fresh ChatGPT chat (the message failed whenever ChatGPT did not confirm those uploads); it
   says how many images each earlier turn had and that they are in Eve's archive. Eve's own chat and the swarm Prime

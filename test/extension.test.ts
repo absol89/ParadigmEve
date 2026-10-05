@@ -25,6 +25,10 @@ beforeAll(async () => {
   backgroundSource = backgroundSource.replace(/\r\n/g, '\n');
 });
 
+/** The logged-close helper for harnesses that run a slice of background.js; unpaired, so it never reports. */
+const tabLogSource = () => `let token = null; let disconnected = false;\n${backgroundSource.slice(
+  backgroundSource.indexOf('function tabMarkers('), backgroundSource.indexOf('/** Bound waiting for a page'))}`;
+
 describe('extension release metadata', () => {
   it('keeps the app package, bundled extension and bridge protocol on the same release', async () => {
     const pkg = JSON.parse(await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf8')) as { version: string };
@@ -4756,7 +4760,7 @@ it.each(['matching', 'wrong-document', 'unsafe-draft', 'newer-navigation', 'pinn
     return { safe: scenario !== 'unsafe-draft', conversationId, navigationEpoch: 0 };
   });
   const code = backgroundSource.slice(backgroundSource.indexOf('async function pruneManagedTabs('), backgroundSource.indexOf('\nfunction maintain(', backgroundSource.indexOf('async function pruneManagedTabs(')));
-  const prune = vm.runInNewContext(`${code}\npruneManagedTabs`, {
+  const prune = vm.runInNewContext(`${tabLogSource()}\n${code}\npruneManagedTabs`, {
     cleanConversationId: (id: string) => id, conversationForTab: () => conversationId,
     conversationFromUrl: (url: string) => url.split('/c/')[1], tabDocuments: { '71': scenario === 'wrong-document' ? 'replacement' : 'doc' },
     tabEpochs: { '71': 0 }, ownsDocument: () => true, journalCountForConversation: () => 0,
@@ -4775,7 +4779,7 @@ it.each(['idle', 'selected', 'selected-before-proof', 'selected-during-proof', '
   const remove = vi.fn();
   const code = backgroundSource.slice(backgroundSource.indexOf('async function pruneManagedTabs('), backgroundSource.indexOf('\nfunction maintain(', backgroundSource.indexOf('async function pruneManagedTabs(')));
   let probed = false;
-  const prune = vm.runInNewContext(`${code}\npruneManagedTabs`, {
+  const prune = vm.runInNewContext(`${tabLogSource()}\n${code}\npruneManagedTabs`, {
     cleanConversationId: (id: string) => id, conversationForTab: () => conversationId,
     conversationFromUrl: (url: string) => url.split('/c/')[1], tabDocuments: { '71': 'doc' },
     tabEpochs: { '71': 0 }, ownsDocument: () => true,

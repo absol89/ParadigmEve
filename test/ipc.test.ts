@@ -1136,7 +1136,7 @@ describe('settings writes from more than one UI', () => {
     });
     const staleWanted = { ...wanted, ui: { ...wanted.ui, minimizeToTray: !wanted.ui.minimizeToTray } };
     expect((await save(staleWanted, wanted)).ok).toBe(true);
-    expect(getConfig().agentRuntime.ollama).toEqual({ endpoint: 'https://gpu.example/v1', model: 'server-model' });
+    expect(getConfig().agentRuntime.ollama).toEqual({ endpoint: 'https://gpu.example/v1', model: 'server-model', chatDirectTools: true });
   });
   it('does not let a stale renderer snapshot undo a newer extension setting', async () => {
     currentWindow = {
