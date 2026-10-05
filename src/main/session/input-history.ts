@@ -8,7 +8,7 @@ import type { AssetRef, ChatProvider } from '../../shared/session.js';
 import { logWarn } from '../logger.js';
 import sharp from 'sharp';
 
-/** Files any provider can read back from the archive. Others keep metadata only. */
+/** Files a provider can consume directly from the archive. Retention itself is broader. */
 export function archivableAttachment(mimeType: string): 'text' | 'image' | null {
   if (/^text\//.test(mimeType) || mimeType === 'application/json') return 'text';
   if (/^image\/(png|jpeg|webp|gif)$/.test(mimeType)) return 'image';
@@ -17,27 +17,20 @@ export function archivableAttachment(mimeType: string): 'text' | 'image' | null 
 const MAX_ARCHIVED_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 /**
- * Copies readable attachments into the session archive. The chat owns its history, so a later
- * turn on another provider must still be able to read what an earlier turn was given. Best
- * effort: a file that is gone, too large or unreadable keeps its metadata card only.
+ * Copies the exact attachment bytes into the session archive when they fit the archive bound.
+ *
+ * Provider capability is a separate concern: a later model may only understand text/images,
+ * but the user-owned archive should not discard a PDF or another format merely because today's
+ * provider cannot consume it. Best effort: a file that is gone, too large or unreadable keeps
+ * its metadata card only.
  */
 async function archiveAttachments(sessionId: string, attachments: readonly InputAttachment[]): Promise<Array<{ attachmentId: string; asset: AssetRef }>> {
   const archived: Array<{ attachmentId: string; asset: AssetRef }> = [];
   for (const attachment of attachments) {
-    const kind = archivableAttachment(attachment.mimeType);
-    if (!kind) continue;
     try {
       const bytes = await readStagedAttachment(attachment, 32 * 1024 * 1024);
-      if (!bytes) continue;
-      if (kind === 'text') {
-        if (bytes.length > MAX_ARCHIVED_ATTACHMENT_BYTES) continue;
-        archived.push({ attachmentId: attachment.id, asset: await writeAsset(sessionId, bytes, 'text/plain') });
-      } else {
-        const png = await sharp(bytes, { limitInputPixels: 36_000_000, animated: false }).rotate()
-          .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).png().toBuffer();
-        if (png.length > MAX_ARCHIVED_ATTACHMENT_BYTES) continue;
-        archived.push({ attachmentId: attachment.id, asset: await writeAsset(sessionId, png, 'image/png') });
-      }
+      if (!bytes || bytes.length > MAX_ARCHIVED_ATTACHMENT_BYTES) continue;
+      archived.push({ attachmentId: attachment.id, asset: await writeAsset(sessionId, bytes, attachment.mimeType) });
     } catch (error) {
       logWarn(`session ${sessionId}: attachment ${attachment.name} could not be archived: ${(error as Error).message}`);
     }

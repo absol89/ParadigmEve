@@ -209,6 +209,18 @@ function archiveAssetId(value: string, prefix = 'asset'): string {
   return `${prefix}:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+function safeAttachmentName(value: string): string {
+  const base = path.basename(value).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').trim();
+  const safe = base && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(base) ? base : `attachment${path.extname(base)}`;
+  if (safe.length <= 140) return safe;
+  const extension = path.extname(safe).slice(0, 24);
+  return `${safe.slice(0, Math.max(1, 140 - extension.length))}${extension}`;
+}
+
+function attachmentTimestamp(at: number): string {
+  return new Date(at).toISOString().replace(/:/g, '-');
+}
+
 /**
  * Rows whose canonical source record is explicitly known to be provisional.
  *
@@ -866,9 +878,25 @@ export class ArchiveRuntime {
       }
       return [await this.retainAsset(sessionId, event.asset, 'native', context, event.providerAssetId)];
     }
-    if (event.kind === 'user_message' && event.assets?.length) {
+    if (event.kind === 'user_message') {
       const out: ArchiveAssetRef[] = [];
-      for (const asset of event.assets) out.push(await this.retainAsset(sessionId, asset, 'message', context));
+      for (const asset of event.assets ?? []) out.push(await this.retainAsset(sessionId, asset, 'message', context));
+      const retained = new Map((event.archivedAttachments ?? []).map(item => [item.attachmentId, item.asset]));
+      for (const attachment of event.attachments ?? []) {
+        const archived = retained.get(attachment.id);
+        if (archived) {
+          out.push(await this.retainAsset(sessionId, archived, 'message', context, undefined, attachment.name));
+          continue;
+        }
+        out.push({
+          id: archiveAssetId(`attachment:${attachment.id}`),
+          kind: attachment.mimeType.startsWith('image/') ? 'image' : 'file',
+          captureState: 'missing',
+          fileName: attachment.name,
+          error: 'Attachment metadata was retained, but its original bytes were not archived.'
+        });
+        context.partial = true;
+      }
       return out;
     }
     if (event.kind === 'tool_call' && event.call.assets?.length) {
@@ -884,15 +912,17 @@ export class ArchiveRuntime {
     sourceAsset: AssetRef,
     assetContext: 'message' | 'tool' | 'native',
     context: ProjectionContext,
-    providerAssetId?: string
+    providerAssetId?: string,
+    fileName?: string
   ): Promise<ArchiveAssetRef> {
     const kind = archiveAssetKind(sourceAsset, assetContext);
     const cached = context.retainedAssets.get(sourceAsset.id);
-    if (cached) return { ...cached, kind, ...(providerAssetId ? { providerAssetId } : {}) };
+    if (cached) return { ...cached, kind, ...(fileName ? { fileName } : {}), ...(providerAssetId ? { providerAssetId } : {}) };
     const missing = (error: string): ArchiveAssetRef => ({
       id: archiveAssetId(sourceAsset.id),
       kind,
       captureState: 'missing',
+      ...(fileName ? { fileName } : {}),
       ...(providerAssetId ? { providerAssetId } : {}),
       error
     });
@@ -928,7 +958,7 @@ export class ArchiveRuntime {
       blob
     };
     context.retainedAssets.set(sourceAsset.id, retained);
-    return { ...retained, kind, ...(providerAssetId ? { providerAssetId } : {}) };
+    return { ...retained, kind, ...(fileName ? { fileName } : {}), ...(providerAssetId ? { providerAssetId } : {}) };
   }
 
   private async readDerivedSessionHeaders(): Promise<ArchiveDerivedSessionHeader[]> {
@@ -1099,7 +1129,7 @@ export class ArchiveRuntime {
 
   private async viewItem(event: ArchiveEvent): Promise<ArchiveViewTranscriptItem | null> {
     const assets: ArchiveViewAsset[] = [];
-    for (const asset of event.assets) assets.push(await this.viewAsset(asset));
+    for (const asset of event.assets) assets.push(await this.viewAsset(asset, event.at));
     const text = payloadString(event.payload, 'text');
     if (event.kind === 'user_message' || event.kind === 'assistant_message' || event.kind === 'agent_message' || event.kind === 'progress' || event.kind === 'chat_error' || event.kind === 'note') {
       return {
@@ -1141,7 +1171,7 @@ export class ArchiveRuntime {
     return null;
   }
 
-  private async viewAsset(asset: ArchiveAssetRef): Promise<ArchiveViewAsset> {
+  private async viewAsset(asset: ArchiveAssetRef, at: number): Promise<ArchiveViewAsset> {
     const kind: ArchiveViewAsset['kind'] = asset.kind === 'image' || asset.kind === 'tool-image' || asset.kind === 'generated-image' ? 'image' : 'file';
     const label = asset.fileName ?? (kind === 'image' ? 'Image' : 'File');
     if (asset.captureState === 'provider-only') {
@@ -1154,7 +1184,9 @@ export class ArchiveRuntime {
     if (inspection.state !== 'present') {
       return { kind, label, captureState: 'capture-error', detail: 'Retained archive blob is missing or corrupt.' };
     }
-    const relative = await this.materializeSiteAsset(asset.blob.sha256, asset.blob.extension ?? this.extensionForMime(asset.blob.mimeType), inspection.path, asset.blob.byteLength);
+    const relative = asset.fileName
+      ? await this.materializeSiteAttachment(asset.blob.sha256, safeAttachmentName(asset.fileName), at, inspection.path, asset.blob.byteLength)
+      : await this.materializeSiteAsset(asset.blob.sha256, asset.blob.extension ?? this.extensionForMime(asset.blob.mimeType), inspection.path, asset.blob.byteLength);
     return {
       kind,
       label,
@@ -1176,6 +1208,44 @@ export class ArchiveRuntime {
       case 'application/pdf': return 'pdf';
       case 'text/plain': return 'txt';
       default: return 'bin';
+    }
+  }
+
+  private async materializeSiteAttachment(sha256: string, fileName: string, at: number, source: string, byteLength: number): Promise<string> {
+    const site = this.staticSiteTarget();
+    const attachmentsRoot = path.join(site.siteRoot, 'attachments');
+    await ensureArchiveDirectory(site.archiveRoot, attachmentsRoot, true);
+    const stem = `${attachmentTimestamp(at)}__${fileName}`;
+    const ext = path.extname(stem);
+    const base = ext ? stem.slice(0, -ext.length) : stem;
+    let targetName = stem;
+    let target = path.join(attachmentsRoot, targetName);
+    const matches = async (candidate: string): Promise<boolean> => {
+      if (await ensureArchiveFile(site.archiveRoot, candidate, { createParents: false }) !== 'present') return false;
+      const stat = await fs.stat(candidate);
+      return stat.isFile() && stat.size === byteLength && await sha256File(candidate) === sha256;
+    };
+    if (await matches(target)) return `attachments/${targetName}`;
+    if (await ensureArchiveFile(site.archiveRoot, target, { createParents: false }) === 'present') {
+      targetName = `${base}__${sha256.slice(0, 8)}${ext}`;
+      target = path.join(attachmentsRoot, targetName);
+      if (await matches(target)) return `attachments/${targetName}`;
+    }
+    if (await ensureArchiveFile(site.archiveRoot, source, { createParents: false }) !== 'present') {
+      throw new Error(`ARCHIVE_RUNTIME_SITE_ATTACHMENT_SOURCE_MISSING: ${sha256}`);
+    }
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await ensureArchiveFile(site.archiveRoot, temporary, { createParents: false });
+      await fs.copyFile(source, temporary);
+      const stat = await fs.stat(temporary);
+      if (!stat.isFile() || stat.size !== byteLength || await sha256File(temporary) !== sha256) {
+        throw new Error(`ARCHIVE_RUNTIME_SITE_ATTACHMENT_COPY_MISMATCH: ${sha256}`);
+      }
+      await fs.rename(temporary, target);
+      return `attachments/${targetName}`;
+    } finally {
+      await fs.rm(temporary, { force: true }).catch(() => undefined);
     }
   }
 

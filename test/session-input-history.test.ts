@@ -3,8 +3,9 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import { appendEvent, createSession, getSession, initSessionStore, observeSessionModel, readEvents, resetSessionStoreForTests, upsertMessageEvent, upsertNativeImageEvent, writeAsset } from '../src/main/session/store.js';
+import { appendEvent, createSession, getSession, initSessionStore, observeSessionModel, readAsset, readEvents, resetSessionStoreForTests, upsertMessageEvent, upsertNativeImageEvent, writeAsset } from '../src/main/session/store.js';
 import { recordDeliveredInput, recordedInputImage, recordedInputImageThumbnail } from '../src/main/session/input-history.js';
+import { stageInputAttachment } from '../src/main/session/input-attachments.js';
 import type { InputEntry } from '../src/main/session/input.js';
 import { chronological } from '../src/shared/chronology.js';
 
@@ -68,6 +69,26 @@ it('derives a bounded local WebP thumbnail from a recorded image asset', async (
   expect(metadata.width).toBeLessThanOrEqual(360);
   expect(metadata.height).toBeLessThanOrEqual(240);
   expect(await recordedInputImageThumbnail(other.id, asset.id)).toBeNull();
+});
+
+it('archives exact native attachment bytes and original metadata independent of provider capability', async () => {
+  const session = await createSession({ conversationId: 'attachment-archive', title: 'Attachment archive' });
+  const original = Buffer.from('%PDF-1.7\nexact attachment bytes\n%%EOF');
+  const staged = await stageInputAttachment({ name: 'Untitled.pdf', bytes: original }, new Set());
+  const entry: InputEntry = {
+    id: '00000000-0000-4000-8000-000000000099', sessionId: session.id, text: 'Read this later', mode: 'auto', dueAt: 0,
+    model: null, reasoningEffort: null, state: 'sent', owner: 'page', createdAt: 100, conversationId: 'attachment-archive',
+    messageId: 'native-attachment-message', deliveredAt: 200, attachments: [staged]
+  };
+
+  expect(await recordDeliveredInput(entry)).toBe(true);
+  const event = (await readEvents(session.id, { kinds: ['user_message'] }))[0];
+  expect(event).toMatchObject({ kind: 'user_message', attachments: [{ name: 'Untitled.pdf', mimeType: 'application/pdf', size: original.length }] });
+  if (!event || event.kind !== 'user_message') throw new Error('recorded user message missing');
+  expect(event.archivedAttachments).toHaveLength(1);
+  const copy = event.archivedAttachments![0]!.asset;
+  expect(copy.mimeType).toBe('application/pdf');
+  expect(await readAsset(session.id, copy.id)).toEqual(original);
 });
 
 it('rehydrates exact native generated-image metadata and its local preview after a store restart', async () => {

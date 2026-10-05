@@ -244,6 +244,50 @@ describe('ArchiveRuntime', () => {
     expect(runtime.staticSiteTarget().indexPath).toBe(path.join(archiveRoot, 'site', 'index.html'));
   });
 
+  it('publishes retained native attachments by send time and sanitized original filename', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-named-attachments';
+    const firstBytes = new TextEncoder().encode('first jpeg-ish attachment');
+    const secondBytes = new TextEncoder().encode('second jpeg-ish attachment');
+    const firstAsset: AssetRef = { id: 'first.bin', mimeType: 'image/jpeg', bytes: firstBytes.byteLength };
+    const secondAsset: AssetRef = { id: 'second.bin', mimeType: 'image/jpeg', bytes: secondBytes.byteLength };
+    const at = Date.parse('2026-10-05T17:03:31.123Z');
+    const event: SessionEvent = {
+      seq: 1, time: at, source: 'app', kind: 'user_message', messageId: 'attachment-user',
+      message: { text: 'two files', chars: 9, truncated: false },
+      attachments: [
+        { id: 'attachment-one', name: 'Untitled.jpg', size: firstBytes.byteLength, mimeType: 'image/jpeg' },
+        { id: 'attachment-two', name: 'Untitled.jpg', size: secondBytes.byteLength, mimeType: 'image/jpeg' }
+      ],
+      archivedAttachments: [
+        { attachmentId: 'attachment-one', asset: firstAsset },
+        { attachmentId: 'attachment-two', asset: secondAsset }
+      ]
+    };
+    const runtime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'runtime-test',
+      source: sourceFor({ summary: summary(id), events: [event] }, new Map([
+        [firstAsset.id, firstBytes], [secondAsset.id, secondBytes]
+      ]))
+    });
+
+    await runtime.start();
+    await runtime.drain();
+    const archived = await runtime.store.readSession(id);
+    expect(archived.events[0]!.assets).toHaveLength(2);
+    expect(archived.events[0]!.assets.map(asset => asset.fileName)).toEqual(['Untitled.jpg', 'Untitled.jpg']);
+    await runtime.rebuildDerived();
+    const names = (await fs.readdir(path.join(archiveRoot, 'site', 'attachments'))).sort();
+    expect(names).toHaveLength(2);
+    expect(names[0]).toBe('2026-10-05T17-03-31.123Z__Untitled.jpg');
+    expect(names[1]).toMatch(/^2026-10-05T17-03-31\.123Z__Untitled__[a-f0-9]{8}\.jpg$/);
+    const generated = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    const chunk = await fs.readFile(generated.chunks[0]!, 'utf8');
+    expect(chunk).toContain('attachments/2026-10-05T17-03-31.123Z__Untitled.jpg');
+    expect(chunk).toContain('Untitled.jpg');
+  });
+
   it('keeps heavy tool output out of the shell/search corpus and writes it only to the selected-chat shard', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-heavy-static-chunk';
