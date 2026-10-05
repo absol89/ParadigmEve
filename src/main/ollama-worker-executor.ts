@@ -22,6 +22,7 @@ import { effectiveCapabilities, getConfig } from './config.js';
 import { localAgentCoreTools } from './local-agent-tools.js';
 import { runLocalAgent } from './local-agent-runtime.js';
 import { createOllamaAgentModelRuntime } from './ollama-agent-runtime.js';
+import { resolveOllamaEndpoint } from './ollama-client.js';
 import { logInfo, logWarn } from './logger.js';
 import type { ToolContext } from './mcp/kernel.js';
 
@@ -75,7 +76,7 @@ async function execute(worker: WorkerSpawn): Promise<void> {
     const result = await runLocalAgent({
       backend: 'ollama',
       principal,
-      endpoint: settings.endpoint,
+      endpoint: resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
       model: settings.model,
       system:
         'You are a bounded ParadigmEve worker. Complete only the task you were given. ' +

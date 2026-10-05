@@ -62,7 +62,7 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
  * drafts, one per active provider). They all live under the same OS-backed encrypted blob and
  * never leave the main process.
  */
-export type SecretKey = 'openaiApiKey' | 'bridgeToken' | 'openRouterApiKey' | 'customProviderApiKey' | 'lanGroupKey' | 'lanPeerPrivateKey' | `plugin:${string}`;
+export type SecretKey = 'openaiApiKey' | 'bridgeToken' | 'openRouterApiKey' | 'customProviderApiKey' | 'ollamaApiKey' | 'lanGroupKey' | 'lanPeerPrivateKey' | `plugin:${string}`;
 
 export function initSecretsPath(userDataDir: string): void {
   secretsPath = path.join(userDataDir, FILE_NAME);

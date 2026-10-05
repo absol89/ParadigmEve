@@ -125,7 +125,7 @@ describe('production Ollama worker executor', () => {
     expect(() => spawn({
       caller: { conversationId: 'prime-missing-ollama' },
       workers: [{ task: 'must not start' }]
-    })).toThrow(/Ollama.*endpoint.*No run or worker was created/i);
+    })).toThrow(/Ollama.*no Ollama model is configured.*No run or worker was created/i);
     expect(snapshotSwarm()).toBeNull();
   });
 });

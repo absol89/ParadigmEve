@@ -46,6 +46,12 @@ export interface AgentRuntimeSettings {
   };
 }
 
+/** Local Ollama daemon. It also serves `<model>:cloud` models once the user ran `ollama signin`. */
+export const OLLAMA_LOCAL_ENDPOINT = 'http://127.0.0.1:11434/v1';
+/** Direct Ollama Cloud. Requires an Ollama API key in secure storage. */
+export const OLLAMA_CLOUD_ENDPOINT = 'https://ollama.com/v1';
+
+/** A blank Ollama endpoint means the local daemon. */
 export const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   ollama: { endpoint: '', model: '' }
 };

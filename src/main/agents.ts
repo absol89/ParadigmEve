@@ -23,7 +23,8 @@ import { CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, configuredChatModelReque
 import { DEFAULT_CORE_CONNECTOR_NAME } from '../shared/types.js';
 import { logInfo, logWarn } from './logger.js';
 import { inheritWorkspace, releasePrimeWorkspace, bindAgentWorkspace } from './workspace.js';
-import { issueLocalAgentExecutionPrincipal, localAgentExecutionPrincipalIssued, normalizeLocalAgentEndpoint, revokeLocalAgentExecutionPrincipal, type LocalAgentBackendId, type LocalAgentExecutionPrincipal } from './local-agent-runtime.js';
+import { issueLocalAgentExecutionPrincipal, localAgentExecutionPrincipalIssued, revokeLocalAgentExecutionPrincipal, type LocalAgentBackendId, type LocalAgentExecutionPrincipal } from './local-agent-runtime.js';
+import { resolveOllamaEndpoint } from './ollama-client.js';
 
 export const PRIME_ID = 'prime';
 
@@ -1555,10 +1556,10 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
   requireSpawnExecutionBackend('worker', worker);
   if (worker === 'ollama') {
     const settings = getConfig().agentRuntime.ollama;
-    if (!normalizeLocalAgentEndpoint(settings.endpoint)) {
+    if (!resolveOllamaEndpoint(settings.endpoint)) {
       throw new AgentError(
         'AGENT_BACKEND_UNAVAILABLE: Ollama is selected as the worker backend, but its endpoint is missing or invalid. ' +
-          'Configure an HTTPS endpoint, or HTTP on loopback, before spawning workers. No run or worker was created.'
+          'Leave it blank for the local daemon, or configure an HTTPS endpoint (HTTP only on loopback), before spawning workers. No run or worker was created.'
       );
     }
     if (!settings.model.trim()) {

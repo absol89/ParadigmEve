@@ -18,6 +18,7 @@ import type {
 } from './local-agent-runtime.js';
 import { localAgentRuntimePrerequisites } from './local-agent-runtime.js';
 import type { AgentRuntimeSettings } from '../shared/agent-backends.js';
+import { ollamaHeaders } from './ollama-client.js';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -127,7 +128,7 @@ export function createOllamaAgentModelRuntime(fetchImpl: typeof fetch = globalTh
       const response = await fetchImpl(`${request.endpoint}/chat/completions`, {
         method: 'POST',
         redirect: 'error',
-        headers: { 'content-type': 'application/json' },
+        headers: await ollamaHeaders(request.endpoint),
         body: JSON.stringify({
           model: request.model,
           stream: false,

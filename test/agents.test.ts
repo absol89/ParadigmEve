@@ -279,7 +279,7 @@ describe('spawning a run', () => {
   });
 
   it.each([
-    ['', 'gemma4:cloud', /endpoint is missing or invalid/],
+    ['not a url', 'gemma4:cloud', /endpoint is missing or invalid/],
     ['http://192.168.1.20:11434/v1', 'gemma4:cloud', /endpoint is missing or invalid/],
     ['http://127.0.0.1:11434/v1', '  ', /no Ollama model is configured/]
   ] as const)('refuses Ollama workers with endpoint %j and model %j before any run', async (endpoint, model, message) => {
