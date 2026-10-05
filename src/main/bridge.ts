@@ -1236,6 +1236,47 @@ function parseCallEvidence(input: unknown, untooled = false): PageCallEvidence[]
   return out.filter((call) => !duplicated.has(call.messageId));
 }
 
+// ---------------------------------------------------------------- ChatGPT Voice
+
+/**
+ * Chats whose page reports a live ChatGPT Voice session, until when.
+ *
+ * Voice holds the composer, has no Stop control, and its tool calls carry no page request ids.
+ * While a call is live nothing here may type into that chat or reload it: the page already
+ * refuses, and asking anyway only produced repeated reload requests, a compaction ticket counted
+ * down to `handoff_never_sent`, and the handoff typed into the voice chat once the call ended
+ * (2026-10-05). The page repeats the report while Voice is up; a silent page expires it.
+ */
+const voiceActiveUntil = new Map<string, number>();
+export const VOICE_REPORT_TTL_MS = 90_000;
+
+function noteVoiceState(conversationId: string, events: unknown, now = Date.now()): void {
+  if (!Array.isArray(events)) return;
+  for (const raw of events.slice(0, MAX_OBSERVATIONS)) {
+    if (!raw || typeof raw !== 'object' || (raw as Record<string, unknown>)['kind'] !== 'voice_state') continue;
+    const active = (raw as Record<string, unknown>)['active'] === true;
+    const was = voiceActive(conversationId, now);
+    if (active) voiceActiveUntil.set(conversationId, now + VOICE_REPORT_TTL_MS);
+    else voiceActiveUntil.delete(conversationId);
+    if (was !== active) logInfo(`bridge: ${conversationId} ${active ? 'is in a ChatGPT Voice call — holding compaction and reloads' : 'left ChatGPT Voice'}`);
+  }
+}
+
+/** True while this chat's page reports a live Voice session. */
+export function voiceActive(conversationId: string, now = Date.now()): boolean {
+  const until = voiceActiveUntil.get(conversationId);
+  if (until === undefined) return false;
+  if (until > now) return true;
+  voiceActiveUntil.delete(conversationId);
+  return false;
+}
+
+/** Test seam. */
+export function setVoiceActiveForTests(conversationId: string, active: boolean): void {
+  if (active) voiceActiveUntil.set(conversationId, Date.now() + VOICE_REPORT_TTL_MS);
+  else voiceActiveUntil.delete(conversationId);
+}
+
 /**
  * Turns whatever the extension posted into observations we are willing to store.
  *
@@ -2422,6 +2463,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     // takes back a worker this app gave up on while its tab was gone but its turn was not.
     const revived = noteAgentAlive(id, 'page');
     if (revived?.report) await recordAgentMessage(revived.report, 'sent', id);
+    noteVoiceState(id, body['events']);
     const observations = parseObservations(body['events']);
     // A turn beginning is the one page fact that outranks the app's own idea of this worker's
     // state. Reported here rather than inferred from `generating`, because this is the exact
@@ -6160,6 +6202,9 @@ async function chatStillWorking(conversationId: string, turnId: string, sessionI
 async function considerAutomaticCompaction(conversationId: string, sessionId: string): Promise<void> {
   if (!getConfig().compaction.auto || compactionFilings.has(conversationId)) return;
   if (goalFencedChat(conversationId) || continuationForSession(sessionId) || !chatIsWorking(conversationId)) return;
+  // Compaction types a handoff prompt into this chat; during a Voice call it cannot and must not.
+  // The next working observation after the call files the ticket.
+  if (voiceActive(conversationId)) return;
   compactionFilings.add(conversationId);
   try {
     const summary = await getSession(sessionId).catch(() => null);
@@ -6590,6 +6635,8 @@ function queueBrowserRecovery(
   // assistant-error, goal, compaction — so refusing here refuses all of them, and none of them
   // needs its own exemption.
   if (!sessionId || isChatBlocked(conversationId) || stopRequestedFor(conversationId)) return false;
+  // A reload ends a live Voice call. No repair is worth that; it waits for the call to end.
+  if (voiceActive(conversationId, now)) return false;
   // The turn's one error reload, already spent. Checked before the episode and state guards
   // below because it outlives both: those forget a repair the moment its episode changes, and
   // the whole point here is that a *new* error on the same broken turn buys nothing.
@@ -7196,7 +7243,7 @@ const COMPACTION_PICKUPS: Record<CompactionPhase, { every: number; attempts: num
   writing: { every: 5 * 60_000, attempts: 3 },
   opening: { every: 15 * 60_000, attempts: 3 }
 };
-const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number; backoffs?: number; told?: boolean }>();
+const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number; backoffs?: number; told?: boolean; voiceHeld?: boolean }>();
 /** The pause before an automatic pre-Send ticket's next pickup burst. (Ported from chat-on-steroids #391.) */
 const AUTOMATIC_ASKING_RETRY_PAUSE_MS = 10 * 60_000;
 /**
@@ -7406,6 +7453,16 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
       compactionWatch.set(entry.from, watch);
     }
     const schedule = COMPACTION_PICKUPS[phase];
+    if (phase === 'asking' && voiceActive(entry.from, now)) {
+      // The page refuses to type during Voice, correctly. A refused pickup is not a failed
+      // one: restart this phase's clock after the call instead of counting toward abandonment.
+      if (!watch.voiceHeld) logInfo(`bridge: compaction ticket ${entry.token.slice(0, 8)} waits for the Voice call in ${entry.from} to end`);
+      watch.voiceHeld = true;
+      watch.attempts = 0;
+      watch.since = now;
+      continue;
+    }
+    watch.voiceHeld = false;
     if (now < watch.since + schedule.every) continue;
     if (watch.attempts >= schedule.attempts) {
       if (phase === 'writing' && !watch.told) {
@@ -9160,6 +9217,7 @@ export function resetBridgeForTests(): void {
   if (browserPresenceTimer) clearTimeout(browserPresenceTimer);
   browserPresenceTimer = null;
   clearAutomaticCompactionDeadlines();
+  voiceActiveUntil.clear();
   commands = [];
   commandReceipts = [];
   commandRetirementsAwaitingBroker.clear();

@@ -577,7 +577,13 @@
    */
   function authoredText(message) {
     const content = message && typeof message === 'object' ? message.content : null;
-    if (!content || typeof content !== 'object' || content.content_type !== 'text') return null;
+    if (!content || typeof content !== 'object') return null;
+    // ChatGPT Voice stores each spoken turn as `multimodal_text`: the words are
+    // `audio_transcription` parts beside audio pointers. Before 2.3.5 only `text` was read, so
+    // most Voice replies never reached Eve. Only the transcription text crosses worlds; audio
+    // pointers and every other part stay in the page.
+    if (content.content_type === 'multimodal_text') return voiceMessage(message) ? multimodalText(content) : null;
+    if (content.content_type !== 'text') return null;
     if (Array.isArray(content.parts)) {
       let value = '';
       for (let at = 0; at < content.parts.length; at++) {
@@ -593,6 +599,34 @@
     return typeof content.text === 'string' && content.text.length > 0
       ? content.text.slice(0, MAX_RENDERED_TEXT)
       : null;
+  }
+
+  /**
+   * Public words of a `multimodal_text` message: plain string parts and the `text` of
+   * `audio_transcription` parts (Voice), in part order. Null when it holds none.
+   */
+  function multimodalText(content) {
+    if (!content || !Array.isArray(content.parts)) return null;
+    let value = '';
+    for (let at = 0; at < content.parts.length; at++) {
+      const part = content.parts[at];
+      const text = typeof part === 'string' ? part
+        : part && typeof part === 'object' && part.content_type === 'audio_transcription' && typeof part.text === 'string' ? part.text
+          : '';
+      if (!text) continue;
+      if (value) value += '\n';
+      value += text;
+      if (value.length >= MAX_RENDERED_TEXT) break;
+    }
+    value = value.slice(0, MAX_RENDERED_TEXT);
+    return value.trim() ? value : null;
+  }
+
+  /** True for a turn ChatGPT Voice spoke or heard (it carries an `audio_transcription` part). */
+  function voiceMessage(message) {
+    const content = message && typeof message === 'object' ? message.content : null;
+    return Boolean(content && content.content_type === 'multimodal_text' && Array.isArray(content.parts) &&
+      content.parts.some(part => part && typeof part === 'object' && part.content_type === 'audio_transcription'));
   }
 
   /** ChatGPT's own message creation time, normalized to epoch milliseconds when present. */
@@ -751,7 +785,7 @@
           typeof file.name === 'string' && file.name.length > 0 && file.name.length <= 200 &&
           /^image\/[a-z0-9.+-]{1,80}$/i.test(file.mime_type) && Number.isSafeInteger(file.size) && file.size >= 0 && file.size <= 512 * 1024 * 1024)
           .slice(0, Math.min(4, imageCount)).map(file => ({ id: file.id, name: file.name, size: file.size, mimeType: file.mime_type })) : [];
-      const authored = multimodal ? content.parts.filter(part => typeof part === 'string').join('\n') : authoredText(message);
+      const authored = multimodal ? multimodalText(content) || '' : authoredText(message);
       const rawText = budgetedText(authored, budget, MAX_RENDERED_TEXT) || '';
       if (!id || (!rawText && !attachments.length)) continue;
       if (seen.has(id)) continue;
@@ -880,6 +914,10 @@
       if (!content || typeof content !== 'object' || !['text', 'multimodal_text', 'image'].includes(content.content_type)) continue;
       if (neverTerminalChannel(message)) continue;
       if (message.end_turn === true && message.status === 'finished_successfully') return str(message.id);
+      // Voice has no Stop control, so this model evidence is the only way a spoken turn can end.
+      // A finished spoken reply ends its turn unless ChatGPT says the turn goes on
+      // (`end_turn: false`, e.g. "Checking." before a tool call).
+      if (voiceMessage(message) && message.end_turn !== false && message.status === 'finished_successfully') return str(message.id);
       return null;
     }
     return null;

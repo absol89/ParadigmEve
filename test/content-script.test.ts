@@ -14168,6 +14168,25 @@ the carried handoff behind a lost reply`;
     });
   });
 
+  it('reports a live Voice call to the app, and its end', async () => {
+    const voiceChat = '6a6a6a6a-8989-4aaa-b2b2-e4e4e4e4e4e4';
+    live = await harness(`https://chatgpt.com/c/${voiceChat}`, {}, (document) => {
+      const endVoice = document.createElement('button');
+      endVoice.setAttribute('aria-label', 'End voice mode');
+      endVoice.id = 'end-voice';
+      document.body.append(endVoice);
+    });
+    const voiceEvents = () => live!.sent.filter(message => message.type === 'events').flatMap(message => message.entries)
+      .filter(entry => entry.event.kind === 'voice_state').map(entry => [entry.conversationId, entry.event.active]);
+    await settle(400); await live.hook.flush();
+    expect(voiceEvents()).toEqual([[voiceChat, true]]);
+
+    live.document.getElementById('end-voice')!.remove();
+    live.hook.observe();
+    await settle(400); await live.hook.flush();
+    expect(voiceEvents()).toEqual([[voiceChat, true], [voiceChat, false]]);
+  });
+
   it('treats active dictation as user-owned voice input but not the idle Start Voice affordance', async () => {
     const repairChat = '69696969-8989-4aaa-b2b2-e4e4e4e4e4e4';
     live = await harness(`https://chatgpt.com/c/${repairChat}`, {}, (document) => {

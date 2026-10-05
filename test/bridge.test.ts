@@ -2700,6 +2700,50 @@ describe('automatic compaction', () => {
    * minutes for as long as it exists. After the first burst and two slowed bursts the ticket is
    * abandoned, as a manual one is, and the next working turn opens a fresh one.
    */
+  it('holds compaction pickups and reloads during a ChatGPT Voice call instead of abandoning the ticket', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac0a';
+      const voice = (active: boolean) => request('POST', '/events', {
+        body: { conversationId, events: [{ kind: 'voice_state', active, time: Date.now() }] }
+      });
+      await request('POST', '/events', {
+        body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'talking in Voice', messageId: 'm-voice-hold' }] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+      const token = filed.body.token as string;
+      const takeRepair = async (): Promise<{ token: string; reason: string } | null> => {
+        await sweepStaleSwarm(Date.now());
+        return (await request('GET', '/status')).body.repairs?.[0] ?? null;
+      };
+      // Forty minutes of Voice, the page re-reporting the call every 30 s: well past every
+      // pickup burst that would otherwise abandon the ticket as handoff_never_sent.
+      await voice(true);
+      for (let minute = 0; minute < 40; minute += 1) {
+        await vi.advanceTimersByTimeAsync(30_000);
+        await voice(true);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(await takeRepair(), `minute ${minute}`).toBeNull();
+      }
+      expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary' });
+
+      // The call ends: the ticket's pickups start again from a fresh clock.
+      await voice(false);
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(await takeRepair()).toMatchObject({ reason: 'compaction' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a Voice report expire when its page goes quiet', async () => {
+    const { voiceActive, setVoiceActiveForTests, VOICE_REPORT_TTL_MS } = await import('../src/main/bridge.js');
+    setVoiceActiveForTests('voice-expiry', true);
+    expect(voiceActive('voice-expiry')).toBe(true);
+    expect(voiceActive('voice-expiry', Date.now() + VOICE_REPORT_TTL_MS + 1)).toBe(false);
+  });
+
   it('abandons an automatic ticket that never reaches Send after its bounded retry bursts (upstream #391)', async () => {
     vi.useFakeTimers();
     try {

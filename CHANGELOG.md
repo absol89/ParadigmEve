@@ -43,6 +43,15 @@ operation.
 
 ### Fixed
 
+- ChatGPT Voice replies were missing from Eve. The Companion read only `content_type: text` messages, and Voice turns
+  are `multimodal_text` with `audio_transcription` parts; most spoken replies were never reported. Voice
+  transcriptions are now read for both sides (only the transcription text crosses into the extension, never audio
+  pointers), and a finished spoken reply ends its turn unless ChatGPT marks the turn as continuing, so Voice turns
+  no longer pile up as "interrupted".
+- Compaction and repairs no longer fight a live Voice call. The page reports Voice state; while a call is live the
+  app files no automatic compaction ticket, pauses a pending ticket's pickups without counting them toward
+  `handoff_never_sent`, queues no repair reloads, and the page does not start compacting. The Companion also leaves
+  an audible tab alone. The handoff no longer lands in the voice chat when the call ends.
 - A LAN peer privacy test asserted a three-letter substring that random ciphertext contains about once in 500 runs.
 
 ## [2.3.4] — Speaking your language

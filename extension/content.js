@@ -1252,6 +1252,9 @@
    * whole batch with whatever is current then files A's messages into B's history —
    * silently, permanently, and with no way to tell afterwards which entries were real.
    */
+  let reportedVoice = false;
+  let reportedVoiceAt = 0;
+  const VOICE_REPORT_EVERY_MS = 30_000;
   function emit(observation) {
     if (temporaryPlannerPage()) return;
     const bounded = { ...observation };
@@ -1668,6 +1671,8 @@
     seenMessages.clear();
     reportedConversationTitle = '';
     reportedModelSelection = '';
+    reportedVoice = false;
+    reportedVoiceAt = 0;
     chatTitleAgent = null;
     chatTitleSuffix = null;
     nativeTitleRepair = null;
@@ -2428,6 +2433,16 @@
       if (selectionKey !== reportedModelSelection) {
         reportedModelSelection = selectionKey;
         emit({ kind: 'model_selection', ...modelSelection });
+      }
+    }
+    // ChatGPT Voice: the app must not type into, compact or reload a chat during a live call.
+    // Report changes at once and repeat while the call lasts so a closed tab expires the claim.
+    if (conversationId) {
+      const voiceNow = activeVoiceSession();
+      if (voiceNow !== reportedVoice || (voiceNow && Date.now() - reportedVoiceAt >= VOICE_REPORT_EVERY_MS)) {
+        reportedVoice = voiceNow;
+        reportedVoiceAt = Date.now();
+        emit({ kind: 'voice_state', active: voiceNow });
       }
     }
     if (pageTitle && pageTitle !== reportedConversationTitle) {
@@ -8689,6 +8704,10 @@
     if (!source || nativeBusy || localError) return;
     if (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved') return;
     if (!alive || conversationId !== forId || epoch !== forEpoch || CLF_DOM.conversationId() !== forId) return;
+    // Never start compacting into a live Voice call: the ticket waits, untouched, for the call to
+    // end (the app holds its pickups for the same reason). 2026-10-05: a pending ticket during
+    // Voice coincided with assistant turns that stopped reaching Eve.
+    if (activeVoiceSession()) return;
     const automatic = job.automatic === true;
     // A stuck restart recovery's ticket may move the chat but must never stop a running turn.
     const recovery = job.recovery === true;

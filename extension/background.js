@@ -3031,6 +3031,9 @@ async function performBrowserRepairs(repairs, policy) {
     // current document before selecting or reloading it. Human typing/drafts/attachments and
     // app-owned composer transactions defer this pass without claiming the repair token; the
     // normal maintenance cadence can retry once the page is free.
+    // Chrome's audible bit is a fail-safe for a live Voice call the page could not describe in
+    // time: a reload would end the call. Leave the repair unclaimed for a later pass.
+    if (target && target.audible === true) continue;
     if (target && await browserRepairProtected(target, conversationId)) continue;
     // `/status` only hands the repair out. The tab scan above can take long enough for the user
     // to Block/Stop the chat, or for its durable source identity to be superseded. Claim this

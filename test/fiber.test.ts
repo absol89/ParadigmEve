@@ -864,6 +864,38 @@ describe('the calls a turn says it made', () => {
     expect(assistant.turns).toEqual([]);
   });
 
+  it('records ChatGPT Voice turns from their audio transcriptions, never their audio', async () => {
+    const heard: Message = { id: 'voice-user', author: { role: 'user' }, recipient: 'all',
+      content: { content_type: 'multimodal_text', parts: [
+        { content_type: 'audio_transcription', text: 'Can Claude drive the workers?', direction: 'in' },
+        { content_type: 'audio_asset_pointer', asset_pointer: 'sediment://must-not-cross-worlds' }
+      ] } };
+    const spoken = (id: string, text: string, extra: Partial<Message> = {}): Message => ({ id, author: { role: 'assistant' }, recipient: 'all',
+      status: 'finished_successfully',
+      content: { content_type: 'multimodal_text', parts: [
+        { content_type: 'audio_transcription', text, direction: 'out' },
+        { content_type: 'audio_asset_pointer', asset_pointer: 'sediment://also-private' }
+      ] }, ...extra } as Message);
+    const { turns } = await scan([], [
+      { id: 'voice-user-turn', messages: [heard] },
+      { id: 'voice-assistant-turn', messages: [spoken('voice-checking', 'Checking.', { end_turn: false } as Partial<Message>), spoken('voice-answer', 'Yes, as a separate provider.')] }
+    ]);
+    expect(turns[0]!.messages).toEqual([expect.objectContaining({ messageId: 'voice-user', role: 'user', rawText: 'Can Claude drive the workers?' })]);
+    expect(turns[1]!.messages.map((message) => message.rawText)).toEqual(['Checking.', 'Yes, as a separate provider.']);
+    // No Stop control exists in Voice: the finished spoken reply is the turn's end evidence.
+    expect(turns[1]!.endMessageId).toBe('voice-answer');
+    expect(JSON.stringify(turns)).not.toMatch(/must-not-cross-worlds|also-private|sediment/);
+  });
+
+  it('keeps a Voice turn open while ChatGPT says it continues', async () => {
+    const checking: Message = { id: 'voice-only-checking', author: { role: 'assistant' }, recipient: 'all',
+      status: 'finished_successfully', end_turn: false,
+      content: { content_type: 'multimodal_text', parts: [{ content_type: 'audio_transcription', text: 'Checking.', direction: 'out' }] } } as Message;
+    const { turns } = await scan([], [{ id: 'voice-open', messages: [checking] }]);
+    expect(turns[0]!.messages[0]).toMatchObject({ rawText: 'Checking.' });
+    expect(turns[0]!.endMessageId ?? null).toBeNull();
+  });
+
   it('captures the opening user message from the page model before the DOM exposes a message id', async () => {
     const opening: Message = {
       id: 'user-opening-model-id',
