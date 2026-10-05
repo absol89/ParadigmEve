@@ -18,7 +18,7 @@
 import sharp from 'sharp';
 import type { ChatProvider, SessionEvent } from '../../shared/session.js';
 import type { InputAttachment, InputImage } from '../../shared/input.js';
-import { readAsset, readEvents, readOverflowText } from './store.js';
+import { readAsset, readCanonicalTranscriptEvents, readOverflowText } from './store.js';
 import { readStagedAttachment } from './input-attachments.js';
 import { archivableAttachment } from './input-history.js';
 import { resolveOllamaEndpoint, type OllamaChatContent, type OllamaChatMessage } from '../ollama-client.js';
@@ -74,7 +74,10 @@ const IMAGE_ASSET_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 /** The archive as conversation turns, oldest first. Streaming partials and empty rows are skipped. */
 export async function archivedTurns(sessionId: string): Promise<ArchivedTurn[]> {
-  const events = await readEvents(sessionId, { kinds: ['user_message', 'assistant_message', 'native_image'], limit: 100_000 });
+  // Provider context is the canonical conversation, not the forensic tool/activity journal.
+  // Keeping this on the message projection prevents a long tool-heavy chat from blocking the
+  // provider-switch preview and then blocking the send-time privacy gate a second time.
+  const events = await readCanonicalTranscriptEvents(sessionId);
   const turns: ArchivedTurn[] = [];
   for (const event of events as SessionEvent[]) {
     if (event.kind === 'user_message') {

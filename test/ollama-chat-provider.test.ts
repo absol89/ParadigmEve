@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
 import sharp from 'sharp';
 import { APP_VERSION, BRIDGE_PROTOCOL } from '../src/main/version.js';
 
@@ -140,6 +141,27 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
   expect(chat.headers.authorization).toBeUndefined();
   // The browser transport never sees an Ollama row.
   expect(await input.pendingBrowserInputs()).toEqual([]);
+});
+
+it('builds provider-switch consent from canonical messages without scanning the forensic event journal', async () => {
+  const session = await createSession({ title: 'Tool-heavy chat', conversationId: randomUUID() });
+  await upsertMessageEvent(session.id, {
+    time: 1, source: 'extension', kind: 'user_message', messageId: 'u-canonical',
+    message: { text: 'Keep this context.', truncated: false, chars: 18 }
+  });
+  await upsertMessageEvent(session.id, {
+    time: 2, source: 'extension', kind: 'assistant_message', messageId: 'a-canonical',
+    message: { text: 'Context retained.', truncated: false, chars: 17 }, final: true, state: 'final'
+  });
+
+  const readFile = vi.spyOn(fs, 'readFile');
+  try {
+    const preview = await history.providerSwitchPreview(session.id, { id: 'ollama', model: 'llama3.2' });
+    expect(preview).toMatchObject({ switching: true, messages: 2, images: 0, files: 0 });
+    expect(readFile.mock.calls.some(([file]) => String(file).endsWith('events.jsonl'))).toBe(false);
+  } finally {
+    readFile.mockRestore();
+  }
 });
 
 it('gives Ollama the ChatGPT history and its images, and refuses an image the model cannot read', async () => {

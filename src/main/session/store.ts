@@ -250,6 +250,7 @@ let assetWriteQueue = Promise.resolve();
 type MessageEvent = Extract<SessionEvent, { kind: 'user_message' | 'assistant_message' }>;
 type NativeImageEvent = Extract<SessionEvent, { kind: 'native_image' }>;
 type CanonicalEvent = MessageEvent | NativeImageEvent;
+export type CanonicalTranscriptEvent = CanonicalEvent;
 type NewMessageEvent = MessageEvent extends infer Event
   ? Event extends MessageEvent
     ? Omit<Event, 'seq'>
@@ -630,6 +631,26 @@ async function readCanonicalMessages(id: string, aliasesCollapsed?: () => void):
       ...(group.some(([, event]) => event.goalEligible === true) ? { goalEligible: true } : {}) });
   }
   return out;
+}
+
+/**
+ * Reads the canonical transcript without scanning the forensic event journal.
+ *
+ * Provider handoff/history only needs authored user/assistant rows and native generated images.
+ * Reading `events.jsonl` there is both semantically wrong (tool/activity rows are not provider
+ * context) and can make a send wait on megabytes of unrelated forensic history. Current sessions
+ * already keep these rows in the canonical message store; persisted sessions read the same shards.
+ *
+ * Truly legacy sessions that predate canonical messages fall back to the event journal so old
+ * chats remain usable rather than silently losing history.
+ */
+export async function readCanonicalTranscriptEvents(sessionId: string): Promise<CanonicalTranscriptEvent[]> {
+  assertSessionId(sessionId);
+  await flushSession(sessionId);
+  const active = open.get(sessionId);
+  const messages = active?.messages ?? await readCanonicalMessages(sessionId);
+  if (messages.size > 0) return chronological([...messages.values()]);
+  return readEvents(sessionId, { kinds: ['user_message', 'assistant_message', 'native_image'], limit: 100_000 }) as Promise<CanonicalTranscriptEvent[]>;
 }
 
 async function writeCanonicalMessage(id: string, key: string, event: CanonicalEvent): Promise<void> {
