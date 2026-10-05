@@ -1,4 +1,6 @@
+import { startOllamaChatDriver } from './session/ollama-chat.js';
 import { applyLoginStartup, supportsLoginStartup } from './window-lifecycle.js';
+import { setSessionLocalOnly } from './session/store.js';
 import { prepareSessionPrompt } from './session/prompt.js';
 import { noteChatOrigin } from './session/recorder.js';
 import { REASONING_EFFORTS } from '../shared/session.js';
@@ -10,6 +12,9 @@ import { GOAL_MARKER_INSTRUCTION } from '../shared/goal-templates.js';
 import { validateInputImages } from './session/input-images.js';
 import { stageInputAttachment, type AttachmentSource } from './session/input-attachments.js';
 import { recordDeliveredInput, recordedInputImage, recordedInputImageThumbnail } from './session/input-history.js';
+import { admitChatProvider, chatGptCatchUp, providerRoute, providerSwitchPreview } from './session/provider-history.js';
+import { listOllamaModels } from './ollama-client.js';
+import { isOllamaConversation } from '../shared/session.js';
 import { UI_BASE_ZOOM, titleBarOverlayForTheme } from './window-layout.js';
 import { usageOverview } from './session/usage.js';
 import { inputArgs, listInputs, editQueuedInput, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs, cancelDeletedSessionInputs, scheduleDeliveryText } from './session/input.js';
@@ -557,11 +562,12 @@ async function buildState(): Promise<AppState> {
   const config = getConfig();
   const status = getStatus();
   const binary = resolvedBinary(config);
-  const [secureStorage, hasApiKey, hasGoalKey, hasCustomProviderKey, bridge, windowOpen, lanGroupKey] = await Promise.all([
+  const [secureStorage, hasApiKey, hasGoalKey, hasCustomProviderKey, hasOllamaKey, bridge, windowOpen, lanGroupKey] = await Promise.all([
     secureStorageStatus(),
     hasSecret('openaiApiKey'),
     hasSecret('openRouterApiKey'),
     hasSecret('customProviderApiKey'),
+    hasSecret('ollamaApiKey'),
     bridgeStatus(),
     paradigmeEveBrowserWindowOpen(),
     lanPeerRuntimeAvailable() ? getLanGroupKey() : Promise.resolve(null)
@@ -586,6 +592,7 @@ async function buildState(): Promise<AppState> {
     hasApiKey,
     hasGoalKey,
     hasCustomProviderKey,
+    hasOllamaKey,
     ...(lanPeerRuntimeAvailable() ? { lan: lanPeerRuntimeStatus(lanGroupKey !== null) } : {}),
     resolvedBinary: binary,
     bundledTunnelVersion: bundledVersion(),
@@ -1152,7 +1159,7 @@ export function registerIpc(
     const { value, key } = z
       .object({
         value: z.string().max(500),
-        key: z.enum(['openaiApiKey', 'openRouterApiKey', 'customProviderApiKey']).default('openaiApiKey')
+        key: z.enum(['openaiApiKey', 'openRouterApiKey', 'customProviderApiKey', 'ollamaApiKey']).default('openaiApiKey')
       })
       .parse(payload);
     if (!(await isEncryptionAvailable())) {
@@ -1161,7 +1168,7 @@ export function registerIpc(
     await setSecret(key, value);
     const activeGoalKey = getConfig().goal.provider.kind === 'custom' ? 'customProviderApiKey' : 'openRouterApiKey';
     if (key === activeGoalKey) retireGoalDrafts();
-    const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : 'api key';
+    const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : key === 'ollamaApiKey' ? 'ollama key' : 'api key';
     logInfo(value.trim() === '' ? `${what} cleared` : `${what} stored`);
     return buildState();
   });
@@ -1351,6 +1358,25 @@ export function registerIpc(
     const { text } = z.object({ text: z.string().min(1).max(4 * 1024 * 1024) }).parse(payload);
     return (await stageFiles([{ text }]))[0]!;
   });
+  // ---- Ollama as a chat provider. The chat owns its history; these only read or gate it.
+  handle('ollama:models', async () => {
+    const models = await listOllamaModels();
+    return models.map((model) => ({ ...model, route: providerRoute({ id: 'ollama', model: model.id }) }));
+  });
+  handle('sessions:providerPreview', async (payload) => {
+    const { id, provider } = sessionIdArg.extend({
+      provider: z.object({ id: z.literal('ollama'), model: z.string().trim().min(1).max(160) }).strict().nullable()
+    }).parse(payload);
+    const session = await getSession(id);
+    if (!session) throw new Error('This chat no longer exists');
+    return providerSwitchPreview(id, provider, session.localOnly === true);
+  });
+  handle('sessions:setLocalOnly', async (payload) => {
+    const { id, localOnly } = sessionIdArg.extend({ localOnly: z.boolean() }).parse(payload);
+    await setSessionLocalOnly(id, localOnly);
+    logInfo(`session ${id}: local only ${localOnly ? 'on' : 'off'}`);
+    return getSession(id);
+  });
   handle('sessions:stopTurn', async payload => {
     const { id, expectedTurnId } = sessionIdArg.extend({ expectedTurnId: z.string().min(1).max(256) }).parse(payload);
     return stopSessionTurn(id, expectedTurnId);
@@ -1405,6 +1431,7 @@ export function registerIpc(
       if (data) input.projectId = data.id;
     }
     await validateInputImages(input.images ?? []);
+    await admitChatProvider(input, session);
     return sendDesktopInput(input);
   });
   handle('sessions:outbox', async () => (await listInputs()).filter((row) => row.purpose !== 'decision' && row.purpose !== 'attention' && row.purpose !== 'schedule'));
@@ -1765,14 +1792,20 @@ export function registerIpc(
     },
     changed: () => push('session:changed'),
     recordDelivered: (entry) => getConfig().sessions.record ? recordDeliveredInput(entry) : Promise.resolve(true),
+    providerCatchUp: (entry, maxChars, imageSlots) => entry.sessionId && getConfig().sessions.record
+      ? chatGptCatchUp(entry.sessionId, maxChars, Math.max(0, imageSlots))
+      : Promise.resolve(null),
     prepareText: async (entry, limits) => {
       const control = entry.conversationId ? goalSwitchFor(entry.conversationId) : getConfig().goal;
       const mode = entry.automation ?? (control.enabled ? control.mode : 'off');
       const text = mode === 'goal' && goalBackendFor('goal') === 'templates' && !entry.text.includes(GOAL_MARKER_INSTRUCTION)
         ? entry.text + GOAL_MARKER_INSTRUCTION : entry.text;
       // Only the opening user input owns executor setup. Existing chats, queued
-      // checkpoints and automatic continuations already have their instructions.
-      if (!entry.sessionId && !entry.conversationId && !entry.finishOwner && entry.mode !== 'finish') {
+      // checkpoints and automatic continuations already have their instructions. A chat that
+      // started on Ollama opens its first ChatGPT conversation here too, so it gets the same setup.
+      const adopting = !!entry.sessionId && !entry.conversationId &&
+        isOllamaConversation((await getSession(entry.sessionId))?.conversationId);
+      if ((!entry.sessionId || adopting) && !entry.conversationId && !entry.finishOwner && entry.mode !== 'finish') {
         const opening = entry.purpose === 'schedule' ? scheduleDeliveryText({ ...entry, text }) : text;
         const contextual = await injectPinsContext(
           opening,
@@ -1801,6 +1834,8 @@ export function registerIpc(
       if (phase === 'after-send' && held.enabled && live.enabled && live.mode === held.mode) await setGoalReplyActiveNow(conversationId, true);
     }
   });
+  // Ollama chat turns: replay rows accepted before a restart and close interrupted turns.
+  void startOllamaChatDriver(() => push('session:changed'));
 
   let statePushGeneration = 0;
   const pushState = (): void => {

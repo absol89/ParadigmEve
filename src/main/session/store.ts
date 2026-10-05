@@ -32,6 +32,7 @@ import type {
   ReasoningEffort,
   SessionEvent,
   SessionOrigin,
+  ChatProvider,
   SessionSummary,
   StoredText
 } from '../../shared/session.js';
@@ -453,10 +454,12 @@ export async function createSession(options: {
   titleSource?: SessionSummary['titleSource'];
   conversationId?: string | null;
   origin?: SessionOrigin | null;
+  provider?: ChatProvider;
 }): Promise<SessionSummary> {
   const id = `${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}`;
   const summary = emptySummary(id, options.title?.trim() || 'ChatGPT session', options.conversationId ?? null);
   summary.origin = options.origin ?? null;
+  if (options.provider) summary.provider = { ...options.provider };
   if (options.titleSource) summary.titleSource = options.titleSource;
   if (options.origin?.fromSessionId) {
     const source = await getSession(options.origin.fromSessionId);
@@ -1212,7 +1215,10 @@ export function upsertMessageEvent(
                 inputDelivery: previous.inputDelivery === 'confirmed' ? 'confirmed' : event.inputDelivery ?? previous.inputDelivery,
                 model: event.model ?? previous.model,
                 reasoningEffort: event.reasoningEffort ?? previous.reasoningEffort,
-                assets: event.assets ?? previous.assets }
+                assets: event.assets ?? previous.assets,
+                ...(event.provider ?? previous.provider ? { provider: event.provider ?? previous.provider } : {}),
+                ...(event.archivedAttachments ?? previous.archivedAttachments
+                  ? { archivedAttachments: event.archivedAttachments ?? previous.archivedAttachments } : {}) }
             : event;
       // A canonical assistant message belongs to exactly one generation permanently. Ownership
       // may still be *promoted* from "not known yet" to a durable generation id when the
@@ -1247,7 +1253,7 @@ export function upsertMessageEvent(
             previous.goalEligible === nextEvent.goalEligible &&
             previous.providerMessageId === nextEvent.providerMessageId)) &&
         (nextEvent.kind !== 'user_message' || previous.kind !== 'user_message' ||
-          (nextEvent.inputId === previous.inputId && nextEvent.authoredText === previous.authoredText && nextEvent.inputDelivery === previous.inputDelivery && JSON.stringify(nextEvent.pinsReferences) === JSON.stringify(previous.pinsReferences) && JSON.stringify(nextEvent.assets) === JSON.stringify(previous.assets) && JSON.stringify(nextEvent.attachments) === JSON.stringify(previous.attachments))) &&
+          (nextEvent.inputId === previous.inputId && JSON.stringify(nextEvent.archivedAttachments) === JSON.stringify(previous.archivedAttachments) && nextEvent.authoredText === previous.authoredText && nextEvent.inputDelivery === previous.inputDelivery && JSON.stringify(nextEvent.pinsReferences) === JSON.stringify(previous.pinsReferences) && JSON.stringify(nextEvent.assets) === JSON.stringify(previous.assets) && JSON.stringify(nextEvent.attachments) === JSON.stringify(previous.attachments))) &&
         (previous.turnId ?? undefined) === settledTurnId &&
         (nextEvent.agent === undefined || previous.agent === nextEvent.agent) &&
         (!preferTime || previous.time === nextEvent.time)
@@ -2621,6 +2627,31 @@ export async function observeSessionBrowserModelIntent(
 }
 
 /** Bind once before publishing project work; a task never silently changes folders. */
+/** Records the provider of the newest delivered user turn (null = ChatGPT). Not a lock. */
+export async function setSessionProvider(id: string, provider: ChatProvider | null): Promise<void> {
+  const entry = await ensureOpen(id);
+  await enqueueSessionOperation(entry, 'provider', async () => {
+    const same = provider ? entry.summary.provider?.id === provider.id && entry.summary.provider.model === provider.model : !entry.summary.provider;
+    if (same) return;
+    if (provider) entry.summary.provider = { ...provider };
+    else delete entry.summary.provider;
+    await writeMeta(entry);
+    publishSessionProjectionCommit(id);
+  });
+}
+
+/** The user's explicit local-only lock for one chat. */
+export async function setSessionLocalOnly(id: string, localOnly: boolean): Promise<void> {
+  const entry = await ensureOpen(id);
+  await enqueueSessionOperation(entry, 'local-only', async () => {
+    if (!!entry.summary.localOnly === localOnly) return;
+    if (localOnly) entry.summary.localOnly = true;
+    else delete entry.summary.localOnly;
+    await writeMeta(entry);
+    publishSessionProjectionCommit(id);
+  });
+}
+
 export async function bindSessionProject(id: string, projectId: string): Promise<void> {
   if (!/^[a-f0-9-]{36}$/i.test(projectId)) throw new Error('Invalid project id');
   const entry = await ensureOpen(id);

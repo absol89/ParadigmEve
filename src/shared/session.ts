@@ -265,6 +265,13 @@ export type SessionEvent =
        */
       pinsReferences?: import('./pins-intent.js').PinsReferenceIntent[];
       attachments?: import('./input.js').InputAttachment[];
+      /** Set when this turn was sent to a local/Ollama provider instead of ChatGPT. */
+      provider?: ChatProvider;
+      /**
+       * Archive copies of readable attachments (text and images), so any later provider can still
+       * read them after the staged upload is pruned. Presentation keeps using `attachments`.
+       */
+      archivedAttachments?: Array<{ attachmentId: string; asset: AssetRef }>;
       assets?: AssetRef[];
       /** First sequence assigned to this stable website message; revisions keep this anchor. */
       origin?: number;
@@ -292,6 +299,8 @@ export type SessionEvent =
       final: boolean;
       /** This exact stable reply was proven terminal and may enter Goal policy. */
       goalEligible?: boolean;
+      /** Set when an Ollama model wrote this reply instead of ChatGPT. */
+      provider?: ChatProvider;
       /** Store-owned sequence of the latest final text/state change; rendering/metadata cannot advance it. */
       finalContentSeq?: number;
       /** First sequence assigned to this logical message; later revisions keep this anchor. */
@@ -463,7 +472,30 @@ export function originTitle(origin: SessionOrigin, source: string | null): strin
   return from ? `${RESUMED_PREFIX}${from}` : 'Resumed session';
 }
 
+/**
+ * Inference provider for one chat, fixed when the chat is created. Absent means ChatGPT in the
+ * browser, which covers every chat recorded before 2.3.5. The model id is the provider's own
+ * exact id (for example `gemma4:cloud`), passed through without family-specific handling.
+ */
+export interface ChatProvider {
+  id: 'ollama';
+  model: string;
+}
+
+/** Local frontend id for an Ollama chat. Never a ChatGPT conversation, never opened in a browser. */
+export const OLLAMA_CONVERSATION_PREFIX = 'ollama-';
+export function isOllamaConversation(conversationId: string | null | undefined): boolean {
+  return !!conversationId && conversationId.startsWith(OLLAMA_CONVERSATION_PREFIX);
+}
+
 export interface SessionSummary {
+  /** Provider of the newest delivered user turn; absent means ChatGPT. The composer's default. */
+  provider?: ChatProvider;
+  /**
+   * The user locked this chat to on-device inference: no ChatGPT turn and no Ollama Cloud turn
+   * may read its history. Only a loopback Ollama endpoint with a non-cloud model may answer.
+   */
+  localOnly?: boolean;
   /** Durable naming authority; absent only on legacy recordings. */
   titleSource?: 'fallback' | 'provider' | 'app' | 'manual';
   /** Latest proven native picker selection; scoped to its frontend, never worker creation intent. */

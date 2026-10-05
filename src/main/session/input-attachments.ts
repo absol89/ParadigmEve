@@ -90,3 +90,16 @@ async function validate(attachments: InputAttachment[]): Promise<void> {
 export async function readInputAttachmentChunk(attachment: InputAttachment, offset: number): Promise<string> {
   return resources.readChunk(attachment, offset);
 }
+/**
+ * Whole bytes of one staged attachment, after the same membership/integrity check as delivery.
+ * Null when it is gone (staging prunes unretained files after a day) or larger than `maxBytes`.
+ */
+export async function readStagedAttachment(attachment: InputAttachment, maxBytes: number): Promise<Buffer | null> {
+  if (attachment.size > maxBytes) return null;
+  try {
+    await validate([attachment]);
+    return await fs.readFile(resources.localPath(attachment.id));
+  } catch {
+    return null;
+  }
+}

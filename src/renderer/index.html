@@ -273,6 +273,17 @@
               <p>Ask Eve to make a pet, or an avatar of herself, then import the folder she saves.</p>
               <button class="btn" id="petsFormatGuide" type="button">How do I make one?</button>
             </div>
+            <dialog class="plugin-dialog" id="providerSwitchDialog" aria-labelledby="providerSwitchTitle">
+              <div class="plugin-dialog-head"><h2 id="providerSwitchTitle">Switch provider for this chat?</h2></div>
+              <div class="plugin-dialog-body">
+                <p id="providerSwitchText"></p>
+                <p class="muted">The chat keeps one history in Eve's archive. The provider that answers a turn reads that history.</p>
+                <div class="step-actions">
+                  <button class="btn" id="providerSwitchCancel" type="button">Cancel</button>
+                  <button class="btn primary" id="providerSwitchConfirm" type="button">Send with full history</button>
+                </div>
+              </div>
+            </dialog>
             <dialog class="plugin-dialog" id="petFormatDialog" aria-labelledby="petFormatTitle">
               <div class="plugin-dialog-head"><h2 id="petFormatTitle">Make an avatar with Eve</h2><button class="btn" id="petsFormatClose" type="button">Close</button></div>
               <div class="plugin-dialog-body pet-format-content">
@@ -845,9 +856,21 @@
                   </div>
                   <label class="setting" for="agentOrchestratorBackend"><span class="setting-text"><b>Agent driver</b><em>Used when your agent starts new worker work.</em></span><select id="agentOrchestratorBackend"></select></label>
                   <label class="setting" for="agentWorkerBackend"><span class="setting-text"><b>Worker driver</b><em>Used for newly created workers.</em></span><select id="agentWorkerBackend"></select></label>
-                  <label class="setting" for="ollamaWorkerEndpoint"><span class="setting-text"><b>Ollama worker endpoint</b><em>OpenAI-compatible base URL. HTTP is allowed only on loopback; remote endpoints must use HTTPS.</em></span><input id="ollamaWorkerEndpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" /></label>
-                  <label class="setting" for="ollamaWorkerModel"><span class="setting-text"><b>Ollama worker model</b><em>Exact model id used only for Ollama workers, for example gemma4:cloud.</em></span><input id="ollamaWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="gemma4:cloud" /></label>
+                  <label class="setting" for="ollamaWorkerModel"><span class="setting-text"><b>Ollama worker model</b><em>Exact model id for Ollama workers, for example gemma4:cloud. Chats pick their model in the composer.</em></span><input id="ollamaWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="gemma4:cloud" /></label>
                   <p class="muted">ParadigmEve never falls back to a different driver when the selected one is unavailable.</p>
+                </div>
+                <h2 class="settings-section-title">Ollama</h2>
+                <div class="pane">
+                  <label class="setting" for="ollamaWorkerEndpoint"><span class="setting-text"><b>Ollama endpoint</b><em>Leave blank for the Ollama app on this computer. Once you run ollama signin it also serves cloud models (names ending in :cloud). For Ollama Cloud directly, use https://ollama.com/v1 with an API key.</em></span><input id="ollamaWorkerEndpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" /></label>
+                  <div class="field">
+                    <label for="ollamaKey">Ollama API key (optional)</label>
+                    <input id="ollamaKey" type="password" spellcheck="false" placeholder="only for https://ollama.com" autocomplete="off" />
+                    <p class="hint" id="ollamaKeyState"></p>
+                    <div class="step-actions">
+                      <button class="btn" id="ollamaKeyRemove" type="button">Remove stored key</button>
+                    </div>
+                  </div>
+                  <p class="muted">Only a model on this computer is local. A cloud model reads your chat on Ollama's servers, even through the local app.</p>
                 </div>
                 <h2 class="settings-section-title">Keep the turn open</h2>
                 <div class="pane">
@@ -1091,6 +1114,7 @@
                         <button type="button" role="radio" aria-checked="false" data-mode="goal" data-keep-menu="true">Goal</button>
                         <button type="button" role="radio" aria-checked="false" data-mode="loop" data-keep-menu="true">Loop</button>
                         </div><select hidden id="chatAutomation" aria-label="Chat automation"><option value="off">Off</option><option value="goal">Goal</option><option value="loop">Loop</option></select>
+              <label class="local-only-toggle" id="localOnlyRow" hidden><input type="checkbox" id="chatLocalOnly" data-keep-menu="true" /><span><b>Local only</b><em>Only an Ollama model on this computer may read this chat.</em></span></label>
               <div id="sessionControls" hidden>
                 <div class="session-controls-menu">
                   <label for="sessionObjective">This chat's goal</label>
@@ -1116,10 +1140,20 @@
                 <details class="composer-menu model-menu" id="modelMenu">
                   <summary><span id="composerModelLabel">Model</span><svg class="ico picker-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></summary>
                   <div class="composer-popover">
+                    <div class="automation-switch provider-switch" id="composerProvider" role="radiogroup" aria-label="Provider">
+                      <button type="button" role="radio" aria-checked="true" data-provider="chatgpt" data-keep-menu="true">ChatGPT</button>
+                      <button type="button" role="radio" aria-checked="false" data-provider="ollama" data-keep-menu="true">Ollama</button>
+                    </div>
+                    <div id="ollamaModelPanel" hidden>
+                      <div class="ollama-header"><div class="power-caption"><strong>Ollama model</strong><span id="ollamaModelStatus">Not loaded yet</span></div><button class="btn model-reload" id="refreshOllamaModels" data-keep-menu="true" type="button" title="Reload Ollama models" aria-label="Reload Ollama models"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-refresh" /></svg></button></div>
+                      <div id="ollamaModelChoices" role="group" aria-label="Ollama model"></div>
+                    </div>
+                    <div id="chatgptModelPanel">
                     <div class="power-header"><div class="power-caption"><strong id="composerPowerTitle">Choose a level</strong><span id="composerPowerModel">Observed models</span></div><button class="btn model-reload" id="refreshComposerModels" data-keep-menu="true" type="button" title="Reload ChatGPT models" aria-label="Reload ChatGPT models"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-refresh" /></svg></button>
                     </div><p id="composerModelStatus" class="muted" role="status" hidden></p>
                     <div id="composerModelChoices" role="group" aria-label="Model"></div><div id="composerPowerChoices" role="group" aria-label="Thinking effort"></div><label hidden>Model<select id="composerModel" aria-label="ChatGPT model"><option value="" disabled>No observed choices</option></select></label>
                     <label hidden>Reasoning<select id="composerReasoning" aria-label="Reasoning effort"><option value="" disabled>No observed choices</option></select></label>
+                    </div>
                   </div>
                 </details>
                 <button class="btn" id="generateFinishGoal" type="button" hidden>Generate Goal</button>

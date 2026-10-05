@@ -5,19 +5,20 @@ import { REASONING_EFFORTS } from '../../shared/session.js';
  */
 import { z } from 'zod';
 import { browserInputModel, type InputImage } from '../../shared/input.js';
-import type { SessionSummary } from '../../shared/session.js';
+import { isOllamaConversation, type SessionSummary } from '../../shared/session.js';
 import { planIdSchema, planItemStatusSchema } from '../../shared/plans.js';
 import { DEFAULT_CORE_CONNECTOR_NAME } from '../../shared/types.js';
 import { getConfig } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { userTitle } from './title.js';
 import { readDurable, writeDurableNow, writeDurableSoon } from '../durable.js';
-import { getSession, findSessionByConversation, createSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, renameSession, sessionFolderExists } from './store.js';
+import { getSession, findSessionByConversation, createSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, rebindSession, renameSession, sessionFolderExists } from './store.js';
+import { endResumeClaim, noteResumeOpening } from './resume-gate.js';
 import { assignSessionProject, projectWorkspace, getSessionProject, getProject } from '../projects.js';
 import { isChatBlocked } from './blocked-chats.js';
 import { wakeBrowserWork } from '../browser-wake.js';
 import { logInfo, logWarn } from '../logger.js';
-import { noteChatOrigin } from './recorder.js';
+import { noteChatOrigin, rebindConversation } from './recorder.js';
 import { compactingConversation } from './continuation.js';
 import { claimAgentConversation, currentAgentConversationId, replaceAgentConversation } from '../agent-identity.js';
 import { selectedBrokerOwnerConversationId } from '../agents.js';
@@ -45,7 +46,19 @@ const inputArgsBase = z.object({
   mode: z.enum(['auto', 'after-turn', 'finish']),
   afterTurn: z.boolean().optional(),
   dueAt: z.number().int().nonnegative(),
-  model: z.string().max(80).nullable(),
+  model: z.string().max(160).nullable(),
+  /**
+   * Provider for this one turn. Absent means ChatGPT in the browser. A chat may switch provider
+   * between turns; the session archive stays the single history both providers read.
+   */
+  provider: z.enum(['ollama']).optional(),
+  /** The switch scope the user confirmed in the composer (see provider-history.ts). */
+  providerConsent: z.object({
+    to: z.enum(['chatgpt', 'ollama-local', 'ollama-cloud']),
+    messages: z.number().int().nonnegative(),
+    images: z.number().int().nonnegative(),
+    files: z.number().int().nonnegative()
+  }).strict().optional(),
   reasoningEffort: z.enum(REASONING_EFFORTS).nullable(),
   /** Browser-native ChatGPT mode. Distinct from paid/API reasoning-effort levels. */
   nativeMode: z.enum(['think']).nullable().optional(),
@@ -84,6 +97,15 @@ function validateOpeningContext(
       path: ['replaceAgentIdentityFrom'],
       message: 'Agent replacement is only valid for a top-level fresh chat'
     });
+  }
+  if (input.provider === 'ollama') {
+    const refuse = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+    if (!input.model?.trim()) refuse('model', 'Choose an Ollama model before sending');
+    if (input.reasoningEffort !== null || input.nativeMode) refuse('reasoningEffort', 'ChatGPT thinking levels do not apply to Ollama');
+    if (input.claimAgentIdentity || input.replaceAgentIdentityFrom) refuse('provider', "Eve's own agent conversation stays in ChatGPT");
+    if (input.automation && input.automation !== 'off') refuse('automation', 'Goal and Loop run in ChatGPT; turn them off to send to Ollama');
+    if (input.stages?.length || input.mode === 'finish') refuse('mode', 'Staged plans and finish tasks run in ChatGPT');
+    if (input.contextQuiltId) refuse('contextQuiltId', 'Thread context openings run in ChatGPT');
   }
   if (input.nativeMode && (input.model !== null || input.reasoningEffort !== null)) {
     ctx.addIssue({
@@ -277,6 +299,8 @@ type InputDeliveryHooks = {
   bindHelper?: (conversationId: string, sourceSessionId: string | null) => Promise<void>;
   recordDelivered?: (entry: Readonly<InputEntry>) => Promise<boolean>;
   prepareText?: (entry: Readonly<InputEntry>, limits: PromptLimits) => string | Promise<string>;
+  /** Turns of this chat ChatGPT has not seen (answered by another provider), frozen into this delivery. */
+  providerCatchUp?: (entry: Readonly<InputEntry>, maxChars: number, imageSlots: number) => Promise<{ preamble: string; images: InputImage[] } | null>;
   applyAutomation: (conversationId: string, automation: NonNullable<InputArgs['automation']>, phase: 'before-send' | 'after-send', objective?: string) => Promise<void>;
   changed: () => void;
 };
@@ -409,7 +433,7 @@ export function hasEligibleToolInput(sessionId: string, finishBoundary = false):
     if (current.some(row => row.sessionId === sessionId && row.state === 'browser')) return false;
     for (const row of current) {
       if (row.sessionId !== sessionId || row.dueAt > Date.now()) continue;
-      if (row.purpose === 'attention' || row.purpose === 'peer') continue;
+      if (row.purpose === 'attention' || row.purpose === 'peer' || isLocalProviderInput(row)) continue;
       if (row.attachments?.length) continue;
       if (row.mode === 'after-turn' || (row.mode === 'finish' && !finishBoundary)) continue;
       if (row.state === 'tool') return true;
@@ -424,8 +448,10 @@ let chain: Promise<unknown> = Promise.resolve();
 // available. Restart discards this evidence and repeats the stable message id.
 const offered = new Map<string, number>();
 const terminal = (row: InputEntry): boolean => ['sent', 'cancelled', 'failed'].includes(row.state);
-const preparable = (row: InputEntry): boolean => row.state === 'queued' ||
-  (row.state === 'browser' && row.requiresAuthorization === true && row.sendAuthorizedAt === undefined);
+/** Rows answered in-process by a local provider. The browser and tool transports never claim them. */
+export const isLocalProviderInput = (row: Pick<InputEntry, 'provider'>): boolean => row.provider === 'ollama';
+const preparable = (row: InputEntry): boolean => !isLocalProviderInput(row) && (row.state === 'queued' ||
+  (row.state === 'browser' && row.requiresAuthorization === true && row.sendAuthorizedAt === undefined));
 const needsHistory = (row: InputEntry): boolean => row.purpose !== 'decision' && !row.historyRecorded &&
   ((row.state === 'tool' && Number.isFinite(row.offeredAt)) || ((row.state === 'sent' || row.state === 'cancelled') && !!row.messageId));
 const pendingStages = (row: InputEntry): boolean => row.state === 'sent' && !!row.stages?.length && !row.stagesApplied;
@@ -510,7 +536,7 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // Only an ordinary browser attempt has an unclaimed startup deadline. Tool
     // intent survives a later terminal observation/restart; legacy bound-chat
     // rows are ambiguous and cannot safely be reclassified from today's activity.
-    if (row.state === 'queued' && row.mode === 'auto' && !row.finishOwner && row.purpose !== 'attention' && row.purpose !== 'peer' &&
+    if (row.state === 'queued' && !isLocalProviderInput(row) && row.mode === 'auto' && !row.finishOwner && row.purpose !== 'attention' && row.purpose !== 'peer' &&
         (row.transportIntent === 'browser' || (!row.transportIntent && !row.sessionId)) &&
         Date.now() - Math.max(row.createdAt, row.dueAt, browserReadyAt ?? 0) >= (browserReadyAt === null ? BROWSER_COLD_START_MS : 60_000))
       return { ...row, state: 'failed', error: browserReadyAt === null
@@ -573,9 +599,21 @@ async function prepare(entry: InputEntry, suffix = ''): Promise<InputEntry> {
       ? `Original user request:\n${entry.objective}\n\nOpening instruction:\n${entry.text}\n\nFollow the complete original request, including all constraints, throughout this task.`
       : entry.text;
   const mandatoryOverhead = `${TOOL_INPUT_HEADER}\n\n${finishInstruction(getConfig().ui.finishLeadMinutes)}`;
-  const deliveryText = entry.deliveryText ?? await deliveryHooks?.prepareText?.({ ...entry, text: text + suffix }, {
+  // The chat owns its history: a ChatGPT turn after turns another provider answered carries
+  // those turns, once, frozen with this delivery so a retry sends the same bytes.
+  let catchUpText = '';
+  if (entry.deliveryText === undefined && !isLocalProviderInput(entry) && entry.sessionId &&
+      (entry.purpose === undefined || entry.purpose === 'user')) {
+    const room = MAX_CHATGPT_MESSAGE_CHARS - text.length - suffix.length - 4000;
+    const catchUp = room > 1000 ? await deliveryHooks?.providerCatchUp?.(entry, room, 4 - (entry.images?.length ?? 0)) : null;
+    if (catchUp) {
+      catchUpText = `${catchUp.preamble}\n\n`;
+      if (catchUp.images.length) entry = { ...entry, images: [...(entry.images ?? []), ...catchUp.images].slice(0, 4) };
+    }
+  }
+  const deliveryText = entry.deliveryText ?? await deliveryHooks?.prepareText?.({ ...entry, text: catchUpText + text + suffix }, {
     maxChars: MAX_CHATGPT_MESSAGE_CHARS, maxBytes: TOOL_INPUT_TEXT_BYTES - Buffer.byteLength(mandatoryOverhead)
-  }) ?? text + suffix;
+  }) ?? catchUpText + text + suffix;
   // A single input must fit the tool envelope by itself. Aggregate batching below
   // may defer a second input, but cannot silently defer an individually impossible one.
   const envelope = `${TOOL_INPUT_HEADER}${deliveryText}\n\n${finishInstruction(getConfig().ui.finishLeadMinutes)}`;
@@ -619,6 +657,10 @@ async function target(entry: InputEntry): Promise<string | null> {
   }
   if (!entry.sessionId) return null;
   const session = await getSession(entry.sessionId);
+  if (isLocalProviderInput(entry)) return session?.conversationId ?? null;
+  // A chat that started on Ollama has no ChatGPT conversation yet: its first ChatGPT turn opens
+  // one, and the receipt binds that conversation to this same session.
+  if (isOllamaConversation(session?.conversationId)) return null;
   if (!session?.conversationId) throw new Error('This recording has no ChatGPT conversation');
   if (isChatBlocked(session.conversationId)) throw new Error('Unblock this conversation before sending');
   return session.conversationId;
@@ -662,7 +704,12 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
         throw new Error('The current Eve conversation is still live or ambiguous; refresh before replacing it');
       }
     }
-    const policy = input.sessionId ? await sessionInputPolicy(input.sessionId) : null;
+    const local = input.provider === 'ollama';
+    if (input.sessionId && localTurnActive(input.sessionId)) {
+      throw new Error('Ollama is still answering in this chat. Wait for it or stop it first.');
+    }
+    if (local && input.mode !== 'auto') input.mode = 'auto';
+    const policy = input.sessionId && !local ? await sessionInputPolicy(input.sessionId) : null;
     const requestedMode = input.mode;
     if (input.attachments?.length) {
       await validateInputAttachments(input.attachments);
@@ -676,9 +723,9 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     }
     // Unattributed work can fence browser Send without making this chat a tool recipient.
     // Leave that input neutral until the existing serialized claim selects a safe transport.
-    const transportIntent = input.attachments?.length ? 'browser' as const : input.mode === 'auto' && !finishOwner
+    const transportIntent = local ? undefined : input.attachments?.length ? 'browser' as const : input.mode === 'auto' && !finishOwner
       ? policy?.canInject ? 'tool' as const : !policy || policy.browserAllowed || policy.directTurn ? 'browser' as const : undefined : undefined;
-    const directTurn = input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
+    const directTurn = !local && input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
     const entry: InputEntry = { ...input, ...(directTurn ? { directTurn } : {}), ...(transportIntent ? { transportIntent } : {}), ...(requestedMode !== input.mode ? { requestedMode } : {}), ...(finishOwner ? { finishOwner } : {}), state: 'queued', owner: null, createdAt: Date.now(), conversationId: null };
     if (input.projectId) {
       await projectWorkspace(input.projectId);
@@ -1403,6 +1450,10 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     await transition(current, current.map((row) => row === entry ? claimed : row),
       entry.state === 'queued' && entry.automation && conversationId && entry.purpose !== 'decision' ? [claimed] : [], 'before-send');
     logInfo(`input ${id}: browser claimed after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
+    // An Ollama-started chat is about to get its first ChatGPT conversation. Hold the recorder,
+    // as Compact & Resume does, so that new conversation is not filed as a separate chat before
+    // the receipt binds it to this session.
+    if (conversationId === null && isOllamaConversation(session?.conversationId)) noteResumeOpening(`ollama-adopt:${id}`);
     // The page must prove it is inside this exact native Project before typing a fresh chat.
     const projectEntry = await nativeDestination(entry, conversationId);
     return { ...claimed, ...selection, text: claimed.deliveryText ?? claimed.text,
@@ -1453,6 +1504,17 @@ export function acknowledgeBrowserInput(id: string, owner: string, conversationI
     if (messageId !== undefined && (!messageId || messageId.length > 256)) return false;
     if ((entry.state !== 'browser' && entry.state !== 'cancelled') || (entry.state === 'cancelled' && entry.deliveredAt !== undefined)) { await publishHistory(); return true; }
     const deliveredConversation = conversationId ?? entry.conversationId;
+    if (entry.sessionId && deliveredConversation && entry.purpose !== 'decision' && !isOllamaConversation(deliveredConversation)) {
+      const owner = await getSession(entry.sessionId);
+      const from = owner?.conversationId;
+      if (owner && from && isOllamaConversation(from)) {
+        // First ChatGPT turn of a chat that started on Ollama: the same session now lives in
+        // this ChatGPT conversation. Its archive, including the Ollama turns, stays as it was.
+        if (await rebindSession(owner.id, from, deliveredConversation)) rebindConversation(owner.id, from, deliveredConversation);
+        else logWarn(`input ${id}: could not bind ChatGPT conversation ${deliveredConversation} to Ollama-started session ${owner.id}`);
+      }
+      endResumeClaim(`ollama-adopt:${id}`);
+    }
     if (!entry.sessionId && entry.purpose !== 'decision' && deliveredConversation) {
       await noteChatOrigin(deliveredConversation, { kind: 'desktop', fromSessionId: null, agentId: null, task: '' });
     }
@@ -1527,7 +1589,7 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
     let payloadFull = false;
     const prepareEntry = async (entry: InputEntry): Promise<InputEntry> => {
       if (entry.sessionId !== sessionId || entry.dueAt > Date.now()) return entry;
-      if (entry.purpose === 'attention' || entry.purpose === 'peer') return entry;
+      if (entry.purpose === 'attention' || entry.purpose === 'peer' || isLocalProviderInput(entry)) return entry;
       if (entry.attachments?.length) return entry;
       if (entry.directTurn && entry.state === 'queued' && session.activeTurnId !== entry.directTurn.id) return entry;
       // ChatGPT may reuse one request id for the whole server turn. Receipt follows
@@ -1717,4 +1779,39 @@ export async function collectRecordedBrowserDecision(conversationId: string): Pr
       final?.kind !== 'assistant_message' || !final.final || final.state !== 'final' || !final.messageId ||
       final.message.truncated || final.message.text.length > 16000) return;
   await completeBrowserDecision(row.id, row.owner!, final.message.text, conversationId);
+}
+
+// ------------------------------------------------------------ local providers
+
+let localTurnProbe: (sessionId: string) => boolean = () => false;
+/** Installed by the local provider driver; input.ts must not import it (it imports this module). */
+export function setLocalTurnProbe(probe: (sessionId: string) => boolean): void { localTurnProbe = probe; }
+function localTurnActive(sessionId: string): boolean {
+  try { return localTurnProbe(sessionId); } catch { return false; }
+}
+
+/** Local-provider rows still owed a turn, oldest first. Includes a restart-interrupted claim. */
+export function pendingLocalInputs(): Promise<InputEntry[]> {
+  return serial(async () => ordered(await load())
+    .filter(row => isLocalProviderInput(row) && (row.state === 'queued' || row.state === 'browser') && row.dueAt <= Date.now())
+    .map(row => ({ ...row })));
+}
+
+/**
+ * Claims one local-provider row for `owner`. Repeating the claim with the same owner returns the
+ * same row, so a restart can finish a claim that was committed before the crash.
+ */
+export function claimLocalInput(id: string, owner: string, conversationId: string): Promise<InputEntry | null> {
+  return serial(async () => {
+    const current = await load();
+    const entry = current.find(row => row.id === id);
+    if (!entry || !isLocalProviderInput(entry) || !owner) return null;
+    if (entry.state === 'browser') return entry.owner === owner && entry.conversationId === conversationId ? { ...entry } : null;
+    if (entry.state !== 'queued' || entry.dueAt > Date.now()) return null;
+    if (entry.sessionId && current.some(row => row.id !== id && row.sessionId === entry.sessionId && ['browser', 'tool'].includes(row.state))) return null;
+    const claimed: InputEntry = { ...entry, state: 'browser', owner, conversationId, offeredAt: entry.offeredAt ?? Date.now() };
+    await commit(current.map(row => row === entry ? claimed : row));
+    logInfo(`input ${id}: local provider claimed after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
+    return { ...claimed };
+  });
 }

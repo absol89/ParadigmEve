@@ -6,6 +6,7 @@ import type { InputAttachment } from '../shared/input.js';
 import type { UsageOverview } from '../shared/usage.js';
 import type { PetLibraryState, PetOverlayControlState, PetRuntimeAsset } from '../shared/pets.js';
 import type { InputArgs, InputEntry } from '../main/session/input.js';
+import type { ProviderSwitchPreview } from '../main/session/provider-history.js';
 import type {
   ArchiveRendererOpenResult,
   ArchiveRendererRebuildResult,
@@ -183,6 +184,11 @@ const api = {
   setGoalKey: (value: string) => call<AppState>('secret:set', { value, key: 'openRouterApiKey' }),
   // The same, for a custom provider endpoint. Optional: keyless local servers need nothing stored.
   setCustomProviderKey: (value: string) => call<AppState>('secret:set', { value, key: 'customProviderApiKey' }),
+  setOllamaKey: (value: string) => call<AppState>('secret:set', { value, key: 'ollamaApiKey' }),
+  listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud' }>>('ollama:models'),
+  providerPreview: (id: string, provider: { id: 'ollama'; model: string } | null) =>
+    call<ProviderSwitchPreview>('sessions:providerPreview', { id, provider }),
+  setSessionLocalOnly: (id: string, localOnly: boolean) => call<SessionSummary | null>('sessions:setLocalOnly', { id, localOnly }),
   listGoalModels: (offset: number) => call<GoalModelPage>('goal:models', { offset }),
   pickBinary: () => call<AppState>('binary:pick'),
   connect: () => call<AppState>('connection:connect'),

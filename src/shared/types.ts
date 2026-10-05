@@ -701,6 +701,8 @@ export interface AppState {
   hasGoalKey: boolean;
   /** True when a custom-provider key is stored. Only meaningful beside a custom endpoint, which may also run keyless. */
   hasCustomProviderKey: boolean;
+  /** An Ollama API key is stored (used only for HTTPS endpoints such as https://ollama.com/v1). */
+  hasOllamaKey: boolean;
   /** Present only in debug builds. Never includes the LAN group key. */
   lan?: LanRuntimeStatus;
   /** Resolved path of the tunnel binary we would run, or null if we cannot find one. */

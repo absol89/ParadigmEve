@@ -375,7 +375,20 @@ export function confirmedComposerModel(): { model: string | null; reasoningEffor
   return null;
 }
 
+let composerLabelOverride: (() => string | null) | null = null;
+/** Another provider (Ollama) may own the composer label while it is selected. */
+export function setComposerLabelOverride(override: () => string | null): void { composerLabelOverride = override; }
+export function repaintComposerLabel(): void { paintComposerLabel(); }
+
 function paintComposerLabel(): void {
+  const override = composerLabelOverride?.();
+  if (override) {
+    const node = $('composerModelLabel');
+    ui(node, 'textContent', () => override);
+    ui(node, 'title', () => override);
+    onComposerPaint?.();
+    return;
+  }
   // Display the same admission decision as Send, including discovery and removed efforts.
   const confirmed = confirmedComposerModel();
   const modelLabel = confirmed?.model ? composerModels().find(model => model.id === confirmed.model)?.label ?? confirmed.model : '';

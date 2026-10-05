@@ -1,5 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel } from './chat-models.js';
+import { applyComposerProvider, composerProvider, confirmProviderSwitch, initChatProvider, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
@@ -1810,7 +1811,9 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       return el('p', 'meta', () => t("Session started — {0}", [event.title]));
     case 'user_message': {
       const box = el('div', 'said is-user');
-      box.append(el('b', '', () => t("You")));
+      const you = el('b', '', () => t("You"));
+      if (event.provider) you.append(el('span', 'provider-tag', () => t("to Ollama · {0}", [event.provider!.model])));
+      box.append(you);
       const attachments = el('div', 'message-attachments');
       if (event.attachments?.length) attachments.append(...event.attachments.map(file => attachmentCard(file)));
       const assets = event.assets?.filter(asset => ['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType)).slice(0, 4) ?? [];
@@ -1844,7 +1847,9 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
     }
     case 'assistant_message': {
       const box = el('div', 'said');
-      box.append(el('b', '', () => event.final ? 'ChatGPT' : t("ChatGPT (partial)")));
+      box.append(el('b', '', () => event.provider
+        ? event.final ? t("Ollama · {0}", [event.provider.model]) : t("Ollama · {0} (partial)", [event.provider.model])
+        : event.final ? 'ChatGPT' : t("ChatGPT (partial)")));
       box.append(renderedMarkdown(event.message.text, event.renderedHtml));
       return box;
     }
@@ -2553,6 +2558,7 @@ function paintDetail(followBottom = true): void {
     ? projects.find(project => project.id === selectedProjectId)
     : null;
   applyComposerSessionModel(composerModelScope(), summary?.selectedModel ?? null, sessionUsesNativeModel(summary));
+  applyComposerProvider(summary?.id ?? null, summary ?? null);
   const config = deps.state()?.config;
   if (config) paintContextMeter(summary, config, confirmedComposerModel());
   ui($('chatTitle'), 'textContent', () => summary ? sessionDisplayTitle(summary) : selectedContextQuiltId
@@ -3254,6 +3260,16 @@ function applyGoal(state: AppState, previous?: Config): void {
       : t("Optional. Stored with secure OS credential storage and sent only by the app to your configured API endpoint. The browser receives only the reply."));
   $('goalCustomKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('goalCustomKeyRemove').disabled = !state.hasCustomProviderKey || !secureStorageAvailable;
+  const ollamaKey = $<HTMLInputElement>('ollamaKey');
+  ui(ollamaKey, 'placeholder', () => state.hasOllamaKey ? t("•••••••• stored") : t("only for https://ollama.com"));
+  ollamaKey.disabled = !secureStorageAvailable;
+  ui($('ollamaKeyState'), 'textContent', () => !secureStorageAvailable
+    ? (state.secureStorage?.detail ?? t("Secure credential storage is unavailable."))
+    : state.hasOllamaKey
+      ? t("A key is stored with secure OS credential storage. Type a new one to replace it.")
+      : t("Optional. Stored with secure OS credential storage and sent only to an HTTPS Ollama endpoint, never to the Ollama app on this computer."));
+  $('ollamaKeyState').classList.toggle('is-warn', !secureStorageAvailable);
+  $<HTMLButtonElement>('ollamaKeyRemove').disabled = !state.hasOllamaKey || !secureStorageAvailable;
   if (goalModels.length > 0) paintGoalModels();
 }
 
@@ -3433,6 +3449,25 @@ function wireGoal(save: () => Promise<void>): void {
     if (next) {
       applyGoal(next);
       toast('Custom provider key removed');
+    }
+  });
+  // The Ollama key follows the same discipline. It is sent only to HTTPS Ollama endpoints.
+  $('ollamaKey').addEventListener('blur', async () => {
+    const input = $<HTMLInputElement>('ollamaKey');
+    const submitted = input.value;
+    if (!submitted.trim()) return;
+    const next = await run(api.setOllamaKey(submitted.trim()));
+    if (next) {
+      if (input.value === submitted) input.value = '';
+      applyGoal(next);
+      toast(t("Ollama key stored"));
+    }
+  });
+  $('ollamaKeyRemove').addEventListener('click', async () => {
+    const next = await run(api.setOllamaKey(''));
+    if (next) {
+      applyGoal(next);
+      toast(t("Ollama key removed"));
     }
   });
 }
@@ -3635,6 +3670,8 @@ async function refreshInputQueue(): Promise<void> {
     let summary = sessions.find((entry) => entry.id === delivered.deliveredSessionId);
     const reflectsReceipt = (candidate: SessionSummary | undefined): boolean => {
       if (!candidate || !delivered.deliveredAt || candidate.conversationId !== delivered.conversationId) return false;
+      // An Ollama turn has no browser model receipt; the session's provider is its proof.
+      if (delivered.provider === 'ollama') return candidate.provider?.model === delivered.model;
       if (delivered.model !== null) {
         const observed = candidate.selectedModel;
         return observed?.conversationId === candidate.conversationId && observed.model === delivered.model &&
@@ -3955,7 +3992,10 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   }
   const discoveryGeneration = ++composerDiscoveryGeneration;
   const discoverySelection = selectionGeneration, discoverySession = selectedId, discoveryDraft = input.value;
-  const modelSettings = confirmedComposerModel() ?? await ensureComposerModel();
+  // The chat owns its history; the provider only answers this turn.
+  const provider = composerProvider();
+  if (provider && !provider.model) { toast(t("Choose an Ollama model, then send again.")); return false; }
+  const modelSettings = provider ? { model: provider.model, reasoningEffort: null } : confirmedComposerModel() ?? await ensureComposerModel();
   // Discovery can outlive navigation or draft edits. Only the latest unchanged
   // authored send may continue; a second click must never send the same text twice.
   if (discoveryGeneration !== composerDiscoveryGeneration || discoverySelection !== selectionGeneration || discoverySession !== selectedId ||
@@ -3964,6 +4004,13 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   if (!modelSettings) { toast(t("Model discovery could not confirm your selection. Choose an available model and thinking effort, then send again.")); return false; }
   const sessionId = selectedId;
   const generation = selectionGeneration;
+  // A turn that hands earlier history to a different provider asks first; main enforces it too.
+  const providerConsent = sessionId && providerSwitchPossible(sessions.find(row => row.id === sessionId), provider)
+    ? await confirmProviderSwitch(sessionId, provider) : undefined;
+  if (providerConsent === false) return false;
+  if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
+  const providerIntent = provider ? { provider: 'ollama' as const } : {};
+  const consentIntent = providerConsent ? { providerConsent } : {};
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
   const mode = chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;
   const dueAt = Date.now();
@@ -3971,15 +4018,15 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const authoredDraft = input.value;
   const attachmentPayload = { images: images.filter((file): file is InputImage => 'dataUrl' in file), attachments: images.filter((file): file is InputAttachment => 'id' in file) };
   const objective = plan ? planObjective : mode === 'finish' ? undefined : $<HTMLTextAreaElement>('sessionObjective').value.trim() || undefined;
-  const identityIntent = sessionId === null
+  const identityIntent = sessionId === null && !provider
     ? newChatAgentClaim
       ? { claimAgentIdentity: true }
       : newChatAgentReplacementFrom
         ? { replaceAgentIdentityFrom: newChatAgentReplacementFrom }
         : {}
     : {};
-  const contextIntent = sessionId === null ? quiltContextIntent() : {};
-  startingInputs.set(id, { id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, ...identityIntent, ...contextIntent, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn',
+  const contextIntent = sessionId === null && !provider ? quiltContextIntent() : {};
+  startingInputs.set(id, { id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, ...identityIntent, ...contextIntent, ...providerIntent, ...consentIntent, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn',
     dueAt, ...modelSettings, state: 'queued', owner: null, createdAt: dueAt, conversationId: null });
   input.value = ''; inputDrafts.delete(key);
   imageDrafts.delete(key); paintComposerImages();
@@ -3987,7 +4034,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   void refreshInputQueue();
   paintDeliveryControls();
   try {
-    const result = await run(api.sendInput({ id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, ...identityIntent, ...contextIntent, automation: mode === 'finish' ? undefined : $<HTMLSelectElement>('chatAutomation').value as InputAutomation, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn', dueAt, ...modelSettings }));
+    const result = await run(api.sendInput({ id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, ...identityIntent, ...contextIntent, ...providerIntent, ...consentIntent, automation: mode === 'finish' ? undefined : provider ? 'off' : $<HTMLSelectElement>('chatAutomation').value as InputAutomation, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn', dueAt, ...modelSettings }));
     if (cancelledStarts.has(id)) return;
     if (!result) {
       if (selectedId === sessionId && selectionGeneration === generation && !input.value) input.value = authoredDraft;
@@ -4094,6 +4141,7 @@ function selectSession(
   showView('timeline');
   const selected = sessions.find(row => row.id === id);
   applyComposerSessionModel(composerModelScope(), selected?.selectedModel ?? null, sessionUsesNativeModel(selected));
+  applyComposerProvider(selected?.id ?? null, selected ?? null);
   const parent = selected?.origin?.kind === 'worker' ? selected.origin.fromSessionId : null;
   if (parent) expandedWorkers.add(parent);
   selectedProjectId = projectGroup(parent ? sessions.find(row => row.id === parent)?.projectId : selected?.projectId);
@@ -4127,6 +4175,7 @@ function selectNewChat(
     ? options.replaceAgentIdentityFrom ?? null
     : null;
   applyComposerSessionModel(composerModelScope(), null);
+  applyComposerProvider(null, null);
   cancelTaskPlan();
   if (options.resetDraft !== false) { inputDrafts.delete(draftKey()); imageDrafts.delete(draftKey()); }
   $('inputQueue').replaceChildren();
@@ -4202,6 +4251,7 @@ export function initChat(next: Deps): void {
       return groupToolRows(rows, `pane:${id}`, agentToolGroups);
     }
   });
+  initChatProvider();
   initChatModels(() => {
     const config = deps.state()?.config;
     if (config) paintContextMeter(sessions.find(session => session.id === selectedId) ?? null, config, confirmedComposerModel());

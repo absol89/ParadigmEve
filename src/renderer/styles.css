@@ -3401,3 +3401,19 @@ select option { background: var(--card); color: var(--ink); }
 .context-meter:hover #contextMeterInfo, .context-meter:focus-within #contextMeterInfo, .context-meter.pinned #contextMeterInfo { display: block; }
 .queue-delivery { flex-shrink: 0; font-size: 11px; padding: 3px 7px; }
 .queue-delivery[aria-pressed="true"] { color: var(--text); border-color: var(--soft); }
+
+/* Provider per turn: the chat owns its history, the provider only answers. */
+.provider-switch { margin-bottom: 12px; }
+.ollama-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ollama-header .model-reload { grid-column: 3; }
+.provider-switch button { flex: 1; }
+#ollamaModelChoices { display: grid; gap: 2px; max-height: 240px; overflow-y: auto; }
+#ollamaModelChoices .model-choice { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; text-align: left; font-size: 13px; }
+#ollamaModelChoices .model-choice[aria-pressed='true'] { background: color-mix(in srgb, #78aaff 18%, var(--card)); }
+#ollamaModelChoices .model-choice span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route-badge { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--sunk); color: var(--soft); }
+.route-badge.is-local { color: #3aa76d; }
+.provider-tag { margin-left: 6px; font-size: 11px; font-weight: 400; color: var(--soft); }
+.local-only-toggle { display: flex; gap: 8px; align-items: flex-start; padding: 8px 4px; font-size: 13px; cursor: pointer; }
+.local-only-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.local-only-toggle em { font-style: normal; font-size: 11px; color: var(--soft); }

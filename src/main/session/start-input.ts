@@ -4,6 +4,8 @@ import { startBridge } from '../bridge.js';
 import { wakeBrowserUrl, resetBrowserStartupForTests } from '../browser-startup.js';
 import { getConfig } from '../config.js';
 import { enqueueInput, cancelInput, listInputs, noteInputStartupError, type InputArgs, type InputEntry } from './input.js';
+import { deliverLocalInput } from './ollama-chat.js';
+import { logWarn } from '../logger.js';
 
 function wakeBrowser(entry: InputEntry, retry = false): Promise<void> {
   const marker = `cos-input=${encodeURIComponent(entry.id)}`;
@@ -47,6 +49,12 @@ export async function cancelDesktopInput(id: string): Promise<boolean> {
   return cancelInput(id);
 }
 export async function sendDesktopInput(input: InputArgs): Promise<InputEntry> {
+  if (input.provider === 'ollama') {
+    // Persist first, then answer: the accepted row is the user's message whatever happens next.
+    const entry = await enqueueInput(input);
+    if (entry.state === 'queued') void deliverLocalInput(entry).catch((error: Error) => logWarn(`input ${entry.id}: Ollama delivery failed: ${error.message}`));
+    return entry;
+  }
   if (input.mode === 'finish') return enqueueInput(input);
   if (starting.has(input.id)) throw new Error('Input already starting');
   const controller = new AbortController(); starting.set(input.id, controller);

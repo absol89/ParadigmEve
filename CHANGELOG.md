@@ -13,6 +13,38 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.5] — Choose who answers
+
+### Added
+
+- Ollama as a chat provider in the desktop chat window. The composer's model menu switches between ChatGPT and
+  Ollama per turn; Ollama models come from the provider's live `/v1/models` list and are passed through unchanged.
+  An Ollama turn is an ordinary outbox row tagged `provider: 'ollama'`: the browser and tool transports never claim
+  it, a local driver records the user message through the same receipt path and streams the reply into the same
+  session archive (`provider` on both messages). Stop works on a running Ollama turn; a restart closes it as
+  interrupted and replays rows accepted before the restart.
+- Mid-chat provider switching with one archive. Ollama turns receive the whole conversation, including ChatGPT
+  turns and their images (vision models only; a non-vision model refuses a new image with a clear error). A
+  ChatGPT turn after Ollama turns carries a bounded catch-up of exactly the turns it did not see, frozen into that
+  delivery, plus up to four of their images. A chat started on Ollama binds a real ChatGPT conversation to the same
+  session on its first ChatGPT receipt, behind the recorder gate Compact & Resume uses.
+- Switch consent: when a turn would hand earlier history to a different provider, the composer shows the exact
+  scope (messages, images, files) and main refuses the send without that confirmation
+  (`PROVIDER_SWITCH_CONSENT_REQUIRED`).
+- Per-chat **Local only** lock: only a loopback Ollama endpoint serving a non-cloud model may answer. Models whose
+  id ends in `cloud` and HTTPS endpoints are labelled and treated as Ollama Cloud.
+- Optional Ollama API key in secure storage, sent only to HTTPS endpoints (direct `https://ollama.com/v1`); a
+  blank endpoint means the local Ollama app.
+- Text and image attachments are copied into the session archive on delivery (`archivedAttachments`), so later
+  turns on any provider can read them after staged uploads are pruned.
+- Ollama as a worker-only driver: Prime stays in ChatGPT; each Ollama worker is a one-shot, terminal local
+  execution with a broker-issued principal and the live Core permissions; restarts fail in-flight Ollama workers
+  visibly and revival is refused. Readiness reports `ollama-worker-config-invalid` until a model is set.
+
+### Fixed
+
+- A LAN peer privacy test asserted a three-letter substring that random ciphertext contains about once in 500 runs.
+
 ## [2.3.4] — Speaking your language
 
 ### Added

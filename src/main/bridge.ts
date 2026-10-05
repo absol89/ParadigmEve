@@ -1,4 +1,6 @@
 import { conversationProgress } from './session/progress.js';
+import { isOllamaConversation } from '../shared/session.js';
+import { localTurnFor, stopLocalTurn } from './session/ollama-chat.js';
 import { MAX_CHATGPT_MESSAGE_CHARS, userPromptText } from '../shared/user-prompt.js';
 import { authoredPinsReferences } from '../shared/pins-intent.js';
 import { prepareSessionPrompt } from './session/prompt.js';
@@ -1566,9 +1568,10 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
   const live = liveConversations().find(entry => entry.conversationId === id && entry.sessionId === sessionId);
   const activityExpiry = sessionActivityExpiresAt(session);
   const stopping = commands.some(c => c.spec.type === 'stop' && c.spec.sessionId === sessionId && c.spec.turnId === session.activeTurnId);
-  const activeTurnId = session.activeTurnId &&
+  const localTurnId = localTurnFor(sessionId);
+  const activeTurnId = localTurnId ?? (session.activeTurnId &&
     (stopping || runningToolCalls(id) > 0 || (activityExpiry !== undefined ? activityExpiry !== null && activityExpiry > Date.now() :
-      live?.activeTurnId === session.activeTurnId)) ? session.activeTurnId : null;
+      live?.activeTurnId === session.activeTurnId)) ? session.activeTurnId : null);
   const finishHeld = !blocked && await sessionFinishHeld(sessionId, activeTurnId, id);
   const draft = goalViewFor(id);
   const inputPolicy = await sessionInputPolicy(sessionId, sessionInputActivity(session));
@@ -1599,6 +1602,12 @@ async function stopUserAnchor(sessionId: string, turnId: string): Promise<string
 }
 /** Stop is a request against one exact live turn, never a predicted final boundary. */
 export async function stopSessionTurn(sessionId: string, expectedTurnId: string): Promise<SessionControlsView> {
+  // An Ollama turn runs in this process; stopping it needs no browser.
+  if (localTurnFor(sessionId) !== null) {
+    if (!stopLocalTurn(sessionId, expectedTurnId)) throw new Error('active_turn_changed');
+    changed();
+    return sessionControlsFor(sessionId);
+  }
   const id = await controlledConversation(sessionId);
   const assertCurrent = async () => {
     const latest = await getSession(sessionId);
@@ -1723,7 +1732,9 @@ async function fileCompactionTicket(sessionId: string, id: string, automatic = f
   return { opened, started: !existing };
 }
 export async function compactSession(sessionId: string): Promise<SessionControlsView> {
-  const { opened } = await fileCompactionTicket(sessionId, await controlledConversation(sessionId));
+  const conversationId = await controlledConversation(sessionId);
+  if (isOllamaConversation(conversationId)) throw new Error('Compact & resume works on a ChatGPT conversation; this chat has only used Ollama so far.');
+  const { opened } = await fileCompactionTicket(sessionId, conversationId);
   await openCompactionSource(sessionId, opened);
   return sessionControlsFor(sessionId);
 }

@@ -1,8 +1,49 @@
 import type { InputEntry } from './input.js';
 import { browserInputModel } from '../../shared/input.js';
-import { getSession, observeSessionBrowserModelIntent, observeSessionModel, readAsset, readEvents, upsertMessageEvent, writeAsset } from './store.js';
+import { getSession, observeSessionBrowserModelIntent, observeSessionModel, readAsset, readEvents, setSessionProvider, upsertMessageEvent, writeAsset } from './store.js';
 import { validateInputImages } from './input-images.js';
+import { readStagedAttachment } from './input-attachments.js';
+import type { InputAttachment } from '../../shared/input.js';
+import type { AssetRef, ChatProvider } from '../../shared/session.js';
+import { logWarn } from '../logger.js';
 import sharp from 'sharp';
+
+/** Files any provider can read back from the archive. Others keep metadata only. */
+export function archivableAttachment(mimeType: string): 'text' | 'image' | null {
+  if (/^text\//.test(mimeType) || mimeType === 'application/json') return 'text';
+  if (/^image\/(png|jpeg|webp|gif)$/.test(mimeType)) return 'image';
+  return null;
+}
+const MAX_ARCHIVED_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Copies readable attachments into the session archive. The chat owns its history, so a later
+ * turn on another provider must still be able to read what an earlier turn was given. Best
+ * effort: a file that is gone, too large or unreadable keeps its metadata card only.
+ */
+async function archiveAttachments(sessionId: string, attachments: readonly InputAttachment[]): Promise<Array<{ attachmentId: string; asset: AssetRef }>> {
+  const archived: Array<{ attachmentId: string; asset: AssetRef }> = [];
+  for (const attachment of attachments) {
+    const kind = archivableAttachment(attachment.mimeType);
+    if (!kind) continue;
+    try {
+      const bytes = await readStagedAttachment(attachment, 32 * 1024 * 1024);
+      if (!bytes) continue;
+      if (kind === 'text') {
+        if (bytes.length > MAX_ARCHIVED_ATTACHMENT_BYTES) continue;
+        archived.push({ attachmentId: attachment.id, asset: await writeAsset(sessionId, bytes, 'text/plain') });
+      } else {
+        const png = await sharp(bytes, { limitInputPixels: 36_000_000, animated: false }).rotate()
+          .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).png().toBuffer();
+        if (png.length > MAX_ARCHIVED_ATTACHMENT_BYTES) continue;
+        archived.push({ attachmentId: attachment.id, asset: await writeAsset(sessionId, png, 'image/png') });
+      }
+    } catch (error) {
+      logWarn(`session ${sessionId}: attachment ${attachment.name} could not be archived: ${(error as Error).message}`);
+    }
+  }
+  return archived;
+}
 
 /** Project a tool handout or proven delivery into history, never the enqueue intent. */
 export async function recordDeliveredInput(entry: Readonly<InputEntry>): Promise<boolean> {
@@ -23,7 +64,8 @@ export async function recordDeliveredInput(entry: Readonly<InputEntry>): Promise
   // Only an explicit native picker request proves model selection. Finish tasks
   // inherit the page model, so their old queued settings cannot become evidence.
   const selection = browserInputModel(entry);
-  const ordinaryNativeBrowserSend = !messageId.startsWith('input:') && entry.mode !== 'finish' &&
+  const provider: ChatProvider | null = entry.provider === 'ollama' && entry.model ? { id: 'ollama', model: entry.model } : null;
+  const ordinaryNativeBrowserSend = !provider && !messageId.startsWith('input:') && entry.mode !== 'finish' &&
     !entry.finishOwner && !entry.recoveryTurnId &&
     (entry.purpose === undefined || entry.purpose === 'user') && !entry.scheduleOccurrenceId && !!entry.conversationId;
   if (ordinaryNativeBrowserSend) {
@@ -38,15 +80,20 @@ export async function recordDeliveredInput(entry: Readonly<InputEntry>): Promise
       await observeSessionModel(sessionId, entry.conversationId!, selection.model, entry.deliveredAt!, selection.reasoningEffort ?? undefined);
     }
   }
+  const archivedAttachments = entry.attachments?.length ? await archiveAttachments(sessionId, entry.attachments) : [];
+  // The newest delivered user turn names the chat's current provider (the composer default).
+  if (confirmed && (entry.purpose === undefined || entry.purpose === 'user')) await setSessionProvider(sessionId, provider);
   await upsertMessageEvent(sessionId, {
     time, source: 'app', kind: 'user_message',
+    ...(provider ? { provider } : {}),
+    ...(archivedAttachments.length ? { archivedAttachments } : {}),
     // Browser delivery uses its exact native key, so a later page echo updates this row.
     // Tool delivery has no native user row and keeps the stable input id as its key.
     messageId, inputId: entry.id, inputDelivery: offered ? 'offered' : 'confirmed', authoredText: entry.text,
     ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
     // Injection does not change the running model. Only the native send path verifies
     // picker selection before delivery; a later sparse browser echo keeps this evidence.
-    ...(!messageId.startsWith('input:') && selection.model
+    ...(!provider && !messageId.startsWith('input:') && selection.model
       ? { model: selection.model, ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) }
       : {}),
     message: { text, chars: text.length, truncated: false },

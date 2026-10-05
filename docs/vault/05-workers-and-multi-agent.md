@@ -53,7 +53,15 @@ OpenAI-compatible endpoint (HTTP only on loopback, HTTPS elsewhere) and an exact
 loop with a broker-issued run/worker principal and the same live Core permissions. Each Ollama
 worker is one-shot: it finishes (or fails) as a terminal row, cannot be revived, and a restart
 fails any in-flight Ollama worker visibly instead of reconstructing its transcript. Ollama cannot
-be the agent driver. GPT Work and custom remain unavailable agent executors. `/models` or
+be the agent driver. GPT Work and custom remain unavailable agent executors.
+
+The desktop chat can also send a single turn to Ollama (2.3.5). The chat owns its history, not the
+provider: every turn, whichever provider answered, lands in the same session archive with a
+`provider` tag on Ollama messages. Ollama turns read the whole archive; a ChatGPT turn after Ollama
+turns receives a catch-up of exactly the turns it did not see. A switch that exposes earlier turns
+to a different provider needs the user's confirmation, and a chat marked Local only refuses ChatGPT
+and Ollama Cloud (`:cloud` models or HTTPS endpoints). If you are asked about an earlier part of a
+chat that another model answered, read the session history rather than assuming you never saw it. `/models` or
 `/chat/completions` reachability alone is never agent-execution readiness proof.
 
 ## Run and worker identities
