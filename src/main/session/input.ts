@@ -255,6 +255,8 @@ const entrySchema = inputArgsBase.extend({
   attentionItems: z.array(workerAttentionItemSchema).max(8).optional(),
   chatReview: chatReviewAttentionSchema.optional(),
   lanPeerKnowledge: lanPeerKnowledgeSchema.optional(),
+  /** App-owned: the one "bring the Plan up to date" message after a Voice call ends. Never merged. */
+  voicePlanCheckpoint: z.literal(true).optional(),
   lifetime: z.literal('temporary-planner').optional(),
   decisionSourceSessionId: z.string().min(8).max(64).optional(),
   response: z.string().max(16000).optional(),
@@ -1048,7 +1050,7 @@ export function enqueueWorkerAttention(sessionId: string, rawItem: WorkerAttenti
     if (prior) return { ...prior };
 
     const pending = ordered(current).find((row) =>
-      row.purpose === 'attention' &&
+      row.purpose === 'attention' && !row.voicePlanCheckpoint &&
       row.sessionId === sessionId &&
       row.state === 'queued' &&
       row.owner === null &&
@@ -1154,7 +1156,7 @@ export function enqueueChatReviewAttention(
     }
 
     const pending = ordered(current).find((row) =>
-      row.purpose === 'attention' &&
+      row.purpose === 'attention' && !row.voicePlanCheckpoint &&
       row.sessionId === sessionId &&
       row.state === 'queued' &&
       row.owner === null &&
@@ -1824,5 +1826,43 @@ export function claimLocalInput(id: string, owner: string, conversationId: strin
     await commit(current.map(row => row === entry ? claimed : row));
     logInfo(`input ${id}: local provider claimed after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
     return { ...claimed };
+  });
+}
+
+export const VOICE_PLAN_CHECKPOINT_TEXT =
+  '[Eve: the ChatGPT Voice call in this chat just ended.] If anything settled in the call is not in ' +
+  "this chat's Plan yet (a decision, a correction, a new or cancelled task), bring it up to date now with " +
+  'update_plan. If nothing changed, answer with one short line saying so.';
+
+/**
+ * After a Voice call ends, asks the chat once to bring its Plan up to date. Waits for the next
+ * completed turn, goes in through the browser only, and is not repeated while one is still queued.
+ */
+export function enqueueVoicePlanCheckpoint(sessionId: string): Promise<InputEntry | null> {
+  return serial(async () => {
+    const current = await load();
+    if (current.some(row => row.voicePlanCheckpoint && row.sessionId === sessionId && !terminal(row))) return null;
+    const session = await getSession(sessionId);
+    if (!session?.conversationId || isChatBlocked(session.conversationId)) return null;
+    const now = Date.now();
+    const entry = entrySchema.parse({
+      id: randomUUID(),
+      sessionId,
+      text: VOICE_PLAN_CHECKPOINT_TEXT,
+      mode: 'after-turn',
+      dueAt: now,
+      model: null,
+      reasoningEffort: null,
+      purpose: 'attention',
+      voicePlanCheckpoint: true,
+      transportIntent: 'browser',
+      state: 'queued',
+      owner: null,
+      createdAt: now,
+      conversationId: session.conversationId
+    });
+    await commit(append(current, entry));
+    logInfo(`input ${entry.id}: Voice call ended in ${session.conversationId}; queued a Plan checkpoint`);
+    return { ...entry };
   });
 }

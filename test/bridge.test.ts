@@ -2755,6 +2755,30 @@ describe('automatic compaction', () => {
     }
   });
 
+  it('asks a chat once to bring its Plan up to date when a Voice call that added something ends', async () => {
+    await pair();
+    const { listInputs, VOICE_PLAN_CHECKPOINT_TEXT } = await import('../src/main/session/input.js');
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac0b';
+    const voice = (active: boolean) => request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'voice_state', active, time: Date.now() }] }
+    });
+    await request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'user_message', time: Date.now() - 1000, text: 'earlier typed', messageId: 'm-before-call' }] }
+    });
+    await voice(true);
+    await request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'Lets also test the queue', messageId: 'm-in-call', voice: true }] }
+    });
+    await voice(false);
+    await vi.waitFor(async () => expect((await listInputs()).filter(row => row.voicePlanCheckpoint && row.conversationId === conversationId)).toHaveLength(1));
+    const [checkpoint] = (await listInputs()).filter(row => row.voicePlanCheckpoint && row.conversationId === conversationId);
+    expect(checkpoint).toMatchObject({ purpose: 'attention', mode: 'after-turn', transportIntent: 'browser', text: VOICE_PLAN_CHECKPOINT_TEXT });
+    // A second short call with the first checkpoint still queued asks nothing more.
+    await voice(true); await voice(false);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect((await listInputs()).filter(row => row.voicePlanCheckpoint && row.conversationId === conversationId)).toHaveLength(1);
+  });
+
   it('lets a Voice report expire when its page goes quiet', async () => {
     const { voiceActive, setVoiceActiveForTests, VOICE_REPORT_TTL_MS } = await import('../src/main/bridge.js');
     setVoiceActiveForTests('voice-expiry', true);

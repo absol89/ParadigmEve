@@ -1,10 +1,28 @@
 import { ui, t } from './i18n.js';
 import type { AgentPlan } from '../shared/agent-plan.js';
-import { el, icon } from './dom.js';
+import { el, icon, run, toast } from './dom.js';
 import { pinStateForSessionPlan, toggleLivePlanPinForSession } from './workspace-library.js';
 
 /** One current plan above the composer queue; every model string is text, never HTML. */
-export function renderAgentPlan(host: HTMLElement, sessionId: string | null, plan: AgentPlan | null): void {
+type PlanRevisionState = { planId: string; revision: number; sentRevision: number | null; autoSend: boolean };
+
+/** Nesting depth of each step from its parent keys (1 = top level). Unknown parents count as top level. */
+function stepDepths(plan: AgentPlan): number[] {
+  const byKey = new Map(plan.plan.flatMap(step => step.key ? [[step.key, step] as const] : []));
+  return plan.plan.map(step => {
+    let depth = 1;
+    let parent = step.parent;
+    while (parent !== undefined && depth < 4) {
+      const next = byKey.get(parent);
+      if (!next) break;
+      depth += 1;
+      parent = next.parent;
+    }
+    return depth;
+  });
+}
+
+export function renderAgentPlan(host: HTMLElement, sessionId: string | null, plan: AgentPlan | null, revision: PlanRevisionState | null = null): void {
   if (host.dataset.sessionId !== (sessionId ?? '')) {
     host.replaceChildren();
     host.dataset.sessionId = sessionId ?? '';
@@ -17,7 +35,7 @@ export function renderAgentPlan(host: HTMLElement, sessionId: string | null, pla
     return;
   }
   const durablePin = pinStateForSessionPlan(sessionId);
-  const signature = JSON.stringify([plan.plan, plan.explanation, durablePin?.pin.id ?? null, durablePin?.quiltTitle ?? null]);
+  const signature = JSON.stringify([plan.plan, plan.explanation, durablePin?.pin.id ?? null, durablePin?.quiltTitle ?? null, revision]);
   if (host.dataset.signature === signature) return;
   const previous = host.querySelector<HTMLDetailsElement>('.agent-plan-shell');
   const expanded = new Map([...host.querySelectorAll<HTMLDetailsElement>('[data-step]')].map(row => [row.dataset.step, row.open]));
@@ -58,21 +76,46 @@ export function renderAgentPlan(host: HTMLElement, sessionId: string | null, pla
       .finally(() => { pin.disabled = false; });
   });
   heading.append(pin);
+  // A revision the orchestrator may not act on yet: the user's Send releases exactly this one.
+  if (revision && !revision.autoSend && revision.sentRevision !== revision.revision) {
+    const send = el('button', 'agent-plan-send') as HTMLButtonElement;
+    send.type = 'button';
+    ui(send, 'textContent', () => revision.sentRevision === null ? t('Send to orchestrator') : t('Send revision {0}', [String(revision.revision)]));
+    ui(send, 'title', () => t('Let the orchestrator act on this revision of the Plan'));
+    send.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      send.disabled = true;
+      void run(window.api.sendPlanRevision(revision.planId, revision.revision)).then(sent => {
+        if (sent) { send.remove(); toast(t('Plan sent to the orchestrator')); }
+      }).finally(() => { send.disabled = false; });
+    });
+    heading.append(send);
+  }
   shell.append(heading);
   const body = el('div', 'agent-plan-body');
   if (plan.explanation) body.append(el('p', 'agent-plan-explanation', plan.explanation));
+  const depths = stepDepths(plan);
   for (const [index, step] of plan.plan.entries()) {
     const row = el('details', 'agent-plan-step') as HTMLDetailsElement;
     row.dataset.step = step.step;
     row.dataset.status = step.status;
+    row.dataset.depth = String(depths[index]);
     row.open = expanded.get(step.step) ?? false;
     const summary = el('summary', 'agent-plan-step-heading');
     const marker = el('span', 'agent-plan-marker', step.status === 'completed' ? '✓' : String(index + 1));
     ui(marker, 'aria-label', () => step.status === 'in_progress' ? t("In progress") : step.status === 'completed' ? t("Completed") : t("Pending"));
     summary.append(marker, el('span', 'agent-plan-step-title', step.step));
-    if (!step.details) summary.addEventListener('click', event => event.preventDefault());
+    const expandable = Boolean(step.details || step.intent || step.constraints?.length);
+    if (!expandable) summary.addEventListener('click', event => event.preventDefault());
     row.append(summary);
     if (step.details) row.append(el('div', 'agent-plan-details', step.details));
+    if (step.intent) row.append(el('div', 'agent-plan-intent', () => t('Why: {0}', [step.intent!])));
+    if (step.constraints?.length) {
+      const list = el('ul', 'agent-plan-constraints');
+      for (const constraint of step.constraints) list.append(el('li', '', constraint));
+      row.append(list);
+    }
     body.append(row);
     if (focused === step.step) queueMicrotask(() => { if (row.isConnected) summary.focus(); });
   }

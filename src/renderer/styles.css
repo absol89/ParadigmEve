@@ -3417,3 +3417,12 @@ select option { background: var(--card); color: var(--ink); }
 .local-only-toggle { display: flex; gap: 8px; align-items: flex-start; padding: 8px 4px; font-size: 13px; cursor: pointer; }
 .local-only-toggle span { display: flex; flex-direction: column; gap: 2px; }
 .local-only-toggle em { font-style: normal; font-size: 11px; color: var(--soft); }
+
+/* 2.3.6: nested Plan steps, intent/constraints, and the user's Send to orchestrator. */
+.agent-plan-step[data-depth='2'] { margin-left: 18px; }
+.agent-plan-step[data-depth='3'] { margin-left: 36px; }
+.agent-plan-step[data-depth='4'] { margin-left: 54px; }
+.agent-plan-intent { font-size: 12px; color: var(--soft); padding: 2px 0 2px 28px; }
+.agent-plan-constraints { margin: 2px 0 4px 28px; padding-left: 16px; font-size: 12px; color: var(--soft); }
+.agent-plan-send { margin-left: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid color-mix(in srgb, #78aaff 50%, var(--edge)); background: color-mix(in srgb, #78aaff 16%, var(--card)); color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
+.agent-plan-send:disabled { opacity: .6; cursor: default; }

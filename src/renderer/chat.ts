@@ -1279,7 +1279,7 @@ async function refreshSessionControls(): Promise<void> {
   // and never apply one across a selection change (late IPC after New Chat / switching chats).
   if (generation < appliedControlsGeneration || id !== selectedId || selection !== selectionGeneration) return;
   appliedControlsGeneration = generation;
-  renderAgentPlan(planHost, id, controls?.plan ?? null);
+  renderAgentPlan(planHost, id, controls?.plan ?? null, controls?.planRevision ?? null);
   controlledSessionId = id;
   controlledSelection = selectionGeneration;
   controlledTurnId = controls?.activeTurnId ?? null;

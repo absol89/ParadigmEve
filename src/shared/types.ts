@@ -155,6 +155,8 @@ export interface UiPrefs {
   chatModel?: string | null;
   /** Reasoning paired with chatModel; null when provider-native default is selected. */
   chatReasoning?: ReasoningEffort | null;
+  /** Send each new Plan revision to the orchestrator without the user's Send. Off by default. */
+  planAutoSend?: boolean;
   /** Concepts overview: visible Quilt-filter rows before the filter area scrolls. */
   conceptQuiltRows?: number;
   /** Thread/Concept cards: square sticky-Pin mosaic dimension (1, 2, 3, or 4). */

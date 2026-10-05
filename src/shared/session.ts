@@ -267,6 +267,8 @@ export type SessionEvent =
       attachments?: import('./input.js').InputAttachment[];
       /** Set when this turn was sent to a local/Ollama provider instead of ChatGPT. */
       provider?: ChatProvider;
+      /** Spoken in a ChatGPT Voice call (transcribed), rather than typed. */
+      voice?: true;
       /**
        * Archive copies of readable attachments (text and images), so any later provider can still
        * read them after the staged upload is pruned. Presentation keeps using `attachments`.

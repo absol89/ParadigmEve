@@ -76,6 +76,8 @@ const planItemFields = {
   reminderAt: timestampSchema.optional(),
   /** Parent step in this Plan. Absent for a top-level step. Priority applies within a level. */
   parentId: planIdSchema.optional(),
+  /** The chat model's own stable key for this step (update_plan), which keeps its id across revisions. */
+  key: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/i).optional(),
   /** Why this step exists, in the user's terms. Kept apart from `text` so rewording cannot lose it. */
   intent: z.string().trim().max(1_000).optional(),
   constraints: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
@@ -170,6 +172,11 @@ export const planRecordSchema = z.object({
    * the revision it was made at. Absent on Plans written before 2.3.6, which read as revision 1.
    */
   revision: z.number().int().min(1).optional(),
+  /**
+   * The newest revision the user sent to the orchestrator (or that auto-send sent). With approval
+   * on, an orchestrator may claim steps only while this equals `revision`.
+   */
+  sentRevision: z.number().int().min(1).optional(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   archivedAt: timestampSchema.nullable(),

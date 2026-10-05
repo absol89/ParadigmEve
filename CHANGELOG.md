@@ -29,6 +29,13 @@ operation.
 - Text, pasted info and attachments sent from Eve's chat during a ChatGPT Voice call are queued and typed in the
   next pause: after the current turn has ended and nothing new was heard or said for 3 seconds. They never cut into
   a running turn and do not expire while you keep talking. Send reads "Send in next pause" during a call.
+- Chats write Plan revisions themselves: `update_plan` takes stable step keys, parents (4 levels, 60 steps), intent and
+  constraints, and the app links each new or changed step to the user's messages since the last revision, marked as
+  spoken (Voice) or typed. In Voice, the model updates the Plan when something settles rather than per utterance, and
+  after a call ends Eve asks once for a revision if anything new was said.
+- Send to orchestrator: the chat's Plan card shows nested steps with their intent and constraints, and a Send button
+  for each new revision. The orchestrator may claim steps only from a sent revision; Setup → Advanced can send every
+  revision automatically. Saying "send it" in Voice sends the revision the model writes.
 
 ## [2.3.5] — Choose who answers
 

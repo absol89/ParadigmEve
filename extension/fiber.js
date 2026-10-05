@@ -796,6 +796,7 @@
         role: 'user',
         stable: true,
         rawText,
+        ...(voiceMessage(message) ? { voice: true } : {}),
         ...(attachments.length ? { attachments } : {}),
         order: index,
         createTime: authoredTime(message)
@@ -1070,6 +1071,7 @@
         createTime: userCandidates[c].createTime,
         rawText: userCandidates[c].rawText,
         ...(userCandidates[c].attachments ? { attachments: userCandidates[c].attachments } : {}),
+        ...(userCandidates[c].voice ? { voice: true } : {}),
         renderedHtml: ''
       });
     }

@@ -1,4 +1,5 @@
 import { conversationProgress } from './session/progress.js';
+import { sessionPlanRevision } from './plans.js';
 import { isOllamaConversation } from '../shared/session.js';
 import { localTurnFor, stopLocalTurn } from './session/ollama-chat.js';
 import { MAX_CHATGPT_MESSAGE_CHARS, userPromptText } from '../shared/user-prompt.js';
@@ -17,7 +18,7 @@ export { setBrowserWorkArea } from './browser-window-layout.js';
 import { pendingBrowserPreferenceRequest, acknowledgeBrowserPreferences } from './browser-preferences.js';
 import { sessionFinishHeld, releaseSessionFinish, getSessionFinishDraft, sessionFinishWaiting } from './session/finish.js';
 import { observeUsage } from './session/usage.js';
-import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, completeBrowserDecision, enqueueWorkerAttention, listInputs, restartRecoveryWaiting } from './session/input.js';
+import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting } from './session/input.js';
 import { syncEvecronOccurrenceStart } from './evecron-runner.js';
 /**
  * The local bridge between the Chrome extension and this app.
@@ -1259,6 +1260,25 @@ function noteVoiceState(conversationId: string, events: unknown, now = Date.now(
     if (active) voiceActiveUntil.set(conversationId, now + VOICE_REPORT_TTL_MS);
     else voiceActiveUntil.delete(conversationId);
     if (was !== active) logInfo(`bridge: ${conversationId} ${active ? 'is in a ChatGPT Voice call — holding compaction and reloads' : 'left ChatGPT Voice'}`);
+    if (was && !active) void voiceCallEnded(conversationId);
+  }
+}
+
+/**
+ * A Voice call ended: if the user said anything since the chat's Plan was last updated, ask the
+ * chat once to bring its Plan up to date. Nothing is asked when the call added nothing new.
+ */
+async function voiceCallEnded(conversationId: string): Promise<void> {
+  try {
+    const session = await findSessionByConversation(conversationId, { requireUnique: true });
+    if (!session) return;
+    const plan = await readSessionPlan(session.id).catch(() => null);
+    const since = plan?.updatedAt ?? 0;
+    const [latest] = await readRecentEvents(session.id, 1, { kinds: ['user_message'] });
+    if (!latest || latest.time <= since) return;
+    await enqueueVoicePlanCheckpoint(session.id);
+  } catch (error) {
+    logWarn(`bridge: could not queue the Plan checkpoint after the Voice call in ${conversationId} — ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -1303,6 +1323,7 @@ function parseObservations(input: unknown): ChatObservation[] {
     };
     if (item['authoredTime'] === true) observation.authoredTime = true;
     if (item['authoredNow'] === true && kind === 'user_message') observation.authoredNow = true;
+    if (item['voice'] === true && kind === 'user_message') observation.voice = true;
     if (item['activeNow'] === true && kind === 'assistant_message') observation.activeNow = true;
     if (kind === 'model_selection') {
       if (typeof item['model'] !== 'string' || !/^[a-zA-Z0-9 ._-]{1,80}$/.test(item['model'])) continue;
@@ -1582,6 +1603,8 @@ export type SessionControlsView = {
   canSendDirectly?: boolean;
   /** The chat's page reports a live ChatGPT Voice call: Send queues for the next pause. */
   voiceActive?: boolean;
+  /** The chat's active Plan revision and whether the user has sent it to the orchestrator. */
+  planRevision?: import('./plans.js').SessionPlanRevision | null;
   finishWaiting?: boolean;
   stopPending?: boolean;
   goalDraft?: Pick<import('./goal.js').GoalDraftView, 'stage' | 'model' | 'text' | 'error'> | null;
@@ -1618,7 +1641,7 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
   const finishHeld = !blocked && await sessionFinishHeld(sessionId, activeTurnId, id);
   const draft = goalViewFor(id);
   const inputPolicy = await sessionInputPolicy(sessionId, sessionInputActivity(session));
-  return { sessionId, plan: await readSessionPlan(sessionId), conversationId: id, activeTurnId, finishHeld,
+  return { sessionId, plan: await readSessionPlan(sessionId), planRevision: await sessionPlanRevision(sessionId).catch(() => null), conversationId: id, activeTurnId, finishHeld,
     queueAtFinish: !blocked && inputPolicy.queueAtFinish, canInject: !blocked && inputPolicy.canInject,
     canSendDirectly: !blocked && !!inputPolicy.directTurn && !voiceActive(id),
     voiceActive: voiceActive(id),

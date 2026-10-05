@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
-import { archivePlan, backfillSessionPlans, cancelPlan, claimPlanItem, createPlan, listPlans, releasePlanItemClaim, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
+import { archivePlan, backfillSessionPlans, cancelPlan, claimPlanItem, createPlan, listPlans, releasePlanItemClaim, resetPlansForTests, sendPlanRevision, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
 import { appendEvent, createSession, initSessionStore, readSessionPlan, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
 
 let directory: string;
@@ -1004,6 +1004,7 @@ it('keeps a claimed step at its claimed wording and marks it superseded when a l
     { id: CHILD, text: 'Write the test', status: 'todo' }
   ] });
   await expect(claimPlanItem(plan.id, PARENT, 'orchestrator', 2)).rejects.toThrow(/revision 1, not 2/);
+  await sendPlanRevision(plan.id, 1);
   const claimed = await claimPlanItem(plan.id, PARENT, 'orchestrator', 1);
   expect(claimed.items[0]).toMatchObject({ status: 'in_progress', claim: { by: 'orchestrator', revision: 1, snapshot: { text: 'Port the fix', intent: 'Keep Voice recorded' } } });
   await expect(claimPlanItem(plan.id, PARENT, 'someone-else', 1)).rejects.toThrow(/claimed by orchestrator/);
@@ -1052,4 +1053,68 @@ it('keeps 2.3.6 step fields when a chat update_plan rewrites the checklist', asy
   expect(next!.id).toBe(enriched.id);
   expect(next!.items[0]).toMatchObject({ status: 'done', intent: 'Find why Voice replies vanish' });
   expect(next!.revision).toBeGreaterThan(enriched.revision ?? 1);
+});
+
+// ------------------------------------------------------------ 2.3.6 step 2: chat-written revisions
+
+it('builds nested steps from a chat update_plan and keeps step ids by key when steps move', async () => {
+  const session = await createSession({ title: 'Voice plan', conversationId: 'voice-plan-chat' });
+  const first = await syncSessionAgentPlan(session.id, 'voice-plan-chat', 'Voice plan', { plan: [
+    { key: 'ship', step: 'Ship the Voice fixes', status: 'in_progress', intent: 'Replies must reach Eve', constraints: ['No typing into a live call'] },
+    { key: 'test', parent: 'ship', step: 'Test on a real call', status: 'pending' }
+  ] });
+  const ship = first!.items.find(item => item.key === 'ship')!;
+  const test = first!.items.find(item => item.key === 'test')!;
+  expect(test.parentId).toBe(ship.id);
+  expect(ship).toMatchObject({ intent: 'Replies must reach Eve', constraints: ['No typing into a live call'] });
+
+  // The model reorders and adds a step; keyed steps keep their ids and the hierarchy.
+  const next = await syncSessionAgentPlan(session.id, 'voice-plan-chat', 'Voice plan', { plan: [
+    { key: 'notes', step: 'Write release notes', status: 'pending' },
+    { key: 'ship', step: 'Ship the Voice fixes', status: 'in_progress' },
+    { key: 'test', parent: 'ship', step: 'Test on a real call', status: 'pending' }
+  ] });
+  expect(next!.items.find(item => item.key === 'ship')).toMatchObject({ id: ship.id, intent: 'Replies must reach Eve' });
+  expect(next!.items.find(item => item.key === 'test')).toMatchObject({ id: test.id, parentId: ship.id });
+  expect(next!.revision).toBe(2);
+});
+
+it('links only new or changed steps to the messages since the last revision', async () => {
+  const session = await createSession({ title: 'Sourced plan', conversationId: 'sourced-chat' });
+  const spoken = [{ sessionId: session.id, messageId: 'voice-1', kind: 'voice' as const }];
+  const first = await syncSessionAgentPlan(session.id, 'sourced-chat', 'Sourced plan', { plan: [
+    { key: 'a', step: 'First step', status: 'pending' }, { key: 'b', step: 'Second step', status: 'pending' }
+  ] }, { sources: spoken });
+  expect(first!.items.every(item => item.sources?.[0]?.messageId === 'voice-1')).toBe(true);
+
+  const typed = [{ sessionId: session.id, messageId: 'typed-2', kind: 'typed' as const }];
+  const next = await syncSessionAgentPlan(session.id, 'sourced-chat', 'Sourced plan', { plan: [
+    { key: 'a', step: 'First step', status: 'pending' }, { key: 'b', step: 'Second step, narrowed', status: 'pending' }
+  ] }, { sources: typed });
+  expect(next!.items.find(item => item.key === 'a')!.sources!.map(source => source.messageId)).toEqual(['voice-1']);
+  expect(next!.items.find(item => item.key === 'b')!.sources!.map(source => source.messageId)).toEqual(['voice-1', 'typed-2']);
+});
+
+it('lets the orchestrator act only on a revision the user sent', async () => {
+  const session = await createSession({ title: 'Approval', conversationId: 'approval-chat' });
+  const first = await syncSessionAgentPlan(session.id, 'approval-chat', 'Approval', { plan: [
+    { key: 'do', step: 'Do the thing', status: 'pending' }
+  ] });
+  const step = first!.items[0]!.id;
+  expect(first!.sentRevision).toBeUndefined();
+  await expect(claimPlanItem(first!.id, step, 'orchestrator', 1)).rejects.toThrow(/waiting for the user's Send/);
+  await expect(sendPlanRevision(first!.id, 2)).rejects.toThrow(/revision 1, not 2/);
+  expect((await sendPlanRevision(first!.id, 1)).sentRevision).toBe(1);
+  await claimPlanItem(first!.id, step, 'orchestrator', 1);
+
+  // A newer revision waits for its own Send; asked for by voice, it is sent with the update.
+  const reworded = await syncSessionAgentPlan(session.id, 'approval-chat', 'Approval', { plan: [
+    { key: 'do', step: 'Do the thing carefully', status: 'pending' }, { key: 'more', step: 'Then more', status: 'pending' }
+  ] });
+  expect(reworded!.revision).toBe(2);
+  expect(reworded!.sentRevision).toBe(1);
+  const spokenSend = await syncSessionAgentPlan(session.id, 'approval-chat', 'Approval', { send_to_orchestrator: true, plan: [
+    { key: 'do', step: 'Do the thing carefully', status: 'pending' }, { key: 'more', step: 'Then more, and test', status: 'pending' }
+  ] });
+  expect(spokenSend!.sentRevision).toBe(spokenSend!.revision);
 });

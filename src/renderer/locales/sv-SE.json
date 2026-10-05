@@ -1822,5 +1822,12 @@
   "ChatGPT (OpenAI)": "ChatGPT (OpenAI)",
   "Ollama on this computer": "Ollama på den här datorn",
   "Send in next pause": "Skicka i nästa paus",
-  "Send in the next pause of the Voice call": "Skicka i nästa paus i röstsamtalet"
+  "Send in the next pause of the Voice call": "Skicka i nästa paus i röstsamtalet",
+  "Send to orchestrator": "Skicka till orkestreraren",
+  "Send revision {0}": "Skicka version {0}",
+  "Let the orchestrator act on this revision of the Plan": "Låt orkestreraren arbeta med den här versionen av planen",
+  "Plan sent to the orchestrator": "Planen har skickats till orkestreraren",
+  "Why: {0}": "Varför: {0}",
+  "Send new Plan revisions to the orchestrator automatically": "Skicka nya planversioner till orkestreraren automatiskt",
+  "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Av: varje version väntar på att du trycker Skicka till orkestreraren på chattens plan. På: orkestreraren får arbeta med en version så snart den har skrivits."
 }

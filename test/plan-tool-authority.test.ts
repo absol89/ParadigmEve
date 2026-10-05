@@ -28,7 +28,10 @@ vi.mock('../src/main/session/store.js', () => ({
   getSession: async (id: string) => fixture.sessions.get(id) ?? null,
   findSessionByConversation: async (conversationId: string) =>
     [...fixture.sessions.values()].find((session: any) => session.conversationId === conversationId) ?? null,
-  updateSessionPlan: fixture.updateSessionPlan
+  updateSessionPlan: fixture.updateSessionPlan,
+  // update_plan attaches the user messages since the previous revision as step sources.
+  readSessionPlan: async () => null,
+  readRecentEvents: async () => []
 }));
 
 vi.mock('../src/main/eve-access.js', () => ({
@@ -190,7 +193,8 @@ describe('update_plan archive boundary', () => {
       'session-prime',
       'conversation-prime',
       'Prime Eve',
-      expect.anything()
+      expect.anything(),
+      { sources: [] }
     );
   });
 

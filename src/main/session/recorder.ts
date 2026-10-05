@@ -1739,6 +1739,8 @@ export interface ChatObservation {
   text?: string;
   /** Exact native user-message attachment metadata; no remote URL or image bytes. */
   attachments?: import('../../shared/input.js').InputAttachment[];
+  /** user_message only: transcribed from a ChatGPT Voice call. */
+  voice?: boolean;
   /** ChatGPT's already-rendered authored markup for this same logical message. */
   renderedHtml?: string;
   messageId?: string;
@@ -2027,6 +2029,7 @@ async function recordSupersededMessages(
           message: await storeText(sessionId, item.text ?? '', MAX_USER_MESSAGE_CHARS),
           ...(item.pinsReferences?.length ? { pinsReferences: item.pinsReferences } : {}),
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+          ...(item.voice === true ? { voice: true as const } : {}),
           messageId: item.messageId
         },
         { preferTime: item.authoredTime === true }
@@ -2142,6 +2145,7 @@ async function recordChatObservationsNow(
           message: await storeText(sessionId, item.text ?? '', MAX_USER_MESSAGE_CHARS),
           ...(item.pinsReferences?.length ? { pinsReferences: item.pinsReferences } : {}),
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+          ...(item.voice === true ? { voice: true as const } : {}),
           messageId: item.messageId
         }, { preferTime: item.authoredTime === true });
         if (!written.changed) continue;

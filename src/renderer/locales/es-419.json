@@ -1816,5 +1816,12 @@
   "ChatGPT (OpenAI)": "ChatGPT (OpenAI)",
   "Ollama on this computer": "Ollama en esta computadora",
   "Send in next pause": "Enviar en la próxima pausa",
-  "Send in the next pause of the Voice call": "Enviar en la próxima pausa de la llamada de voz"
+  "Send in the next pause of the Voice call": "Enviar en la próxima pausa de la llamada de voz",
+  "Send to orchestrator": "Enviar al orquestador",
+  "Send revision {0}": "Enviar revisión {0}",
+  "Let the orchestrator act on this revision of the Plan": "Permitir que el orquestador actúe sobre esta revisión del plan",
+  "Plan sent to the orchestrator": "Plan enviado al orquestador",
+  "Why: {0}": "Por qué: {0}",
+  "Send new Plan revisions to the orchestrator automatically": "Enviar automáticamente las nuevas revisiones del plan al orquestador",
+  "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Desactivado: cada revisión espera a que pulses Enviar al orquestador en el plan del chat. Activado: el orquestador puede actuar sobre una revisión en cuanto se escribe."
 }

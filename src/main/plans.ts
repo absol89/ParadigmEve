@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getConfig } from './config.js';
 import { readDurableStrict, writeDurableNow } from './durable.js';
 import { agentPlanUpdateSchema, type AgentPlanUpdate } from '../shared/agent-plan.js';
 import { indexedSessions, readSessionPlan, updateSessionPlan } from './session/store.js';
@@ -18,6 +19,7 @@ import {
   type PlanPatch,
   type PlanProvenance,
   type PlanRecord,
+  type PlanStepSource,
   type PlanView
 } from '../shared/plans.js';
 
@@ -231,6 +233,7 @@ function carriedStepFields(previous: PlanItem | undefined): Partial<PlanItem> {
   if (!previous) return {};
   return {
     ...(previous.parentId === undefined ? {} : { parentId: previous.parentId }),
+    ...(previous.key === undefined ? {} : { key: previous.key }),
     ...(previous.intent === undefined ? {} : { intent: previous.intent }),
     ...(previous.constraints === undefined ? {} : { constraints: [...previous.constraints] }),
     ...(previous.sources === undefined ? {} : { sources: previous.sources.map(source => ({ ...source })) }),
@@ -258,6 +261,16 @@ function stepsChanged(before: readonly PlanItem[], after: readonly PlanItem[]): 
   const shape = (item: PlanItem) => JSON.stringify([item.id, item.text, item.details ?? '', item.priority ?? '', item.parentId ?? '',
     item.intent ?? '', item.constraints ?? [], item.sources ?? [], item.status]);
   return before.length !== after.length || before.some((item, at) => shape(item) !== shape(after[at]!));
+}
+
+/** A revision goes to the orchestrator at once when auto-send is on or the user asked for it by voice. */
+function sendsRevision(update: AgentPlanUpdate): boolean {
+  return getConfig().ui.planAutoSend === true || update.send_to_orchestrator === true;
+}
+
+/** Whether an orchestrator may act on this Plan's current revision. */
+export function planRevisionSent(plan: Pick<PlanRecord, 'revision' | 'sentRevision'>): boolean {
+  return getConfig().ui.planAutoSend === true || (plan.sentRevision !== undefined && plan.sentRevision === (plan.revision ?? 1));
 }
 
 function nextRevision(plan: PlanRecord): number {
@@ -476,20 +489,65 @@ function agentStatus(status: AgentPlanUpdate['plan'][number]['status']): PlanIte
 }
 
 function sameAgentDocument(plan: PlanRecord, update: AgentPlanUpdate): boolean {
-  return sameAgentSteps(plan, update) && plan.items.every((item, index) =>
-    item.status === agentStatus(update.plan[index]!.status) &&
-    (item.details ?? '') === (update.plan[index]!.details ?? '')
-  );
+  if (!sameAgentSteps(plan, update)) return false;
+  const keyed = new Map(plan.items.flatMap(item => item.key ? [[item.key, item.id] as const] : []));
+  return plan.items.every((item, index) => {
+    const step = update.plan[index]!;
+    return item.status === agentStatus(step.status) &&
+      (item.details ?? '') === (step.details ?? '') &&
+      (step.key === undefined || item.key === step.key) &&
+      (step.parent === undefined ? true : item.parentId === keyed.get(step.parent)) &&
+      (step.intent === undefined || (item.intent ?? '') === step.intent) &&
+      (step.constraints === undefined || JSON.stringify(item.constraints ?? []) === JSON.stringify(step.constraints));
+  });
 }
 
-function agentItems(current: PlanRecord | null, update: AgentPlanUpdate): PlanItem[] {
-  return update.plan.map((step, index) => ({
-    ...carriedStepFields(current?.items[index]),
-    id: current?.items[index]?.id ?? randomUUID(),
-    text: step.step,
-    status: agentStatus(step.status),
-    ...(step.details ? { details: step.details } : {})
-  }));
+/**
+ * The chat's complete update_plan document as Plan steps. A step keeps its id by its key when it
+ * has one (so steps can move and nest), otherwise by position. Fields the model left out are kept.
+ * Steps new or changed in this revision get `sources` (the user messages since the last revision).
+ */
+function agentItems(current: PlanRecord | null, update: AgentPlanUpdate, sources: readonly PlanStepSource[] = []): PlanItem[] {
+  const byKey = new Map((current?.items ?? []).flatMap(item => item.key ? [[item.key, item] as const] : []));
+  const used = new Set<string>();
+  const previousFor = (step: AgentPlanUpdate['plan'][number], index: number): PlanItem | undefined => {
+    const keyed = step.key ? byKey.get(step.key) : undefined;
+    if (keyed && !used.has(keyed.id)) return keyed;
+    const positional = current?.items[index];
+    return positional && !used.has(positional.id) && (!positional.key || !step.key || positional.key === step.key) ? positional : undefined;
+  };
+  const drafts = update.plan.map((step, index) => {
+    const previous = previousFor(step, index);
+    if (previous) used.add(previous.id);
+    return { step, previous, id: previous?.id ?? randomUUID() };
+  });
+  const idByKey = new Map(drafts.flatMap(draft => draft.step.key ? [[draft.step.key, draft.id] as const] : []));
+  return drafts.map(({ step, previous, id }) => {
+    const carried = carriedStepFields(previous);
+    const parentId = step.parent === undefined ? undefined : idByKey.get(step.parent);
+    const item: PlanItem = {
+      ...carried,
+      id,
+      text: step.step,
+      status: agentStatus(step.status),
+      ...(step.details ? { details: step.details } : {}),
+      ...(step.key ? { key: step.key } : {}),
+      ...(step.intent === undefined ? {} : { intent: step.intent }),
+      ...(step.constraints === undefined ? {} : { constraints: [...step.constraints] })
+    };
+    if (step.parent !== undefined) {
+      if (parentId) item.parentId = parentId;
+    } else delete item.parentId;
+    const changed = !previous || previous.text !== item.text || (previous.details ?? '') !== (item.details ?? '') ||
+      (previous.intent ?? '') !== (item.intent ?? '') || JSON.stringify(previous.constraints ?? []) !== JSON.stringify(item.constraints ?? []) ||
+      (previous.parentId ?? '') !== (item.parentId ?? '');
+    if (changed && sources.length) {
+      const merged = [...(item.sources ?? []), ...sources];
+      const unique = merged.filter((source, at) => merged.findIndex(other => other.messageId === source.messageId && other.sessionId === source.sessionId) === at);
+      item.sources = unique.slice(-20);
+    }
+    return item;
+  });
 }
 
 /**
@@ -505,7 +563,7 @@ export function syncSessionAgentPlan(
   conversationId: string | null,
   sourceTitle: string,
   input: AgentPlanUpdate,
-  options: { importOnly?: boolean } = {}
+  options: { importOnly?: boolean; sources?: readonly PlanStepSource[] } = {}
 ): Promise<PlanView | null> {
   const update = agentPlanUpdateSchema.parse(input);
   if (!update.plan.length) return Promise.resolve(null);
@@ -528,8 +586,9 @@ export function syncSessionAgentPlan(
       const created: PlanRecord = {
         id: randomUUID(),
         title,
-        items: agentItems(null, update),
+        items: agentItems(null, update, options.sources),
         revision: 1,
+        ...(sendsRevision(update) ? { sentRevision: 1 } : {}),
         provenance: {
           kind: 'plan',
           sessionId,
@@ -565,12 +624,15 @@ export function syncSessionAgentPlan(
     const replaceCurrent = current && (!current.items.every(item => item.status === 'done') || sameAgentSteps(current, update));
     if (replaceCurrent) {
       const revision = nextTimestamp(current.updatedAt);
-      const items = markSupersededClaims(agentItems(current, update));
+      const items = markSupersededClaims(agentItems(current, update, options.sources));
+      const changed = stepsChanged(current.items, items) || title !== current.title;
+      const planRevision = changed ? nextRevision(current) : current.revision ?? 1;
       const updated: PlanRecord = {
         ...current,
         title,
         items,
-        ...(stepsChanged(current.items, items) || title !== current.title ? { revision: nextRevision(current) } : {}),
+        ...(changed ? { revision: planRevision } : {}),
+        ...(sendsRevision(update) ? { sentRevision: planRevision } : {}),
         updatedAt: revision,
         agentRevision: revision
       };
@@ -583,8 +645,9 @@ export function syncSessionAgentPlan(
     const created: PlanRecord = {
       id: randomUUID(),
       title,
-      items: agentItems(null, update),
+      items: agentItems(null, update, options.sources),
       revision: 1,
+      ...(sendsRevision(update) ? { sentRevision: 1 } : {}),
       provenance: {
         kind: 'plan',
         sessionId,
@@ -799,6 +862,59 @@ export function withPlanReviewValidationFence<T>(
  * misstate what happened. Cancel keeps the checklist exactly as it is, marks the Plan cancelled and
  * moves it to Done, where it is as immutable as any other archived Plan.
  */
+/** What the chat's Plan card needs to offer Send to orchestrator. */
+export interface SessionPlanRevision {
+  planId: string;
+  revision: number;
+  sentRevision: number | null;
+  autoSend: boolean;
+}
+
+/** The revision state of the one active Plan written by this chat, if any. */
+export async function sessionPlanRevision(sessionId: string): Promise<SessionPlanRevision | null> {
+  const plans = await readRecords();
+  const active = plans.filter(plan => plan.archivedAt === null && plan.provenance?.kind === 'plan' && plan.provenance.sessionId === sessionId)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  if (!active) return null;
+  return {
+    planId: active.id,
+    revision: active.revision ?? 1,
+    sentRevision: active.sentRevision ?? null,
+    autoSend: getConfig().ui.planAutoSend === true
+  };
+}
+
+const revisionSentListeners = new Set<(plan: PlanView) => void>();
+/** The orchestrator side subscribes here; a sent revision is its signal to look at the Plan. */
+export function onPlanRevisionSent(listener: (plan: PlanView) => void): () => void {
+  revisionSentListeners.add(listener);
+  return () => { revisionSentListeners.delete(listener); };
+}
+
+/** The user's Send to orchestrator for exactly this revision. Refused if the Plan moved on meanwhile. */
+export function sendPlanRevision(planId: string, revision: number): Promise<PlanView> {
+  return queueMutation(async () => {
+    const parsedId = planUpdateId(planId);
+    const plans = await readRecords();
+    const index = plans.findIndex(plan => plan.id === parsedId);
+    if (index < 0) throw new Error('Plan not found');
+    const current = plans[index]!;
+    if (current.archivedAt !== null) throw new Error('Archived Plans cannot be sent');
+    const latest = current.revision ?? 1;
+    if (revision !== latest) throw new Error(`Plan is at revision ${latest}, not ${revision}; review the newer revision before sending`);
+    if (current.sentRevision === latest) return projectPlan(current);
+    const updated: PlanRecord = { ...current, sentRevision: latest, updatedAt: nextTimestamp(current.updatedAt) };
+    const next = [...plans];
+    next[index] = updated;
+    await writeRecords(next);
+    const view = projectPlan(updated);
+    for (const listener of revisionSentListeners) {
+      try { listener(view); } catch { /* a listener failure never undoes the user's Send */ }
+    }
+    return view;
+  });
+}
+
 /**
  * Claims one step for an executor at an exact Plan revision. The step becomes that claimant's
  * in-progress step and keeps the wording it had now, whatever later revisions say. Refused when the
@@ -816,6 +932,7 @@ export function claimPlanItem(planId: string, itemId: string, by: string, expect
     if (current.archivedAt !== null) throw new Error('Archived Plans cannot be claimed');
     const revision = current.revision ?? 1;
     if (revision !== expectedRevision) throw new Error(`Plan is at revision ${revision}, not ${expectedRevision}; read it again before claiming`);
+    if (!planRevisionSent(current)) throw new Error(`Plan revision ${revision} is waiting for the user's Send to orchestrator`);
     const step = current.items.find(item => item.id === itemId);
     if (!step) throw new Error('Plan step not found');
     if (step.status === 'done') throw new Error('Plan step is already done');

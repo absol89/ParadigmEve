@@ -864,6 +864,7 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark' } = {}): Prom
       startAtLogin: $<HTMLInputElement>('startAtLogin').checked,
       minimizeToTray: $<HTMLInputElement>('minimizeToTray').checked,
       developerMode: $<HTMLInputElement>('developerMode').checked,
+      planAutoSend: $<HTMLInputElement>('planAutoSend').checked,
       privacyScreenshots: $<HTMLInputElement>('privacyScreenshots').checked,
       ...conceptSettingsPatch(previous.ui),
       theme: over.theme ?? previous.ui.theme
@@ -1555,6 +1556,7 @@ function apply(next: AppState): void {
   applyChecked($<HTMLInputElement>('startAtLogin'), config.ui.startAtLogin === true, previousState?.config.ui.startAtLogin);
   applyChecked($<HTMLInputElement>('autoConnect'), config.ui.autoConnect, previousState?.config.ui.autoConnect);
   applyChecked($<HTMLInputElement>('developerMode'), config.ui.developerMode === true, previousState?.config.ui.developerMode);
+  applyChecked($<HTMLInputElement>('planAutoSend'), config.ui.planAutoSend === true, previousState?.config.ui.planAutoSend);
   applyChecked(
     $<HTMLInputElement>('minimizeToTray'),
     config.ui.minimizeToTray,
@@ -2509,6 +2511,7 @@ for (const id of [
   'startAtLogin',
   'minimizeToTray',
   'developerMode',
+  'planAutoSend',
   'privacyScreenshots',
   'tunnelKind',
   'tunnelId',

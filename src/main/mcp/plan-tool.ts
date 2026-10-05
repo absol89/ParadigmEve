@@ -1,7 +1,8 @@
 import { currentCaller, currentCall } from './call-context.js';
 import { fail, guard, ok, type SurfaceRegistrar } from './kernel.js';
 import { toolDeclaration } from './tool-declarations.js';
-import { findSessionByConversation, getSession, updateSessionPlan } from '../session/store.js';
+import { findSessionByConversation, getSession, readRecentEvents, readSessionPlan, updateSessionPlan } from '../session/store.js';
+import type { PlanStepSource } from '../../shared/plans.js';
 import { listPlans, syncSessionAgentPlan } from '../plans.js';
 import { ensureRequestTrailForAcceptedPlan } from '../request-trail-admission.js';
 import { agentPlanUpdateSchema } from '../../shared/agent-plan.js';
@@ -16,7 +17,7 @@ import { sharedEveOwnerForCurrentCall } from '../eve-access.js';
 export function registerPlanTool(reg: SurfaceRegistrar): void {
   reg.register('update_plan', toolDeclaration('update_plan', () => ({
     title: 'Update plan',
-    description: 'Updates your task plan in the user’s app. Use for work with several meaningful steps; skip simple tasks. Send the complete plan with short step headlines, useful details and current statuses. Keep at most one step in_progress. Never add Report to Prime, Hand off to Prime, or equivalent reporting/handoff as a Plan step: reporting is lifecycle, not work. Update after completing a step or changing approach. This only displays a plan; it does not execute steps or advance queued stages. Completing a human Plan leaves it Live as Ready to archive; only the user’s explicit archive is signoff.',
+    description: 'Updates your task plan in the user’s app. Use for work with several meaningful steps; skip simple tasks. Send the complete plan with short step headlines, useful details and current statuses. Keep at most one step in_progress. Never add Report to Prime, Hand off to Prime, or equivalent reporting/handoff as a Plan step: reporting is lifecycle, not work. Update after completing a step or changing approach. This only records a plan; it does not execute steps or advance queued stages.',
     inputSchema: agentPlanUpdateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   })), update => guard('update_plan', async () => {
@@ -37,12 +38,15 @@ export function registerPlanTool(reg: SurfaceRegistrar): void {
     if (!sessionId || !conversationId) {
       return fail('Exact chat identity is required to update its plan. No plan was changed; retry after the companion reconnects.');
     }
-    const accepted = await updateSessionPlan(sessionId, conversationId, update, currentCall()!.startedAt);
+    const startedAt = currentCall()!.startedAt;
+    const previousPlan = await readSessionPlan(sessionId).catch(() => null);
+    const accepted = await updateSessionPlan(sessionId, conversationId, update, startedAt);
     if (!accepted) return fail('This plan update is stale or its chat was replaced. The current plan was preserved.');
     const summary = await getSession(sessionId);
+    const sources = await planSources(sessionId, previousPlan?.updatedAt ?? 0, startedAt);
     let projected;
     try {
-      projected = await syncSessionAgentPlan(sessionId, conversationId, summary?.title ?? 'Chat plan', update);
+      projected = await syncSessionAgentPlan(sessionId, conversationId, summary?.title ?? 'Chat plan', update, { sources });
     } catch (error) {
       return fail(`The chat plan was updated, but its durable Plans projection could not refresh: ${error instanceof Error ? error.message : String(error)}. The chat-local plan was preserved.`);
     }
@@ -74,4 +78,22 @@ export function registerPlanTool(reg: SurfaceRegistrar): void {
     }
     return ok('Plan updated');
   }));
+}
+
+/**
+ * The user's messages since the chat's previous plan update: the evidence this revision was
+ * written from. The app attaches them, so the model never has to quote message ids. Spoken
+ * (Voice) and typed messages are told apart from what the page itself reported.
+ */
+async function planSources(sessionId: string, since: number, until: number): Promise<PlanStepSource[]> {
+  try {
+    const recent = await readRecentEvents(sessionId, 80, { kinds: ['user_message'] });
+    return recent
+      .filter((event): event is Extract<typeof event, { kind: 'user_message' }> =>
+        event.kind === 'user_message' && !!event.messageId && event.time > since && event.time <= until)
+      .slice(-20)
+      .map(event => ({ sessionId, messageId: event.messageId!.slice(0, 240), kind: event.voice ? 'voice' as const : 'typed' as const }));
+  } catch {
+    return [];
+  }
 }

@@ -837,7 +837,8 @@
     // plain-text bubble retains the existing exact-text receipt contract; no Markdown stripping.
     const actual = authored.length === 1 ? authored[0].rawText : message.text;
     return typeof actual === 'string' && actual.length <= 256000 ? { text: actual, canonical: authored.length === 1,
-      ...(authored[0]?.attachments?.length ? { attachments: authored[0].attachments } : {}) } : null;
+      ...(authored[0]?.attachments?.length ? { attachments: authored[0].attachments } : {}),
+      ...(authored[0]?.voice === true ? { voice: true } : {}) } : null;
   }
   function userMessagePresent(message) {
     if (message.role !== 'user' || !message.id) return false;
@@ -2221,6 +2222,7 @@
           kind: 'user_message',
           text,
           ...(source.attachments?.length ? { attachments: source.attachments } : {}),
+          ...(source.voice === true ? { voice: true } : {}),
           messageId: message.id,
           turnId: message.turnId || undefined,
           ...(justAuthored ? { authoredNow: true } : {})
@@ -3281,6 +3283,7 @@
             : null,
         rawText,
         ...(attachments.length ? { attachments } : {}),
+        ...(entry.role === 'user' && entry.voice === true ? { voice: true } : {}),
         renderedHtml,
         sectionIndex:
           Number.isInteger(entry.sectionIndex) && entry.sectionIndex >= 0 && entry.sectionIndex < 64
@@ -4270,6 +4273,7 @@
             messageId: message.messageId,
             text: message.rawText,
             ...(message.attachments?.length ? { attachments: message.attachments } : {}),
+            ...(message.voice === true ? { voice: true } : {}),
             ...(message.createTime ? { time: message.createTime, authoredTime: true } : {})
           });
           continue;

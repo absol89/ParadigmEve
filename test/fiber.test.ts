@@ -880,7 +880,7 @@ describe('the calls a turn says it made', () => {
       { id: 'voice-user-turn', messages: [heard] },
       { id: 'voice-assistant-turn', messages: [spoken('voice-checking', 'Checking.', { end_turn: false } as Partial<Message>), spoken('voice-answer', 'Yes, as a separate provider.')] }
     ]);
-    expect(turns[0]!.messages).toEqual([expect.objectContaining({ messageId: 'voice-user', role: 'user', rawText: 'Can Claude drive the workers?' })]);
+    expect(turns[0]!.messages).toEqual([expect.objectContaining({ messageId: 'voice-user', role: 'user', rawText: 'Can Claude drive the workers?', voice: true })]);
     expect(turns[1]!.messages.map((message) => message.rawText)).toEqual(['Checking.', 'Yes, as a separate provider.']);
     // No Stop control exists in Voice: the finished spoken reply is the turn's end evidence.
     expect(turns[1]!.endMessageId).toBe('voice-answer');

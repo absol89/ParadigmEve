@@ -1,4 +1,5 @@
 import { startOllamaChatDriver } from './session/ollama-chat.js';
+import { sendPlanRevision } from './plans.js';
 import { applyLoginStartup, supportsLoginStartup } from './window-lifecycle.js';
 import { setSessionLocalOnly } from './session/store.js';
 import { prepareSessionPrompt } from './session/prompt.js';
@@ -253,6 +254,7 @@ const settingsPatch = z.object({
     chatReasoning: z.enum(REASONING_EFFORTS).nullable().optional(),
     developerMode: z.boolean().optional(),
     finishTool: z.boolean().optional(),
+    planAutoSend: z.boolean().optional(),
     planBackend: z.enum(['chatgpt', 'api']).optional(),
     finishAction: z.enum(['notify', 'goal']).optional(),
     finishLeadMinutes: z.number().int().min(3).max(5).optional(),
@@ -437,6 +439,7 @@ function mergeSettings(
       chatReasoning: pick(current.ui.chatReasoning, base.ui.chatReasoning, wanted.ui.chatReasoning),
       developerMode: pick(current.ui.developerMode, base.ui.developerMode, wanted.ui.developerMode),
       finishTool: pick(current.ui.finishTool, base.ui.finishTool, wanted.ui.finishTool),
+      planAutoSend: pick(current.ui.planAutoSend, base.ui.planAutoSend, wanted.ui.planAutoSend),
       planBackend: pick(current.ui.planBackend, base.ui.planBackend, wanted.ui.planBackend),
       finishAction: pick(current.ui.finishAction, base.ui.finishAction, wanted.ui.finishAction),
       finishLeadMinutes: pick(current.ui.finishLeadMinutes, base.ui.finishLeadMinutes, wanted.ui.finishLeadMinutes),
@@ -1031,6 +1034,10 @@ export function registerIpc(
     return ensureSessionPlan(id);
   });
   handle('plans:create', (payload) => createPlan(planCreateSchema.parse(payload)));
+  handle('plans:send', (payload) => {
+    const { id, revision } = z.object({ id: z.string().uuid(), revision: z.number().int().min(1) }).strict().parse(payload);
+    return sendPlanRevision(id, revision);
+  });
   handle('plans:update', (payload) => {
     const { id, patch, expectedUpdatedAt } = planUpdateRequestSchema.parse(payload);
     return updatePlan(id, patch, expectedUpdatedAt);

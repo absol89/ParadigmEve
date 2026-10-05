@@ -363,6 +363,8 @@ const configSchema = z.object({
     chatModel: z.string().trim().min(1).max(80).nullable().optional(),
     chatReasoning: z.enum(REASONING_EFFORTS).nullable().optional(),
     developerMode: z.boolean().optional(),
+    /** Send each new Plan revision to the orchestrator without the user's Send. Off by default. */
+    planAutoSend: z.boolean().optional(),
     finishTool: z.boolean().optional(),
     planBackend: z.enum(['chatgpt', 'api']).optional(),
     finishAction: z.enum(['notify', 'goal']).optional(),
