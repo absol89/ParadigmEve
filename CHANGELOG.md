@@ -52,6 +52,14 @@ operation.
   app files no automatic compaction ticket, pauses a pending ticket's pickups without counting them toward
   `handoff_never_sent`, queues no repair reloads, and the page does not start compacting. The Companion also leaves
   an audible tab alone. The handoff no longer lands in the voice chat when the call ends.
+- Ported from upstream chat-on-steroids 2.1.24–2.1.27:
+  - the chat Compact & Resume moved you into is never closed as an idle app-owned tab (0eb1e3c6);
+  - the replacement chat's ownership gate is re-armed when its Send is dispatched after a long wait, so the
+    resumed chat is not filed as a separate session (5ecb19ff);
+  - recovered handoffs carry provenance and restart refuses a brief that belongs to another continuation
+    (fb19351c);
+  - a Goal "goal is met" decision settles its turn at once, even if the chat's page never acknowledges it (ffd69e0c);
+  - finals that existed before a Send are history, so a fast first answer can still close its own turn (1f093832).
 - A LAN peer privacy test asserted a three-letter substring that random ciphertext contains about once in 500 runs.
 
 ## [2.3.4] — Speaking your language

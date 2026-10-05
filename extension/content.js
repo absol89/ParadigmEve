@@ -919,7 +919,10 @@
       attachmentNames,
       conversationId: CLF_DOM.conversationId(),
       previousMessageId,
-      baseline: { sections, marks: sections.slice(-3).map(node => ({ node, mark: sectionMark(node) })) },
+      // The finals that are history for this question, taken now: a fast answer can finish before
+      // ChatGPT shows its question again, and its own final must still close its turn.
+      // (Ported from upstream chat-on-steroids 1f093832.)
+      baseline: { sections, marks: sections.slice(-3).map(node => ({ node, mark: sectionMark(node) })), finals: new Set(knownFinals) },
       at: Date.now()
     };
   }
@@ -2561,7 +2564,9 @@
       // state the resume exists to keep, since recorder.ts empties `progress`, `pageTools`
       // and the pending sightings on every turn_start.
       emit({ kind: 'turn_start', turnId });
-      for (const known of knownFinals) settledFinals.add(known);
+      // Without a witnessed Send, every final already on the page is history.
+      const finalsAtSend = submission?.baseline?.finals;
+      for (const known of knownFinals) if (!finalsAtSend || finalsAtSend.has(known)) settledFinals.add(known);
 
       // The compaction binding is made here and only here: the first generation to open
     }

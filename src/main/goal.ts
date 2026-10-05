@@ -1327,6 +1327,11 @@ function settle(draft: GoalDraft, stage: GoalStage, error: string | null = null)
   draft.stage = stage;
   draft.error = error;
   draft.settledAt = Date.now();
+  // NO_REPLY is a decision with nothing to type, so it discharges the turn here, as the page's
+  // acknowledgement would. A page closed meanwhile never acknowledges, the draft dies with the
+  // process, and the turn stayed owed for the ledger's twelve hours ("Answer settling").
+  // (Ported from upstream chat-on-steroids ffd69e0c.)
+  if (stage === 'no-reply') handleGoalReply(draft.conversationId, draft.turnId);
   notifyGoalChange();
   // A terminal browser-helper failure cannot be repaired by reloading the source chat.
   // Retire this exact automatic pickup, retaining its visible failure and objective.

@@ -893,6 +893,39 @@ describe('the reply', () => {
     expect(view.reply).toBe('');
   });
 
+  /**
+   * "The goal is met" needs nothing typed, so it must not wait for a page to come and act on it.
+   * (Ported from upstream chat-on-steroids ffd69e0c.)
+   */
+  it('settles the owed turn as soon as the model says the goal is met, even if no page acknowledges it', async () => {
+    const sessionId = await seed('c-met-unacked');
+    await goal.acceptGoalReplyNow({
+      conversationId: 'c-met-unacked', sessionId, replyId: 'assistant-met-unacked', turnId: 'g-met', eventSeq: 3, blocked: false
+    });
+    globalThis.fetch = (async () => stream([delta('NO_REPLY'), 'data: [DONE]\n'])) as never;
+    goal.startGoalDraft({ sessionId, conversationId: 'c-met-unacked', turnId: 'g-met' });
+    expect((await settled('c-met-unacked')).stage).toBe('no-reply');
+
+    expect(goal.goalPendingReplyFor('c-met-unacked')).toBeNull();
+    expect(goal.pendingGoalReplies().map(owed => owed.conversationId)).not.toContain('c-met-unacked');
+    const saved = goal.snapshotGoalReplies();
+    expect(saved.replies).toContainEqual(expect.objectContaining({ replyId: 'assistant-met-unacked', state: 'handled' }));
+    goal.resetGoalStateForTests();
+    goal.restoreGoalReplies(saved);
+    expect(goal.goalPendingReplyFor('c-met-unacked'), 'still settled after a restart').toBeNull();
+  });
+
+  it('keeps the turn owed while a continuation waits to be typed', async () => {
+    const sessionId = await seed('c-typed-owed');
+    await goal.acceptGoalReplyNow({
+      conversationId: 'c-typed-owed', sessionId, replyId: 'assistant-typed-owed', turnId: 'g-typed', eventSeq: 3, blocked: false
+    });
+    globalThis.fetch = (async () => decision('continue', 'what about the tests')) as never;
+    goal.startGoalDraft({ sessionId, conversationId: 'c-typed-owed', turnId: 'g-typed' });
+    expect((await settled('c-typed-owed')).stage).toBe('ready');
+    expect(goal.goalPendingReplyFor('c-typed-owed')).toMatchObject({ turnId: 'g-typed' });
+  });
+
   /** Protocol words are never safe composer prose; ambiguity stops instead of self-prompting. */
   it('fails closed when legacy output wraps NO_REPLY in scratchpad prose', async () => {
     const sessionId = await seed('c-mentions');

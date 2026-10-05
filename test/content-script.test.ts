@@ -707,6 +707,41 @@ describe('desktop input delivery and helper ownership', () => {
     expect(live.sent.some(message => message.type === 'desktop_input' && message.ack)).toBe(change === 'accepted');
   });
 
+  it('closes a fast first answer whose final the page saw before its question (upstream 1f093832)', async () => {
+    // A new chat can show the whole Instant answer, end_turn and all, before its question. The
+    // final then existed before the turn opened, and treating every known final as history left
+    // nothing that could close the turn.
+    const submitted = 'Fast-answer test: reply with exactly the word ready.';
+    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+      activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
+      desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed({ text: submitted }) } })
+    });
+    let answer!: HTMLElement;
+    live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+      live!.document.querySelector('#prompt-textarea')!.textContent = '';
+      live!.dom.reconfigure({ url: `https://chatgpt.com/c/${chatB}` });
+      answer = assistantTurn(live!.document, 'fast-answer', []);
+      prose(live!.document, answer, 'fast-message', 'ready');
+      void bindFiberTurns([{ section: answer, turn: { turnId: 'fast-answer', conversationId: chatB, endMessageId: 'fast-message',
+        messages: [{ role: 'assistant', messageId: 'fast-message', rawMessageId: 'fast-message', rawText: 'ready' }] } }]);
+      live!.hook.observe();
+      // The question mounts only after the finished answer was read.
+      const user = userTurn(live!.document, 'fast-user', submitted, { sent: false });
+      answer.before(user);
+      live!.hook.observe();
+    });
+    await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: null });
+    for (let pass = 0; pass < 6; pass++) {
+      live.hook.observe(); await settle();
+      await new Promise(resolve => live!.window.setTimeout(resolve, 3_000));
+    }
+    await live.hook.flush();
+    expect(emitted(live.sent, 'turn_start')).toHaveLength(1);
+    const ends = emitted(live.sent, 'turn_end');
+    expect(ends).toHaveLength(1);
+    expect(ends[0]!.event).toMatchObject({ outcome: 'completed' });
+  });
+
   it('acks a fresh desktop send when the provider user id exists in Fiber before the DOM message id mounts', async () => {
     live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),

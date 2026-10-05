@@ -66,7 +66,7 @@ import { clearChatWorkspace, moveChatWorkspace, workspaceForChat } from '../work
 import { clearGoalObjective, clearGoalSwitch, goalObjectiveFor, goalSwitchFor, moveGoalObjective, moveGoalSwitch } from '../goal.js';
 import { writeDurableNow, writeDurableSoon } from '../durable.js';
 import { currentAgentConversationId, transferAgentConversation } from '../agent-identity.js';
-import { prepareHandoff, resumeBootstrapMatches } from './handoff.js';
+import { handoffMatchesContinuation, prepareHandoff, resumeBootstrapMatches } from './handoff.js';
 import { ensureHandoffRecorded, recordHandoff, recordNote, rebindConversation } from './recorder.js';
 import { endResumeClaim, noteResumeClaim, resetResumeGate, setDurableResumeProbe } from './resume-gate.js';
 import {
@@ -982,6 +982,10 @@ export async function dispatchContinuationDestinationSendNow(token: string): Pro
       ...current,
       destinationSend: { state: 'dispatched-unresolved', conversationId: null, messageId: null }
     }));
+    // The claim window may have lapsed while the page waited before Send (a slow model picker).
+    // Re-arm it so the new conversation is not filed as a separate chat before the commit lands.
+    // (Ported from upstream chat-on-steroids 5ecb19ff.)
+    noteResumeClaim(entry.token);
     return true;
   });
 }
@@ -1072,7 +1076,10 @@ export async function attachSummary(token: string, text: string): Promise<Handof
   return capture(token, brief, async (entry) =>
     prepareHandoff({
       sessionId: entry.sessionId,
-      text: brief
+      text: brief,
+      continuationToken: entry.token,
+      sourceConversationId: entry.from,
+      sourceTurnId: entry.sourceTurnId ?? null
     })
   );
 }
@@ -1625,9 +1632,15 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
       entry.askedAt = typeof raw.askedAt === 'number' && Number.isFinite(raw.askedAt) ? raw.askedAt : now;
     }
     const waitingExpired = entry.state !== 'committed' && entry.state !== 'aborted' && expired(entry, now);
+    let handoffProvenanceConflict = false;
     if (entry.handoffId) {
       try {
         entry.handoff = await readHandoff(entry.sessionId, entry.handoffId);
+        if (entry.handoff && !handoffMatchesContinuation(entry.handoff, entry.token, entry.from, entry.sourceTurnId ?? null)) {
+          handoffProvenanceConflict = true;
+          logWarn(`continuation ${entry.token.slice(0, 8)} refused handoff ${entry.handoff.id}: stored provenance belongs to another transaction`);
+          entry.handoff = null;
+        }
       } catch (err) {
         logWarn(`continuation ${entry.token.slice(0, 8)} handoff recovery failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1658,7 +1671,7 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
         logWarn(`continuation ${entry.token.slice(0, 8)} session recovery failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       if (session && entry.to && session.conversationId === entry.to) {
-        if (entry.handoffId) {
+        if (entry.handoffId && !handoffProvenanceConflict) {
           try {
             await ensureCommittedResumeHandoff(entry.sessionId, entry.to, entry.handoffId);
           } catch (err) {
@@ -1680,7 +1693,14 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
         entry.error = null;
         logInfo(`continuation ${entry.token.slice(0, 8)} recovered after durable commit`);
       } else if (entry.state === 'committing' && session && session.conversationId === entry.from) {
-        if (waitingExpired) {
+        if (!entry.handoff) {
+          entry.state = 'aborted';
+          entry.to = null;
+          entry.error = handoffProvenanceConflict
+            ? 'The saved handoff belongs to a different continuation.'
+            : 'The saved handoff could not be recovered.';
+          cancelPrimeTransfer(entry.from);
+        } else if (waitingExpired) {
           // The WAL proves the durable session move never landed. Restart must not turn an
           // already-expired ten-minute transaction into a fresh one merely because its
           // ephemeral transfer lock disappeared with the process.
@@ -1718,7 +1738,9 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
       // handoff data is not an empty valid brief and must not be typed into a new chat.
       } else if (entry.state !== 'awaiting-summary' && !entry.handoff) {
         entry.state = 'aborted';
-        entry.error = 'The saved handoff could not be recovered.';
+        entry.error = handoffProvenanceConflict
+          ? 'The saved handoff belongs to a different continuation.'
+          : 'The saved handoff could not be recovered.';
         cancelPrimeTransfer(entry.from);
       } else {
         beginPrimeTransfer(entry.from);

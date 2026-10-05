@@ -8,7 +8,7 @@
  * brief.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Handoff } from '../../shared/session.js';
 import { logInfo } from '../logger.js';
 import { getSession, readSessionPlan, saveHandoff } from './store.js';
@@ -23,6 +23,36 @@ export interface PrepareHandoffInput {
   /** How the recording looked when the brief was written. Defaults to the session's own counts. */
   sourceEvents?: number;
   sourceTokens?: number;
+  /** The continuation transaction writing this brief, and the exact frontend/turn it pinned. */
+  continuationToken?: string;
+  sourceConversationId?: string | null;
+  sourceTurnId?: string | null;
+}
+
+/** A public, non-authority id for provenance. The raw continuation token is never persisted here. */
+export function handoffContinuationId(token: string | null | undefined): string | null {
+  if (!token || !/^[A-Za-z0-9_-]{16,64}$/.test(token)) return null;
+  return createHash('sha256').update(token, 'utf8').digest('base64url');
+}
+
+/**
+ * Whether a stored brief was written by this continuation. Legacy handoffs carry no proof and stay
+ * readable; recovery then relies on the older transaction evidence, as before.
+ * (Ported from upstream chat-on-steroids fb19351c.)
+ */
+export function handoffMatchesContinuation(
+  handoff: Handoff,
+  token: string,
+  sourceConversationId: string,
+  sourceTurnId: string | null
+): boolean {
+  if (handoff.version === undefined && handoff.provenance === undefined) return true;
+  if (handoff.version !== 1 || !handoff.provenance) return false;
+  const continuationId = handoffContinuationId(token);
+  return !!continuationId &&
+    handoff.provenance.continuationId === continuationId &&
+    handoff.provenance.sourceConversationId === sourceConversationId &&
+    handoff.provenance.sourceTurnId === sourceTurnId;
 }
 
 export function handoffPlanNotice(sessionId: string): string {
@@ -146,7 +176,10 @@ export async function prepareHandoff(input: PrepareHandoffInput): Promise<Handof
   if (handoffText.length > MAX_HANDOFF_CHARS) {
     throw new Error(`The handoff plus its plan notice is ${handoffText.length} characters, which exceeds the ${MAX_HANDOFF_CHARS}-character browser delivery limit.`);
   }
+  const sourceConversationId = input.sourceConversationId === undefined ? summary.conversationId : input.sourceConversationId;
+  const sourceIndex = sourceConversationId ? summary.chatIds.indexOf(sourceConversationId) : -1;
   const handoff: Handoff = {
+    version: 1,
     id: newHandoffId(),
     sessionId: input.sessionId,
     createdAt: Date.now(),
@@ -156,7 +189,13 @@ export async function prepareHandoff(input: PrepareHandoffInput): Promise<Handof
     // The working folder is deliberately not here. It belongs to the durable local session
     // and moves with the session's rebind (see `moveChatWorkspace`), so writing it into the
     // brief as well would be a second, weaker copy of state the commit already carries.
-    notes: [...(input.notes ?? [])]
+    notes: [...(input.notes ?? [])],
+    provenance: {
+      sourceConversationId,
+      sourceGeneration: sourceIndex >= 0 ? sourceIndex + 1 : null,
+      sourceTurnId: input.sourceTurnId ?? null,
+      continuationId: handoffContinuationId(input.continuationToken)
+    }
   };
   await saveHandoff(handoff);
   logInfo(`handoff ${handoff.id} prepared (${handoff.text.length} characters)`);
