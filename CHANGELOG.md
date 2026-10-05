@@ -20,6 +20,12 @@ operation.
 ### Added
 
 - *(in progress)* Interpreter → Plan → orchestrator → workers. See `docs/eve-tasks/interpreter-orchestrator-2.3.6.md`.
+- Plan model for that pipeline: Plans carry a revision; steps can nest (4 levels, 100 per level, 400 per Plan)
+  and carry their own intent, constraints and exact source messages (Voice, typed or tool). An executor claims a
+  step at an exact revision; the claim keeps the wording it started from and is marked superseded when a later
+  revision rewords the step. One step in progress per claimant. A chat has one active Plan; a new one starts only
+  after it is completed or cancelled. Worker Plans can link to their parent step and revision. Plans written
+  before 2.3.6 load unchanged.
 
 ## [2.3.5] — Choose who answers
 

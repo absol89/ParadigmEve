@@ -1,6 +1,6 @@
 # 2.3.6 — Interpreter → Plan → Orchestrator → Workers
 
-Status: design agreed, not started. Branch `release/2.3.6`, cut from `release/2.3.5` (2.3.5 is an internal
+Status: design agreed. Step 1 (Plan model) done; steps 2–4 not started. Branch `release/2.3.6`, cut from `release/2.3.5` (2.3.5 is an internal
 dogfood build and will not be released; 2.3.6 replaces it publicly).
 
 Reviewers: Eve (design review), the user (scope). Implementation: Claude.

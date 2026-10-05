@@ -7,6 +7,7 @@ import {
   planCatalogSchema,
   planCreateSchema,
   planIdSchema,
+  planRecordSchema,
   planPatchSchema,
   planProvenanceSchema,
   type PlanCreate,
@@ -225,12 +226,51 @@ async function workerProjection(
   };
 }
 
+/** The 2.3.6 step fields a writer that does not know them must carry over unchanged. */
+function carriedStepFields(previous: PlanItem | undefined): Partial<PlanItem> {
+  if (!previous) return {};
+  return {
+    ...(previous.parentId === undefined ? {} : { parentId: previous.parentId }),
+    ...(previous.intent === undefined ? {} : { intent: previous.intent }),
+    ...(previous.constraints === undefined ? {} : { constraints: [...previous.constraints] }),
+    ...(previous.sources === undefined ? {} : { sources: previous.sources.map(source => ({ ...source })) }),
+    ...(previous.claim === undefined ? {} : { claim: { ...previous.claim, snapshot: { ...previous.claim.snapshot } } })
+  };
+}
+
+/**
+ * A claimed step keeps the wording it was claimed with. When a later revision changes what the
+ * step says, the claim is marked superseded instead of silently changing the work underneath it.
+ */
+function markSupersededClaims(items: PlanItem[]): PlanItem[] {
+  return items.map(item => {
+    if (!item.claim || item.claim.superseded) return item;
+    const snapshot = item.claim.snapshot;
+    const same = snapshot.text === item.text && (snapshot.details ?? '') === (item.details ?? '') &&
+      (snapshot.intent ?? '') === (item.intent ?? '') &&
+      JSON.stringify(snapshot.constraints ?? []) === JSON.stringify(item.constraints ?? []);
+    return same ? item : { ...item, claim: { ...item.claim, superseded: true } };
+  });
+}
+
+/** Whether two step lists differ in anything but status/reminder bookkeeping. */
+function stepsChanged(before: readonly PlanItem[], after: readonly PlanItem[]): boolean {
+  const shape = (item: PlanItem) => JSON.stringify([item.id, item.text, item.details ?? '', item.priority ?? '', item.parentId ?? '',
+    item.intent ?? '', item.constraints ?? [], item.sources ?? [], item.status]);
+  return before.length !== after.length || before.some((item, at) => shape(item) !== shape(after[at]!));
+}
+
+function nextRevision(plan: PlanRecord): number {
+  return (plan.revision ?? 1) + 1;
+}
+
 function replacementItems(current: PlanRecord, updates: PlanItemUpdate[]): PlanItem[] {
   const existing = new Map(current.items.map(item => [item.id, item]));
   return updates.map(update => {
     if (update.id !== undefined && !existing.has(update.id)) throw new Error('Plan item does not belong to this Plan');
     const previous = update.id === undefined ? undefined : existing.get(update.id);
     return {
+      ...carriedStepFields(previous),
       id: update.id ?? randomUUID(),
       text: update.text,
       status: update.status,
@@ -238,7 +278,11 @@ function replacementItems(current: PlanRecord, updates: PlanItemUpdate[]): PlanI
         ? previous?.details === undefined ? {} : { details: previous.details }
         : update.details ? { details: update.details } : {}),
       ...(update.priority === undefined ? {} : { priority: update.priority }),
-      ...(update.reminderAt === undefined ? {} : { reminderAt: update.reminderAt })
+      ...(update.reminderAt === undefined ? {} : { reminderAt: update.reminderAt }),
+      ...(update.parentId === undefined ? {} : { parentId: update.parentId }),
+      ...(update.intent === undefined ? {} : { intent: update.intent }),
+      ...(update.constraints === undefined ? {} : { constraints: [...update.constraints] }),
+      ...(update.sources === undefined ? {} : { sources: update.sources.map(source => ({ ...source })) })
     };
   });
 }
@@ -440,6 +484,7 @@ function sameAgentDocument(plan: PlanRecord, update: AgentPlanUpdate): boolean {
 
 function agentItems(current: PlanRecord | null, update: AgentPlanUpdate): PlanItem[] {
   return update.plan.map((step, index) => ({
+    ...carriedStepFields(current?.items[index]),
     id: current?.items[index]?.id ?? randomUUID(),
     text: step.step,
     status: agentStatus(step.status),
@@ -484,6 +529,7 @@ export function syncSessionAgentPlan(
         id: randomUUID(),
         title,
         items: agentItems(null, update),
+        revision: 1,
         provenance: {
           kind: 'plan',
           sessionId,
@@ -519,10 +565,12 @@ export function syncSessionAgentPlan(
     const replaceCurrent = current && (!current.items.every(item => item.status === 'done') || sameAgentSteps(current, update));
     if (replaceCurrent) {
       const revision = nextTimestamp(current.updatedAt);
+      const items = markSupersededClaims(agentItems(current, update));
       const updated: PlanRecord = {
         ...current,
         title,
-        items: agentItems(current, update),
+        items,
+        ...(stepsChanged(current.items, items) || title !== current.title ? { revision: nextRevision(current) } : {}),
         updatedAt: revision,
         agentRevision: revision
       };
@@ -536,6 +584,7 @@ export function syncSessionAgentPlan(
       id: randomUUID(),
       title,
       items: agentItems(null, update),
+      revision: 1,
       provenance: {
         kind: 'plan',
         sessionId,
@@ -571,11 +620,19 @@ export function createPlan(input: PlanCreate): Promise<PlanView> {
   return queueMutation(async () => {
     const parsed = planCreateSchema.parse(input);
     const plans = withRoomForPlan(await readRecords());
+    const sessionId = parsed.provenance?.kind === 'plan' ? parsed.provenance.sessionId : undefined;
+    if (sessionId && plans.some(plan => plan.archivedAt === null && plan.provenance?.kind === 'plan' &&
+        plan.provenance.sessionId === sessionId && !plan.items.every(item => item.status === 'done'))) {
+      // One active Plan per chat: a chat iterates on its focused Plan; a new one starts only after
+      // the current one is completed or cancelled.
+      throw new Error('This chat already has an active Plan. Complete or cancel it before starting another.');
+    }
     const now = Date.now();
     const plan: PlanRecord = {
       id: randomUUID(),
       title: parsed.title,
       items: parsed.items.map(item => ({ id: randomUUID(), ...item })),
+      revision: 1,
       ...(parsed.provenance === undefined ? {} : { provenance: parsed.provenance }),
       createdAt: now,
       updatedAt: now,
@@ -632,10 +689,13 @@ export function updatePlan(id: string, patch: PlanPatch, expectedUpdatedAt: numb
     const current = plans[index]!;
     if (current.archivedAt !== null) throw new Error('Archived Plans cannot be edited');
     if (current.updatedAt !== expectedUpdatedAt) throw new Error('Plan changed; refresh before editing it again');
+    const items = parsedPatch.items === undefined ? current.items : markSupersededClaims(replacementItems(current, parsedPatch.items));
+    const title = parsedPatch.title ?? current.title;
     const edited: PlanRecord = {
       ...current,
-      ...(parsedPatch.title === undefined ? {} : { title: parsedPatch.title }),
-      ...(parsedPatch.items === undefined ? {} : { items: replacementItems(current, parsedPatch.items) }),
+      title,
+      items,
+      ...(stepsChanged(current.items, items) || title !== current.title ? { revision: nextRevision(current) } : {}),
       updatedAt: nextTimestamp(current.updatedAt)
     };
     // A human scope change (title or step text/order) is no longer the checklist the worker
@@ -643,7 +703,7 @@ export function updatePlan(id: string, patch: PlanPatch, expectedUpdatedAt: numb
     const sameScope = edited.title === current.title && edited.items.length === current.items.length &&
       edited.items.every((item, at) => item.text === current.items[at]!.text);
     const { agentRevision: _dropped, ...withoutAgentRevision } = edited;
-    const updated: PlanRecord = sameScope ? edited : withoutAgentRevision;
+    const updated: PlanRecord = planRecordSchema.parse(sameScope ? edited : withoutAgentRevision);
     if (parsedPatch.items !== undefined && !(await syncOriginatingSessionPlan(updated))) {
       throw new Error('Plan source changed; refresh before editing it again');
     }
@@ -739,6 +799,85 @@ export function withPlanReviewValidationFence<T>(
  * misstate what happened. Cancel keeps the checklist exactly as it is, marks the Plan cancelled and
  * moves it to Done, where it is as immutable as any other archived Plan.
  */
+/**
+ * Claims one step for an executor at an exact Plan revision. The step becomes that claimant's
+ * in-progress step and keeps the wording it had now, whatever later revisions say. Refused when the
+ * Plan moved past `expectedRevision`, the step is done, or someone else holds it.
+ */
+export function claimPlanItem(planId: string, itemId: string, by: string, expectedRevision: number): Promise<PlanView> {
+  return queueMutation(async () => {
+    const parsedId = planUpdateId(planId);
+    const claimant = by.trim();
+    if (!claimant || claimant.length > 120) throw new Error('Claimant is invalid');
+    const plans = await readRecords();
+    const index = plans.findIndex(plan => plan.id === parsedId);
+    if (index < 0) throw new Error('Plan not found');
+    const current = plans[index]!;
+    if (current.archivedAt !== null) throw new Error('Archived Plans cannot be claimed');
+    const revision = current.revision ?? 1;
+    if (revision !== expectedRevision) throw new Error(`Plan is at revision ${revision}, not ${expectedRevision}; read it again before claiming`);
+    const step = current.items.find(item => item.id === itemId);
+    if (!step) throw new Error('Plan step not found');
+    if (step.status === 'done') throw new Error('Plan step is already done');
+    if (step.claim && step.claim.by !== claimant) throw new Error(`Plan step is claimed by ${step.claim.by}`);
+    const now = Date.now();
+    const items = current.items.map(item => {
+      // The claimant's previous in-progress step goes back to todo: one step in progress per claimant.
+      if (item.id !== itemId && item.status === 'in_progress' && (item.claim?.by ?? '') === claimant) return { ...item, status: 'todo' as const };
+      if (item.id !== itemId) return item;
+      return {
+        ...item,
+        status: 'in_progress' as const,
+        claim: {
+          by: claimant,
+          revision,
+          at: now,
+          snapshot: {
+            text: item.text,
+            ...(item.details === undefined ? {} : { details: item.details }),
+            ...(item.intent === undefined ? {} : { intent: item.intent }),
+            ...(item.constraints === undefined ? {} : { constraints: [...item.constraints] })
+          }
+        }
+      };
+    });
+    const updated = planRecordSchema.parse({ ...current, items, updatedAt: nextTimestamp(current.updatedAt) });
+    const next = [...plans];
+    next[index] = updated;
+    await writeRecords(next);
+    return projectPlan(updated);
+  });
+}
+
+/** Ends a claim, recording the step's outcome. Only the claimant may release it. */
+export function releasePlanItemClaim(
+  planId: string,
+  itemId: string,
+  by: string,
+  outcome: 'done' | 'todo'
+): Promise<PlanView> {
+  return queueMutation(async () => {
+    const parsedId = planUpdateId(planId);
+    const plans = await readRecords();
+    const index = plans.findIndex(plan => plan.id === parsedId);
+    if (index < 0) throw new Error('Plan not found');
+    const current = plans[index]!;
+    const step = current.items.find(item => item.id === itemId);
+    if (!step?.claim) throw new Error('Plan step is not claimed');
+    if (step.claim.by !== by.trim()) throw new Error(`Plan step is claimed by ${step.claim.by}`);
+    const items = current.items.map(item => {
+      if (item.id !== itemId) return item;
+      const { claim: _released, ...rest } = item;
+      return { ...rest, status: outcome };
+    });
+    const updated = planRecordSchema.parse({ ...current, items, updatedAt: nextTimestamp(current.updatedAt) });
+    const next = [...plans];
+    next[index] = updated;
+    await writeRecords(next);
+    return projectPlan(updated);
+  });
+}
+
 export async function cancelPlan(id: string): Promise<PlanView> {
   const sessions = await indexedSessions();
   const bySession = new Map(sessions.map(session => [session.id, session]));

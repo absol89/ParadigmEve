@@ -26,7 +26,46 @@ export const planProvenanceSchema = z.object({
   messageId: z.string().min(1).max(240).optional(),
   toolCallId: z.string().min(1).max(240).optional(),
   sourcePlanId: planIdSchema.optional(),
+  /** A worker Plan's exact parent step, and the parent revision it was delegated from. */
+  sourceItemId: planIdSchema.optional(),
+  sourceRevision: z.number().int().min(1).optional(),
   label: z.string().trim().min(1).max(240).optional()
+}).strict();
+
+/** Most nesting levels a Plan may have (a top-level step is level 1). */
+export const PLAN_MAX_DEPTH = 4;
+/** Most steps directly under one parent (or at the top level). */
+export const PLAN_MAX_SIBLINGS = 100;
+/** Most steps in one Plan, all levels together. */
+export const PLAN_MAX_ITEMS = 400;
+
+/**
+ * Exact conversation material that created or changed one step. Metadata only: the archive is the
+ * evidence, and a pruned recording never invalidates the step.
+ */
+export const planStepSourceSchema = z.object({
+  sessionId: z.string().min(1).max(160),
+  messageId: z.string().min(1).max(240),
+  kind: z.enum(['voice', 'typed', 'tool'])
+}).strict();
+
+/** What a claimed step said when its claimant started it. Later revisions never change this. */
+const planClaimSnapshotSchema = z.object({
+  text: planItemTextSchema,
+  details: planItemDetailsSchema,
+  intent: z.string().trim().max(1_000).optional(),
+  constraints: z.array(z.string().trim().min(1).max(500)).max(20).optional()
+}).strict();
+
+export const planItemClaimSchema = z.object({
+  /** Who executes this step: an orchestrator or worker identity. */
+  by: z.string().trim().min(1).max(120),
+  /** The Plan revision the claim was made at. */
+  revision: z.number().int().min(1),
+  at: timestampSchema,
+  snapshot: planClaimSnapshotSchema,
+  /** Set when a later revision changed this step's wording, intent or constraints after the claim. */
+  superseded: z.literal(true).optional()
 }).strict();
 
 const planItemFields = {
@@ -34,22 +73,73 @@ const planItemFields = {
   status: planItemStatusSchema,
   details: planItemDetailsSchema,
   priority: planPrioritySchema.optional(),
-  reminderAt: timestampSchema.optional()
+  reminderAt: timestampSchema.optional(),
+  /** Parent step in this Plan. Absent for a top-level step. Priority applies within a level. */
+  parentId: planIdSchema.optional(),
+  /** Why this step exists, in the user's terms. Kept apart from `text` so rewording cannot lose it. */
+  intent: z.string().trim().max(1_000).optional(),
+  constraints: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
+  sources: z.array(planStepSourceSchema).max(20).optional()
 };
 
-export const planItemCreateSchema = z.object(planItemFields).strict();
+/** A created step may carry its own id so later steps in the same request can name it as parent. */
+export const planItemCreateSchema = z.object({ id: planIdSchema.optional(), ...planItemFields }).strict();
 export const planItemUpdateSchema = z.object({ id: planIdSchema.optional(), ...planItemFields }).strict();
-export const planItemSchema = z.object({ id: planIdSchema, ...planItemFields }).strict();
+export const planItemSchema = z.object({ id: planIdSchema, ...planItemFields, claim: planItemClaimSchema.optional() }).strict();
 
-function validItemSequence(items: ReadonlyArray<{ id?: string; status: string }>): boolean {
-  const ids = items.flatMap(item => item.id ? [item.id] : []);
-  return new Set(ids).size === ids.length && items.filter(item => item.status === 'in_progress').length <= 1;
+type SequenceItem = { id?: string; status: string; parentId?: string; claim?: { by: string } };
+
+/**
+ * One in-progress step per claimant: unclaimed steps count as one shared claimant, so a Plan
+ * without claims keeps the original "one step in progress" rule.
+ */
+function oneInProgressPerClaimant(items: ReadonlyArray<SequenceItem>): boolean {
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.status !== 'in_progress') continue;
+    const claimant = item.claim?.by ?? '';
+    if (seen.has(claimant)) return false;
+    seen.add(claimant);
+  }
+  return true;
 }
 
-const createItemsSchema = z.array(planItemCreateSchema).min(1).max(100)
-  .refine(validItemSequence, 'A Plan can have at most one in-progress item');
-const updateItemsSchema = z.array(planItemUpdateSchema).min(1).max(100)
-  .refine(validItemSequence, 'Plan item ids must be unique and at most one item can be in progress');
+/** Parents exist in this Plan, no cycles, at most PLAN_MAX_DEPTH levels and PLAN_MAX_SIBLINGS per level. */
+export function validPlanHierarchy(items: ReadonlyArray<SequenceItem>): boolean {
+  const byId = new Map(items.flatMap(item => item.id ? [[item.id, item] as const] : []));
+  const siblings = new Map<string, number>();
+  for (const item of items) {
+    const key = item.parentId ?? '';
+    siblings.set(key, (siblings.get(key) ?? 0) + 1);
+    if (siblings.get(key)! > PLAN_MAX_SIBLINGS) return false;
+    let depth = 1;
+    let parent = item.parentId;
+    while (parent !== undefined) {
+      if (parent === item.id) return false;
+      const next = byId.get(parent);
+      if (!next) return false;
+      depth += 1;
+      if (depth > PLAN_MAX_DEPTH) return false;
+      parent = next.parentId;
+    }
+  }
+  return true;
+}
+
+function validItemSequence(items: ReadonlyArray<SequenceItem>): boolean {
+  const ids = items.flatMap(item => item.id ? [item.id] : []);
+  return new Set(ids).size === ids.length && oneInProgressPerClaimant(items) && validPlanHierarchy(items);
+}
+
+const createItemsSchema = z.array(planItemCreateSchema).min(1).max(PLAN_MAX_ITEMS)
+  .refine(validItemSequence, 'Plan steps are invalid: ids must be unique, parents must exist without cycles within the depth and per-level limits, and at most one item can be in progress per claimant');
+// Claims live in the stored Plan, not in an edit, so an edit's in-progress rule is checked on the
+// merged record (planRecordSchema) instead of here.
+const updateItemsSchema = z.array(planItemUpdateSchema).min(1).max(PLAN_MAX_ITEMS)
+  .refine(items => {
+    const ids = items.flatMap(item => item.id ? [item.id] : []);
+    return new Set(ids).size === ids.length && validPlanHierarchy(items);
+  }, 'Plan steps are invalid: ids must be unique, parents must exist without cycles within the depth and per-level limits, and at most one item can be in progress per claimant');
 
 export const planCreateSchema = z.object({
   title: planTitleSchema,
@@ -73,8 +163,13 @@ export const planArchiveRequestSchema = z.object({ id: planIdSchema }).strict();
 export const planRecordSchema = z.object({
   id: planIdSchema,
   title: planTitleSchema,
-  items: z.array(planItemSchema).min(1).max(100).refine(validItemSequence, 'Plan items are invalid'),
+  items: z.array(planItemSchema).min(1).max(PLAN_MAX_ITEMS).refine(validItemSequence, 'Plan steps are invalid: ids must be unique, parents must exist without cycles within the depth and per-level limits, and at most one item can be in progress per claimant'),
   provenance: planProvenanceSchema.optional(),
+  /**
+   * Plan revision, starting at 1 and advanced by every accepted change to its steps. A claim records
+   * the revision it was made at. Absent on Plans written before 2.3.6, which read as revision 1.
+   */
+  revision: z.number().int().min(1).optional(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   archivedAt: timestampSchema.nullable(),
@@ -111,6 +206,8 @@ export type PlanPriority = z.infer<typeof planPrioritySchema>;
 export type PlanItemStatus = z.infer<typeof planItemStatusSchema>;
 export type PlanProvenance = z.infer<typeof planProvenanceSchema>;
 export type PlanItemCreate = z.infer<typeof planItemCreateSchema>;
+export type PlanStepSource = z.infer<typeof planStepSourceSchema>;
+export type PlanItemClaim = z.infer<typeof planItemClaimSchema>;
 export type PlanItemUpdate = z.infer<typeof planItemUpdateSchema>;
 export type PlanItem = z.infer<typeof planItemSchema>;
 export type PlanCreate = z.infer<typeof planCreateSchema>;

@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
-import { archivePlan, backfillSessionPlans, cancelPlan, createPlan, listPlans, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
+import { archivePlan, backfillSessionPlans, cancelPlan, claimPlanItem, createPlan, listPlans, releasePlanItemClaim, resetPlansForTests, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
 import { appendEvent, createSession, initSessionStore, readSessionPlan, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
 
 let directory: string;
@@ -948,4 +948,108 @@ it('accepts an incomplete archived Plan only when it was cancelled at its archiv
   await expect(listPlans()).rejects.toThrow('Plan catalog is invalid');
   await writeDurableNow('plans', record({}));
   await expect(listPlans()).rejects.toThrow('Plan catalog is invalid');
+});
+
+// ------------------------------------------------------------ 2.3.6 Plan model
+
+const PARENT = '11111111-1111-4111-8111-111111111111';
+const CHILD = '22222222-2222-4222-8222-222222222222';
+const GRANDCHILD = '33333333-3333-4333-8333-333333333333';
+
+it('nests steps with their own intent, constraints and sources, starting at revision 1', async () => {
+  const plan = await createPlan({
+    title: 'Ollama workers',
+    items: [
+      { id: PARENT, text: 'Ship Ollama workers', status: 'todo', priority: 'high',
+        intent: 'Workers run on Ollama while Prime stays in ChatGPT',
+        constraints: ['Keep the Prime provider unchanged'],
+        sources: [{ sessionId: 's-1', messageId: 'voice-msg-7', kind: 'voice' }] },
+      { id: CHILD, parentId: PARENT, text: 'Verify the worker selector', status: 'todo' },
+      { parentId: CHILD, text: 'Check after a provider change', status: 'todo' }
+    ]
+  });
+  expect(plan.revision).toBe(1);
+  expect(plan.items[0]).toMatchObject({ id: PARENT, intent: expect.stringContaining('Prime'), sources: [{ messageId: 'voice-msg-7', kind: 'voice' }] });
+  expect(plan.items[1]).toMatchObject({ id: CHILD, parentId: PARENT });
+  expect(plan.items[2]).toMatchObject({ parentId: CHILD });
+});
+
+it.each([
+  ['a missing parent', [{ parentId: PARENT, text: 'Orphan', status: 'todo' as const }]],
+  ['a cycle', [{ id: PARENT, parentId: CHILD, text: 'A', status: 'todo' as const }, { id: CHILD, parentId: PARENT, text: 'B', status: 'todo' as const }]],
+  ['five levels', [
+    { id: PARENT, text: '1', status: 'todo' as const },
+    { id: CHILD, parentId: PARENT, text: '2', status: 'todo' as const },
+    { id: GRANDCHILD, parentId: CHILD, text: '3', status: 'todo' as const },
+    { id: '44444444-4444-4444-8444-444444444444', parentId: GRANDCHILD, text: '4', status: 'todo' as const },
+    { parentId: '44444444-4444-4444-8444-444444444444', text: '5', status: 'todo' as const }
+  ]]
+])('refuses a hierarchy with %s', async (_label, items) => {
+  await expect(createPlan({ title: 'Bad tree', items })).rejects.toThrow();
+});
+
+it('allows more than 100 steps across levels but not more than 100 at one level', async () => {
+  const children = Array.from({ length: 150 }, (_, at) => ({ parentId: at < 75 ? PARENT : CHILD, text: `Child ${at}`, status: 'todo' as const }));
+  const plan = await createPlan({ title: 'Big', items: [
+    { id: PARENT, text: 'A', status: 'todo' }, { id: CHILD, text: 'B', status: 'todo' }, ...children
+  ] });
+  expect(plan.items).toHaveLength(152);
+  const flat = Array.from({ length: 101 }, (_, at) => ({ text: `Top ${at}`, status: 'todo' as const }));
+  await expect(createPlan({ title: 'Too wide', items: flat })).rejects.toThrow();
+});
+
+it('keeps a claimed step at its claimed wording and marks it superseded when a later revision rewords it', async () => {
+  const plan = await createPlan({ title: 'Claims', items: [
+    { id: PARENT, text: 'Port the fix', status: 'todo', intent: 'Keep Voice recorded' },
+    { id: CHILD, text: 'Write the test', status: 'todo' }
+  ] });
+  await expect(claimPlanItem(plan.id, PARENT, 'orchestrator', 2)).rejects.toThrow(/revision 1, not 2/);
+  const claimed = await claimPlanItem(plan.id, PARENT, 'orchestrator', 1);
+  expect(claimed.items[0]).toMatchObject({ status: 'in_progress', claim: { by: 'orchestrator', revision: 1, snapshot: { text: 'Port the fix', intent: 'Keep Voice recorded' } } });
+  await expect(claimPlanItem(plan.id, PARENT, 'someone-else', 1)).rejects.toThrow(/claimed by orchestrator/);
+
+  // A worker may hold its own in-progress step beside the orchestrator's.
+  const both = await claimPlanItem(plan.id, CHILD, 'worker-1', 1);
+  expect(both.items.filter(item => item.status === 'in_progress')).toHaveLength(2);
+
+  const reworded = await updatePlan(plan.id, { items: [
+    { id: PARENT, text: 'Port the fix and its test', status: 'in_progress' },
+    { id: CHILD, text: 'Write the test', status: 'in_progress' }
+  ] }, both.updatedAt);
+  expect(reworded.revision).toBe(2);
+  expect(reworded.items[0]!.claim).toMatchObject({ revision: 1, superseded: true, snapshot: { text: 'Port the fix' } });
+  expect(reworded.items[0]!.intent).toBe('Keep Voice recorded');
+  expect(reworded.items[1]!.claim?.superseded).toBeUndefined();
+
+  await expect(releasePlanItemClaim(plan.id, PARENT, 'worker-1', 'done')).rejects.toThrow(/claimed by orchestrator/);
+  const released = await releasePlanItemClaim(plan.id, PARENT, 'orchestrator', 'done');
+  expect(released.items[0]).toMatchObject({ status: 'done' });
+  expect(released.items[0]).not.toHaveProperty('claim');
+});
+
+it('keeps one active Plan per chat and allows a new one only after it ends', async () => {
+  const source = { kind: 'plan' as const, sessionId: 'focused-chat' };
+  const first = await createPlan({ title: 'First focus', items: [{ text: 'Do it', status: 'todo' }], provenance: source });
+  await expect(createPlan({ title: 'Second focus', items: [{ text: 'Other', status: 'todo' }], provenance: source }))
+    .rejects.toThrow(/already has an active Plan/);
+  await cancelPlan(first.id);
+  const second = await createPlan({ title: 'Second focus', items: [{ text: 'Other', status: 'todo' }], provenance: source });
+  expect(second.revision).toBe(1);
+});
+
+it('keeps 2.3.6 step fields when a chat update_plan rewrites the checklist', async () => {
+  const session = await createSession({ title: 'Agent plan', conversationId: 'agent-chat' });
+  const first = await syncSessionAgentPlan(session.id, 'agent-chat', 'Agent plan', { plan: [
+    { step: 'Read the bug folder', status: 'in_progress' }, { step: 'Write the fix', status: 'pending' }
+  ] });
+  const enriched = await updatePlan(first!.id, { items: [
+    { id: first!.items[0]!.id, text: 'Read the bug folder', status: 'in_progress', intent: 'Find why Voice replies vanish' },
+    { id: first!.items[1]!.id, text: 'Write the fix', status: 'todo' }
+  ] }, first!.updatedAt);
+  const next = await syncSessionAgentPlan(session.id, 'agent-chat', 'Agent plan', { plan: [
+    { step: 'Read the bug folder', status: 'completed' }, { step: 'Write the fix', status: 'in_progress' }
+  ] });
+  expect(next!.id).toBe(enriched.id);
+  expect(next!.items[0]).toMatchObject({ status: 'done', intent: 'Find why Voice replies vanish' });
+  expect(next!.revision).toBeGreaterThan(enriched.revision ?? 1);
 });
