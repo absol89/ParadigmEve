@@ -1820,5 +1820,7 @@
   "Ollama key stored": "Ollama-nyckeln har sparats",
   "Ollama key removed": "Ollama-nyckeln har tagits bort",
   "ChatGPT (OpenAI)": "ChatGPT (OpenAI)",
-  "Ollama on this computer": "Ollama på den här datorn"
+  "Ollama on this computer": "Ollama på den här datorn",
+  "Send in next pause": "Skicka i nästa paus",
+  "Send in the next pause of the Voice call": "Skicka i nästa paus i röstsamtalet"
 }

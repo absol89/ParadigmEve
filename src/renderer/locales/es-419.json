@@ -1814,5 +1814,7 @@
   "Ollama key stored": "Clave de Ollama guardada",
   "Ollama key removed": "Clave de Ollama eliminada",
   "ChatGPT (OpenAI)": "ChatGPT (OpenAI)",
-  "Ollama on this computer": "Ollama en esta computadora"
+  "Ollama on this computer": "Ollama en esta computadora",
+  "Send in next pause": "Enviar en la próxima pausa",
+  "Send in the next pause of the Voice call": "Enviar en la próxima pausa de la llamada de voz"
 }

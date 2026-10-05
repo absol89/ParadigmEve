@@ -1580,6 +1580,8 @@ export type SessionControlsView = {
   queueAtFinish?: boolean;
   canInject?: boolean;
   canSendDirectly?: boolean;
+  /** The chat's page reports a live ChatGPT Voice call: Send queues for the next pause. */
+  voiceActive?: boolean;
   finishWaiting?: boolean;
   stopPending?: boolean;
   goalDraft?: Pick<import('./goal.js').GoalDraftView, 'stage' | 'model' | 'text' | 'error'> | null;
@@ -1618,7 +1620,8 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
   const inputPolicy = await sessionInputPolicy(sessionId, sessionInputActivity(session));
   return { sessionId, plan: await readSessionPlan(sessionId), conversationId: id, activeTurnId, finishHeld,
     queueAtFinish: !blocked && inputPolicy.queueAtFinish, canInject: !blocked && inputPolicy.canInject,
-    canSendDirectly: !blocked && !!inputPolicy.directTurn,
+    canSendDirectly: !blocked && !!inputPolicy.directTurn && !voiceActive(id),
+    voiceActive: voiceActive(id),
     finishGoalDraft: getSessionFinishDraft(sessionId, activeTurnId),
     finishWaiting: await sessionFinishWaiting(sessionId, activeTurnId, id),
     goalDraft: draft ? { stage: draft.stage, model: draft.model, text: draft.text.slice(-8000), error: draft.error } : null,

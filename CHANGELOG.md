@@ -26,6 +26,9 @@ operation.
   revision rewords the step. One step in progress per claimant. A chat has one active Plan; a new one starts only
   after it is completed or cancelled. Worker Plans can link to their parent step and revision. Plans written
   before 2.3.6 load unchanged.
+- Text, pasted info and attachments sent from Eve's chat during a ChatGPT Voice call are queued and typed in the
+  next pause: after the current turn has ended and nothing new was heard or said for 3 seconds. They never cut into
+  a running turn and do not expire while you keep talking. Send reads "Send in next pause" during a call.
 
 ## [2.3.5] — Choose who answers
 

@@ -1258,7 +1258,21 @@
   let reportedVoice = false;
   let reportedVoiceAt = 0;
   const VOICE_REPORT_EVERY_MS = 30_000;
+  /** When this page last reported a spoken or typed message. A Voice pause is measured from it. */
+  let lastTranscriptAt = 0;
+  /** Quiet needed after the last message before a queued input may go into a live Voice call. */
+  const VOICE_QUIET_MS = 3_000;
+  /**
+   * True outside Voice, or in a Voice call that is between turns: the last turn has closed and
+   * nothing new was heard or said for VOICE_QUIET_MS. Queued text and attachments wait for this so
+   * they land in a pause instead of in the middle of an utterance or a spoken reply.
+   */
+  function voicePause() {
+    if (!activeVoiceSession()) return true;
+    return !generating && !CLF_DOM.generating() && pendingTools === 0 && Date.now() - lastTranscriptAt >= VOICE_QUIET_MS;
+  }
   function emit(observation) {
+    if (observation && (observation.kind === 'user_message' || observation.kind === 'assistant_message')) lastTranscriptAt = Date.now();
     if (temporaryPlannerPage()) return;
     const bounded = { ...observation };
     // One browser observation must fit the bridge's bounded HTTP body even when JavaScript
@@ -11124,6 +11138,9 @@
     // window below. A live Stop/generation therefore still blocks it and nothing here clicks Stop.
     const recoveringStaleTurn = Boolean(recoveryTurnId && message.conversationId && turnId === recoveryTurnId);
     if (desktopInputBusy || modelCatalogBusy || !alive || (generating && !message.directTurn && !recoveringStaleTurn) || pendingTools > 0 || goalBusy || job?.busy) return false;
+    // A live Voice call: never cut into a running turn, and send only in a pause between turns.
+    // The input stays queued (unclaimed) until then.
+    if (activeVoiceSession() && (message.directTurn || !voicePause())) return false;
     const target = message.conversationId || null;
     const forEpoch = epoch;
     const sourceTurn = turnId;
@@ -11175,6 +11192,8 @@
       // an otherwise healthy Prime chat look non-responsive in the desktop app.
       const freshDraftReplaceable = () => ownsFreshPage() && !trustedComposerTakenOver;
       if ((!freshDraftReplaceable() && (composer.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return false;
+      // Re-prove the Voice pause after the composer wait: the user or the reply may have started.
+      if (!voicePause()) return false;
       const reply = await ask({ type: 'desktop_input', id: message.id, conversationId: target, requiresAuthorization: true });
       const input = reply?.data?.input;
       if (!input || !onTarget()) return false;

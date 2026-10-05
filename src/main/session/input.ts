@@ -299,6 +299,8 @@ type InputDeliveryHooks = {
   bindHelper?: (conversationId: string, sourceSessionId: string | null) => Promise<void>;
   recordDelivered?: (entry: Readonly<InputEntry>) => Promise<boolean>;
   prepareText?: (entry: Readonly<InputEntry>, limits: PromptLimits) => string | Promise<string>;
+  /** True while this ChatGPT conversation's page reports a live Voice call. */
+  voiceActive?: (conversationId: string) => boolean;
   /** Turns of this chat ChatGPT has not seen (answered by another provider), frozen into this delivery. */
   providerCatchUp?: (entry: Readonly<InputEntry>, maxChars: number, imageSlots: number) => Promise<{ preamble: string; images: InputImage[] } | null>;
   applyAutomation: (conversationId: string, automation: NonNullable<InputArgs['automation']>, phase: 'before-send' | 'after-send', objective?: string) => Promise<void>;
@@ -717,15 +719,24 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
       if (finishOwner) throw new Error('Automatic finish messages cannot attach files');
       if (input.mode === 'finish' || (input.mode === 'auto' && (policy?.canInject || policy?.directTurn))) input.mode = 'after-turn';
     } else if (input.mode === 'after-turn' && policy?.queueAtFinish) input.mode = 'finish';
+    // A live Voice call: queued text and attachments go in the next pause between turns, typed by
+    // the page. Never into a running turn (tool injection or a direct send), and never expiring
+    // while the user keeps talking. `requestedMode` keeps the authored mode for idempotent retries.
+    let voiceHeld = false;
+    if (!local && input.sessionId && !finishOwner && input.mode !== 'finish') {
+      const conversationId = (await getSession(input.sessionId))?.conversationId;
+      voiceHeld = !!conversationId && deliveryHooks?.voiceActive?.(conversationId) === true;
+      if (voiceHeld) input.mode = 'after-turn';
+    }
     if (input.mode === 'finish' || input.stages?.length) {
       const session = input.sessionId ? await getSession(input.sessionId) : null;
       if ((input.mode === 'finish' && !session?.conversationId) || session?.origin?.kind === 'worker') throw new Error('Queue staged tasks in a normal chat');
     }
     // Unattributed work can fence browser Send without making this chat a tool recipient.
     // Leave that input neutral until the existing serialized claim selects a safe transport.
-    const transportIntent = local ? undefined : input.attachments?.length ? 'browser' as const : input.mode === 'auto' && !finishOwner
+    const transportIntent = local ? undefined : voiceHeld || input.attachments?.length ? 'browser' as const : input.mode === 'auto' && !finishOwner
       ? policy?.canInject ? 'tool' as const : !policy || policy.browserAllowed || policy.directTurn ? 'browser' as const : undefined : undefined;
-    const directTurn = !local && input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
+    const directTurn = !local && !voiceHeld && input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
     const entry: InputEntry = { ...input, ...(directTurn ? { directTurn } : {}), ...(transportIntent ? { transportIntent } : {}), ...(requestedMode !== input.mode ? { requestedMode } : {}), ...(finishOwner ? { finishOwner } : {}), state: 'queued', owner: null, createdAt: Date.now(), conversationId: null };
     if (input.projectId) {
       await projectWorkspace(input.projectId);

@@ -968,6 +968,7 @@ let controlledFinishWaiting = false;
 let controlledQueueAtFinish = false;
 let controlledCanInject = false;
 let controlledCanSendDirectly = false;
+let controlledVoice = false;
 let pendingComposerInputs: InputEntry[] = [];
 let inputQueueGeneration = 0;
 let goalIntentGeneration = 0;
@@ -1031,7 +1032,8 @@ function paintDeliveryControls(): void {
   generate.hidden = !working || !controlledFinishWaiting || queued || controlledStopPending || !!finishGoalDraftView;
   generate.disabled = generate.dataset.busy === `${selectedId}:${controlledTurnId}`;
   const sendOption = $<HTMLSelectElement>('sendMode').querySelector('option[value="auto"]');
-  const immediateLabel = () => canSendDirectly ? t("Send directly") : canInject ? t("Inject now") : t("Send");
+  const voice = selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledVoice;
+  const immediateLabel = () => voice ? t("Send in next pause") : canSendDirectly ? t("Send directly") : canInject ? t("Inject now") : t("Send");
   if (sendOption) ui(sendOption, 'textContent', immediateLabel);
   ui($('immediateDeliveryLabel'), 'textContent', immediateLabel);
   if (!canInject && !canSendDirectly && !queueAtFinish) $<HTMLSelectElement>('sendMode').value = 'auto';
@@ -1044,13 +1046,13 @@ function paintDeliveryControls(): void {
   const planMode = taskPlans.has(draftKey()), preparedPlan = currentPreparedPlan();
   send.disabled = !!preparedPlan && (preparedPlan.sending || preparedPlan.stages.some(stage => !stage.trim()));
   send.dataset.action = stop ? 'stop' : 'send';
-  ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : t("Send message"));
+  ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : voice ? t("Send in the next pause of the Voice call") : t("Send message"));
   if (stop && !working && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
   const planAction = selectedId ? t("Queue plan at Session finish") : t("Start full plan");
   if (preparedPlan && !stop) send.setAttribute('aria-label', planAction);
   else if (planMode && !stop) ui(send, 'aria-label', () => t("Generate plan"));
   send.classList.toggle('is-plan-ready', !!preparedPlan && !stop);
-  ui(send, 'title', () => stop && !working && pending ? t("Cancel delivery") : preparedPlan && !stop ? planAction : planMode && !stop ? t("Click to generate plan") : '');
+  ui(send, 'title', () => stop && !working && pending ? t("Cancel delivery") : preparedPlan && !stop ? planAction : planMode && !stop ? t("Click to generate plan") : voice && !stop ? t("Send in the next pause of the Voice call") : '');
   send.classList.toggle('is-stop', stop);
   for (const button of $('sendOptions').querySelectorAll<HTMLElement>('[data-delivery]')) {
     button.setAttribute('aria-checked', String(button.dataset.delivery === $<HTMLSelectElement>('sendMode').value));
@@ -1288,6 +1290,7 @@ async function refreshSessionControls(): Promise<void> {
   controlledQueueAtFinish = controls?.queueAtFinish === true;
   controlledCanInject = controls?.canInject ?? controlledTurnId !== null;
   controlledCanSendDirectly = controls?.canSendDirectly === true;
+  controlledVoice = controls?.voiceActive === true;
   paintDeliveryControls();
   paintStateLine();
   menu.hidden = !controls;

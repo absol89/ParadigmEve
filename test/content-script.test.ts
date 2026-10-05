@@ -969,6 +969,31 @@ describe('desktop input delivery and helper ownership', () => {
     ]);
   });
 
+  it('sends queued input into a live Voice call only in a pause after the last message', async () => {
+    live = await harness(`https://chatgpt.com/c/${chatA}`, {
+      desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed() } })
+    }, (document) => {
+      const endVoice = document.createElement('button');
+      endVoice.setAttribute('aria-label', 'End voice mode');
+      document.body.append(endVoice);
+    });
+    const sends = watchSend(live.document);
+    live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+      userTurn(live!.document, 'voice-queued-user', text, { sent: false });
+      live!.document.querySelector('#prompt-textarea')!.textContent = '';
+    });
+    // Something was just said in the call: no claim, no typing, the input stays queued.
+    userTurn(live.document, 'spoken-now', 'Can you hear me?', { sent: false });
+    live.hook.observe(); await settle(); await live.hook.flush();
+    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA })).toEqual({ ok: false });
+    expect(live.sent.filter(message => message.type === 'desktop_input')).toHaveLength(0);
+    expect(sends()).toBe(0);
+    // Three quiet seconds later it goes in.
+    live.advance(3_100);
+    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA })).toEqual({ ok: true });
+    expect(sends()).toBe(1);
+  });
+
   it('reconstructs an opaque staged attachment from id-and-offset chunks without a local path', async () => {
     const first = Buffer.alloc(524288, 0x61);
     const tail = Buffer.from([0x62, 0x00, 0xff]);

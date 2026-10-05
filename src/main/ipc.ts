@@ -149,7 +149,8 @@ import {
   startBridge,
   stopBridge,
   sweepStaleSwarm,
-  unpair
+  unpair,
+  voiceActive
 } from './bridge.js';
 import { extensionDir } from './extension-path.js';
 import { connectorIconPath } from './connector-assets.js';
@@ -1792,6 +1793,7 @@ export function registerIpc(
     },
     changed: () => push('session:changed'),
     recordDelivered: (entry) => getConfig().sessions.record ? recordDeliveredInput(entry) : Promise.resolve(true),
+    voiceActive: (conversationId) => voiceActive(conversationId),
     providerCatchUp: (entry, maxChars, imageSlots) => entry.sessionId && getConfig().sessions.record
       ? chatGptCatchUp(entry.sessionId, maxChars, Math.max(0, imageSlots))
       : Promise.resolve(null),

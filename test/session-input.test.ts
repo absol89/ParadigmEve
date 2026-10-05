@@ -146,6 +146,29 @@ describe('durable user input ownership', () => {
     expect(current).toMatchObject({ state: 'queued', conversationId: binding.conversationId, transportIntent: 'browser' });
     expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({ state: 'tool', sessionId: 'session-two' });
   });
+  it('holds input during a live Voice call for the next pause, never injecting it into a running turn', async () => {
+    configureInputDelivery({ applyAutomation: automate, changed, voiceActive: conversation => conversation === binding.conversationId });
+    try {
+      binding.model = 'gpt-5.6-sol'; binding.activeTurnId = 'voice-turn';
+      binding.end = { kind: 'turn_start', outcome: '', turnId: 'voice-turn', time: 900 };
+      binding.lastToolCallAt = 950;
+      const held = await enqueueInput(input({ text: 'Here is the pasted error log' }));
+      // Mid-turn tool injection and a direct send would cut into the conversation.
+      expect(held).toMatchObject({ mode: 'after-turn', requestedMode: 'auto', transportIntent: 'browser' });
+      expect(held.directTurn).toBeUndefined();
+      expect(await offerToolInput(sessionId, binding.conversationId, 'voice-tool', now)).toEqual([]);
+      // It does not expire while the user keeps talking, however long the call runs.
+      noteBrowserReady(now);
+      vi.spyOn(Date, 'now').mockReturnValue(now + 30 * 60_000);
+      try { expect((await listInputs())[0]).toMatchObject({ id: held.id, state: 'queued' }); }
+      finally { vi.mocked(Date.now).mockRestore(); }
+      // The same send repeated by the renderer is the same input.
+      expect((await enqueueInput(input({ id: held.id, text: 'Here is the pasted error log' }))).id).toBe(held.id);
+    } finally {
+      configureInputDelivery({ applyAutomation: automate, changed });
+    }
+  });
+
   it('sends a tool-free non-Pro correction through one durable browser claim and native receipt', async () => {
     binding.model = 'gpt-5.6-sol'; binding.activeTurnId = 'plain-turn';
     binding.end = { kind: 'turn_start', outcome: '', turnId: 'plain-turn', time: 900 };
