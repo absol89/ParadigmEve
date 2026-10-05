@@ -35,11 +35,12 @@ vi.mock('../src/main/browser.js', () => ({ openInPreferredBrowser: async () => '
 const { defaultConfig, initConfigPath, saveConfig } = await import('../src/main/config.js');
 const { initSecretsPath, setSecret, clearSecret } = await import('../src/main/secrets.js');
 const { initDurableStore, flushDurable, resetDurableForTests, writeDurableNow } = await import('../src/main/durable.js');
-const { createSession, getSession, initSessionStore, readEvents, resetSessionStoreForTests, upsertMessageEvent, writeAsset } =
+const { createSession, getSession, initSessionStore, readEvents, resetSessionStoreForTests, setSessionProvider, upsertMessageEvent, writeAsset } =
   await import('../src/main/session/store.js');
 const { registerIpc } = await import('../src/main/ipc.js');
 const { bridgePort, startBridge, stopBridge } = await import('../src/main/bridge.js');
 const input = await import('../src/main/session/input.js');
+const { resetOllamaChatForTests } = await import('../src/main/session/ollama-chat.js');
 const history = await import('../src/main/session/provider-history.js');
 const { makeTempDir, removeTempDir } = await import('./helpers.js');
 
@@ -119,6 +120,7 @@ beforeAll(async () => {
   bearer = (await post('/pair', {})).body.token;
 });
 beforeEach(async () => {
+  resetOllamaChatForTests();
   await writeDurableNow('session-input', []);
   input.resetInputForTests();
   ollamaRequests.length = 0;
@@ -256,6 +258,105 @@ it('catches ChatGPT up on Ollama turns once, and binds a ChatGPT conversation to
   // ChatGPT has now seen everything: no second catch-up, no switch prompt.
   expect(await history.chatGptCatchUp(sessionId, 50_000, 4)).toBeNull();
   expect((await history.providerSwitchPreview(sessionId, null)).switching).toBe(false);
+});
+
+it('keeps explicit provider authorization durable as later ChatGPT and voice-style turns extend the history', async () => {
+  const conversationId = randomUUID();
+  const session = await createSession({ title: 'Durable provider consent', conversationId });
+  await upsertMessageEvent(session.id, { time: 1, source: 'extension', kind: 'user_message', messageId: 'u1',
+    message: { text: 'Initial GPT context', truncated: false, chars: 19 } });
+  await upsertMessageEvent(session.id, { time: 2, source: 'extension', kind: 'assistant_message', messageId: 'a1',
+    message: { text: 'Initial answer', truncated: false, chars: 14 }, final: true, state: 'final' });
+
+  const preview = await history.providerSwitchPreview(session.id, { id: 'ollama', model: 'llama3.2' });
+  const local = randomUUID();
+  expect((await send({ id: local, sessionId: session.id, provider: 'ollama', model: 'llama3.2', text: 'Ask local',
+    providerConsent: { to: preview.to, messages: preview.messages, images: preview.images, files: preview.files } })).ok).toBe(true);
+  await finished(session.id, `ollama-turn:${local}`);
+  expect((await getSession(session.id))?.providerAuthorizations).toEqual(expect.arrayContaining(['chatgpt', 'ollama-local']));
+
+  // Returning to a route that was already part of the explicitly approved switch needs no new consent.
+  const back = randomUUID();
+  expect((await send({ id: back, sessionId: session.id, text: 'Back on GPT' })).ok).toBe(true);
+  expect((await post('/input/claim', { id: back, owner: 'gpt-page', conversationId })).status).toBe(200);
+  expect((await post('/input/ack', { id: back, owner: 'gpt-page', conversationId, messageId: 'gpt-user-back' })).body.ok).toBe(true);
+  // More GPT/Voice-like transcript rows change context but do not revoke Ollama's authorization.
+  await upsertMessageEvent(session.id, { time: Date.now(), source: 'extension', kind: 'assistant_message', messageId: 'gpt-answer-later',
+    message: { text: 'A later GPT/voice answer', truncated: false, chars: 24 }, final: true, state: 'final' });
+  await upsertMessageEvent(session.id, { time: Date.now() + 1, source: 'extension', kind: 'user_message', messageId: 'voice-user-later',
+    message: { text: 'And a later voice turn', truncated: false, chars: 22 } });
+
+  const authorizations = (await getSession(session.id))!.providerAuthorizations ?? [];
+  expect((await history.providerSwitchPreview(session.id, { id: 'ollama', model: 'llama3.2' }, false, authorizations)).switching).toBe(false);
+  const localAgain = randomUUID();
+  expect((await send({ id: localAgain, sessionId: session.id, provider: 'ollama', model: 'llama3.2', text: 'Use the newer context too' })).ok).toBe(true);
+  await finished(session.id, `ollama-turn:${localAgain}`);
+});
+
+it('keeps a delayed Ollama response on its original model after the user switches back to ChatGPT', async () => {
+  const conversationId = randomUUID();
+  const session = await createSession({ title: 'Delayed provider provenance', conversationId });
+  await upsertMessageEvent(session.id, { time: 1, source: 'extension', kind: 'user_message', messageId: 'u-delay',
+    message: { text: 'Start on GPT', truncated: false, chars: 12 } });
+  await upsertMessageEvent(session.id, { time: 2, source: 'extension', kind: 'assistant_message', messageId: 'a-delay',
+    message: { text: 'GPT answer', truncated: false, chars: 10 }, final: true, state: 'final' });
+  const preview = await history.providerSwitchPreview(session.id, { id: 'ollama', model: 'llama3.2' });
+
+  let release!: () => void;
+  chatGate = new Promise<void>(resolve => { release = resolve; });
+  replyText = 'Delayed Ollama answer';
+  try {
+    const local = randomUUID();
+    expect((await send({ id: local, sessionId: session.id, provider: 'ollama', model: 'llama3.2', text: 'Take your time',
+      providerConsent: { to: preview.to, messages: preview.messages, images: preview.images, files: preview.files } })).ok).toBe(true);
+    await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === local)?.state).toBe('sent'));
+
+    // While that exact llama3.2 request is still in flight, independently recorded GPT/Voice
+    // activity advances the chat. The app intentionally still serializes app-authored sends while
+    // a local turn is active; provenance must nevertheless survive external/browser activity.
+    await setSessionProvider(session.id, null);
+    await upsertMessageEvent(session.id, { time: Date.now(), source: 'extension', kind: 'user_message', messageId: 'gpt-user-delay',
+      message: { text: 'Continue on GPT meanwhile', truncated: false, chars: 25 } });
+    await upsertMessageEvent(session.id, { time: Date.now() + 1, source: 'extension', kind: 'assistant_message', messageId: 'gpt-answer-delay',
+      message: { text: 'GPT continued', truncated: false, chars: 13 }, final: true, state: 'final' });
+    expect((await getSession(session.id))?.provider).toBeUndefined();
+
+    release();
+    const events = await finished(session.id, `ollama-turn:${local}`);
+    expect(events.find(event => event.kind === 'assistant_message' && event.messageId === `ollama-reply:${local}`)).toMatchObject({
+      provider: { id: 'ollama', model: 'llama3.2' }, message: { text: 'Delayed Ollama answer' }
+    });
+    // A late reply never becomes the composer's active provider; user-turn provenance owns that.
+    expect((await getSession(session.id))?.provider).toBeUndefined();
+  } finally {
+    chatGate = null;
+  }
+});
+
+it('authorizes each privacy route independently and never expands consent just because history grew', async () => {
+  const session = await createSession({ title: 'Multiple provider routes', conversationId: randomUUID() });
+  await upsertMessageEvent(session.id, { time: 1, source: 'extension', kind: 'user_message', messageId: 'u-multi',
+    message: { text: 'Shared context', truncated: false, chars: 14 } });
+  const localProvider = { id: 'ollama', model: 'llama3.2' } as const;
+  const localPreview = await history.providerSwitchPreview(session.id, localProvider);
+  await history.admitChatProvider({ sessionId: session.id, provider: 'ollama', model: 'llama3.2',
+    providerConsent: { to: localPreview.to, messages: localPreview.messages, images: 0, files: 0 } }, session);
+  let stored = (await getSession(session.id))!;
+  expect(stored.providerAuthorizations).toEqual(expect.arrayContaining(['chatgpt', 'ollama-local']));
+
+  const cloudProvider = { id: 'ollama', model: 'gemma4:cloud' } as const;
+  await expect(history.admitChatProvider({ sessionId: session.id, provider: 'ollama', model: 'gemma4:cloud' }, stored))
+    .rejects.toThrow(/PROVIDER_SWITCH_CONSENT_REQUIRED/);
+  const cloudPreview = await history.providerSwitchPreview(session.id, cloudProvider, false, stored.providerAuthorizations ?? []);
+  await history.admitChatProvider({ sessionId: session.id, provider: 'ollama', model: 'gemma4:cloud',
+    providerConsent: { to: cloudPreview.to, messages: cloudPreview.messages, images: 0, files: 0 } }, stored);
+  stored = (await getSession(session.id))!;
+  expect(stored.providerAuthorizations).toEqual(expect.arrayContaining(['chatgpt', 'ollama-local', 'ollama-cloud']));
+
+  await upsertMessageEvent(session.id, { time: 2, source: 'extension', kind: 'assistant_message', messageId: 'a-multi',
+    message: { text: 'Context grew', truncated: false, chars: 12 }, final: true, state: 'final' });
+  await expect(history.admitChatProvider({ sessionId: session.id, provider: 'ollama', model: 'llama3.2' }, stored)).resolves.toBeUndefined();
+  await expect(history.admitChatProvider({ sessionId: session.id, provider: 'ollama', model: 'gemma4:cloud' }, stored)).resolves.toBeUndefined();
 });
 
 it('keeps a local-only chat on this computer and labels cloud models honestly', async () => {

@@ -17,14 +17,14 @@
 
 import { markProviderSwitch } from '../provider-switch-trace.js';
 import sharp from 'sharp';
-import type { ChatProvider, SessionEvent } from '../../shared/session.js';
+import type { ChatProvider, ChatProviderRoute, SessionEvent } from '../../shared/session.js';
 import type { InputAttachment, InputImage } from '../../shared/input.js';
-import { readAsset, readCanonicalTranscriptEvents, readOverflowText } from './store.js';
+import { authorizeSessionProviderRoutes, readAsset, readCanonicalTranscriptEvents, readOverflowText } from './store.js';
 import { readStagedAttachment } from './input-attachments.js';
 import { archivableAttachment } from './input-history.js';
 import { knownCloudModel, resolveOllamaEndpoint, type OllamaChatContent, type OllamaChatMessage } from '../ollama-client.js';
 
-export type ProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud';
+export type ProviderRoute = ChatProviderRoute;
 
 /** Honest labels: "local" means this computer, not merely "not OpenAI". */
 export const PROVIDER_ROUTE_LABELS: Record<ProviderRoute, string> = {
@@ -158,7 +158,8 @@ export interface ProviderSwitchPreview {
 export async function providerSwitchPreview(
   sessionId: string,
   provider: ChatProvider | null,
-  localOnly = false
+  localOnly = false,
+  authorizedRoutes: readonly ProviderRoute[] = []
 ): Promise<ProviderSwitchPreview> {
   // Consent needs counts and routes only; never materialize long text, images or files here.
   const turns = await archivedTurns(sessionId, { fullText: false });
@@ -166,9 +167,13 @@ export async function providerSwitchPreview(
   const to = providerRoute(provider);
   const users = turns.filter((turn) => turn.role === 'user');
   const from = users.length ? users[users.length - 1]!.route : null;
+  // Existing multi-provider chats predate durable authorization metadata. A route that already
+  // owns an authored user turn necessarily received this conversation before, so do not invent a
+  // new consent prompt on upgrade merely because the new summary field is absent.
+  const previouslyUsed = users.some((turn) => turn.route === to);
   const unseen = unseenBy(turns, to);
   return {
-    switching: from !== null && from !== to && unseen.length > 0,
+    switching: from !== null && from !== to && unseen.length > 0 && !authorizedRoutes.includes(to) && !previouslyUsed,
     from,
     to,
     fromLabel: from ? PROVIDER_ROUTE_LABELS[from] : null,
@@ -191,9 +196,10 @@ export async function assertProviderSwitchAllowed(
   sessionId: string,
   provider: ChatProvider | null,
   localOnly: boolean,
-  consent: ProviderSwitchConsent | undefined
+  consent: ProviderSwitchConsent | undefined,
+  authorizedRoutes: readonly ProviderRoute[] = []
 ): Promise<void> {
-  const preview = await providerSwitchPreview(sessionId, provider, localOnly);
+  const preview = await providerSwitchPreview(sessionId, provider, localOnly, authorizedRoutes);
   if (preview.blockedByLocalOnly) {
     throw new Error(`This chat is local only. ${preview.toLabel} cannot read it; choose a local Ollama model or turn local only off.`);
   }
@@ -404,7 +410,7 @@ export async function admitChatProvider(input: {
   model: string | null;
   providerConsent?: ProviderSwitchConsent;
   localOnly?: true;
-}, session: { id: string; localOnly?: boolean } | null): Promise<void> {
+}, session: { id: string; localOnly?: boolean; provider?: ChatProvider; providerAuthorizations?: ChatProviderRoute[] } | null): Promise<void> {
   if (!input.sessionId) {
     if (input.localOnly && providerRoute(input.provider === 'ollama' && input.model ? { id: 'ollama', model: input.model } : null) !== 'ollama-local') {
       throw new Error('This new chat is local only, so it needs a model on this computer, not a cloud model.');
@@ -413,5 +419,13 @@ export async function admitChatProvider(input: {
   }
   if (!session) throw new Error('This chat no longer exists');
   const provider: ChatProvider | null = input.provider === 'ollama' && input.model ? { id: 'ollama', model: input.model } : null;
-  await assertProviderSwitchAllowed(session.id, provider, session.localOnly === true, input.providerConsent);
+  const from = providerRoute(session.provider);
+  const to = providerRoute(provider);
+  const authorized = session.providerAuthorizations ?? [];
+  await assertProviderSwitchAllowed(session.id, provider, session.localOnly === true, input.providerConsent, authorized);
+  // A confirmed switch authorizes the privacy destination, not one frozen transcript size. Keep
+  // the route the chat already used too, so returning to it later is not treated as a new grant.
+  if (from !== to && !authorized.includes(to) && input.providerConsent?.to === to) {
+    await authorizeSessionProviderRoutes(session.id, [from, to]);
+  }
 }

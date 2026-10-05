@@ -33,7 +33,7 @@ import type {
   ReasoningEffort,
   SessionEvent,
   SessionOrigin,
-  ChatProvider,
+  ChatProvider, ChatProviderRoute,
   SessionSummary,
   StoredText
 } from '../../shared/session.js';
@@ -2686,6 +2686,21 @@ export async function setSessionProvider(id: string, provider: ChatProvider | nu
     if (same) return;
     if (provider) entry.summary.provider = { ...provider };
     else delete entry.summary.provider;
+    await writeMeta(entry);
+    publishSessionProjectionCommit(id);
+  });
+}
+
+/** Remember privacy destinations the user has explicitly authorized for this chat. */
+export async function authorizeSessionProviderRoutes(id: string, routes: readonly ChatProviderRoute[]): Promise<void> {
+  if (!routes.length) return;
+  const entry = await ensureOpen(id);
+  await enqueueSessionOperation(entry, 'provider-authorization', async () => {
+    const current = new Set(entry.summary.providerAuthorizations ?? []);
+    const before = current.size;
+    for (const route of routes) current.add(route);
+    if (current.size === before) return;
+    entry.summary.providerAuthorizations = [...current];
     await writeMeta(entry);
     publishSessionProjectionCommit(id);
   });

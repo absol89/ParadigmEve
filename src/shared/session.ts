@@ -484,6 +484,9 @@ export interface ChatProvider {
   model: string;
 }
 
+/** Privacy destination that may receive this chat's archived history after explicit user approval. */
+export type ChatProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud';
+
 /** Local frontend id for an Ollama chat. Never a ChatGPT conversation, never opened in a browser. */
 export const OLLAMA_CONVERSATION_PREFIX = 'ollama-';
 export function isOllamaConversation(conversationId: string | null | undefined): boolean {
@@ -493,6 +496,12 @@ export function isOllamaConversation(conversationId: string | null | undefined):
 export interface SessionSummary {
   /** Provider of the newest delivered user turn; absent means ChatGPT. The composer's default. */
   provider?: ChatProvider;
+  /**
+   * Provider routes the user has already authorized to receive this chat's history.
+   * Authorization is durable across later messages and provider changes; it is not a snapshot of
+   * how many messages existed when consent was first given.
+   */
+  providerAuthorizations?: ChatProviderRoute[];
   /**
    * The user locked this chat to on-device inference: no ChatGPT turn and no Ollama Cloud turn
    * may read its history. Only a loopback Ollama endpoint with a non-cloud model may answer.

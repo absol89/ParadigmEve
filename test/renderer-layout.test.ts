@@ -625,6 +625,7 @@ describe('provider adoption in the composer', () => {
     expect(body).toContain("const from = session.provider ? routeOf(session.provider.model) : 'chatgpt'");
     expect(body).toContain("const to = provider ? routeOf(provider.model) : 'chatgpt'");
     expect(body).not.toContain('session.provider?.model');
+    expect(body).toContain('!session.providerAuthorizations?.includes(to)');
   });
 });
 

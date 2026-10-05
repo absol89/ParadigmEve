@@ -1382,7 +1382,7 @@ export function registerIpc(
       const session = await getOpenSession(id);
       markProviderSwitch('getSession');
       if (!session) throw new Error('This chat no longer exists');
-      return providerSwitchPreview(id, provider, session.localOnly === true);
+      return providerSwitchPreview(id, provider, session.localOnly === true, session.providerAuthorizations ?? []);
     });
   });
   handle('sessions:setLocalOnly', async (payload) => {

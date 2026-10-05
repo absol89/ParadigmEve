@@ -131,7 +131,7 @@ export function providerSwitchPossible(session: SessionSummary | null | undefine
   const to = provider ? routeOf(provider.model) : 'chatgpt';
   // Consent is about crossing a privacy/provider route, not about changing model ids inside the
   // same route. Main remains the final authority and re-checks the exact archive scope on send.
-  return from !== null && to !== null && from !== to;
+  return from !== null && to !== null && from !== to && !session.providerAuthorizations?.includes(to);
 }
 
 /**
