@@ -122,15 +122,18 @@ export function startupSplashDocument(theme: StartupSplashTheme, language: UiLan
       inset: 0;
       background: ${palette.fade};
     }
+    /* The greeting is one centred column in the space beside the portrait. */
     main {
       position: relative;
       display: flex;
       flex-direction: column;
+      align-items: center;
       justify-content: center;
       min-width: 0;
-      padding: 0 28px 0 4px;
+      padding: 0 20px;
+      text-align: center;
     }
-    .brand { display: flex; align-items: center; gap: 10px; height: 34px; }
+    .brand { display: flex; align-items: center; justify-content: center; gap: 10px; height: 34px; }
     .brand img { display: block; flex: none; width: 34px; height: 34px; }
     .brand span {
       color: var(--brand);

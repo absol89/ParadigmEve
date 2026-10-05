@@ -50,6 +50,10 @@ describe('native window activation', () => {
     expect(close).toBeLessThan(show);
 
     const splashWindow = source.slice(source.indexOf('const splash = new BrowserWindow({'), splashLoad);
+    const splashCreate = source.slice(source.indexOf('function createStartupSplash(): void'), splashLoad);
+    expect(splashCreate).toContain("const theme = 'dark' as const;");
+    expect(splashCreate).toContain("backgroundColor: '#07111f'");
+    expect(splashCreate).not.toContain('getConfig().ui.theme');
     expect(splashWindow).toContain('contextIsolation: true');
     expect(splashWindow).toContain('nodeIntegration: false');
     expect(splashWindow).toContain('sandbox: true');

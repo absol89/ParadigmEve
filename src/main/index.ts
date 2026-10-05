@@ -325,7 +325,8 @@ function closeStartupSplash(): void {
 function createStartupSplash(): void {
   if (!startupSplashEligible || quitting || startupSplash) return;
   startupSplashEligible = false;
-  const theme = getConfig().ui.theme;
+  // The splash is always the dark presentation, whatever the app theme: it is the approved look.
+  const theme = 'dark' as const;
   const splash = new BrowserWindow({
     width: 560,
     height: 360,
@@ -337,7 +338,7 @@ function createStartupSplash(): void {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    backgroundColor: theme === 'dark' ? '#07111f' : '#f4eadc',
+    backgroundColor: '#07111f',
     title: 'ParadigmEve',
     webPreferences: {
       contextIsolation: true,

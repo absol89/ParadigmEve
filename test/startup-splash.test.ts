@@ -29,6 +29,16 @@ describe('startup splash', () => {
     expect(document).toContain('<span>ParadigmEve</span>');
   });
 
+  it('centres the greeting stack in the right-side panel', () => {
+    const document = startupSplashDocument('dark');
+    expect(document).toContain('align-items: center;');
+    expect(document).toContain('justify-content: center;');
+    expect(document).toContain('padding: 0 20px;');
+    expect(document).toContain('text-align: center;');
+    expect(document).toContain('.brand { display: flex; align-items: center; justify-content: center;');
+    expect(document).not.toContain('padding: 0 28px 0 4px;');
+  });
+
   it('greets in the app language from the shared catalogs', () => {
     const english = startupSplashDocument('dark');
     expect(english).toContain('<html lang="en">');
