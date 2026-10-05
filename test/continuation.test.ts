@@ -1212,6 +1212,31 @@ describe('a brief that cannot be the whole handoff', () => {
  * clears would make every unrelated new chat wait.
  */
 describe('the window in which a replacement chat is expected', () => {
+  it('keeps the recorder gated beyond five seconds so a slow provider adoption cannot mint a shadow session', async () => {
+    const { sessionId, token } = await readyContinuation();
+    const destination = '93939393-2222-4333-8444-666666666666';
+    await claimContinuationNow(token, 'slow-provider-adoption');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const create = vi.spyOn(store, 'createSession');
+      let resolved: string | null | undefined;
+      const observation = sessionForConversation(destination).then(value => { resolved = value; return value; });
+
+      // This is the live Ollama->ChatGPT shape: the fresh provider chat exists, but catch-up /
+      // attachment work delays the ACK well past the old five-second recorder timeout.
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(resolved).toBeUndefined();
+      expect(create).not.toHaveBeenCalled();
+
+      expect(await commitContinuation(token, destination)).toBe(true);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await observation).toBe(sessionId);
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('re-arms the destination ownership gate when Send is dispatched after a long post-claim wait (upstream 5ecb19ff)', async () => {
     const { sessionId, token } = await readyContinuation();
     const destination = '93939393-2222-4333-8444-555555555555';

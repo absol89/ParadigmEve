@@ -67,7 +67,7 @@ import {
   requestCorrelation,
   resetCorrelationRegistryForTests,
 } from './correlation.js';
-import { resumeOpeningChat } from './resume-gate.js';
+import { RESUME_CLAIM_WINDOW_MS, resumeOpeningChat } from './resume-gate.js';
 import { summarizeToolCall } from './summarize.js';
 
 interface LiveConversation {
@@ -235,15 +235,13 @@ export async function restoreRecordedConversation(conversationId: string): Promi
   return sessionForConversation(conversationId);
 }
 
-/**
- * How long to let a resume's commit land before recording a conversation it may be about to
- * claim. Generous next to the milliseconds a commit actually takes, and bounded because a
- * commit that never lands must not stop the chat being recorded at all.
- */
-const RESUME_COMMIT_SETTLE_MS = 5_000;
-
 async function settleResumeCommit(): Promise<void> {
-  const deadline = Date.now() + RESUME_COMMIT_SETTLE_MS;
+  // Use the same bounded ownership window that armed the recorder gate. Five seconds was enough
+  // for ordinary Compact & Resume, but not for provider adoption where a fresh ChatGPT page may
+  // need to upload archived attachments/history before its ACK can durably rebind the existing
+  // Ollama-started session. Giving up early mints a shadow session for the destination and then
+  // makes the correct rebind refuse its own chat as already owned.
+  const deadline = Date.now() + RESUME_CLAIM_WINDOW_MS;
   while (resumeOpeningChat() && Date.now() < deadline) {
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 50);
