@@ -126,7 +126,12 @@ function paint(): void {
 
 /** Whether this turn might hand history to a provider other than the chat's newest turn's. */
 export function providerSwitchPossible(session: SessionSummary | null | undefined, provider: ChatProvider | null): boolean {
-  return !!session && (session.provider?.model ?? null) !== (provider?.model ?? null);
+  if (!session) return false;
+  const from = session.provider ? routeOf(session.provider.model) : 'chatgpt';
+  const to = provider ? routeOf(provider.model) : 'chatgpt';
+  // Consent is about crossing a privacy/provider route, not about changing model ids inside the
+  // same route. Main remains the final authority and re-checks the exact archive scope on send.
+  return from !== null && to !== null && from !== to;
 }
 
 /**

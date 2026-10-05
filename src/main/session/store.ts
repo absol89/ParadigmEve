@@ -646,8 +646,11 @@ async function readCanonicalMessages(id: string, aliasesCollapsed?: () => void):
  */
 export async function readCanonicalTranscriptEvents(sessionId: string): Promise<CanonicalTranscriptEvent[]> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
-  const active = open.get(sessionId);
+  // Provider previews are read-only and sit directly on the interactive Send path. Do not force
+  // a metadata flush here: canonical message shards are committed before `entry.messages` is
+  // advanced, while summary/meta writes intentionally trail behind on the per-session queue.
+  // Waiting for those unrelated writes made a provider switch look like a frozen composer.
+  const active = open.get(sessionId) ?? (opening.get(sessionId) ? await opening.get(sessionId)! : undefined);
   const messages = active?.messages ?? await readCanonicalMessages(sessionId);
   if (messages.size > 0) return chronological([...messages.values()]);
   return readEvents(sessionId, { kinds: ['user_message', 'assistant_message', 'native_image'], limit: 100_000 }) as Promise<CanonicalTranscriptEvent[]>;

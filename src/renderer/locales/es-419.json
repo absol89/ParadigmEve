@@ -1824,7 +1824,7 @@
   "Why: {0}": "Por qué: {0}",
   "Send new Plan revisions to the orchestrator automatically": "Enviar automáticamente las nuevas revisiones del plan al orquestador",
   "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Desactivado: cada revisión espera a que pulses Enviar al orquestador en el plan del chat. Activado: el orquestador puede actuar sobre una revisión en cuanto se escribe.",
-  "Local only: this computer, never the cloud": "Solo local: esta computadora, nunca la nube",
+  "Show only local models": "Mostrar solo modelos locales",
   "Search models": "Buscar modelos",
   "Search Ollama models": "Buscar modelos de Ollama",
   "Cloud · not added yet": "Nube · aún no añadido",

@@ -616,6 +616,16 @@ describe('provider adoption in the composer', () => {
     expect(body).toContain("? { model: null, reasoningEffort: null }");
     expect(body.indexOf('const adoptingChatGpt')).toBeLessThan(body.indexOf('await ensureComposerModel()'));
   });
+
+  it('gates provider consent by privacy route rather than by Ollama model id', async () => {
+    const provider = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat-provider.ts'), 'utf8');
+    const start = provider.indexOf('export function providerSwitchPossible');
+    const end = provider.indexOf('/**', start + 10);
+    const body = provider.slice(start, end);
+    expect(body).toContain("const from = session.provider ? routeOf(session.provider.model) : 'chatgpt'");
+    expect(body).toContain("const to = provider ? routeOf(provider.model) : 'chatgpt'");
+    expect(body).not.toContain('session.provider?.model');
+  });
 });
 
 describe('the window as a whole', () => {
