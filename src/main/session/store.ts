@@ -71,6 +71,7 @@ const MAX_LISTED_SESSIONS = 200;
 const MAX_SCANNED_SESSIONS = 5_000;
 /** Keep the uncapped authoritative scan fast without opening thousands of files at once. */
 const ATTACHMENT_CATALOG_READ_CONCURRENCY = 64;
+const CANONICAL_MESSAGE_READ_CONCURRENCY = 48;
 
 let root = '';
 /**
@@ -584,20 +585,23 @@ async function readCanonicalMessages(id: string, aliasesCollapsed?: () => void):
   const shards = path.join(sessionDir(id), 'messages');
   try {
     const names = await fs.readdir(shards);
-    for (const name of names) {
-      if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
-      try {
-        const raw = await fs.readFile(path.join(shards, name), 'utf8');
-        if (Buffer.byteLength(raw, 'utf8') > MAX_CANONICAL_MESSAGE_BYTES) continue;
-        const event = JSON.parse(raw) as CanonicalEvent;
-        const key = messageKey(event);
-        if (!key) continue;
-        const expectedName = `${createHash('sha256').update(key).digest('hex')}.json`;
-        if (expectedName !== name) continue;
-        out.set(key, event);
-      } catch {
-        logWarn(`session ${id}: ignored unreadable canonical message shard ${name}`);
-      }
+    const candidates = names.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+    for (let offset = 0; offset < candidates.length; offset += CANONICAL_MESSAGE_READ_CONCURRENCY) {
+      const rows = await Promise.all(candidates.slice(offset, offset + CANONICAL_MESSAGE_READ_CONCURRENCY).map(async name => {
+        try {
+          const raw = await fs.readFile(path.join(shards, name), 'utf8');
+          if (Buffer.byteLength(raw, 'utf8') > MAX_CANONICAL_MESSAGE_BYTES) return null;
+          const event = JSON.parse(raw) as CanonicalEvent;
+          const key = messageKey(event);
+          if (!key) return null;
+          const expectedName = `${createHash('sha256').update(key).digest('hex')}.json`;
+          return expectedName === name ? { key, event } : null;
+        } catch {
+          logWarn(`session ${id}: ignored unreadable canonical message shard ${name}`);
+          return null;
+        }
+      }));
+      for (const row of rows) if (row) out.set(row.key, row.event);
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') logWarn(`session ${id}: canonical message shards unreadable`);
@@ -646,14 +650,12 @@ async function readCanonicalMessages(id: string, aliasesCollapsed?: () => void):
  */
 export async function readCanonicalTranscriptEvents(sessionId: string): Promise<CanonicalTranscriptEvent[]> {
   assertSessionId(sessionId);
-  // Provider previews are read-only and sit directly on the interactive Send path. Do not force
-  // a metadata flush here: canonical message shards are committed before `entry.messages` is
-  // advanced, while summary/meta writes intentionally trail behind on the per-session queue.
-  // Waiting for those unrelated writes made a provider switch look like a frozen composer.
-  const active = open.get(sessionId) ?? (opening.get(sessionId) ? await opening.get(sessionId)! : undefined);
-  const messages = active?.messages ?? await readCanonicalMessages(sessionId);
-  if (messages.size > 0) return chronological([...messages.values()]);
-  return readEvents(sessionId, { kinds: ['user_message', 'assistant_message', 'native_image'], limit: 100_000 }) as Promise<CanonicalTranscriptEvent[]>;
+  // Provider switching is an active operation, unlike passive archive/list reads. Hydrate this
+  // exact session once so the preview and the immediate send-time privacy re-check share the
+  // same in-memory canonical transcript instead of reopening hundreds of message shards twice.
+  // `ensureOpen()` already performs the legacy journal fallback/reconciliation when needed.
+  const entry = await ensureOpen(sessionId);
+  return chronological([...entry.messages.values()]);
 }
 
 async function writeCanonicalMessage(id: string, key: string, event: CanonicalEvent): Promise<void> {
