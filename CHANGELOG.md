@@ -20,6 +20,12 @@ operation.
 ### Added
 
 - *(in progress)* Interpreter → Plan → orchestrator → workers. See `docs/eve-tasks/interpreter-orchestrator-2.3.6.md`.
+- Moving an Ollama-started (or local-only) chat to ChatGPT works again. The ChatGPT catch-up no longer re-uploads
+  earlier images into the fresh ChatGPT chat (the message failed whenever ChatGPT did not confirm those uploads); it
+  says how many images each earlier turn had and that they are in Eve's archive. Eve's own chat and the swarm Prime
+  are never reused for a fresh input or closed as idle tabs: the fresh chat had taken over Prime's tab. A failed
+  attachment upload now names why (no file input, tile mismatch, timeout and counts), failed browser deliveries are
+  logged with their input id, and every tab the Companion closes or reuses is logged with its reason and proof.
 - Switching a chat's provider no longer freezes the app. The consent dialog sat inside the (hidden) Pets panel, so
   opening it made the window modal while the dialog itself was never shown; it now lives outside every panel, with a
   layout test and a runtime guard. The consent preview also opens the chat once instead of reading its history twice,

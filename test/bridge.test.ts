@@ -983,6 +983,58 @@ describe('active agent tab discard projection', () => {
       expect((await request('GET', '/status')).body.closableConversations).toEqual([]);
     } finally { await saveConfig(previous); }
   });
+  it('never reuses or closes the tab of the Eve identity chat, even though it was opened from her composer (2.3.6 c8)', async () => {
+    await pair();
+    const { setSessionOrigin } = await import('../src/main/session/store.js');
+    const eveChat = 'eeeeeeee-0c80-4000-8000-0000000000e1';
+    const ordinary = 'eeeeeeee-0c80-4000-8000-0000000000e2';
+    const now = Date.now();
+    for (const conversationId of [eveChat, ordinary]) {
+      await request('POST', '/events', { body: { conversationId, events: [
+        { kind: 'user_message', time: now - 10, text: 'hello', messageId: `u-${conversationId}` },
+        { kind: 'turn_start', time: now - 9, turnId: `t-${conversationId}` },
+        { kind: 'assistant_message', time: now - 8, text: 'hi', messageId: `a-${conversationId}`, final: true, state: 'final', turnId: `t-${conversationId}` },
+        { kind: 'turn_end', time: now - 7, turnId: `t-${conversationId}`, outcome: 'completed' }
+      ] } });
+      const summary = await findSessionByConversation(conversationId, { requireUnique: true });
+      await setSessionOrigin(summary!.id, { kind: 'desktop', fromSessionId: null, agentId: null, task: '' }, 'Started in Eve');
+    }
+    restoreAgentIdentity({ version: 1, conversationId: eveChat });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 360_000);
+    try {
+      const status = (await request('POST', '/status', { body: { openConversations: [eveChat, ordinary] } })).body;
+      // The ordinary composer chat is idle inventory; Eve's chat is not.
+      expect(status.reusableConversations).toContain(ordinary);
+      expect(status.closableConversations).toContain(ordinary);
+      expect(status.reusableConversations).not.toContain(eveChat);
+      expect(status.closableConversations).not.toContain(eveChat);
+      expect(status.retiredConversations ?? []).not.toContain(eveChat);
+    } finally {
+      clock.mockRestore();
+      resetAgentIdentityForTests();
+    }
+  });
+
+  it('logs every extension tab close or reuse, flagging the Eve identity chat', async () => {
+    await pair();
+    const { onLog } = await import('../src/main/logger.js');
+    const lines: string[] = [];
+    const stop = onLog(entry => { if (entry.message.startsWith('browser tab ')) lines.push(`${entry.level} ${entry.message}`); });
+    const eveChat = 'eeeeeeee-0c80-4000-8000-0000000000e3';
+    restoreAgentIdentity({ version: 1, conversationId: eveChat });
+    try {
+      expect((await request('POST', '/tab-event', { body: { action: 'reuse', reason: 'fresh-input', tabId: 7, conversationId: eveChat, markers: '', inputId: 'abc', proof: 'probe' } })).status).toBe(200);
+      expect((await request('POST', '/tab-event', { body: { action: 'close', reason: 'model-catalog-helper', tabId: 8, conversationId: null, markers: 'cos-model-catalog' } })).status).toBe(200);
+      expect(lines).toEqual([
+        `warn browser tab reuse reason=fresh-input tab=7 conversation=${eveChat} markers=none input=abc proof=probe OWNER-CHAT`,
+        'info browser tab close reason=model-catalog-helper tab=8 conversation=none markers=cos-model-catalog proof=none'
+      ]);
+    } finally {
+      stop();
+      resetAgentIdentityForTests();
+    }
+  });
+
   it('never treats the chat Compact & Resume moved the user into as an app-owned tab (upstream 0eb1e3c6, #1012)', async () => {
     await pair();
     const { setSessionOrigin } = await import('../src/main/session/store.js');

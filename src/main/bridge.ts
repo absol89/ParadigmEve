@@ -2320,6 +2320,18 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     } catch { return json(res, 400, { error: 'invalid_usage' }, origin); }
   }
 
+  // The extension reports every tab it closes or reuses (diagnostics only; it never gates the action).
+  if (route === '/tab-event' && req.method === 'POST') {
+    let body: Record<string, unknown>;
+    try { body = (await readBody(req)) as Record<string, unknown>; } catch { return json(res, 400, { error: 'bad_request' }, origin); }
+    const clean = (value: unknown, max: number) => typeof value === 'string' ? value.replace(/[^\w:,.+\- ]/g, '').slice(0, max) : '';
+    const conversation = conversationId(body['conversationId']);
+    const owner = !!conversation && ownerConversations().includes(conversation);
+    (owner ? logWarn : logInfo)(`browser tab ${clean(body['action'], 12)} reason=${clean(body['reason'], 40)} tab=${typeof body['tabId'] === 'number' ? body['tabId'] : '?'}` +
+      ` conversation=${conversation ?? 'none'} markers=${clean(body['markers'], 80) || 'none'}${body['inputId'] ? ` input=${clean(body['inputId'], 40)}` : ''}` +
+      ` proof=${clean(body['proof'], 80) || 'none'}${owner ? ' OWNER-CHAT' : ''}`);
+    return json(res, 200, { ok: true }, origin);
+  }
   if (route === '/input/unreachable' && req.method === 'POST') {
     const body = await readBody(req).catch(() => null) as Record<string, unknown> | null;
     const source = conversationId(body?.['conversationId']);
@@ -6977,6 +6989,20 @@ function nonDiscardableAgentConversations(): string[] {
 }
 
 /**
+ * Chats whose tab is never idle inventory: never reused for a fresh input, never closed as idle.
+ * Chrome may still discard (sleep) them; that keeps the tab. Eve's own chat (the installation's
+ * agent identity) is started from Eve's composer, so it carries a `desktop` origin like any
+ * app-opened chat; reusing its tab for a fresh input (2.3.6 c8) navigated Prime away, closed its
+ * last tab and stranded the heartbeat. The swarm Prime is the run's human-facing owner.
+ */
+function ownerConversations(): string[] {
+  const ids = new Set(swarmState().agents.filter(agent => agent.role === 'prime' && agent.conversationId).map(agent => agent.conversationId as string));
+  const identity = currentAgentConversationId();
+  if (identity) ids.add(identity);
+  return [...ids];
+}
+
+/**
  * Idle app-owned pages are a reusable resource, independent of durable chat/worker life.
  * Two minutes gives follow-ups a warm page; five minutes releases an unused renderer.
  * The extension still proves the exact document has no draft or generation before closing.
@@ -6993,6 +7019,7 @@ async function browserTabPolicy(openConversations: Set<string>) {
   for (const id of [...supersededSourceConversations(), ...closableWorkerConversations(0)]) if (openConversations.has(id)) managed.add(id);
   for (const agent of swarmState().agents) if (agent.conversationId && openConversations.has(agent.conversationId)) managed.add(agent.conversationId);
   const protectedChats = new Set(nonDiscardableAgentConversations());
+  const owners = new Set(ownerConversations());
   for (const entry of pendingContinuations()) protectedChats.add(entry.from);
   // Recorder history can restore an unclosed old turn. Only the existing live-work grant,
   // running tools, automation/broker obligation and fresh page proof protect pruning.
@@ -7083,14 +7110,15 @@ async function browserTabPolicy(openConversations: Set<string>) {
     // Only terminal/blocked helpers and superseded sources grant close authority; a superseded
     // source grants it once, until its tab is gone (see spendSupersededSourceCloses).
     retiredConversations: [...new Set([...idle, ...supersededSourceConversations()])]
-      .filter(id => openConversations.has(id) && !protectedChats.has(id)).sort(),
+      .filter(id => openConversations.has(id) && !protectedChats.has(id) && !owners.has(id)).sort(),
     conversationActivityAt: Object.fromEntries(lastActivity),
     managedConversations: [...managed].sort(),
-    reusableConversations: available.filter(id => quietFor(id, 120_000) && !isGoalDecisionChat(id) &&
+    reusableConversations: available.filter(id => quietFor(id, 120_000) && !isGoalDecisionChat(id) && !owners.has(id) &&
       !supersededSourceConversations().includes(id)).sort(),
     nonDiscardableConversations: [...protectedChats].sort(),
     blockedConversations: blocked.sort(),
-    closableConversations: [...new Set([...idlePages, ...idle, ...supersededSourceConversations().filter(id => openConversations.has(id) && !protectedChats.has(id))])].sort()
+    closableConversations: [...new Set([...idlePages, ...idle, ...supersededSourceConversations().filter(id => openConversations.has(id) && !protectedChats.has(id))])]
+      .filter(id => !owners.has(id)).sort()
   };
 }
 

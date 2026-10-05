@@ -1698,6 +1698,7 @@ export function failBrowserInput(id: string, owner: string, error: string): Prom
     const entry = current.find((row) => row.id === id && row.owner === owner && row.state === 'browser');
     if (!entry) return false;
     await commit(current.map((row) => row === entry ? { ...row, state: 'failed', error: error.slice(0, 200) } : row));
+    logWarn(`input ${id}: browser delivery failed after claim — ${error.slice(0, 300)}`);
     decisionWaiters.get(id)?.reject(new Error('goal_browser_send_failed'));
     decisionWaiters.delete(id);
     return true;

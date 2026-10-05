@@ -2115,45 +2115,54 @@ var CLF_DOM = (() => {
   function pluginManagementIdle() {
     return safe(() => ![...document.querySelectorAll('textarea,input:not([type="hidden"]),[contenteditable="true"]')].some(node => node.getClientRects().length > 0 && String(node.value || node.textContent || '').trim()), false);
   }
+  /** Why the last uploadImages() call gave up: names and counts only, never file content. */
+  let uploadFailure = null;
+  const uploadFailureReason = () => uploadFailure;
+  const uploadFailed = (reason) => { uploadFailure = reason; return false; };
   async function uploadImages(images, stillCurrent = () => true, draft = null, files = []) {
+    uploadFailure = null;
     if (files.length) images = [...(images || []), ...files];
     if (!images?.length) return true;
-    if (!Array.isArray(images) || images.length > 20 || !stillCurrent() || hasComposerAttachments()) return false;
+    if (!Array.isArray(images) || images.length > 20) return uploadFailed(`too-many-files requested=${images?.length ?? 0}`);
+    if (!stillCurrent()) return uploadFailed('page-changed-before-upload');
+    if (hasComposerAttachments()) return uploadFailed('composer-already-has-attachments');
     // The current shell uses React-generated ids. Elect by the native upload kind
     // inside this exact composer's form; a second matching input is ambiguous.
     const host = composerBox();
     const candidates = [...(host?.querySelectorAll('input[type="file"]') || [])].filter(node =>
       !node.disabled && (files.length ? !node.accept : node.accept === 'image/*'));
     const input = candidates.length === 1 ? candidates[0] : null;
-    if (!input) return false;
+    if (!input) return uploadFailed(`file-input-not-found candidates=${candidates.length}`);
     const priorTiles = new Set((composerBox() || composerActions()?.host)?.querySelectorAll('button[aria-label]') || []);
     const transfer = new DataTransfer();
     try {
       for (const image of images) {
         if (image instanceof File) { transfer.items.add(image); continue; }
-        if (typeof image.name !== 'string' || !/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(image.dataUrl) || image.dataUrl.length > 512100) return false;
+        if (typeof image.name !== 'string' || !/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(image.dataUrl) || image.dataUrl.length > 512100) return uploadFailed('invalid-image-payload');
         const raw = atob(image.dataUrl.split(',')[1]);
         const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
         transfer.items.add(new File([bytes], image.name, { type: 'image/webp' }));
       }
       input.files = transfer.files;
       input.dispatchEvent(new Event('change', { bubbles: true }));
-    } catch { return false; }
+    } catch { return uploadFailed('file-transfer-rejected'); }
     return new Promise((resolve) => {
       let observer, timer;
       let ownedTiles = null;
       const historyOnly = images.every((image) => !(image instanceof File) && image.history === true);
-      const finish = (ok) => { observer?.disconnect(); clearTimeout(timer); resolve(ok); };
+      let lastTiles = 0;
+      const finish = (ok, reason) => { if (!ok && reason) uploadFailure = reason; observer?.disconnect(); clearTimeout(timer); resolve(ok); };
       const check = () => {
-        if (!stillCurrent()) return finish(false);
+        if (!stillCurrent()) return finish(false, `page-changed-during-upload tiles=${lastTiles}`);
         const host = composerBox() || composerActions()?.host;
         if (!host) return;
         // ChatGPT's remove control names the complete filename. Each requested image
         // needs its own new tile; a substring or an old same-name tile is no upload ACK.
         const tiles = [...host.querySelectorAll('button[aria-label]')].filter((button) => !priorTiles.has(button) && composerFileName(button));
+        lastTiles = tiles.length;
         // Every attached file must belong to this input. A newly added user attachment
         // cannot be silently included just because the requested subset finished uploading.
-        if (tiles.length > images.length) return finish(false);
+        if (tiles.length > images.length) return finish(false, `extra-tiles requested=${images.length} tiles=${tiles.length}`);
         if (!ownedTiles) {
           const unmatched = [...tiles];
           const exact = images.filter((image) => image instanceof File || image.history !== true);
@@ -2179,7 +2188,7 @@ var CLF_DOM = (() => {
         if (historyOnly && tiles.length === images.length) ownedTiles = tiles;
         // The provider can rename report.md to report(1).md during processing.
         // Bind once by exact original names, then retain those exact remove controls.
-        if (tiles.length !== ownedTiles.length || tiles.some(node => !ownedTiles.includes(node))) return finish(false);
+        if (tiles.length !== ownedTiles.length || tiles.some(node => !ownedTiles.includes(node))) return finish(false, `tiles-replaced requested=${images.length} tiles=${tiles.length}`);
         if (!host.querySelector('[aria-busy="true"], [role="progressbar"], [data-inline-file-uploading]') && sendButtonEnabled(sendButton())) {
           draft?.attachments(ownedTiles);
           finish(true);
@@ -2187,7 +2196,11 @@ var CLF_DOM = (() => {
       };
       observer = new MutationObserver(check);
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
-      timer = setTimeout(() => finish(false), files.length ? 600000 : 60000);
+      timer = setTimeout(() => {
+        const host = composerBox() || composerActions()?.host;
+        const busy = !!host?.querySelector('[aria-busy="true"], [role="progressbar"], [data-inline-file-uploading]');
+        finish(false, `timeout requested=${images.length} tiles=${lastTiles} matched=${ownedTiles ? 'yes' : 'no'} busy=${busy} send_enabled=${sendButtonEnabled(sendButton())}`);
+      }, files.length ? 600000 : 60000);
       check();
     });
   }
@@ -2717,6 +2730,7 @@ var CLF_DOM = (() => {
     modelSelectionFailureReason,
     inspectModelSettings,
     uploadImages,
+    uploadFailureReason,
     captureComposerDraft,
     hasComposerAttachments,
     composerAttachmentNames,

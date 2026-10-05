@@ -277,7 +277,7 @@ export async function chatGptCatchUp(sessionId: string, maxChars: number, imageS
       const text = await fileText(sessionId, file);
       lines.push(text !== null ? `[Attached file ${file.name}]\n${text}\n[End of ${file.name}]` : `[Attached file ${file.name} (${file.mimeType}) is not available as text]`);
     }
-    if (turn.images.length) lines.push(`[${turn.images.length} image(s) in this turn]`);
+    if (turn.images.length) lines.push(`[${turn.images.length} image(s) in this turn are kept in Eve's archive and are not attached here; ask the user to share any you need to see]`);
     blocks.push(lines.join('\n'));
   }
   const budget = Math.max(0, maxChars - header.length - footer.length - 200);
@@ -297,22 +297,11 @@ export async function chatGptCatchUp(sessionId: string, maxChars: number, imageS
   }
   const preamble = [header, ...(omitted > 0 ? [`(${omitted} older turn(s) omitted for length; they remain in Eve's archive.)`] : []), ...kept, footer].join('\n\n');
 
+  // Earlier images are not re-uploaded. Re-attaching them made a fresh ChatGPT chat's first send
+  // depend on ChatGPT confirming synthetic uploads; when it did not (2.3.6 c5–c8), the whole message
+  // was lost. The text above says where they are; Ollama turns still receive them in full.
+  void imageSlots;
   const images: InputImage[] = [];
-  const seenImageBytes = new Set<string>();
-  const candidates = unseen.flatMap((turn) => turn.images).reverse();
-  for (const image of candidates) {
-    if (images.length >= imageSlots) break;
-    const webp = await imageBytes(image, 1600, 'webp');
-    if (!webp) continue;
-    const dataUrl = `data:image/webp;base64,${webp.toString('base64')}`;
-    if (dataUrl.length > 512_000) continue;
-    // The same user image can exist in the canonical archive both as a native message asset and
-    // as an archived attachment copy with a different asset id. Provider catch-up is about visual
-    // content, not archive identities, so send identical normalized bytes only once.
-    if (seenImageBytes.has(dataUrl)) continue;
-    seenImageBytes.add(dataUrl);
-    images.push({ name: `earlier-image-${images.length + 1}.webp`, dataUrl, history: true });
-  }
   return { preamble, images };
 }
 
