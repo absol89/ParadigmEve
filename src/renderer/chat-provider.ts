@@ -138,9 +138,17 @@ export function providerSwitchPossible(session: SessionSummary | null | undefine
  * Asks before a turn would hand this chat's earlier history to a different provider.
  * Returns the confirmed scope, undefined when no confirmation is needed, or false to cancel.
  */
-export async function confirmProviderSwitch(sessionId: string, provider: ChatProvider | null): Promise<ProviderConsent | undefined | false> {
+/** Logs one renderer-side step of a provider-switch trace into app.log. Never awaited, never throws. */
+export function markProviderSwitch(traceId: string | undefined, step: string, startedAt: number): void {
+  if (!traceId) return;
+  try { void window.api.providerSwitchMark?.(traceId, step, performance.now() - startedAt)?.catch(() => undefined); } catch { /* diagnostics only */ }
+}
+
+export async function confirmProviderSwitch(sessionId: string, provider: ChatProvider | null, traceId?: string): Promise<ProviderConsent | undefined | false> {
   // Main enforces the same rule on send; without a preview, let it decide and explain.
-  const reply = await window.api.providerPreview?.(sessionId, provider).catch(() => null);
+  const previewStartedAt = performance.now();
+  const reply = await window.api.providerPreview?.(sessionId, provider, traceId).catch(() => null);
+  markProviderSwitch(traceId, 'preview-ipc', previewStartedAt);
   if (!reply?.ok) return undefined;
   const preview = reply.data;
   if (preview.blockedByLocalOnly) {
@@ -154,16 +162,21 @@ export async function confirmProviderSwitch(sessionId: string, provider: ChatPro
     [t(preview.fromLabel ?? 'ChatGPT (OpenAI)'), t(preview.toLabel), String(preview.messages), String(preview.images), String(preview.files)]
   ));
   return new Promise((resolve) => {
+    const consentStartedAt = performance.now();
     const finish = (value: ProviderConsent | false) => {
       $('providerSwitchConfirm').onclick = null;
       $('providerSwitchCancel').onclick = null;
       dialog.onclose = null;
       if (dialog.open) dialog.close();
+      markProviderSwitch(traceId, value === false ? 'consent-declined' : 'consent-given', consentStartedAt);
       resolve(value);
     };
     $('providerSwitchConfirm').onclick = () => finish({ to: preview.to, messages: preview.messages, images: preview.images, files: preview.files });
     $('providerSwitchCancel').onclick = () => finish(false);
     dialog.onclose = () => finish(false);
+    // Never open it inside an inactive (display:none) panel: the dialog would be invisible while
+    // still making the window modal, which looks exactly like a frozen app.
+    if (dialog.closest('.panel')) document.body.append(dialog);
     dialog.showModal();
   });
 }

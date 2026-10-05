@@ -20,6 +20,11 @@ operation.
 ### Added
 
 - *(in progress)* Interpreter → Plan → orchestrator → workers. See `docs/eve-tasks/interpreter-orchestrator-2.3.6.md`.
+- Switching a chat's provider no longer freezes the app. The consent dialog sat inside the (hidden) Pets panel, so
+  opening it made the window modal while the dialog itself was never shown; it now lives outside every panel, with a
+  layout test and a runtime guard. The consent preview also opens the chat once instead of reading its history twice,
+  and counts without loading long-message text; chats recorded before per-message storage get their history again.
+  Each switch logs `provider-switch timing` lines (preview, consent, send, enqueue) to the app log.
 - Ollama model discovery lists every model you can use. The local Ollama app's `/v1/models` showed only models
   already pulled, so cloud models were invisible. The picker now reads the app's own model list (which marks cloud
   models exactly and says which read images), adds the public Ollama Cloud catalog under the app's cloud names, and

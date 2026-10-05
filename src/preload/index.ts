@@ -186,8 +186,9 @@ const api = {
   setCustomProviderKey: (value: string) => call<AppState>('secret:set', { value, key: 'customProviderApiKey' }),
   setOllamaKey: (value: string) => call<AppState>('secret:set', { value, key: 'ollamaApiKey' }),
   listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud'; cloud: boolean; installed: boolean; vision?: boolean }>>('ollama:models'),
-  providerPreview: (id: string, provider: { id: 'ollama'; model: string } | null) =>
-    call<ProviderSwitchPreview>('sessions:providerPreview', { id, provider }),
+  providerPreview: (id: string, provider: { id: 'ollama'; model: string } | null, traceId?: string) =>
+    call<ProviderSwitchPreview>('sessions:providerPreview', { id, provider, ...(traceId ? { traceId } : {}) }),
+  providerSwitchMark: (id: string, step: string, ms: number) => call<boolean>('diagnostics:providerSwitchMark', { id, step, ms }),
   setSessionLocalOnly: (id: string, localOnly: boolean) => call<SessionSummary | null>('sessions:setLocalOnly', { id, localOnly }),
   listGoalModels: (offset: number) => call<GoalModelPage>('goal:models', { offset }),
   pickBinary: () => call<AppState>('binary:pick'),

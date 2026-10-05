@@ -629,6 +629,18 @@ describe('provider adoption in the composer', () => {
 });
 
 describe('the window as a whole', () => {
+  /**
+   * 2.3.6: the provider-switch consent dialog sat inside the Pets panel. An inactive panel is
+   * display:none, and showModal() inside one opens a dialog that is never rendered but still makes
+   * the window modal: every provider switch looked like a frozen app with the draft in the composer.
+   * A dialog opened from the chat must live outside every panel.
+   */
+  it('keeps the provider-switch consent dialog outside every panel', () => {
+    const dialog = document.getElementById('providerSwitchDialog');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.closest('.panel')).toBeNull();
+  });
+
   it('keeps workspace settings in a scrollable column', () => {
     expect(rule("[data-panel='home']")).toContain('overflow-y: auto');
   });

@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel } from './chat-models.js';
-import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, providerSwitchPossible } from './chat-provider.js';
+import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
@@ -4018,8 +4018,12 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const sessionId = selectedId;
   const generation = selectionGeneration;
   // A turn that hands earlier history to a different provider asks first; main enforces it too.
-  const providerConsent = sessionId && providerSwitchPossible(selectedSession, provider)
-    ? await confirmProviderSwitch(sessionId, provider) : undefined;
+  // One id traces this send end to end (renderer marks, preview IPC, send IPC) and becomes the input id.
+  const switchTrace = crypto.randomUUID();
+  const switchStartedAt = performance.now();
+  const switching = !!sessionId && providerSwitchPossible(selectedSession, provider);
+  const providerConsent = switching ? await confirmProviderSwitch(sessionId!, provider, switchTrace) : undefined;
+  if (switching) markProviderSwitch(switchTrace, 'before-send', switchStartedAt);
   if (providerConsent === false) return false;
   if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
   const providerIntent = provider ? { provider: 'ollama' as const, ...(composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
@@ -4027,7 +4031,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
   const mode = chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;
   const dueAt = Date.now();
-  const id = crypto.randomUUID();
+  const id = switchTrace;
   const authoredDraft = input.value;
   const attachmentPayload = { images: images.filter((file): file is InputImage => 'dataUrl' in file), attachments: images.filter((file): file is InputAttachment => 'id' in file) };
   const objective = plan ? planObjective : mode === 'finish' ? undefined : $<HTMLTextAreaElement>('sessionObjective').value.trim() || undefined;
@@ -4047,7 +4051,9 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   void refreshInputQueue();
   paintDeliveryControls();
   try {
+    const sendStartedAt = performance.now();
     const result = await run(api.sendInput({ id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, ...identityIntent, ...contextIntent, ...providerIntent, ...consentIntent, automation: mode === 'finish' ? undefined : provider ? 'off' : $<HTMLSelectElement>('chatAutomation').value as InputAutomation, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn', dueAt, ...modelSettings }));
+    if (switching) markProviderSwitch(id, result ? 'send-ipc' : 'send-ipc-failed', sendStartedAt);
     if (cancelledStarts.has(id)) return;
     if (!result) {
       if (selectedId === sessionId && selectionGeneration === generation && !input.value) input.value = authoredDraft;

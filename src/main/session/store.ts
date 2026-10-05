@@ -21,6 +21,7 @@
  *   sessions/<id>/handoffs/<id>.json
  */
 
+import { markProviderSwitch } from '../provider-switch-trace.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isProModel } from '../../shared/chat-models.js';
 import { promises as fs } from 'node:fs';
@@ -655,7 +656,10 @@ export async function readCanonicalTranscriptEvents(sessionId: string): Promise<
   // same in-memory canonical transcript instead of reopening hundreds of message shards twice.
   // `ensureOpen()` already performs the legacy journal fallback/reconciliation when needed.
   const entry = await ensureOpen(sessionId);
-  return chronological([...entry.messages.values()]);
+  if (entry.messages.size > 0) return chronological([...entry.messages.values()]);
+  // A chat recorded before canonical message shards existed has its messages only in the journal.
+  // Without this fallback a provider switch handed such a chat no history at all.
+  return readEvents(sessionId, { kinds: ['user_message', 'assistant_message', 'native_image'], limit: 100_000 }) as Promise<CanonicalTranscriptEvent[]>;
 }
 
 async function writeCanonicalMessage(id: string, key: string, event: CanonicalEvent): Promise<void> {
@@ -856,7 +860,9 @@ async function readDurableSnapshot(id: string): Promise<DurableSessionSnapshot |
     }
     if (!checkpoint && historySeq === 0) return null;
 
+    markProviderSwitch('snapshot:journal-rebuild-start', `checkpoint_seq=${checkpoint?.historySeq ?? 'none'} history_seq=${historySeq}`);
     const summary = await rebuildSummaryFromHistory(id, messages, checkpoint?.summary ?? null, historySeq, checkpoint?.historySeq === historySeq);
+    markProviderSwitch('snapshot:journal-rebuild-done');
     return { summary, messages, historySeq, reconciled: true };
   })();
   reconciling.set(id, work);
@@ -870,6 +876,7 @@ async function readDurableSnapshot(id: string): Promise<DurableSessionSnapshot |
 async function readAuthoritativeSummary(id: string): Promise<SessionSummary | null> {
   const live = open.get(id);
   if (live) return live.summary;
+  markProviderSwitch('getSession:not-open');
   const becomingLive = opening.get(id);
   if (becomingLive) return (await becomingLive).summary;
   const snapshot = await readDurableSnapshot(id);
@@ -890,8 +897,10 @@ async function ensureOpen(id: string): Promise<OpenSession> {
   const inFlight = opening.get(id);
   if (inFlight) return inFlight;
   const reconstruction = (async () => {
+    markProviderSwitch('ensureOpen:cold-start');
     await sealTornTail(id);
     const snapshot = await readDurableSnapshot(id);
+    markProviderSwitch('ensureOpen:snapshot', snapshot ? `messages=${snapshot.messages.size} rebuilt=${snapshot.reconciled}` : 'none');
     if (!snapshot) throw new Error(`Session ${id} has no recoverable metadata or history`);
     const entry: OpenSession = {
       summary: snapshot.summary,
@@ -2454,6 +2463,21 @@ export async function sessionDurableModifiedAt(id: string): Promise<number | nul
     }
   }
   return newest > 0 ? newest : null;
+}
+
+/**
+ * Like getSession, for an active operation on this chat (sending into it, a provider switch):
+ * opens the session once and keeps it open, so the history read that follows reuses the same
+ * in-memory snapshot instead of reading every message shard a second time.
+ */
+export async function getOpenSession(id: string): Promise<SessionSummary | null> {
+  assertSessionId(id);
+  try {
+    return { ...(await ensureOpen(id)).summary };
+  } catch (error) {
+    if ((error as Error).message.includes('has no recoverable metadata or history')) return null;
+    throw error;
+  }
 }
 
 export async function getSession(id: string): Promise<SessionSummary | null> {

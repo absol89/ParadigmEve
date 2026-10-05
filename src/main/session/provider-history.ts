@@ -15,6 +15,7 @@
  * sees what a different provider is about to receive, and `localOnly` is the enforced lock.
  */
 
+import { markProviderSwitch } from '../provider-switch-trace.js';
 import sharp from 'sharp';
 import type { ChatProvider, SessionEvent } from '../../shared/session.js';
 import type { InputAttachment, InputImage } from '../../shared/input.js';
@@ -65,19 +66,26 @@ export interface ArchivedTurn {
   inputId?: string;
 }
 
-async function fullText(sessionId: string, message: { text: string; truncated: boolean; assetId?: string }): Promise<string> {
-  if (message.truncated && message.assetId) return (await readOverflowText(sessionId, message.assetId)) ?? message.text;
+async function readFullText(sessionId: string, message: { text: string; truncated: boolean; assetId?: string }, onOverflow?: () => void): Promise<string> {
+  if (message.truncated && message.assetId) { onOverflow?.(); return (await readOverflowText(sessionId, message.assetId)) ?? message.text; }
   return message.text;
 }
 
 const IMAGE_ASSET_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 /** The archive as conversation turns, oldest first. Streaming partials and empty rows are skipped. */
-export async function archivedTurns(sessionId: string): Promise<ArchivedTurn[]> {
+/**
+ * The archive as conversation turns, oldest first. With `fullText: false` (the consent preview) no
+ * overflow text is read: counts and routes need only the stored rows, never the payload.
+ */
+export async function archivedTurns(sessionId: string, options: { fullText?: boolean } = {}): Promise<ArchivedTurn[]> {
+  const fullText = options.fullText !== false;
   // Provider context is the canonical conversation, not the forensic tool/activity journal.
   // Keeping this on the message projection prevents a long tool-heavy chat from blocking the
   // provider-switch preview and then blocking the send-time privacy gate a second time.
   const events = await readCanonicalTranscriptEvents(sessionId);
+  markProviderSwitch('readCanonicalTranscriptEvents', `events=${events.length}`);
+  let overflowReads = 0;
   const turns: ArchivedTurn[] = [];
   for (const event of events as SessionEvent[]) {
     if (event.kind === 'user_message') {
@@ -98,14 +106,14 @@ export async function archivedTurns(sessionId: string): Promise<ArchivedTurn[]> 
         role: 'user',
         route: providerRoute(event.provider),
         ...(event.provider ? { model: event.provider.model } : {}),
-        text: event.authoredText ?? await fullText(sessionId, event.message),
+        text: event.authoredText ?? (fullText ? await readFullText(sessionId, event.message, () => { overflowReads++; }) : event.message.text),
         images,
         files,
         ...(event.inputId ? { inputId: event.inputId } : {})
       });
     } else if (event.kind === 'assistant_message') {
       if (!(event.final === true || event.state === 'final')) continue;
-      const text = await fullText(sessionId, event.message);
+      const text = (fullText ? await readFullText(sessionId, event.message, () => { overflowReads++; }) : event.message.text);
       if (!text.trim()) continue;
       turns.push({
         role: 'assistant',
@@ -121,6 +129,7 @@ export async function archivedTurns(sessionId: string): Promise<ArchivedTurn[]> 
       owner?.images.push({ sessionId, assetId: event.asset.id, mimeType: event.asset.mimeType });
     }
   }
+  markProviderSwitch('archivedTurns', `turns=${turns.length} overflow_reads=${overflowReads}`);
   return turns;
 }
 
@@ -151,7 +160,9 @@ export async function providerSwitchPreview(
   provider: ChatProvider | null,
   localOnly = false
 ): Promise<ProviderSwitchPreview> {
-  const turns = await archivedTurns(sessionId);
+  // Consent needs counts and routes only; never materialize long text, images or files here.
+  const turns = await archivedTurns(sessionId, { fullText: false });
+  markProviderSwitch('providerSwitchPreview:turns');
   const to = providerRoute(provider);
   const users = turns.filter((turn) => turn.role === 'user');
   const from = users.length ? users[users.length - 1]!.route : null;

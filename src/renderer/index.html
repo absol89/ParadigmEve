@@ -273,17 +273,6 @@
               <p>Ask Eve to make a pet, or an avatar of herself, then import the folder she saves.</p>
               <button class="btn" id="petsFormatGuide" type="button">How do I make one?</button>
             </div>
-            <dialog class="plugin-dialog" id="providerSwitchDialog" aria-labelledby="providerSwitchTitle">
-              <div class="plugin-dialog-head"><h2 id="providerSwitchTitle">Switch provider for this chat?</h2></div>
-              <div class="plugin-dialog-body">
-                <p id="providerSwitchText"></p>
-                <p class="muted">The chat keeps one history in Eve's archive. The provider that answers a turn reads that history.</p>
-                <div class="step-actions">
-                  <button class="btn" id="providerSwitchCancel" type="button">Cancel</button>
-                  <button class="btn primary" id="providerSwitchConfirm" type="button">Send with full history</button>
-                </div>
-              </div>
-            </dialog>
             <dialog class="plugin-dialog" id="petFormatDialog" aria-labelledby="petFormatTitle">
               <div class="plugin-dialog-head"><h2 id="petFormatTitle">Make an avatar with Eve</h2><button class="btn" id="petsFormatClose" type="button">Close</button></div>
               <div class="plugin-dialog-body pet-format-content">
@@ -1216,5 +1205,18 @@
     </div>
 
     <script type="module" src="./main.ts"></script>
-  </body>
+    <!-- App-level, outside every panel: an inactive panel is display:none, and showModal() inside one
+         leaves an invisible modal dialog that blocks the whole window. -->
+    <dialog class="plugin-dialog" id="providerSwitchDialog" aria-labelledby="providerSwitchTitle">
+      <div class="plugin-dialog-head"><h2 id="providerSwitchTitle">Switch provider for this chat?</h2></div>
+      <div class="plugin-dialog-body">
+        <p id="providerSwitchText"></p>
+        <p class="muted">The chat keeps one history in Eve's archive. The provider that answers a turn reads that history.</p>
+        <div class="step-actions">
+          <button class="btn" id="providerSwitchCancel" type="button">Cancel</button>
+          <button class="btn primary" id="providerSwitchConfirm" type="button">Send with full history</button>
+        </div>
+      </div>
+    </dialog>
+</body>
 </html>

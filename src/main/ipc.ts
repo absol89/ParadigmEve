@@ -1,4 +1,6 @@
 import { startOllamaChatDriver } from './session/ollama-chat.js';
+import { getOpenSession } from './session/store.js';
+import { logRendererProviderSwitchMark, markProviderSwitch, traceProviderSwitch } from './provider-switch-trace.js';
 import { sendPlanRevision } from './plans.js';
 import { applyLoginStartup, supportsLoginStartup } from './window-lifecycle.js';
 import { setSessionLocalOnly } from './session/store.js';
@@ -1372,12 +1374,16 @@ export function registerIpc(
     return models.map((model) => ({ ...model, route: model.cloud ? 'ollama-cloud' as const : providerRoute({ id: 'ollama', model: model.id }) }));
   });
   handle('sessions:providerPreview', async (payload) => {
-    const { id, provider } = sessionIdArg.extend({
-      provider: z.object({ id: z.literal('ollama'), model: z.string().trim().min(1).max(160) }).strict().nullable()
+    const { id, provider, traceId } = sessionIdArg.extend({
+      provider: z.object({ id: z.literal('ollama'), model: z.string().trim().min(1).max(160) }).strict().nullable(),
+      traceId: z.string().uuid().optional()
     }).parse(payload);
-    const session = await getSession(id);
-    if (!session) throw new Error('This chat no longer exists');
-    return providerSwitchPreview(id, provider, session.localOnly === true);
+    return traceProviderSwitch(traceId ?? randomUUID(), 'preview', async () => {
+      const session = await getOpenSession(id);
+      markProviderSwitch('getSession');
+      if (!session) throw new Error('This chat no longer exists');
+      return providerSwitchPreview(id, provider, session.localOnly === true);
+    });
   });
   handle('sessions:setLocalOnly', async (payload) => {
     const { id, localOnly } = sessionIdArg.extend({ localOnly: z.boolean() }).parse(payload);
@@ -1423,11 +1429,14 @@ export function registerIpc(
   });
   handle('sessions:send', async (payload) => {
     const input = inputArgs.parse(payload);
+    return traceProviderSwitch(input.id, 'send', async () => {
     // Authored template references may select their existing project integration. A selected
     // Thread may do the same only when its durable id is already the exact Thread bound into the
     // Expenses project; arbitrary Thread context still grants no project/filesystem authority.
-    const session = input.sessionId ? await getSession(input.sessionId) : null;
+    const session = input.sessionId ? await getOpenSession(input.sessionId) : null;
+    markProviderSwitch('getSession');
     const project = await resolveExpensesProject(input.text, session?.projectId ?? input.projectId, input.contextQuiltId);
+    markProviderSwitch('resolveExpensesProject');
     if (project && !input.sessionId) input.projectId = project.id;
     if (project && input.sessionId && session?.projectId !== project.id) throw new Error('Open a new chat with the Expenses Thread to use its local project');
     // Plain #expenses in a fresh, otherwise unbound chat binds the one canonical Expenses project so
@@ -1439,8 +1448,17 @@ export function registerIpc(
       if (data) input.projectId = data.id;
     }
     await validateInputImages(input.images ?? []);
+    markProviderSwitch('validateInputImages');
     await admitChatProvider(input, session);
+    markProviderSwitch('admitChatProvider');
     return sendDesktopInput(input);
+    });
+  });
+  // Renderer-side boundaries of the same provider-switch trace (fire-and-forget, bounded).
+  handle('diagnostics:providerSwitchMark', async (payload) => {
+    const { id, step, ms } = z.object({ id: z.string().uuid(), step: z.string().regex(/^[a-z:-]{1,40}$/), ms: z.number().finite().min(0).max(3_600_000) }).strict().parse(payload);
+    logRendererProviderSwitchMark(id, step, ms);
+    return true;
   });
   handle('sessions:outbox', async () => (await listInputs()).filter((row) => row.purpose !== 'decision' && row.purpose !== 'attention' && row.purpose !== 'schedule'));
   handle('sessions:reorderInputs', async (payload) => {

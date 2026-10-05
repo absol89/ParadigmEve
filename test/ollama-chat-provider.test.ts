@@ -56,6 +56,8 @@ const ollamaRequests: Array<{ url: string; body: any; headers: Record<string, st
 let replyText = 'Hello from Ollama';
 let visionModels = new Set<string>(['llava']);
 let pulled: string[] = [];
+/** When set, Ollama's chat answer waits for it: proves a send returned before payload work. */
+let chatGate: Promise<void> | null = null;
 function sse(chunks: string[]): Response {
   const body = chunks.map((chunk) => `data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
@@ -77,7 +79,10 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
   if (url === 'https://ollama.com/api/tags') return Response.json({ models: [{ name: 'gemma4:31b' }, { name: 'kimi-k3' }, { name: 'mistral-large-3:675b' }] });
   if (url.endsWith('/api/pull')) { pulled.push(body.model); return Response.json({ status: 'success' }); }
   if (url.endsWith('/api/show')) return Response.json({ capabilities: visionModels.has(body.model) ? ['completion', 'vision'] : ['completion'] });
-  if (url.endsWith('/v1/chat/completions')) return sse([replyText.slice(0, 5), replyText.slice(5)]);
+  if (url.endsWith('/v1/chat/completions')) {
+    if (chatGate) { const gate = chatGate; ollamaRequests.pop(); await gate; ollamaRequests.push({ url, body, headers: {} }); }
+    return sse([replyText.slice(0, 5), replyText.slice(5)]);
+  }
   return new Response('not found', { status: 404 });
 };
 
@@ -313,3 +318,59 @@ it('sends the stored Ollama key only to an HTTPS endpoint', async () => {
     await clearSecret('ollamaApiKey');
   }
 });
+
+it('previews and enqueues a switch on a long cold chat promptly, preparing the Ollama payload only afterwards', async () => {
+  const { flushSessions, writeOverflowText } = await import('../src/main/session/store.js');
+  const { onLog } = await import('../src/main/logger.js');
+  const conversationId = randomUUID();
+  const session = await createSession({ title: 'Long GPT chat', conversationId });
+  const long = 'x'.repeat(20_000);
+  for (let turn = 0; turn < 300; turn++) {
+    const at = 1_000 + turn * 10;
+    await upsertMessageEvent(session.id, { time: at, source: 'extension', kind: 'user_message', messageId: `u${turn}`,
+      message: { text: `Question ${turn}`, truncated: false, chars: 12 },
+      ...(turn % 25 === 0 ? { attachments: [{ id: randomUUID(), name: `notes-${turn}.pdf`, size: 1000, mimeType: 'application/pdf' }] } : {}) });
+    const overflow = turn % 10 === 0 ? await writeOverflowText(session.id, long) : null;
+    await upsertMessageEvent(session.id, { time: at + 5, source: 'extension', kind: 'assistant_message', messageId: `a${turn}`,
+      message: overflow ? { text: long.slice(0, 12_000), truncated: true, chars: long.length, assetId: overflow } : { text: `Answer ${turn}`, truncated: false, chars: 9 },
+      final: true, state: 'final' });
+  }
+  // Cold: the chat is not open in this process, as after a restart.
+  await flushSessions();
+  resetSessionStoreForTests();
+  initSessionStore(directory);
+
+  const lines: string[] = [];
+  const stopLog = onLog(entry => { if (entry.message.includes('provider-switch timing')) lines.push(entry.message); });
+  try {
+    const traceId = randomUUID();
+    const startedAt = Date.now();
+    const preview = await handlers.get('sessions:providerPreview')!(rendererEvent, { id: session.id, provider: { id: 'ollama', model: 'llama3.2' }, traceId });
+    const previewMs = Date.now() - startedAt;
+    expect(preview.ok, preview.error).toBe(true);
+    expect(preview.data).toMatchObject({ switching: true, messages: 600, files: 12 });
+    expect(previewMs).toBeLessThan(5_000);
+    // Consent counts rows; it never reads the 30 long answers' overflow text.
+    expect(lines.find(line => line.includes(`trace=${traceId.slice(0, 8)}`) && line.includes('step=archivedTurns'))).toContain('overflow_reads=0');
+
+    // Hold Ollama's answer: the send must return (durably queued) while the payload is still pending.
+    let release!: () => void;
+    chatGate = new Promise<void>(resolve => { release = resolve; });
+    const id = randomUUID();
+    const sendStartedAt = Date.now();
+    const accepted = await send({ id, sessionId: session.id, provider: 'ollama', model: 'llama3.2', text: 'Continue here',
+      providerConsent: { to: preview.data.to, messages: preview.data.messages, images: preview.data.images, files: preview.data.files } });
+    expect(accepted.ok, accepted.error).toBe(true);
+    expect(Date.now() - sendStartedAt).toBeLessThan(5_000);
+    expect((await input.listInputs()).find(row => row.id === id)).toBeTruthy();
+    expect(ollamaRequests.some(request => request.url.endsWith('/chat/completions') && request.body?.messages)).toBe(false);
+    release();
+    await finished(session.id, `ollama-turn:${id}`);
+    const chat = ollamaRequests.find(request => request.url.endsWith('/chat/completions'))!;
+    // The real payload, built after enqueue, does carry the long answers in full.
+    expect(chat.body.messages.some((message: { content: unknown }) => typeof message.content === 'string' && message.content.length === long.length)).toBe(true);
+  } finally {
+    stopLog();
+    chatGate = null;
+  }
+}, 60_000);

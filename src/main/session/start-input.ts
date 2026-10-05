@@ -1,4 +1,5 @@
 /** Explicit desktop sends bring up the existing connection/browser authorities. */
+import { markProviderSwitch } from '../provider-switch-trace.js';
 import { connect, getStatus, onStatusChange } from '../connection.js';
 import { startBridge } from '../bridge.js';
 import { wakeBrowserUrl, resetBrowserStartupForTests } from '../browser-startup.js';
@@ -52,6 +53,7 @@ export async function sendDesktopInput(input: InputArgs): Promise<InputEntry> {
   if (input.provider === 'ollama') {
     // Persist first, then answer: the accepted row is the user's message whatever happens next.
     const entry = await enqueueInput(input);
+    markProviderSwitch('enqueueInput:ollama', `state=${entry.state}`);
     if (entry.state === 'queued') void deliverLocalInput(entry).catch((error: Error) => logWarn(`input ${entry.id}: Ollama delivery failed: ${error.message}`));
     return entry;
   }
@@ -60,8 +62,10 @@ export async function sendDesktopInput(input: InputArgs): Promise<InputEntry> {
   const controller = new AbortController(); starting.set(input.id, controller);
   try {
     await ready(controller.signal);
+    markProviderSwitch('connector-ready');
     controller.signal.throwIfAborted();
     const entry = await enqueueInput(input);
+    markProviderSwitch('enqueueInput:chatgpt', `state=${entry.state}`);
     // Cancellation can arrive while the durable enqueue is committing.
     if (controller.signal.aborted) { await cancelInput(input.id); controller.signal.throwIfAborted(); }
     starting.delete(input.id);
