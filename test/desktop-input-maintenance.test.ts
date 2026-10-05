@@ -997,15 +997,21 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     await h.authorizeDocument({ tab: { id: 7 }, documentId: 'unavailable', frameId: 0, url }, { navigationEpoch: 1 });
     h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-input-reuse-state'
       ? { safe: false, navigationEpoch: 1 } as never : { ok: true });
+    h.create.mockImplementation(async ({ url: freshUrl, windowId }: { url: string; windowId?: number }) => {
+      const tab = { id: 8, pendingUrl: freshUrl, windowId } as Tab;
+      h.tabs.push(tab);
+      setTimeout(() => {
+        tab.url = freshUrl;
+        delete tab.pendingUrl;
+        void h.authorizeDocument({ tab: { id: tab.id }, documentId: 'fresh-input', frameId: 0, url: freshUrl }, { navigationEpoch: 1 });
+      }, 0);
+      return tab;
+    });
     await h.maintain();
     expect(h.create).toHaveBeenCalledTimes(1);
     expect(h.tabs[0]!.url).toBe(url);
-    expect(h.tabs[1]!.pendingUrl).toBe(`https://chatgpt.com/?cos-input=${firstId}#cos-input=${firstId}`);
+    expect(h.tabs[1]!.url).toBe(`https://chatgpt.com/?cos-input=${firstId}#cos-input=${firstId}`);
     expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-prepare-desktop-input')).toBe(false);
-    h.tabs[1]!.url = h.tabs[1]!.pendingUrl;
-    delete h.tabs[1]!.pendingUrl;
-    await h.maintain();
-    expect(h.create).toHaveBeenCalledTimes(1);
     expect(h.sendMessage).toHaveBeenCalledWith(h.tabs[1]!.id, { type: 'clf-desktop-input', id: firstId, conversationId: null });
   });
   it.each(['explicit-failure', 'ambiguous', 'closed'])('allows a single pre-send fallback only for %s', async reason => {

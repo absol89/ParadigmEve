@@ -2116,6 +2116,29 @@ async function prepareDesktopInputTarget(tab, conversationId = null) {
 }
 
 /**
+ * A newly-created fresh ChatGPT tab used to stop at the cos-input marker and depend on the next
+ * maintenance sweep to offer its already-durable input. If that sweep was delayed or the service
+ * worker briefly slept, the user was left looking at an inert blank ChatGPT home forever.
+ *
+ * Wait only for this exact elected tab to finish navigation and register one owned content
+ * document. This spends no new opening authority and performs no claim/send itself; the ordinary
+ * content-side durable claim remains the one delivery fence. Failure simply leaves the row queued
+ * for the normal later sweep.
+ */
+async function waitFreshDesktopInputTarget(tabId, inputId, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab || tab.pinned || desktopInputMarker(tab) !== inputId) return null;
+    const documentId = tabDocuments[String(tabId)];
+    const source = { tab: tabId, documentId, navigationEpoch: tabEpochs[String(tabId)] };
+    if (!tab.pendingUrl && documentId && ownsDocument(source)) return tab;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+/**
  * Put an acknowledged scheduled run back into the same hidden background posture as worker work.
  *
  * Generic browser inputs briefly select their tab and restore the app-owned background window so
@@ -2314,6 +2337,15 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
       tab = await createChatTab(url, background);
       await elect(input.id, { tab: tab.id, stage: 'ready', conversationId: target });
       tabs.push(tab);
+      if (!target) {
+        const ready = await waitFreshDesktopInputTarget(tab.id, input.id);
+        if (!ready || !await prepareDesktopInputTarget(ready, null)) continue;
+        offerDesktopInput(ready.id, { type: 'clf-desktop-input', id: input.id, conversationId: null,
+          ...(!target && projectEntryOf(input) ? { projectEntry: projectEntryOf(input) } : {}),
+          ...(input.directTurn ? { directTurn: input.directTurn } : {}),
+          ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}),
+          ...(input.lifetime ? { lifetime: input.lifetime } : {}) });
+      }
       continue;
     }
     if (!target && elected?.stage === 'preparing' && !tab.pendingUrl && matchesInput(input, tab)) {
