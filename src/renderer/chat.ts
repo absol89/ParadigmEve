@@ -38,7 +38,8 @@ import {
   CHAT_ACTIVE_MS,
   CONTINUATION_MARKER,
   TURN_OUTCOME_LABELS,
-  foldProgress
+  foldProgress,
+  isOllamaConversation
 } from '../shared/session.js';
 import { chronological } from '../shared/chronology.js';
 import {
@@ -3998,7 +3999,16 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   // The chat owns its history; the provider only answers this turn.
   const provider = composerProvider();
   if (provider && !provider.model) { toast(t("Choose an Ollama model, then send again.")); return false; }
-  const modelSettings = provider ? { model: provider.model, reasoningEffort: null } : confirmedComposerModel() ?? await ensureComposerModel();
+  const selectedSession = selectedId ? sessions.find(row => row.id === selectedId) : null;
+  // An Ollama-born chat has no ChatGPT conversation yet, so there is no existing ChatGPT picker
+  // state to discover or confirm. Its first ChatGPT turn opens a fresh provider conversation;
+  // leave that page on native/default and let the delivery receipt bind the real conversation id.
+  // Waiting on model discovery here can only inspect unrelated ChatGPT tabs and blocks the draft
+  // before durable enqueue if that discovery is slow or unavailable.
+  const adoptingChatGpt = !provider && isOllamaConversation(selectedSession?.conversationId);
+  const modelSettings = adoptingChatGpt
+    ? { model: null, reasoningEffort: null }
+    : provider ? { model: provider.model, reasoningEffort: null } : confirmedComposerModel() ?? await ensureComposerModel();
   // Discovery can outlive navigation or draft edits. Only the latest unchanged
   // authored send may continue; a second click must never send the same text twice.
   if (discoveryGeneration !== composerDiscoveryGeneration || discoverySelection !== selectionGeneration || discoverySession !== selectedId ||
@@ -4008,7 +4018,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const sessionId = selectedId;
   const generation = selectionGeneration;
   // A turn that hands earlier history to a different provider asks first; main enforces it too.
-  const providerConsent = sessionId && providerSwitchPossible(sessions.find(row => row.id === sessionId), provider)
+  const providerConsent = sessionId && providerSwitchPossible(selectedSession, provider)
     ? await confirmProviderSwitch(sessionId, provider) : undefined;
   if (providerConsent === false) return false;
   if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;

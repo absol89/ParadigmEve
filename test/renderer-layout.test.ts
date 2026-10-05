@@ -606,6 +606,18 @@ describe('the session timeline', () => {
   });
 });
 
+describe('provider adoption in the composer', () => {
+  it('does not wait for existing-chat model discovery when an Ollama-born chat first switches to ChatGPT', async () => {
+    const chat = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat.ts'), 'utf8');
+    const start = chat.indexOf('async function sendComposer');
+    const end = chat.indexOf('// ------------------------------------------------------------------- wiring', start);
+    const body = chat.slice(start, end);
+    expect(body).toContain('isOllamaConversation(selectedSession?.conversationId)');
+    expect(body).toContain("? { model: null, reasoningEffort: null }");
+    expect(body.indexOf('const adoptingChatGpt')).toBeLessThan(body.indexOf('await ensureComposerModel()'));
+  });
+});
+
 describe('the window as a whole', () => {
   it('keeps workspace settings in a scrollable column', () => {
     expect(rule("[data-panel='home']")).toContain('overflow-y: auto');
