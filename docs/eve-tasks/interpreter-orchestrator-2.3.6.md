@@ -62,6 +62,21 @@ Legacy Plans (no revision/sources/parent) stay readable unchanged.
   then shows the new one only.
 - A revision waits for the user's **Send to orchestrator** unless auto-send is on (Advanced settings).
 
+## Workers get their own chat and Plan
+
+When the orchestrator delegates a claimed step, the worker runs in its own sub-chat (a GPT Chat
+worker chat, or an Ollama worker), never in the main chat. That keeps the main chat about the user's
+focused Plan instead of filling it with execution detail.
+
+- The worker chat starts with the **shared Eve context** (Vault, pinned context, the step's intent and
+  constraints), not the main chat's transcript.
+- It gets **its own Plan**, created from the claimed step: `provenance.sourcePlanId` = the main Plan,
+  plus a source link to the exact step id and revision it came from. The one-active-Plan-per-chat rule
+  applies to the worker chat too.
+- The worker may read the step's sources and the archive as background, like the orchestrator.
+- Its result and evidence update the parent step's state; the main chat sees one status change on its
+  Plan, not the worker's working turns. The worker chat stays inspectable from that step.
+
 ## Orchestrator contract (prompt sketch)
 
 > Act on Plan "<title>" step <id> at revision <n>. Its sources are messages <ids>; read them and the
@@ -109,6 +124,8 @@ When a new revision touches a claimed step, Eve decides by the size of the chang
 - Every step's sources resolve to archived messages.
 - Legacy Plans load unchanged.
 - With approval on, the orchestrator cannot claim from an unsent revision; with it off, it can at once.
+- A delegated step opens a worker chat whose Plan has `sourcePlanId` and a step/revision link back;
+  the worker's turns never appear in the main chat, and its result updates the parent step.
 - A chat's Plan revisions stay one Plan; a second Plan cannot open while the first is active, and after
   it ends the chat shows only the new one. A Thread lists Plans from several chats with their sources.
 - The early archive import is resumable, skips chats already recorded, and is skipped when the
