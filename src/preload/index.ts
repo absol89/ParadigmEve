@@ -185,7 +185,7 @@ const api = {
   // The same, for a custom provider endpoint. Optional: keyless local servers need nothing stored.
   setCustomProviderKey: (value: string) => call<AppState>('secret:set', { value, key: 'customProviderApiKey' }),
   setOllamaKey: (value: string) => call<AppState>('secret:set', { value, key: 'ollamaApiKey' }),
-  listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud' }>>('ollama:models'),
+  listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud'; cloud: boolean; installed: boolean; vision?: boolean }>>('ollama:models'),
   providerPreview: (id: string, provider: { id: 'ollama'; model: string } | null) =>
     call<ProviderSwitchPreview>('sessions:providerPreview', { id, provider }),
   setSessionLocalOnly: (id: string, localOnly: boolean) => call<SessionSummary | null>('sessions:setLocalOnly', { id, localOnly }),

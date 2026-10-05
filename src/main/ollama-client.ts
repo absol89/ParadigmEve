@@ -66,13 +66,106 @@ function timeoutSignal(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+/** The public Ollama Cloud catalog. Listing it needs no key; using its models does. */
+export const OLLAMA_CLOUD_CATALOG = 'https://ollama.com/api/tags';
+
 export interface OllamaModelChoice {
+  /** The exact id to send for this endpoint. */
   id: string;
+  /** Runs on Ollama's servers (a cloud model), even when reached through the local app. */
+  cloud: boolean;
+  /** Already on this computer (a pulled model or cloud stub). False for a cloud catalog entry. */
+  installed: boolean;
+  /** The model declares image input. Unknown when absent. */
+  vision?: boolean;
 }
 
-/** The provider's live model list. Exact ids, newest-first order as the provider returns it. */
+/** Ids this process has seen marked as cloud by the provider itself (`remote_host`, catalog). */
+const knownCloud = new Set<string>();
+/** Whether the provider marked this exact model id as a cloud model in a listing. */
+export function knownCloudModel(id: string): boolean {
+  return knownCloud.has(id);
+}
+
+/**
+ * The local app's name for a cloud catalog model: `kimi-k3` → `kimi-k3:cloud`,
+ * `mistral-large-3:675b` → `mistral-large-3:675b-cloud` (Ollama's own convention).
+ */
+export function localCloudName(catalogName: string): string {
+  return catalogName.includes(':') ? `${catalogName}-cloud` : `${catalogName}:cloud`;
+}
+
+interface TagsModel { name?: unknown; remote_host?: unknown; remote_model?: unknown; capabilities?: unknown }
+
+async function tags(url: string, endpoint: string, fetchImpl: typeof fetch, timeoutMs = REQUEST_TIMEOUT_MS): Promise<TagsModel[]> {
+  const response = await fetchImpl(url, {
+    method: 'GET',
+    redirect: 'error',
+    headers: await ollamaHeaders(endpoint),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  if (!response.ok) throw httpError(response.status, await response.text().catch(() => ''));
+  const payload = await boundedJson(response, MAX_LIST_BYTES * 4) as { models?: unknown };
+  if (!Array.isArray(payload?.models)) throw new Error('OLLAMA_PROTOCOL_ERROR: model list had no models array');
+  return payload.models as TagsModel[];
+}
+
+function validId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 160;
+}
+
+/**
+ * Every model the user can pick, local and cloud.
+ *
+ * The local app's OpenAI-compatible `/v1/models` lists only pulled models, so cloud models the
+ * user never pulled were invisible. Read the native `/api/tags` instead (it marks cloud stubs with
+ * `remote_host` and declares capabilities) and add the public Ollama Cloud catalog under the local
+ * app's cloud names; picking one pulls its tiny stub on first use. A direct HTTPS endpoint such as
+ * ollama.com is all cloud. Falls back to `/v1/models` when `/api/tags` is unavailable.
+ */
 export async function listOllamaModels(fetchImpl: typeof fetch = globalThis.fetch): Promise<OllamaModelChoice[]> {
   const endpoint = requireEndpoint();
+  const remote = endpoint.startsWith('https://');
+  let installed: TagsModel[];
+  try {
+    installed = await tags(`${nativeBase(endpoint)}/api/tags`, endpoint, fetchImpl);
+  } catch (error) {
+    if ((error as Error).message.startsWith('OLLAMA_UNAUTHORIZED')) throw error;
+    return (await listOpenAiModels(endpoint, fetchImpl)).map((id) => ({ id, cloud: remote || isCloudName(id), installed: true }));
+  }
+  const out: OllamaModelChoice[] = [];
+  const seen = new Set<string>();
+  const remoteModels = new Set<string>();
+  for (const row of installed) {
+    if (!validId(row.name) || seen.has(row.name)) continue;
+    seen.add(row.name);
+    const cloud = remote || typeof row.remote_host === 'string' || isCloudName(row.name);
+    if (typeof row.remote_model === 'string') remoteModels.add(row.remote_model);
+    const capabilities = Array.isArray(row.capabilities) ? row.capabilities : null;
+    out.push({ id: row.name, cloud, installed: true, ...(capabilities ? { vision: capabilities.includes('vision') } : {}) });
+  }
+  if (!remote) {
+    try {
+      for (const row of await tags(OLLAMA_CLOUD_CATALOG, OLLAMA_CLOUD_CATALOG, fetchImpl, 10_000)) {
+        if (!validId(row.name) || remoteModels.has(row.name)) continue;
+        const id = localCloudName(row.name);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push({ id, cloud: true, installed: false });
+      }
+    } catch {
+      // The catalog is a convenience: offline or blocked, the installed models still list.
+    }
+  }
+  for (const choice of out) if (choice.cloud) knownCloud.add(choice.id);
+  return out;
+}
+
+function isCloudName(id: string): boolean {
+  return /(?:^|[:-])cloud$/i.test(id.trim());
+}
+
+async function listOpenAiModels(endpoint: string, fetchImpl: typeof fetch): Promise<string[]> {
   const response = await fetchImpl(`${endpoint}/models`, {
     method: 'GET',
     redirect: 'error',
@@ -85,9 +178,31 @@ export async function listOllamaModels(fetchImpl: typeof fetch = globalThis.fetc
   const ids = new Set<string>();
   for (const row of payload.data) {
     const id = (row as { id?: unknown })?.id;
-    if (typeof id === 'string' && id.trim() && id.length <= 160) ids.add(id.trim());
+    if (validId(id)) ids.add(id.trim());
   }
-  return [...ids].map((id) => ({ id }));
+  return [...ids];
+}
+
+/**
+ * Makes a cloud model usable through the local app: a model picked from the cloud catalog is
+ * pulled once (only a small stub; the model runs on Ollama's servers). Local models and direct
+ * HTTPS endpoints need nothing. Never pulls a local (on-device) model, which can be gigabytes.
+ */
+export async function ensureOllamaModel(model: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<void> {
+  const endpoint = requireEndpoint();
+  if (endpoint.startsWith('https://') || !(isCloudName(model) || knownCloud.has(model))) return;
+  const present = await tags(`${nativeBase(endpoint)}/api/tags`, endpoint, fetchImpl).catch(() => null);
+  // An unreadable list proves nothing either way: send the turn and let a real error speak.
+  if (!present || present.some((row) => row.name === model)) return;
+  const response = await fetchImpl(`${nativeBase(endpoint)}/api/pull`, {
+    method: 'POST',
+    redirect: 'error',
+    headers: await ollamaHeaders(endpoint),
+    body: JSON.stringify({ model, stream: false }),
+    signal: AbortSignal.timeout(60_000)
+  });
+  if (!response.ok) throw httpError(response.status, await response.text().catch(() => ''));
+  await response.text().catch(() => '');
 }
 
 /**

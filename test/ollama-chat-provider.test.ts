@@ -55,6 +55,7 @@ const realFetch = globalThis.fetch;
 const ollamaRequests: Array<{ url: string; body: any; headers: Record<string, string> }> = [];
 let replyText = 'Hello from Ollama';
 let visionModels = new Set<string>(['llava']);
+let pulled: string[] = [];
 function sse(chunks: string[]): Response {
   const body = chunks.map((chunk) => `data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
@@ -65,6 +66,16 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
   const body = init?.body ? JSON.parse(String(init.body)) : null;
   ollamaRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
   if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: 'gemma4:cloud' }, { id: 'llama3.2' }, { id: 'llava' }] });
+  // The local app: pulled models only, cloud stubs marked by remote_host.
+  if (url === 'http://127.0.0.1:11434/api/tags') return Response.json({ models: [
+    { name: 'gemma4:cloud', remote_host: 'https://ollama.com', remote_model: 'gemma4:31b', capabilities: ['completion', 'vision'] },
+    { name: 'llama3.2', capabilities: ['completion'] },
+    { name: 'llava', capabilities: ['completion', 'vision'] },
+    ...pulled.map(name => ({ name, remote_host: 'https://ollama.com', capabilities: ['completion'] }))
+  ] });
+  // The public cloud catalog, by remote names.
+  if (url === 'https://ollama.com/api/tags') return Response.json({ models: [{ name: 'gemma4:31b' }, { name: 'kimi-k3' }, { name: 'mistral-large-3:675b' }] });
+  if (url.endsWith('/api/pull')) { pulled.push(body.model); return Response.json({ status: 'success' }); }
   if (url.endsWith('/api/show')) return Response.json({ capabilities: visionModels.has(body.model) ? ['completion', 'vision'] : ['completion'] });
   if (url.endsWith('/v1/chat/completions')) return sse([replyText.slice(0, 5), replyText.slice(5)]);
   return new Response('not found', { status: 404 });
@@ -106,6 +117,7 @@ beforeEach(async () => {
   await writeDurableNow('session-input', []);
   input.resetInputForTests();
   ollamaRequests.length = 0;
+  pulled = [];
   replyText = 'Hello from Ollama';
   await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, enabled: false } });
 });
@@ -255,10 +267,40 @@ it('keeps a local-only chat on this computer and labels cloud models honestly', 
 
   const models = await handlers.get('ollama:models')!(rendererEvent, undefined);
   expect(models.data).toEqual([
-    { id: 'gemma4:cloud', route: 'ollama-cloud' },
-    { id: 'llama3.2', route: 'ollama-local' },
-    { id: 'llava', route: 'ollama-local' }
+    { id: 'gemma4:cloud', cloud: true, installed: true, vision: true, route: 'ollama-cloud' },
+    { id: 'llama3.2', cloud: false, installed: true, vision: false, route: 'ollama-local' },
+    { id: 'llava', cloud: false, installed: true, vision: true, route: 'ollama-local' },
+    // The cloud catalog under the local app's cloud names; gemma4:31b is already the gemma4:cloud stub.
+    { id: 'kimi-k3:cloud', cloud: true, installed: false, route: 'ollama-cloud' },
+    { id: 'mistral-large-3:675b-cloud', cloud: true, installed: false, route: 'ollama-cloud' }
   ]);
+});
+
+it('pulls a cloud model picked from the catalog before its first turn, never a local model', async () => {
+  await handlers.get('ollama:models')!(rendererEvent, undefined);
+  const id = randomUUID();
+  expect((await send({ id, provider: 'ollama', model: 'kimi-k3:cloud', text: 'Hello cloud' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  const row = (await input.listInputs()).find(entry => entry.id === id)!;
+  await finished(row.deliveredSessionId!, `ollama-turn:${id}`);
+  expect(pulled).toEqual(['kimi-k3:cloud']);
+  expect(ollamaRequests.find(request => request.url.endsWith('/chat/completions'))?.body.model).toBe('kimi-k3:cloud');
+
+  const local = randomUUID();
+  expect((await send({ id: local, provider: 'ollama', model: 'llama3.2', text: 'Hello local' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(entry => entry.id === local)?.state).toBe('sent'));
+  expect(pulled).toEqual(['kimi-k3:cloud']);
+});
+
+it('starts a new chat locked to this computer when Local only is ticked before the first send', async () => {
+  expect((await send({ provider: 'ollama', model: 'gemma4:cloud', localOnly: true })).error).toMatch(/model on this computer/);
+  const id = randomUUID();
+  expect((await send({ id, provider: 'ollama', model: 'llama3.2', localOnly: true, text: 'Private start' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  const session = (await getSession((await input.listInputs()).find(row => row.id === id)!.deliveredSessionId!))!;
+  expect(session.localOnly).toBe(true);
+  // An existing chat changes the lock in its options, not on a send.
+  expect((await send({ sessionId: session.id, provider: 'ollama', model: 'llama3.2', localOnly: true })).ok).toBe(false);
 });
 
 it('sends the stored Ollama key only to an HTTPS endpoint', async () => {

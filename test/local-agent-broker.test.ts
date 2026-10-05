@@ -87,8 +87,10 @@ describe('production Ollama worker executor', () => {
 
     const browser = vi.fn();
     const dropBrowser = onExecutorSpawnRequest('gpt-chat', browser);
-    const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-      Response.json({ choices: [{ message: { content: 'OLLAMA_WORKER_OK' } }] }));
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
+      String(input).endsWith('/api/tags')
+        ? Response.json({ models: [{ name: 'gemma4:cloud', remote_host: 'https://ollama.com' }] })
+        : Response.json({ choices: [{ message: { content: 'OLLAMA_WORKER_OK' } }] }));
     vi.stubGlobal('fetch', fetch);
     const stop = startOllamaWorkerExecutor();
     try {
@@ -103,9 +105,12 @@ describe('production Ollama worker executor', () => {
       }));
       expect(browser).not.toHaveBeenCalled();
       expect(pendingCount('prime', started.runId)).toBe(1);
-      expect(fetch).toHaveBeenCalledTimes(1);
-      expect(String(fetch.mock.calls[0]?.[0])).toBe('http://127.0.0.1:11434/v1/chat/completions');
-      const request = fetch.mock.calls[0]?.[1] as RequestInit;
+      // The cloud stub is already on this computer: one tag check, no pull, one chat request.
+      expect(fetch.mock.calls.map(call => String(call[0]))).toEqual([
+        'http://127.0.0.1:11434/api/tags',
+        'http://127.0.0.1:11434/v1/chat/completions'
+      ]);
+      const request = fetch.mock.calls[1]?.[1] as RequestInit;
       expect(JSON.parse(String(request.body))).toMatchObject({ model: 'gemma4:cloud', stream: false });
     } finally {
       stop();

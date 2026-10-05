@@ -21,7 +21,7 @@ import type { InputAttachment, InputImage } from '../../shared/input.js';
 import { readAsset, readCanonicalTranscriptEvents, readOverflowText } from './store.js';
 import { readStagedAttachment } from './input-attachments.js';
 import { archivableAttachment } from './input-history.js';
-import { resolveOllamaEndpoint, type OllamaChatContent, type OllamaChatMessage } from '../ollama-client.js';
+import { knownCloudModel, resolveOllamaEndpoint, type OllamaChatContent, type OllamaChatMessage } from '../ollama-client.js';
 
 export type ProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud';
 
@@ -40,7 +40,7 @@ export function isOllamaCloudModel(model: string): boolean {
 /** Where a turn's history actually goes. A loopback daemon serving a cloud model is still cloud. */
 export function providerRoute(provider: ChatProvider | null | undefined, endpoint = resolveOllamaEndpoint()): ProviderRoute {
   if (!provider) return 'chatgpt';
-  if (!endpoint || endpoint.startsWith('https://') || isOllamaCloudModel(provider.model)) return 'ollama-cloud';
+  if (!endpoint || endpoint.startsWith('https://') || isOllamaCloudModel(provider.model) || knownCloudModel(provider.model)) return 'ollama-cloud';
   return 'ollama-local';
 }
 
@@ -392,8 +392,14 @@ export async function admitChatProvider(input: {
   provider?: 'ollama';
   model: string | null;
   providerConsent?: ProviderSwitchConsent;
+  localOnly?: true;
 }, session: { id: string; localOnly?: boolean } | null): Promise<void> {
-  if (!input.sessionId) return;
+  if (!input.sessionId) {
+    if (input.localOnly && providerRoute(input.provider === 'ollama' && input.model ? { id: 'ollama', model: input.model } : null) !== 'ollama-local') {
+      throw new Error('This new chat is local only, so it needs a model on this computer, not a cloud model.');
+    }
+    return;
+  }
   if (!session) throw new Error('This chat no longer exists');
   const provider: ChatProvider | null = input.provider === 'ollama' && input.model ? { id: 'ollama', model: input.model } : null;
   await assertProviderSwitchAllowed(session.id, provider, session.localOnly === true, input.providerConsent);

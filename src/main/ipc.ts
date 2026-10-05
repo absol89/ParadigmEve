@@ -1369,7 +1369,7 @@ export function registerIpc(
   // ---- Ollama as a chat provider. The chat owns its history; these only read or gate it.
   handle('ollama:models', async () => {
     const models = await listOllamaModels();
-    return models.map((model) => ({ ...model, route: providerRoute({ id: 'ollama', model: model.id }) }));
+    return models.map((model) => ({ ...model, route: model.cloud ? 'ollama-cloud' as const : providerRoute({ id: 'ollama', model: model.id }) }));
   });
   handle('sessions:providerPreview', async (payload) => {
     const { id, provider } = sessionIdArg.extend({

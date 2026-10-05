@@ -1823,5 +1823,12 @@
   "Plan sent to the orchestrator": "Plan enviado al orquestador",
   "Why: {0}": "Por qué: {0}",
   "Send new Plan revisions to the orchestrator automatically": "Enviar automáticamente las nuevas revisiones del plan al orquestador",
-  "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Desactivado: cada revisión espera a que pulses Enviar al orquestador en el plan del chat. Activado: el orquestador puede actuar sobre una revisión en cuanto se escribe."
+  "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Desactivado: cada revisión espera a que pulses Enviar al orquestador en el plan del chat. Activado: el orquestador puede actuar sobre una revisión en cuanto se escribe.",
+  "Local only: this computer, never the cloud": "Solo local: esta computadora, nunca la nube",
+  "Search models": "Buscar modelos",
+  "Search Ollama models": "Buscar modelos de Ollama",
+  "Cloud · not added yet": "Nube · aún no añadido",
+  "Can read images": "Puede leer imágenes",
+  "No models on this computer. Pull one with ollama pull, or turn Local only off.": "No hay modelos en esta computadora. Descarga uno con ollama pull o desactiva Solo local.",
+  "No models match.": "Ningún modelo coincide."
 }

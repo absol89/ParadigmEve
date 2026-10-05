@@ -22,12 +22,12 @@ import {
   setLocalTurnProbe,
   type InputEntry
 } from './input.js';
-import { appendEvent, createSession, findSessionByConversation, getSession, listAllSessions, upsertMessageEvent } from './store.js';
+import { appendEvent, createSession, findSessionByConversation, getSession, listAllSessions, setSessionLocalOnly, upsertMessageEvent } from './store.js';
 import { assignSessionProject } from '../projects.js';
 import { userTitle } from './title.js';
 import { getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
-import { ollamaModelCapabilities, streamOllamaChat } from '../ollama-client.js';
+import { ensureOllamaModel, ollamaModelCapabilities, streamOllamaChat } from '../ollama-client.js';
 import { ollamaConversation, ProviderCapabilityError } from './provider-history.js';
 import { OLLAMA_CONVERSATION_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
 
@@ -78,6 +78,7 @@ async function sessionFor(entry: InputEntry, conversationId: string, provider: C
     provider
   });
   if (entry.projectId) await assignSessionProject(created.id, entry.projectId);
+  if (entry.localOnly) await setSessionLocalOnly(created.id, true);
   return created.id;
 }
 
@@ -161,6 +162,7 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
   try {
     await appendEvent(sessionId, { time: startedAt, source: 'app', kind: 'turn_start', turnId, detail: `Ollama · ${provider.model}` });
     changed();
+    await ensureOllamaModel(provider.model);
     const capabilities = await ollamaModelCapabilities(provider.model);
     const vision = capabilities ? capabilities.includes('vision') : null;
     const messages = await ollamaConversation(sessionId, vision, SYSTEM_PROMPT);

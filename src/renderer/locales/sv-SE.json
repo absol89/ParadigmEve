@@ -1829,5 +1829,12 @@
   "Plan sent to the orchestrator": "Planen har skickats till orkestreraren",
   "Why: {0}": "Varför: {0}",
   "Send new Plan revisions to the orchestrator automatically": "Skicka nya planversioner till orkestreraren automatiskt",
-  "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Av: varje version väntar på att du trycker Skicka till orkestreraren på chattens plan. På: orkestreraren får arbeta med en version så snart den har skrivits."
+  "Off: each revision waits for your Send to orchestrator on the chat's Plan. On: the orchestrator may act on a revision as soon as it is written.": "Av: varje version väntar på att du trycker Skicka till orkestreraren på chattens plan. På: orkestreraren får arbeta med en version så snart den har skrivits.",
+  "Local only: this computer, never the cloud": "Endast lokalt: den här datorn, aldrig molnet",
+  "Search models": "Sök modeller",
+  "Search Ollama models": "Sök Ollama-modeller",
+  "Cloud · not added yet": "Moln · inte tillagd än",
+  "Can read images": "Kan läsa bilder",
+  "No models on this computer. Pull one with ollama pull, or turn Local only off.": "Inga modeller på den här datorn. Hämta en med ollama pull, eller stäng av Endast lokalt.",
+  "No models match.": "Inga modeller matchar."
 }

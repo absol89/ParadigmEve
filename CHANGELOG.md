@@ -20,6 +20,12 @@ operation.
 ### Added
 
 - *(in progress)* Interpreter → Plan → orchestrator → workers. See `docs/eve-tasks/interpreter-orchestrator-2.3.6.md`.
+- Ollama model discovery lists every model you can use. The local Ollama app's `/v1/models` showed only models
+  already pulled, so cloud models were invisible. The picker now reads the app's own model list (which marks cloud
+  models exactly and says which read images), adds the public Ollama Cloud catalog under the app's cloud names, and
+  pulls a cloud model's small stub on its first use. Models are grouped "On this computer" and "Ollama Cloud", with a
+  search box, and a visible **Local only** checkbox filters to local models: for a new chat it locks the chat to this
+  computer from its first message, and for an existing chat it is that chat's lock.
 - Plan model for that pipeline: Plans carry a revision; steps can nest (4 levels, 100 per level, 400 per Plan)
   and carry their own intent, constraints and exact source messages (Voice, typed or tool). An executor claims a
   step at an exact revision; the claim keeps the wording it started from and is marked superseded when a later

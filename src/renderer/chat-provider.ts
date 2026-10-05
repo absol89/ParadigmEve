@@ -13,7 +13,7 @@ import { repaintComposerLabel, setComposerLabelOverride } from './chat-models.js
 import type { ChatProvider, SessionSummary } from '../shared/session.js';
 
 type Route = 'chatgpt' | 'ollama-local' | 'ollama-cloud';
-interface OllamaChoice { id: string; route: Route }
+interface OllamaChoice { id: string; route: Route; cloud?: boolean; installed?: boolean; vision?: boolean }
 export interface ProviderConsent { to: Route; messages: number; images: number; files: number }
 
 let models: OllamaChoice[] = [];
@@ -23,6 +23,16 @@ let scope: string | null = null;
 /** Per chat (null = New chat): the provider picked for the next turn. */
 const choices = new Map<string | null, ChatProvider | null>();
 let lastOllamaModel: string | null = null;
+/** Local only for the chat being composed: the selected chat's lock, or the choice for a new chat. */
+let newChatLocalOnly = false;
+let selectedLocalOnly = false;
+let modelSearch = '';
+const localOnlyNow = () => scope === null ? newChatLocalOnly : selectedLocalOnly;
+
+/** For a new chat started on Ollama with Local only ticked: the lock goes with its first message. */
+export function composerLocalOnlyForNewChat(): boolean {
+  return scope === null && newChatLocalOnly;
+}
 
 function current(): ChatProvider | null {
   return choices.has(scope) ? choices.get(scope)! : null;
@@ -45,6 +55,7 @@ export function applyComposerProvider(nextScope: string | null, session: Session
   scope = nextScope;
   if (!choices.has(scope)) choices.set(scope, session?.provider ? { ...session.provider } : null);
   const localOnly = session?.localOnly === true;
+  selectedLocalOnly = localOnly;
   const row = $('localOnlyRow');
   row.hidden = !session;
   $<HTMLInputElement>('chatLocalOnly').checked = localOnly;
@@ -86,16 +97,30 @@ function paint(): void {
     : modelsState === 'error' ? modelsError || t("Ollama is not reachable")
     : modelsState === 'ready' ? (models.length ? t("{0} models", [String(models.length)]) : t("No models installed"))
     : t("Not loaded yet"));
-  const list = $('ollamaModelChoices');
-  list.replaceChildren(...models.map((choice) => {
-    const button = el('button', 'btn model-choice') as HTMLButtonElement;
-    button.type = 'button';
-    button.dataset.keepMenu = 'true';
-    button.setAttribute('aria-pressed', provider?.model === choice.id ? 'true' : 'false');
-    button.append(el('span', '', choice.id), el('span', `route-badge${choice.route === 'ollama-local' ? ' is-local' : ''}`, () => routeLabel(choice.route)));
-    button.onclick = () => choose({ id: 'ollama', model: choice.id });
-    return button;
-  }));
+  const localOnly = localOnlyNow();
+  $<HTMLInputElement>('ollamaLocalOnly').checked = localOnly;
+  const search = $<HTMLInputElement>('ollamaModelSearch');
+  search.hidden = models.length <= 10;
+  const query = modelSearch.trim().toLowerCase();
+  const visible = models.filter((choice) => (!localOnly || choice.route === 'ollama-local') && (!query || choice.id.toLowerCase().includes(query)));
+  const button = (choice: OllamaChoice): HTMLButtonElement => {
+    const node = el('button', `btn model-choice${choice.installed === false ? ' is-not-installed' : ''}`) as HTMLButtonElement;
+    node.type = 'button';
+    node.dataset.keepMenu = 'true';
+    node.setAttribute('aria-pressed', provider?.model === choice.id ? 'true' : 'false');
+    node.append(el('span', '', choice.id), el('span', `route-badge${choice.route === 'ollama-local' ? ' is-local' : ''}`,
+      () => choice.installed === false ? t("Cloud · not added yet") : routeLabel(choice.route)));
+    if (choice.vision) node.title = t("Can read images");
+    node.onclick = () => choose({ id: 'ollama', model: choice.id });
+    return node;
+  };
+  const local = visible.filter((choice) => choice.route === 'ollama-local');
+  const cloud = visible.filter((choice) => choice.route !== 'ollama-local');
+  const groups: HTMLElement[] = [];
+  if (local.length) groups.push(el('div', 'ollama-group-title', () => t("On this computer")), ...local.map(button));
+  if (cloud.length) groups.push(el('div', 'ollama-group-title', () => t("Ollama Cloud")), ...cloud.map(button));
+  if (!groups.length && modelsState === 'ready') groups.push(el('p', 'muted', () => localOnly ? t("No models on this computer. Pull one with ollama pull, or turn Local only off.") : t("No models match.")));
+  $('ollamaModelChoices').replaceChildren(...groups);
   repaintComposerLabel();
 }
 
@@ -154,12 +179,33 @@ export function initChatProvider(): void {
     });
   }
   $('refreshOllamaModels').addEventListener('click', () => void loadModels());
+  $<HTMLInputElement>('ollamaModelSearch').addEventListener('input', () => {
+    modelSearch = $<HTMLInputElement>('ollamaModelSearch').value;
+    paint();
+  });
+  $<HTMLInputElement>('ollamaLocalOnly').addEventListener('change', async () => {
+    const box = $<HTMLInputElement>('ollamaLocalOnly');
+    if (scope === null) {
+      newChatLocalOnly = box.checked;
+    } else {
+      const updated = await run(window.api.setSessionLocalOnly(scope, box.checked));
+      if (!updated) { box.checked = !box.checked; return; }
+      selectedLocalOnly = box.checked;
+      $<HTMLInputElement>('chatLocalOnly').checked = box.checked;
+    }
+    // A cloud model cannot stay selected in a local-only chat.
+    const current = choices.get(scope);
+    if (box.checked && current && routeOf(current.model) === 'ollama-cloud') choices.set(scope, { id: 'ollama', model: '' });
+    paint();
+  });
   $<HTMLInputElement>('chatLocalOnly').addEventListener('change', async () => {
     const box = $<HTMLInputElement>('chatLocalOnly');
     if (!scope) { box.checked = false; return; }
     const updated = await run(window.api.setSessionLocalOnly(scope, box.checked));
     if (!updated) box.checked = !box.checked;
-    else toast(box.checked ? t("This chat is now local only") : t("Local only is off for this chat"));
+    else selectedLocalOnly = box.checked;
+    if (updated) paint();
+    if (updated) toast(box.checked ? t("This chat is now local only") : t("Local only is off for this chat"));
   });
   paint();
 }

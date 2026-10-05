@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel } from './chat-models.js';
-import { applyComposerProvider, composerProvider, confirmProviderSwitch, initChatProvider, providerSwitchPossible } from './chat-provider.js';
+import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
@@ -4022,7 +4022,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
     ? await confirmProviderSwitch(sessionId, provider) : undefined;
   if (providerConsent === false) return false;
   if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
-  const providerIntent = provider ? { provider: 'ollama' as const } : {};
+  const providerIntent = provider ? { provider: 'ollama' as const, ...(composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
   const consentIntent = providerConsent ? { providerConsent } : {};
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
   const mode = chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;

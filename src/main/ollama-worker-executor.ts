@@ -22,7 +22,7 @@ import { effectiveCapabilities, getConfig } from './config.js';
 import { localAgentCoreTools } from './local-agent-tools.js';
 import { runLocalAgent } from './local-agent-runtime.js';
 import { createOllamaAgentModelRuntime } from './ollama-agent-runtime.js';
-import { resolveOllamaEndpoint } from './ollama-client.js';
+import { ensureOllamaModel, resolveOllamaEndpoint } from './ollama-client.js';
 import { logInfo, logWarn } from './logger.js';
 import type { ToolContext } from './mcp/kernel.js';
 
@@ -72,6 +72,7 @@ async function execute(worker: WorkerSpawn): Promise<void> {
 
   try {
     const settings = getConfig().agentRuntime.ollama;
+    await ensureOllamaModel(settings.model);
     const tools = localAgentCoreTools(coreContext, principal);
     const result = await runLocalAgent({
       backend: 'ollama',
