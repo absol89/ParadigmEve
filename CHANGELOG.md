@@ -13,6 +13,14 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.6] — Talk, plan, delegate
+
+2.3.5 was an internal dogfood build and is not released publicly; its changes below ship with 2.3.6.
+
+### Added
+
+- *(in progress)* Interpreter → Plan → orchestrator → workers. See `docs/eve-tasks/interpreter-orchestrator-2.3.6.md`.
+
 ## [2.3.5] — Choose who answers
 
 ### Added
