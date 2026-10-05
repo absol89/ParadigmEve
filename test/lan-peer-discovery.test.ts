@@ -139,7 +139,10 @@ describe('LAN peer authenticated privacy boundary', () => {
     const key = randomBytes(32);
     const datagram = encodeLanPeerDatagram(announcement(), key);
     const wireText = datagram.toString('utf8');
-    expect(wireText).not.toContain('Eva');
+    // The nickname is three letters, and the ciphertext is random base64url: about one key in 500
+    // contains "Eva" by chance. Assert the structure instead of a substring that can occur by luck.
+    expect(Object.keys(JSON.parse(wireText) as Record<string, unknown>).sort()).toEqual(['ciphertext', 'magic', 'nonce', 'protocol', 'tag']);
+    expect(wireText).not.toContain('nickname');
     expect(wireText).not.toContain('Semantic review completed.');
     expect(decodeLanPeerDatagram(datagram, key)).toEqual(announcement());
   });
