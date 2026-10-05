@@ -13,7 +13,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AssetRef, FileChange, ToolOutcome } from '../../shared/session.js';
+import type { AssetRef, FileChange, ToolCallRecord, ToolOutcome } from '../../shared/session.js';
 import type { OutputPublication } from '../codex/unified-exec.js';
 import type { LocalAgentExecutionPrincipal } from '../local-agent-runtime.js';
 
@@ -32,6 +32,8 @@ export interface CallEvidence {
   running: boolean | null;
   /** Managed-process id when the command continues beyond one MCP response. */
   processSessionId: string | null;
+  /** Durable exec start-directory/capability evidence recorded on exec_command rows. */
+  execStart?: ToolCallRecord['execStart'] | null;
 }
 
 /**
@@ -106,7 +108,8 @@ export function emptyEvidence(): CallEvidence {
     timedOut: false,
     durationMs: null,
     running: null,
-    processSessionId: null
+    processSessionId: null,
+    execStart: null
   };
 }
 
@@ -281,6 +284,11 @@ export function noteCount(count: number): void {
 export function noteDetail(detail: string): void {
   const store = storage.getStore();
   if (store) store.evidence.detail = detail;
+}
+
+export function noteExecStart(start: NonNullable<ToolCallRecord['execStart']>): void {
+  const store = storage.getStore();
+  if (store) store.evidence.execStart = start;
 }
 
 export function noteProcess(result: {

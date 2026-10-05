@@ -134,7 +134,8 @@ import {
   noteChanges,
   noteCount,
   noteDetail,
-  noteExec
+  noteExec,
+  noteExecStart
 } from './call-context.js';
 import {
   awaitFreshCallOrigin,
@@ -793,7 +794,23 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           const workspace = currentWorkspace();
           const probes = [input.workdir, workspace?.virtual].filter((value): value is string => Boolean(value));
           const roots = await rootsForSelfMaintenance('exec_command', ctx.roots, probes);
-          const dir = await resolveCwd({ ...ctx, roots }, input.workdir);
+          const allowedRoots = roots.map((root) => root.name);
+          let dir;
+          try {
+            dir = await resolveCwd({ ...ctx, roots }, input.workdir);
+          } catch (error) {
+            noteExecStart({ allowedRoots, denied: true });
+            logWarn(
+              `exec_command start denied: requested=${JSON.stringify(input.workdir ?? null)} ` +
+              `allowedRoots=${allowedRoots.join(',') || '(none)'} reason=${error instanceof Error ? error.message : String(error)}`
+            );
+            throw error;
+          }
+          noteExecStart({
+            directory: dir.virtual,
+            root: dir.virtual.replace(/^[/\\]+/, '').split(/[/\\]/, 1)[0] || undefined,
+            allowedRoots
+          });
           const rawCommands = input.cmd === undefined ? input.cmds! : [input.cmd];
           const isBatch = input.cmd === undefined;
           for (const [index, rawCommand] of rawCommands.entries()) {

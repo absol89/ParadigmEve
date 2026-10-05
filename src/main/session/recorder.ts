@@ -1465,6 +1465,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       outcome: input.outcome,
       durationMs: input.durationMs,
       summary,
+      ...(evidence.execStart ? { execStart: evidence.execStart } : {}),
       ...(evidence.changes.length > 0 ? { changes: evidence.changes } : {}),
       ...(assets.length > 0 ? { assets } : {}),
       ...(input.endsActivity === true ? { endsActivity: true as const } : {})

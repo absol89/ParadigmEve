@@ -36,7 +36,7 @@ import {
 import { resetWorkspaces, setWorkspaceFor } from '../src/main/workspace.js';
 import { DEFAULT_CAPABILITIES, DESKTOP_CAPABILITIES, type Capabilities, type Root } from '../src/shared/types.js';
 import type { ToolOutcome } from '../src/shared/session.js';
-import { emptyEvidence, noteExec, noteOutcome, runInCallContext, type CallContext } from '../src/main/mcp/call-context.js';
+import { emptyEvidence, noteExec, noteExecStart, noteOutcome, runInCallContext, type CallContext } from '../src/main/mcp/call-context.js';
 import { observeRequestCorrelation } from '../src/main/session/correlation.js';
 import { WINDOWS_COMPUTER_METHODS, WINDOWS_COMPUTER_READ_METHODS } from '../src/shared/windows-computer.js';
 import { resetBlockedChatsForTests, setChatBlocked } from '../src/main/session/blocked-chats.js';
@@ -4496,6 +4496,42 @@ describe('the outcome a shell command is recorded with', () => {
       noteOutcome('ok');
     });
     expect(context.outcome).toBe('process_exit_nonzero');
+  });
+
+  it('records the approved virtual start directory instead of duplicating a native host path', () => {
+    const context: CallContext = {
+      startedAt: Date.now(),
+      transportKey: null,
+      agent: null,
+      caller: { transportKey: null, requestId: null, conversationId: null },
+      outcome: null,
+      evidence: emptyEvidence()
+    };
+    runInCallContext(context, () => noteExecStart({
+      directory: '/projects/ParadigmEve',
+      root: 'projects',
+      allowedRoots: ['projects', 'downloads']
+    }));
+    expect(context.evidence.execStart).toEqual({
+      directory: '/projects/ParadigmEve',
+      root: 'projects',
+      allowedRoots: ['projects', 'downloads']
+    });
+  });
+
+  it('records a denied start capability without pretending a child was spawned', () => {
+    const context: CallContext = {
+      startedAt: Date.now(),
+      transportKey: null,
+      agent: null,
+      caller: { transportKey: null, requestId: null, conversationId: null },
+      outcome: null,
+      evidence: emptyEvidence()
+    };
+    runInCallContext(context, () => noteExecStart({ allowedRoots: ['projects'], denied: true }));
+    expect(context.evidence.execStart).toEqual({ allowedRoots: ['projects'], denied: true });
+    expect(context.evidence.processSessionId).toBeNull();
+    expect(context.evidence.running).toBeNull();
   });
 });
 

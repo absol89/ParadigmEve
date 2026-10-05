@@ -197,6 +197,17 @@ export interface ToolCallRecord {
   outcome: ToolOutcome;
   durationMs: number;
   summary: ActivitySummary;
+  /** Resolved shell start capability. Native host paths are intentionally not duplicated here. */
+  execStart?: {
+    /** Virtual approved folder where the child was allowed to start, e.g. /projects/repo. */
+    directory?: string;
+    /** Approved root that owns the start directory. */
+    root?: string;
+    /** Root names available to this exact caller at admission time. */
+    allowedRoots: string[];
+    /** Eve refused the requested start directory before any child was spawned. */
+    denied?: true;
+  };
   /** Files this call demonstrably changed, with line counts where computable. */
   changes?: FileChange[];
   assets?: AssetRef[];
