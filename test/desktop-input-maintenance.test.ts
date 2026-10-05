@@ -998,11 +998,11 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-input-reuse-state'
       ? { safe: false, navigationEpoch: 1 } as never : { ok: true });
     h.create.mockImplementation(async ({ url: freshUrl, windowId }: { url: string; windowId?: number }) => {
-      const tab = { id: 8, pendingUrl: freshUrl, windowId } as Tab;
+      const tab = { id: 8, pendingUrl: freshUrl, windowId };
       h.tabs.push(tab);
       setTimeout(() => {
-        tab.url = freshUrl;
-        delete tab.pendingUrl;
+        (tab as Tab).url = freshUrl;
+        delete (tab as Tab).pendingUrl;
         void h.authorizeDocument({ tab: { id: tab.id }, documentId: 'fresh-input', frameId: 0, url: freshUrl }, { navigationEpoch: 1 });
       }, 0);
       return tab;
