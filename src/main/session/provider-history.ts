@@ -298,6 +298,7 @@ export async function chatGptCatchUp(sessionId: string, maxChars: number, imageS
   const preamble = [header, ...(omitted > 0 ? [`(${omitted} older turn(s) omitted for length; they remain in Eve's archive.)`] : []), ...kept, footer].join('\n\n');
 
   const images: InputImage[] = [];
+  const seenImageBytes = new Set<string>();
   const candidates = unseen.flatMap((turn) => turn.images).reverse();
   for (const image of candidates) {
     if (images.length >= imageSlots) break;
@@ -305,6 +306,11 @@ export async function chatGptCatchUp(sessionId: string, maxChars: number, imageS
     if (!webp) continue;
     const dataUrl = `data:image/webp;base64,${webp.toString('base64')}`;
     if (dataUrl.length > 512_000) continue;
+    // The same user image can exist in the canonical archive both as a native message asset and
+    // as an archived attachment copy with a different asset id. Provider catch-up is about visual
+    // content, not archive identities, so send identical normalized bytes only once.
+    if (seenImageBytes.has(dataUrl)) continue;
+    seenImageBytes.add(dataUrl);
     images.push({ name: `earlier-image-${images.length + 1}.webp`, dataUrl, history: true });
   }
   return { preamble, images };

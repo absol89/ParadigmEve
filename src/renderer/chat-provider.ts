@@ -65,10 +65,12 @@ export function applyComposerProvider(nextScope: string | null, session: Session
 }
 
 function choose(provider: ChatProvider | null): void {
-  const previous = current();
-  const changed = previous?.id !== provider?.id || previous?.model !== provider?.model || (!!previous !== !!provider);
   choices.set(scope, provider);
-  if (changed) explicitSwitchIntent.add(scope);
+  // `choose()` is only called by an explicit provider/model picker action. Do not infer whether
+  // that action "really changed" the provider from the renderer's cached choice: while another
+  // provider is answering, that cache can lag main. Main's authoritative preview decides whether
+  // consent is actually necessary; the user's picker action decides whether to ask it.
+  explicitSwitchIntent.add(scope);
   if (provider) lastOllamaModel = provider.model;
   paint();
 }

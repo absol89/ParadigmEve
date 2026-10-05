@@ -2142,6 +2142,7 @@ var CLF_DOM = (() => {
     return new Promise((resolve) => {
       let observer, timer;
       let ownedTiles = null;
+      const historyOnly = images.every((image) => !(image instanceof File) && image.history === true);
       const finish = (ok) => { observer?.disconnect(); clearTimeout(timer); resolve(ok); };
       const check = () => {
         if (!stillCurrent()) return finish(false);
@@ -2171,6 +2172,11 @@ var CLF_DOM = (() => {
           if (exactMatched && tiles.length === images.length && unmatched.length === history.length) ownedTiles = tiles;
         }
         if (!ownedTiles) return;
+        // ChatGPT can remount or replace image tiles while it normalizes an upload. For a
+        // history-only transfer, ownership is already fenced by: no prior composer attachments,
+        // exactly the requested number of new tiles, and no extra human-added tile. Rebind to the
+        // replacement nodes rather than treating a harmless React remount as upload failure.
+        if (historyOnly && tiles.length === images.length) ownedTiles = tiles;
         // The provider can rename report.md to report(1).md during processing.
         // Bind once by exact original names, then retain those exact remove controls.
         if (tiles.length !== ownedTiles.length || tiles.some(node => !ownedTiles.includes(node))) return finish(false);

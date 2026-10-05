@@ -728,6 +728,25 @@ describe('native image readiness', () => {
     }, { once: true });
     expect(await api.uploadImages([{ name: 'user.webp', dataUrl: 'data:image/webp;base64,YQ==' }])).toBe(false);
   });
+
+  it('keeps a history-only upload confirmed when ChatGPT remounts its attachment tile', async () => {
+    const input = upload();
+    const form = document.querySelector('form')!;
+    let first: HTMLButtonElement | null = null;
+    input.addEventListener('change', () => {
+      first = document.createElement('button');
+      first.setAttribute('aria-label', 'Remove file: image.png');
+      first.setAttribute('aria-busy', 'true');
+      form.append(first);
+    });
+    const result = api.uploadImages([{ name: 'earlier-image-1.webp', dataUrl: 'data:image/webp;base64,YQ==', history: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+    const replacement = document.createElement('button');
+    replacement.setAttribute('aria-label', 'Remove file: image.png');
+    first!.remove(); form.append(replacement);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toBe(true);
+  });
 });
 
 
