@@ -2155,12 +2155,20 @@ var CLF_DOM = (() => {
         if (tiles.length > images.length) return finish(false);
         if (!ownedTiles) {
           const unmatched = [...tiles];
-          if (images.every((image) => {
+          const exact = images.filter((image) => image instanceof File || image.history !== true);
+          const history = images.filter((image) => !(image instanceof File) && image.history === true);
+          const exactMatched = exact.every((image) => {
             const index = unmatched.findIndex((button) => composerFileName(button) === image.name);
             if (index < 0) return false;
             unmatched.splice(index, 1);
             return true;
-          })) ownedTiles = tiles;
+          });
+          // ChatGPT may immediately normalize an app-generated historical image's filename.
+          // Only synthetic history images get this relaxation: every ordinary attachment still
+          // matched by exact name, there are no extra new tiles, and every remaining tile maps
+          // one-for-one to one requested history image. A concurrent human-added extra tile still
+          // fails closed above because tiles.length would exceed images.length.
+          if (exactMatched && tiles.length === images.length && unmatched.length === history.length) ownedTiles = tiles;
         }
         if (!ownedTiles) return;
         // The provider can rename report.md to report(1).md during processing.

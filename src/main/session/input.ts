@@ -38,7 +38,11 @@ const inputArgsBase = z.object({
   automation: z.enum(['off', 'goal', 'loop']).optional(),
   objective: z.string().trim().max(16000).optional(),
   stages: z.array(z.string().trim().min(1).max(16000)).max(11).optional(),
-  images: z.array(z.object({ name: z.string().min(1).max(110), dataUrl: z.string().max(512100).regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/) })).max(4).optional(),
+  images: z.array(z.object({
+    name: z.string().min(1).max(110),
+    dataUrl: z.string().max(512100).regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/),
+    history: z.literal(true).optional()
+  }).strict()).max(4).optional(),
   attachments: z.array(attachmentSchema).max(20).optional(),
   id: z.string().uuid(),
   sessionId: z.string().min(8).max(64).nullable(),

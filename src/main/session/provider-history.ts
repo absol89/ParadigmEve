@@ -305,7 +305,7 @@ export async function chatGptCatchUp(sessionId: string, maxChars: number, imageS
     if (!webp) continue;
     const dataUrl = `data:image/webp;base64,${webp.toString('base64')}`;
     if (dataUrl.length > 512_000) continue;
-    images.push({ name: `earlier-image-${images.length + 1}.webp`, dataUrl });
+    images.push({ name: `earlier-image-${images.length + 1}.webp`, dataUrl, history: true });
   }
   return { preamble, images };
 }

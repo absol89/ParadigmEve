@@ -4,7 +4,12 @@ import type { ReasoningEffort } from './session.js';
 export type NativeChatMode = 'think';
 
 /** Normalized image bytes only. No local filesystem path crosses into the renderer. */
-export interface InputImage { name: string; dataUrl: string; }
+export interface InputImage {
+  name: string;
+  dataUrl: string;
+  /** Eve-generated provider catch-up image, not a user-authored attachment. */
+  history?: true;
+}
 /** Upload metadata without a local path. Outbox ids require immutable staging;
  * recorded native-message ids are presentation metadata and grant no file access. */
 export interface InputAttachment { id: string; name: string; size: number; mimeType: string; preview?: string; }

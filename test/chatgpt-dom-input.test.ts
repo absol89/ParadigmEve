@@ -20,7 +20,7 @@ interface DomApi {
   inspectModelSettings(current?: () => boolean, failure?: (reason: string) => void, nativeDefault?: () => void): Promise<Array<{id: string; label: string; efforts: string[]}> | null>;
   send(options?: { acceptanceTimeoutMs?: number; stillCurrent?: () => boolean; beforeSend?: () => Promise<boolean> }): Promise<boolean>;
   selectModelSettings(model: string | null, effort: string | null, current?: () => boolean): Promise<boolean>;
-  uploadImages(images: Array<{ name: string; dataUrl: string }>, current?: () => boolean, draft?: ReturnType<DomApi['captureComposerDraft']>, files?: File[]): Promise<boolean>;
+  uploadImages(images: Array<{ name: string; dataUrl: string; history?: true }>, current?: () => boolean, draft?: ReturnType<DomApi['captureComposerDraft']>, files?: File[]): Promise<boolean>;
 }
 let dom: JSDOM;
 let document: Document;
@@ -708,6 +708,25 @@ describe('native image readiness', () => {
     const second = document.createElement('button'); second.setAttribute('aria-label', 'Remove file: a.webp'); form.append(second);
     await vi.advanceTimersByTimeAsync(0);
     expect(await result).toBe(true);
+  });
+
+  it('accepts an immediately renamed synthetic history image but still fences ordinary attachments', async () => {
+    const input = upload();
+    const form = document.querySelector('form')!;
+    input.addEventListener('change', () => {
+      const history = document.createElement('button');
+      history.setAttribute('aria-label', 'Remove file: image.png');
+      form.append(history);
+    });
+    expect(await api.uploadImages([{ name: 'earlier-image-1.webp', dataUrl: 'data:image/webp;base64,YQ==', history: true }])).toBe(true);
+
+    document.querySelectorAll('button[aria-label]').forEach(node => node.remove());
+    input.addEventListener('change', () => {
+      const ordinary = document.createElement('button');
+      ordinary.setAttribute('aria-label', 'Remove file: renamed.png');
+      form.append(ordinary);
+    }, { once: true });
+    expect(await api.uploadImages([{ name: 'user.webp', dataUrl: 'data:image/webp;base64,YQ==' }])).toBe(false);
   });
 });
 
