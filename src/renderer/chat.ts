@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel } from './chat-models.js';
-import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, providerSwitchPossible } from './chat-provider.js';
+import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
@@ -4021,7 +4021,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   // One id traces this send end to end (renderer marks, preview IPC, send IPC) and becomes the input id.
   const switchTrace = crypto.randomUUID();
   const switchStartedAt = performance.now();
-  const switching = !!sessionId && providerSwitchPossible(selectedSession, provider);
+  const switching = !!sessionId && (providerSwitchExplicitlyRequested(sessionId) || providerSwitchPossible(selectedSession, provider));
   const providerConsent = switching ? await confirmProviderSwitch(sessionId!, provider, switchTrace) : undefined;
   if (switching) markProviderSwitch(switchTrace, 'before-send', switchStartedAt);
   if (providerConsent === false) return false;
@@ -4063,6 +4063,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
       if (pendingNewInput?.id === id) pendingNewInput = null;
       return;
     }
+    markProviderSwitchAccepted(sessionId);
     // The accepted IPC result is newer than any queue read started before it. Keep
     // that durable row visible while the next listing crosses the process boundary.
     inputQueueGeneration++;

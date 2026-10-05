@@ -627,6 +627,15 @@ describe('provider adoption in the composer', () => {
     expect(body).not.toContain('session.provider?.model');
     expect(body).toContain('!session.providerAuthorizations?.includes(to)');
   });
+
+  it('previews an explicit picker switch even when the cached session provider is stale', async () => {
+    const provider = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat-provider.ts'), 'utf8');
+    expect(provider).toContain('const explicitSwitchIntent = new Set<string | null>()');
+    expect(provider).toContain('if (changed) explicitSwitchIntent.add(scope)');
+    const chat = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat.ts'), 'utf8');
+    expect(chat).toContain('providerSwitchExplicitlyRequested(sessionId) || providerSwitchPossible(selectedSession, provider)');
+    expect(chat).toContain('markProviderSwitchAccepted(sessionId)');
+  });
 });
 
 describe('the window as a whole', () => {

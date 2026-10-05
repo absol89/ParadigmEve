@@ -22,6 +22,8 @@ let modelsError = '';
 let scope: string | null = null;
 /** Per chat (null = New chat): the provider picked for the next turn. */
 const choices = new Map<string | null, ChatProvider | null>();
+/** Chats whose next send follows an explicit provider/model picker change. */
+const explicitSwitchIntent = new Set<string | null>();
 let lastOllamaModel: string | null = null;
 /** Local only for the chat being composed: the selected chat's lock, or the choice for a new chat. */
 let newChatLocalOnly = false;
@@ -63,9 +65,25 @@ export function applyComposerProvider(nextScope: string | null, session: Session
 }
 
 function choose(provider: ChatProvider | null): void {
+  const previous = current();
+  const changed = previous?.id !== provider?.id || previous?.model !== provider?.model || (!!previous !== !!provider);
   choices.set(scope, provider);
+  if (changed) explicitSwitchIntent.add(scope);
   if (provider) lastOllamaModel = provider.model;
   paint();
+}
+
+/**
+ * An explicit picker change must be previewed against main's authoritative session state even if
+ * the renderer's cached SessionSummary is stale while another provider is still answering.
+ */
+export function providerSwitchExplicitlyRequested(sessionId: string | null): boolean {
+  return explicitSwitchIntent.has(sessionId);
+}
+
+/** Clear only after main accepted the authored send; a failed/cancelled attempt remains explicit. */
+export function markProviderSwitchAccepted(sessionId: string | null): void {
+  explicitSwitchIntent.delete(sessionId);
 }
 
 async function loadModels(): Promise<void> {
