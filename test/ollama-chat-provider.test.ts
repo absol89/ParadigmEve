@@ -35,7 +35,7 @@ vi.mock('../src/main/browser.js', () => ({ openInPreferredBrowser: async () => '
 const { defaultConfig, initConfigPath, saveConfig } = await import('../src/main/config.js');
 const { initSecretsPath, setSecret, clearSecret } = await import('../src/main/secrets.js');
 const { initDurableStore, flushDurable, resetDurableForTests, writeDurableNow } = await import('../src/main/durable.js');
-const { createSession, getSession, initSessionStore, readEvents, resetSessionStoreForTests, setSessionProvider, upsertMessageEvent, writeAsset } =
+const { createSession, getSession, initSessionStore, readEvents, resetSessionStoreForTests, upsertMessageEvent, writeAsset } =
   await import('../src/main/session/store.js');
 const { registerIpc } = await import('../src/main/ipc.js');
 const { bridgePort, startBridge, stopBridge } = await import('../src/main/bridge.js');
@@ -311,12 +311,14 @@ it('keeps a delayed Ollama response on its original model after the user switche
       providerConsent: { to: preview.to, messages: preview.messages, images: preview.images, files: preview.files } })).ok).toBe(true);
     await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === local)?.state).toBe('sent'));
 
-    // While that exact llama3.2 request is still in flight, independently recorded GPT/Voice
-    // activity advances the chat. The app intentionally still serializes app-authored sends while
-    // a local turn is active; provenance must nevertheless survive external/browser activity.
-    await setSessionProvider(session.id, null);
-    await upsertMessageEvent(session.id, { time: Date.now(), source: 'extension', kind: 'user_message', messageId: 'gpt-user-delay',
-      message: { text: 'Continue on GPT meanwhile', truncated: false, chars: 25 } });
+    // A real app-authored GPT turn may be admitted while the old local request is still in
+    // flight. The browser owns that new turn; the delayed local reply keeps its original model.
+    const back = randomUUID();
+    expect((await send({ id: back, sessionId: session.id, text: 'Continue on GPT meanwhile' })).ok).toBe(true);
+    expect((await post('/input/claim', { id: back, owner: 'gpt-page-delay', conversationId })).status).toBe(200);
+    const ack = await post('/input/ack', { id: back, owner: 'gpt-page-delay', conversationId, messageId: 'gpt-user-delay' });
+    expect(ack.status, JSON.stringify(ack.body)).toBe(200);
+    expect(ack.body.ok, JSON.stringify(ack.body)).toBe(true);
     await upsertMessageEvent(session.id, { time: Date.now() + 1, source: 'extension', kind: 'assistant_message', messageId: 'gpt-answer-delay',
       message: { text: 'GPT continued', truncated: false, chars: 13 }, final: true, state: 'final' });
     expect((await getSession(session.id))?.provider).toBeUndefined();

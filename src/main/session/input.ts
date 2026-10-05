@@ -1,11 +1,10 @@
-import { REASONING_EFFORTS } from '../../shared/session.js';
+import { OLLAMA_TURN_PREFIX, REASONING_EFFORTS, isOllamaConversation, type SessionSummary } from '../../shared/session.js';
 /** User-authored input has one durable owner across browser and MCP delivery.
  * A claimed browser send is never automatically retried: losing the ACK is ambiguous.
  * Tool delivery repeats under a stable message id until a later request proves receipt.
  */
 import { z } from 'zod';
 import { browserInputModel, type InputImage } from '../../shared/input.js';
-import { isOllamaConversation, type SessionSummary } from '../../shared/session.js';
 import { planIdSchema, planItemStatusSchema } from '../../shared/plans.js';
 import { DEFAULT_CORE_CONNECTOR_NAME } from '../../shared/types.js';
 import { getConfig } from '../config.js';
@@ -356,7 +355,14 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   const awaitingUserTurnStart = lastRecent?.kind === 'user_message' && Date.now() - lastRecent.time < USER_TURN_START_WAIT_MS;
   const session = await getSession(sessionId);
   if (!session?.conversationId || isChatBlocked(session.conversationId)) return { queueAtFinish: false, canInject: false, directTurn: null, browserAllowed: false, settled: false };
-  const activity = observedActivity ?? deliveryHooks?.activity?.(session) ?? { possible: !!session.activeTurnId, exact: !!session.activeTurnId };
+  const localProviderTurn = session.activeTurnId?.startsWith(OLLAMA_TURN_PREFIX) === true;
+  // A local Ollama stream lives in this archive but is not activity in the ChatGPT browser.
+  // Treat it as a separate provider lane so an explicit switch can claim an idle ChatGPT page
+  // while the local answer continues in parallel. Real browser activity still wins below.
+  const activity = observedActivity ?? deliveryHooks?.activity?.(session) ?? {
+    possible: !!session.activeTurnId && !localProviderTurn,
+    exact: !!session.activeTurnId && !localProviderTurn
+  };
   const stopped = session.finishTurn?.released === true;
   const selection = session.selectedModel?.conversationId === session.conversationId ? session.selectedModel : null;
   // A previous turn's MCP history must not disable ordinary-chat steering. The
@@ -386,7 +392,8 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   const terminal = end?.kind === 'turn_end' && !!end.turnId && end.outcome !== 'unknown';
   return { canInject, directTurn, queueAtFinish: astra && canInject && getConfig().ui.finishTool === true,
     browserAllowed: !awaitingUserTurnStart && (!astra || terminal) &&
-      (quietlyFinished || (!session.activeTurnId && !activity.possible && !activity.exact)),
+      (quietlyFinished || (localProviderTurn && !activity.possible && !activity.exact) ||
+        (!session.activeTurnId && !activity.possible && !activity.exact)),
     settled: (terminal && (session.lastToolCallAt ?? 0) <= end.time) || (!astra && quietlyFinished) };
 }
 async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
@@ -718,9 +725,6 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
       }
     }
     const local = input.provider === 'ollama';
-    if (input.sessionId && localTurnActive(input.sessionId)) {
-      throw new Error('Ollama is still answering in this chat. Wait for it or stop it first.');
-    }
     if (local && input.mode !== 'auto') input.mode = 'auto';
     const policy = input.sessionId && !local ? await sessionInputPolicy(input.sessionId) : null;
     const requestedMode = input.mode;
@@ -1804,13 +1808,6 @@ export async function collectRecordedBrowserDecision(conversationId: string): Pr
 }
 
 // ------------------------------------------------------------ local providers
-
-let localTurnProbe: (sessionId: string) => boolean = () => false;
-/** Installed by the local provider driver; input.ts must not import it (it imports this module). */
-export function setLocalTurnProbe(probe: (sessionId: string) => boolean): void { localTurnProbe = probe; }
-function localTurnActive(sessionId: string): boolean {
-  try { return localTurnProbe(sessionId); } catch { return false; }
-}
 
 /** Local-provider rows still owed a turn, oldest first. Includes a restart-interrupted claim. */
 export function pendingLocalInputs(): Promise<InputEntry[]> {

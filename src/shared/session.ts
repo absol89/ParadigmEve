@@ -489,6 +489,8 @@ export type ChatProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud';
 
 /** Local frontend id for an Ollama chat. Never a ChatGPT conversation, never opened in a browser. */
 export const OLLAMA_CONVERSATION_PREFIX = 'ollama-';
+/** Local provider lifecycle id. Shared so browser-delivery policy can distinguish it from ChatGPT activity. */
+export const OLLAMA_TURN_PREFIX = 'ollama-turn:';
 export function isOllamaConversation(conversationId: string | null | undefined): boolean {
   return !!conversationId && conversationId.startsWith(OLLAMA_CONVERSATION_PREFIX);
 }

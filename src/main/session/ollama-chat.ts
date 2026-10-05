@@ -19,7 +19,6 @@ import {
   isLocalProviderInput,
   listInputs,
   pendingLocalInputs,
-  setLocalTurnProbe,
   type InputEntry
 } from './input.js';
 import { appendEvent, createSession, findSessionByConversation, getSession, listAllSessions, setSessionLocalOnly, upsertMessageEvent } from './store.js';
@@ -29,10 +28,9 @@ import { getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
 import { ensureOllamaModel, ollamaModelCapabilities, streamOllamaChat } from '../ollama-client.js';
 import { ollamaConversation, ProviderCapabilityError } from './provider-history.js';
-import { OLLAMA_CONVERSATION_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
+import { OLLAMA_CONVERSATION_PREFIX, OLLAMA_TURN_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
 
 const OWNER = 'ollama-local';
-const TURN_PREFIX = 'ollama-turn:';
 const MAX_REPLY_INLINE = 256_000;
 const STREAM_WRITE_MS = 300;
 
@@ -133,7 +131,7 @@ async function claimAndFail(entry: InputEntry, reason: string): Promise<void> {
 }
 
 async function answer(sessionId: string, entry: InputEntry, provider: ChatProvider): Promise<void> {
-  const turnId = `${TURN_PREFIX}${entry.id}`;
+  const turnId = `${OLLAMA_TURN_PREFIX}${entry.id}`;
   const controller = new AbortController();
   active.set(sessionId, { turnId, controller });
   const startedAt = Date.now();
@@ -203,10 +201,9 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
  */
 export async function startOllamaChatDriver(onChange: () => void): Promise<void> {
   changed = onChange;
-  setLocalTurnProbe((sessionId) => active.has(sessionId));
   try {
     for (const session of await listAllSessions()) {
-      if (!session.activeTurnId?.startsWith(TURN_PREFIX) || active.has(session.id)) continue;
+      if (!session.activeTurnId?.startsWith(OLLAMA_TURN_PREFIX) || active.has(session.id)) continue;
       const note = 'ParadigmEve restarted while Ollama was answering. The partial reply is kept; send again to continue.';
       await appendEvent(session.id, { time: Date.now(), source: 'app', kind: 'chat_error', message: { text: note, truncated: false, chars: note.length } });
       await appendEvent(session.id, { time: Date.now(), source: 'app', kind: 'turn_end', turnId: session.activeTurnId, outcome: 'interrupted' });
