@@ -1114,6 +1114,30 @@ describe('settings writes from more than one UI', () => {
     expect((await save(legacyWanted, legacyBase)).ok).toBe(true);
     expect(getConfig().execution).toEqual({ orchestrator: 'gpt-work', worker: 'ollama' });
   });
+  it('round-trips Ollama worker runtime settings without letting stale renderer state overwrite them', async () => {
+    const base = defaultConfig();
+    await saveConfig(base);
+    const wanted = {
+      ...base,
+      execution: { orchestrator: 'gpt-chat' as const, worker: 'ollama' as const },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+    };
+    const first = await save(wanted, base);
+    expect(first.ok, first.error).toBe(true);
+    expect(getConfig()).toMatchObject({
+      execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+    });
+
+    const live = getConfig();
+    await saveConfig({
+      ...live,
+      agentRuntime: { ollama: { endpoint: 'https://gpu.example/v1', model: 'server-model' } }
+    });
+    const staleWanted = { ...wanted, ui: { ...wanted.ui, minimizeToTray: !wanted.ui.minimizeToTray } };
+    expect((await save(staleWanted, wanted)).ok).toBe(true);
+    expect(getConfig().agentRuntime.ollama).toEqual({ endpoint: 'https://gpu.example/v1', model: 'server-model' });
+  });
   it('does not let a stale renderer snapshot undo a newer extension setting', async () => {
     currentWindow = {
       setBackgroundColor: vi.fn(), setTitleBarOverlay: vi.fn(),

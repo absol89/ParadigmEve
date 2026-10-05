@@ -160,6 +160,31 @@ describe('Eve readiness projection', () => {
     });
   });
 
+  it('keeps a selected Ollama worker unavailable until endpoint and model are explicitly configured', () => {
+    const missing = config({
+      onboarding: { complete: true },
+      execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: '', model: '' } }
+    });
+    expect(eveReadiness(input({ config: missing, status: status('connected', null) }), 'win32')).toMatchObject({
+      state: 'needs-user',
+      nextAction: 'select-supported-backends',
+      backends: {
+        worker: { backend: 'ollama', support: 'supported', readiness: 'unavailable', reason: 'ollama-worker-config-invalid' }
+      }
+    });
+
+    const configured = config({
+      onboarding: { complete: true },
+      execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+    });
+    expect(eveReadiness(input({ config: configured, status: status('connected', null) }), 'win32')).toMatchObject({
+      state: 'ready',
+      backends: { worker: { backend: 'ollama', support: 'supported', readiness: 'unknown', reason: null } }
+    });
+  });
+
   it('repairs safe transport before surfacing an independently unsupported backend preference', () => {
     const selected = config({
       onboarding: { complete: true },

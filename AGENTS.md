@@ -1904,11 +1904,12 @@ an artifact built through that escape hatch must never be described as the curre
 | `dev` | GPT Work, Ollama, custom OpenAI-compatible |
 | `shipping` | GPT Work, Ollama |
 
-Inclusion is not execution-readiness proof. At 2.2.2, GPT Chat remains the implemented end-to-end
-agent executor. Ollama now has bounded local model/tool-loop primitives, durable endpoint/model
-settings, broker-issued run/worker principals and an authorized Core-tool adapter, but the published
-backend status still fails closed until worker startup/revival/finalization is wired end to end.
-GPT Work and custom remain unavailable as agent executors. Fresh debug config defaults Prime/Worker to GPT Chat; fresh
+Inclusion is not execution-readiness proof. GPT Chat remains the implemented orchestrator and
+browser-backed worker executor. Ollama is implemented as a worker-only, one-shot executor: admission
+requires an explicit valid endpoint and model, the broker issues exact run/worker authority, the
+bounded model/tool loop uses only the authorized Core surface, and the final result returns to Prime.
+Ollama workers are terminal after one bounded task and are not revived from a fabricated transcript
+after completion or restart. GPT Work and custom remain unavailable as agent executors. Fresh debug config defaults Prime/Worker to GPT Chat; fresh
 dev/shipping config defaults them to GPT Work so a build is never born with an excluded default.
 Recognized saved ids are preserved across build flavors for visibility and explicit repair rather
 than rewritten to a fallback.
