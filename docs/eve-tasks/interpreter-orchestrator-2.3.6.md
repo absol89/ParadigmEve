@@ -1,6 +1,6 @@
 # 2.3.6 — Interpreter → Plan → Orchestrator → Workers
 
-Status: design, not started. Branch `release/2.3.6`, cut from `release/2.3.5` (2.3.5 is an internal
+Status: design agreed, not started. Branch `release/2.3.6`, cut from `release/2.3.5` (2.3.5 is an internal
 dogfood build and will not be released; 2.3.6 replaces it publicly).
 
 Reviewers: Eve (design review), the user (scope). Implementation: Claude.
@@ -57,8 +57,8 @@ Legacy Plans (no revision/sources/parent) stay readable unchanged.
 - Only on committed turns: a `turn_end` for the turn (Voice turns end correctly since the 2.3.5
   Voice fixes). Never on streaming or provisional text.
 - Debounced: a burst of short turns produces one revision.
-- One Plan per chat by default; the Plan's provenance names the chat, so later talk in the same chat
-  revises the same Plan.
+- One Plan per chat; its provenance names the chat, so later talk in that chat revises the same Plan.
+- A revision waits for the user's **Send to orchestrator** unless auto-send is on (Advanced settings).
 
 ## Orchestrator contract (prompt sketch)
 
@@ -76,12 +76,25 @@ When a new revision touches a claimed step, Eve decides by the size of the chang
   checkpoint;
 - explicit cancel ("stop that") → cancel the claim.
 
-## Open questions
+## Decisions (the user, 2026-10-05)
 
-1. Which model interprets by default (ChatGPT Voice itself vs. a separate text model)?
-2. Should the user approve each revision before the orchestrator may claim from it, or only
-   revisions that change claimed steps?
-3. Plan per chat, or per Thread/project?
+1. **Default interpreter: the ChatGPT model the account can use.** It has the broadest language and
+   Voice recognition training. Other providers can be chosen per chat, as in 2.3.5.
+   - **New requirement — early archive.** ParadigmEve imports the account's existing ChatGPT chats
+     automatically at the start, so the interpreter (and every later provider) has the user's
+     context from day one. Exception: a user who switches to another provider before starting any
+     chat is not imported. *Not built yet:* today a chat's history is recorded only when that chat
+     is opened and observed. Needs: list the account's conversations from the Eve Browser session,
+     read each one, write it into the session store as archived (not live) sessions, bounded and
+     resumable, with visible progress and a stop control.
+2. **Approval before the orchestrator sees a revision: on by default.** The Plan card in the Eve chat
+   gets a **Send to orchestrator** button for each new revision. Settings → Advanced has a switch;
+   turned off, every new revision goes to the orchestrator immediately.
+3. **One Plan per chat.** It gets revisions, and ends as completed or cancelled. A Thread can hold
+   several Plans from several sources, because each pinned object keeps its own source. A Project is
+   a context scope: it limits (or opens) how much broader ChatGPT/archive context reaches its chats,
+   so a long-running project's chats do not drift after compaction or get polluted by unrelated
+   history.
 
 ## Tests to write first
 
@@ -90,3 +103,7 @@ When a new revision touches a claimed step, Eve decides by the size of the chang
 - A claimed step keeps its claimed revision when the interpreter publishes a newer one.
 - Every step's sources resolve to archived messages.
 - Legacy Plans load unchanged.
+- With approval on, the orchestrator cannot claim from an unsent revision; with it off, it can at once.
+- A chat's Plan revisions stay one Plan; a Thread lists Plans from several chats with their sources.
+- The early archive import is resumable, skips chats already recorded, and is skipped when the
+  user switched provider before their first chat.
