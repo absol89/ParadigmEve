@@ -1471,6 +1471,25 @@ var CLF_DOM = (() => {
     return safe(() => {
       const out = [];
       const texts = new Set();
+      // Free-plan/file-chat exhaustion is rendered as an ordinary card rather than a dialog.
+      // It still blocks Send just as completely as the access-throttling dialog below. Anchor on
+      // the semantic heading + limit/reset copy so assistant prose mentioning "usage limits" is
+      // never mistaken for provider state. Do not click New chat/Upgrade: those are user choices.
+      for (const heading of document.querySelectorAll('h1,h2,h3,[role="heading"]')) {
+        if (heading.closest(OWN_SURFACES) || heading.closest('[hidden],[inert],[aria-hidden="true"]') || !displayed(heading)) continue;
+        const headingText = (heading.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!/^chat paused until usage resets(?:\s+at\s+.+)?$/i.test(headingText)) continue;
+        let node = heading.parentElement;
+        for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
+          if (!displayed(node) || node.closest(OWN_SURFACES)) continue;
+          const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+          if (value.length >= 700 || !/reached the limit for chats/i.test(value)) continue;
+          const notice = value.startsWith(headingText) ? value : `${headingText} ${value}`;
+          out.push({ text: notice, node, turnId: null, recoverable: false, blocking: true });
+          texts.add(value);
+          break;
+        }
+      }
       // Live provider access throttling is a dialog, not a broken transport. Match
       // its semantic heading and notice together; quoted assistant prose is not it.
       for (const node of document.querySelectorAll('[role="dialog"], [role="alertdialog"]')) {

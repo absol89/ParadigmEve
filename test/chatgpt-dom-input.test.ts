@@ -713,6 +713,16 @@ describe('native image readiness', () => {
 
 
 describe('provider limit notice', () => {
+  it('recognizes the free-plan chat-paused usage card as a blocking provider limit', () => {
+    const card = document.createElement('section');
+    card.innerHTML = '<h2>Chat paused until usage resets at 10:57 PM</h2><p>You\'ve reached the limit for chats that include files or images. Start a new text-only chat or upgrade to continue now.</p><button>New chat</button><button>Upgrade</button>';
+    document.body.append(card);
+    expect(api.errors()).toEqual([expect.objectContaining({
+      blocking: true,
+      recoverable: false,
+      text: expect.stringContaining('Chat paused until usage resets at 10:57 PM')
+    })]);
+  });
   it('records and acknowledges the exact access notice once without accepting other dialogs', () => {
     const notice = document.createElement('div'); notice.setAttribute('role', 'dialog');
     notice.innerHTML = '<h2>Too many requests</h2><p>We have temporarily limited access to conversations to protect your data. Please wait a few minutes.</p><button>Got it</button>';
