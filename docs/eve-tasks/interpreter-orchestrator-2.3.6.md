@@ -57,7 +57,9 @@ Legacy Plans (no revision/sources/parent) stay readable unchanged.
 - Only on committed turns: a `turn_end` for the turn (Voice turns end correctly since the 2.3.5
   Voice fixes). Never on streaming or provisional text.
 - Debounced: a burst of short turns produces one revision.
-- One Plan per chat; its provenance names the chat, so later talk in that chat revises the same Plan.
+- One active Plan per chat; its provenance names the chat, so later talk in that chat revises the same
+  Plan. Only once it is completed or cancelled may the interpreter start a new Plan there, and the chat
+  then shows the new one only.
 - A revision waits for the user's **Send to orchestrator** unless auto-send is on (Advanced settings).
 
 ## Orchestrator contract (prompt sketch)
@@ -90,7 +92,10 @@ When a new revision touches a claimed step, Eve decides by the size of the chang
 2. **Approval before the orchestrator sees a revision: on by default.** The Plan card in the Eve chat
    gets a **Send to orchestrator** button for each new revision. Settings → Advanced has a switch;
    turned off, every new revision goes to the orchestrator immediately.
-3. **One Plan per chat.** It gets revisions, and ends as completed or cancelled. A Thread can hold
+3. **One active Plan per chat.** It gets revisions, and ends as completed or cancelled. After that, a
+   new Plan may start in the same chat, but only one Plan is ever visible in the chat at a time: the
+   chat iterates on its focused Plan instead of mixing projects and brainstorming. Earlier finished
+   Plans stay in the Plans library with their sources. A Thread can hold
    several Plans from several sources, because each pinned object keeps its own source. A Project is
    a context scope: it limits (or opens) how much broader ChatGPT/archive context reaches its chats,
    so a long-running project's chats do not drift after compaction or get polluted by unrelated
@@ -104,6 +109,7 @@ When a new revision touches a claimed step, Eve decides by the size of the chang
 - Every step's sources resolve to archived messages.
 - Legacy Plans load unchanged.
 - With approval on, the orchestrator cannot claim from an unsent revision; with it off, it can at once.
-- A chat's Plan revisions stay one Plan; a Thread lists Plans from several chats with their sources.
+- A chat's Plan revisions stay one Plan; a second Plan cannot open while the first is active, and after
+  it ends the chat shows only the new one. A Thread lists Plans from several chats with their sources.
 - The early archive import is resumable, skips chats already recorded, and is skipped when the
   user switched provider before their first chat.
