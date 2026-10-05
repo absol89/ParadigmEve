@@ -61,6 +61,8 @@ const call = <T>(channel: string, payload?: unknown): Promise<Reply<T>> =>
 export interface SettingsPatch {
   /** Optional for backward-compatible callers; the current renderer sends its visible driver choices. */
   execution?: Config['execution'];
+  /** Dedicated local worker runtime settings; intentionally separate from Goal/Loop providers. */
+  agentRuntime?: Config['agentRuntime'];
   capabilities: Capabilities;
   readOnly: boolean;
   tunnel: Config['tunnel'];

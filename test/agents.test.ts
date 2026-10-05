@@ -254,7 +254,6 @@ describe('spawning a run', () => {
     ['orchestrator', 'ollama', 'Ollama'],
     ['orchestrator', 'custom', 'Custom OpenAI-compatible'],
     ['worker', 'gpt-work', 'GPT Work'],
-    ['worker', 'ollama', 'Ollama'],
     ['worker', 'custom', 'Custom OpenAI-compatible']
   ] as const)('refuses unavailable %s backend %s before any run or browser bootstrap', async (role, backend, label) => {
     const base = defaultConfig();
@@ -275,6 +274,52 @@ describe('spawning a run', () => {
       expect(bootstraps).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
+      await setEnabled(true);
+    }
+  });
+
+  it.each([
+    ['', 'gemma4:cloud', /endpoint is missing or invalid/],
+    ['http://192.168.1.20:11434/v1', 'gemma4:cloud', /endpoint is missing or invalid/],
+    ['http://127.0.0.1:11434/v1', '  ', /no Ollama model is configured/]
+  ] as const)('refuses Ollama workers with endpoint %j and model %j before any run', async (endpoint, model, message) => {
+    const base = defaultConfig();
+    await saveConfig({
+      ...base,
+      multiAgent: { ...base.multiAgent, enabled: true, maxWorkers: 3 },
+      execution: { ...base.execution, worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint, model } }
+    });
+    try {
+      expect(() => spawn({ workers: [{ task: 'must not start' }], caller: prime })).toThrow(message);
+      expect(currentRunId()).toBeNull();
+      expect(pendingWorkerSpawns()).toEqual([]);
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
+  it('hands configured Ollama workers to the local executor, never to a ChatGPT tab', async () => {
+    const base = defaultConfig();
+    await saveConfig({
+      ...base,
+      multiAgent: { ...base.multiAgent, enabled: true, maxWorkers: 3 },
+      execution: { ...base.execution, worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+    });
+    const browser = vi.fn();
+    const local: string[] = [];
+    const dropBrowser = onSpawnRequest(browser);
+    const dropLocal = onExecutorSpawnRequest('ollama', (workers) => local.push(...workers.map((entry) => entry.id)));
+    try {
+      expect(() => spawn({ workers: [{ task: 'x', model: 'gpt-5.5' }], caller: prime })).toThrow(/omit model\/reasoning_effort/);
+      const result = spawn({ workers: [{ task: 'summarize the notes' }], caller: prime });
+      expect(result.created[0]).toMatchObject({ model: null, reasoningEffort: null });
+      expect(local).toEqual(['worker-1']);
+      expect(browser).not.toHaveBeenCalled();
+    } finally {
+      dropLocal();
+      dropBrowser();
       await setEnabled(true);
     }
   });

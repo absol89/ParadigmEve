@@ -7,6 +7,7 @@ import path from 'node:path';
 import { app, Notification, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, screen, session } from 'electron';
 import { browserExtensionRequired } from '../shared/types.js';
 import { getConfig, initConfigPath, loadConfig } from './config.js';
+import { startOllamaWorkerExecutor } from './ollama-worker-executor.js';
 import { connect, disconnect, getStatus, onStatusChange, shutdownConnection } from './connection.js';
 import { registerIpc } from './ipc.js';
 import { getChatModels, restoreChatModels, startChatModelDiscovery } from './chat-models.js';
@@ -151,6 +152,7 @@ let shutdownComplete = false;
 let stopSessionRetention: (() => void) | null = null;
 let stopRequestCheckIns: (() => void) | null = null;
 let stopScheduleMaintenance: (() => Promise<void>) | null = null;
+let stopOllamaWorkerExecutor: (() => void) | null = null;
 let stopChatReviewHeartbeat: (() => void) | null = null;
 let stopChatReviewHeartbeatStatus: (() => void) | null = null;
 let lanHeartbeatStatus: ChatReviewHeartbeatPublicStatus | null = null;
@@ -715,6 +717,11 @@ void app.whenReady().then(async () => {
   const savedSwarm = await readDurable<SwarmSnapshot>(SWARM_STATE);
   if (windowActivation.isDisabled()) return;
   restoreSwarm(savedSwarm);
+  // The local worker executor registers only after durable broker state is restored, so an
+  // invited Ollama worker accepted before a crash is replayed through the same broker request
+  // path as a fresh spawn. Prime/orchestrator execution remains in ChatGPT.
+  stopOllamaWorkerExecutor?.();
+  stopOllamaWorkerExecutor = startOllamaWorkerExecutor();
   let savedAgentIdentity: unknown = null;
   let agentIdentityReadable = true;
   try {
@@ -1036,6 +1043,8 @@ app.on('will-quit', (event) => {
   stopChatReviewHeartbeatStatus?.();
   stopChatReviewHeartbeatStatus = null;
   stopLanPeerRuntime();
+  stopOllamaWorkerExecutor?.();
+  stopOllamaWorkerExecutor = null;
   tray?.destroy();
   tray = null;
 

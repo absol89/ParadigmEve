@@ -845,6 +845,8 @@
                   </div>
                   <label class="setting" for="agentOrchestratorBackend"><span class="setting-text"><b>Agent driver</b><em>Used when your agent starts new worker work.</em></span><select id="agentOrchestratorBackend"></select></label>
                   <label class="setting" for="agentWorkerBackend"><span class="setting-text"><b>Worker driver</b><em>Used for newly created workers.</em></span><select id="agentWorkerBackend"></select></label>
+                  <label class="setting" for="ollamaWorkerEndpoint"><span class="setting-text"><b>Ollama worker endpoint</b><em>OpenAI-compatible base URL. HTTP is allowed only on loopback; remote endpoints must use HTTPS.</em></span><input id="ollamaWorkerEndpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" /></label>
+                  <label class="setting" for="ollamaWorkerModel"><span class="setting-text"><b>Ollama worker model</b><em>Exact model id used only for Ollama workers, for example gemma4:cloud.</em></span><input id="ollamaWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="gemma4:cloud" /></label>
                   <p class="muted">ParadigmEve never falls back to a different driver when the selected one is unavailable.</p>
                 </div>
                 <h2 class="settings-section-title">Keep the turn open</h2>

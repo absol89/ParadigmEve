@@ -219,6 +219,12 @@ const settingsPatch = z.object({
     orchestrator: z.enum(AGENT_BACKEND_IDS),
     worker: z.enum(AGENT_BACKEND_IDS)
   }).strict().optional(),
+  agentRuntime: z.object({
+    ollama: z.object({
+      endpoint: z.string().max(2048),
+      model: z.string().max(160)
+    }).strict()
+  }).strict().optional(),
   capabilities: capabilityPatch,
   readOnly: z.boolean(),
   tunnel: z.object({
@@ -354,7 +360,11 @@ function mergeSettings(
   current: Config,
   base: SettingsSnapshot,
   wanted: SettingsSnapshot
-): Omit<SettingsSnapshot, 'mcp' | 'execution'> & { mcp: Config['mcp']; execution: Config['execution'] } {
+): Omit<SettingsSnapshot, 'mcp' | 'execution' | 'agentRuntime'> & {
+  mcp: Config['mcp'];
+  execution: Config['execution'];
+  agentRuntime: Config['agentRuntime'];
+} {
   const pick = <T>(live: T, before: T, next: T): T => (Object.is(before, next) ? live : next);
   const sameStrings = (left: string[], right: string[]): boolean =>
     left.length === right.length && left.every((value, index) => value === right[index]);
@@ -379,6 +389,20 @@ function mergeSettings(
         wanted.execution.worker
       )
     } : current.execution,
+    agentRuntime: wanted.agentRuntime ? {
+      ollama: {
+        endpoint: pick(
+          current.agentRuntime.ollama.endpoint,
+          base.agentRuntime?.ollama.endpoint ?? current.agentRuntime.ollama.endpoint,
+          wanted.agentRuntime.ollama.endpoint
+        ),
+        model: pick(
+          current.agentRuntime.ollama.model,
+          base.agentRuntime?.ollama.model ?? current.agentRuntime.ollama.model,
+          wanted.agentRuntime.ollama.model
+        )
+      }
+    } : current.agentRuntime,
     mcp: wanted.mcp ? {
       connectorName: pick(
         current.mcp.connectorName,

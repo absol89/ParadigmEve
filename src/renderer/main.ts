@@ -26,6 +26,7 @@ import { BUILD_FLAVOR } from '../shared/build-flavor.js';
 import {
   AGENT_BACKEND_IDS,
   AGENT_BACKEND_LABELS,
+  DEFAULT_AGENT_RUNTIME_SETTINGS,
   DEFAULT_AGENT_EXECUTION_SETTINGS,
   agentBackendAvailableInBuild,
   agentBackendsForBuild,
@@ -94,7 +95,10 @@ initChatBrowserChoices();
 function initAgentExecutionControls(): void {
   for (const id of ['agentOrchestratorBackend', 'agentWorkerBackend']) {
     const select = $<HTMLSelectElement>(id);
-    select.replaceChildren(...agentBackendsForBuild().map((backend) => {
+    const choices = id === 'agentOrchestratorBackend'
+      ? agentBackendsForBuild().filter((backend) => backend !== 'ollama')
+      : agentBackendsForBuild();
+    select.replaceChildren(...choices.map((backend) => {
       const option = document.createElement('option');
       option.value = backend;
       option.textContent = AGENT_BACKEND_LABELS[backend];
@@ -828,6 +832,12 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark' } = {}): Prom
       orchestrator: selectedBackend('agentOrchestratorBackend', previousExecution.orchestrator),
       worker: selectedBackend('agentWorkerBackend', previousExecution.worker)
     },
+    agentRuntime: {
+      ollama: {
+        endpoint: $<HTMLInputElement>('ollamaWorkerEndpoint').value.trim(),
+        model: $<HTMLInputElement>('ollamaWorkerModel').value.trim()
+      }
+    },
     capabilities,
     readOnly,
     tunnel: {
@@ -1440,6 +1450,16 @@ function apply(next: AppState): void {
     $<HTMLSelectElement>('agentWorkerBackend'),
     execution.worker,
     previousExecution.worker
+  );
+  applyValue(
+    $<HTMLInputElement>('ollamaWorkerEndpoint'),
+    (config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.endpoint,
+    (previousState?.config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.endpoint
+  );
+  applyValue(
+    $<HTMLInputElement>('ollamaWorkerModel'),
+    (config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.model,
+    (previousState?.config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.model
   );
   // Recording is a tool switch like the rest of this list, so it goes through the same
   // dirty-field guard rather than being assigned outright from the Chat panel.
@@ -2494,7 +2514,9 @@ for (const id of [
   'tunnelId',
   'instanceName',
   'agentOrchestratorBackend',
-  'agentWorkerBackend'
+  'agentWorkerBackend',
+  'ollamaWorkerEndpoint',
+  'ollamaWorkerModel'
 ]) {
   $(id).addEventListener('change', () => void save());
 }

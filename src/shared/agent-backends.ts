@@ -70,6 +70,8 @@ export type AgentExecutionReadiness = (typeof AGENT_EXECUTION_READINESS)[number]
 export const AGENT_EXECUTION_UNAVAILABLE_REASONS = [
   'backend-excluded-by-build-flavor',
   'gpt-work-executor-unavailable',
+  'ollama-orchestrator-unavailable',
+  'ollama-worker-config-invalid',
   'ollama-agent-runtime-unavailable',
   'custom-agent-runtime-unavailable'
 ] as const;
@@ -90,7 +92,8 @@ export interface AgentBackendExecutionStatus {
  */
 export function agentBackendExecutionStatus(
   backend: AgentBackendId,
-  flavor: BuildFlavor = BUILD_FLAVOR
+  flavor: BuildFlavor = BUILD_FLAVOR,
+  role: 'orchestrator' | 'worker' = 'worker'
 ): AgentBackendExecutionStatus {
   if (!agentBackendAvailableInBuild(backend, flavor)) {
     return {
@@ -123,15 +126,24 @@ export function agentBackendExecutionStatus(
     };
   }
   if (backend === 'ollama') {
+    if (role === 'worker') {
+      return {
+        backend,
+        label: AGENT_BACKEND_LABELS[backend],
+        support: 'supported',
+        readiness: 'unknown',
+        reason: null,
+        detail: null
+      };
+    }
     return {
       backend,
       label: AGENT_BACKEND_LABELS[backend],
       support: 'unsupported',
       readiness: 'unavailable',
-      reason: 'ollama-agent-runtime-unavailable',
+      reason: 'ollama-orchestrator-unavailable',
       detail:
-        'Ollama inference may be reachable and the local runtime primitives may be present, but end-to-end worker ' +
-        'startup/revival/finalization is not wired yet. Inference reachability alone is not agent execution readiness.'
+        'Ollama is available as a worker executor, but ParadigmEve still requires the owning agent/orchestrator to run through ChatGPT.'
     };
   }
   return {

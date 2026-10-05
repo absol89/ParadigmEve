@@ -1053,7 +1053,7 @@ it('opens a project-scoped Expenses composer only when main reports no establish
   expect(mounted.window.document.getElementById('chatTitle')?.textContent).toBe('New chat · Expenses');
 });
 
-it('uses the debug build gate for agent drivers and saves a custom driver choice', async () => {
+it('offers Ollama only as a worker driver and saves its dedicated runtime settings', async () => {
   const mounted = await mountChat();
   const doc = mounted.window.document;
   const prime = doc.getElementById('agentOrchestratorBackend') as HTMLSelectElement;
@@ -1063,16 +1063,26 @@ it('uses the debug build gate for agent drivers and saves a custom driver choice
   expect([...prime.options].map(option => [option.value, option.disabled])).toEqual([
     ['gpt-chat', false],
     ['gpt-work', false],
+    ['custom', false]
+  ]);
+  expect([...worker.options].map(option => [option.value, option.disabled])).toEqual([
+    ['gpt-chat', false],
+    ['gpt-work', false],
     ['ollama', false],
     ['custom', false]
   ]);
 
-  worker.value = 'custom';
+  (doc.getElementById('ollamaWorkerEndpoint') as HTMLInputElement).value = 'http://127.0.0.1:11434/v1';
+  (doc.getElementById('ollamaWorkerModel') as HTMLInputElement).value = 'gemma4:cloud';
+  worker.value = 'ollama';
   worker.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
   await vi.waitFor(() => expect(mounted.calls.at(-1)?.execution).toEqual({
     orchestrator: 'gpt-chat',
-    worker: 'custom'
+    worker: 'ollama'
   }));
+  expect(mounted.calls.at(-1)?.agentRuntime).toEqual({
+    ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' }
+  });
 });
 
 it('keeps the Goal helper model canonicalized across state pushes and user changes', async () => {

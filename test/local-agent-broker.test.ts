@@ -19,11 +19,15 @@ const {
   agentForCaller,
   finishAgent,
   issueWorkerExecutionPrincipal,
+  onExecutorSpawnRequest,
+  pendingCount,
   resetAgentsForTests,
   restoreSwarm,
   snapshotSwarm,
-  spawn
+  spawn,
+  workerInfo
 } = await import('../src/main/agents.js');
+const { startOllamaWorkerExecutor, resetOllamaWorkerExecutorForTests } = await import('../src/main/ollama-worker-executor.js');
 const { localAgentExecutionPrincipalIssued } = await import('../src/main/local-agent-runtime.js');
 const { localAgentCoreTools, resetLocalAgentToolAdapterForTests } = await import('../src/main/local-agent-tools.js');
 const { lastToolCallAt, onMcpToolCallSeen, resetToolClock } = await import('../src/main/mcp/kernel.js');
@@ -43,6 +47,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  resetOllamaWorkerExecutorForTests();
   resetAgentsForTests();
   resetRecorderForTests();
   resetSessionStoreForTests();
@@ -51,6 +56,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  resetOllamaWorkerExecutorForTests();
   resetAgentsForTests();
   resetRecorderForTests();
   resetLocalAgentToolAdapterForTests();
@@ -61,6 +67,66 @@ beforeEach(async () => {
     ...base,
     sessions: { ...base.sessions, record: true },
     multiAgent: { ...base.multiAgent, enabled: true }
+  });
+});
+
+describe('production Ollama worker executor', () => {
+  it('routes an Ollama worker locally, reports its result to Prime, and never opens a GPT Chat worker', async () => {
+    const approved = path.join(dir, 'ollama-executor');
+    await fs.mkdir(approved, { recursive: true });
+    const base = getConfig();
+    await saveConfig({
+      ...base,
+      execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } },
+      roots: [{ name: 'workspace', path: approved }],
+      capabilities: { ...base.capabilities, read: true },
+      multiAgent: { ...base.multiAgent, enabled: true }
+    });
+    setWorkspaceFor('chat:prime-local-executor', { virtual: '/workspace', real: approved });
+
+    const browser = vi.fn();
+    const dropBrowser = onExecutorSpawnRequest('gpt-chat', browser);
+    const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      Response.json({ choices: [{ message: { content: 'OLLAMA_WORKER_OK' } }] }));
+    vi.stubGlobal('fetch', fetch);
+    const stop = startOllamaWorkerExecutor();
+    try {
+      const started = spawn({
+        caller: { conversationId: 'prime-local-executor' },
+        workers: [{ task: 'Return the bounded result.' }]
+      });
+      await vi.waitFor(() => expect(workerInfo('worker-1', started.runId)).toMatchObject({
+        state: 'finished',
+        revivable: false,
+        result: 'OLLAMA_WORKER_OK'
+      }));
+      expect(browser).not.toHaveBeenCalled();
+      expect(pendingCount('prime', started.runId)).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(String(fetch.mock.calls[0]?.[0])).toBe('http://127.0.0.1:11434/v1/chat/completions');
+      const request = fetch.mock.calls[0]?.[1] as RequestInit;
+      expect(JSON.parse(String(request.body))).toMatchObject({ model: 'gemma4:cloud', stream: false });
+    } finally {
+      stop();
+      dropBrowser();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('rejects missing Ollama runtime settings before it creates a run and never falls back', async () => {
+    const base = getConfig();
+    await saveConfig({
+      ...base,
+      execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
+      agentRuntime: { ollama: { endpoint: '', model: '' } },
+      multiAgent: { ...base.multiAgent, enabled: true }
+    });
+    expect(() => spawn({
+      caller: { conversationId: 'prime-missing-ollama' },
+      workers: [{ task: 'must not start' }]
+    })).toThrow(/Ollama.*endpoint.*No run or worker was created/i);
+    expect(snapshotSwarm()).toBeNull();
   });
 });
 
@@ -96,7 +162,11 @@ describe('broker-owned local worker principal', () => {
     expect(agentForCaller({ localPrincipal: second })).toBe('worker-1');
     expect(agentForCaller({ localPrincipal: { ...second, runId: 'other-run' } })).toBeNull();
 
-    expect(finishAgent({ localPrincipal: second }, 'done').info.state).toBe('sleeping');
+    expect(finishAgent({ localPrincipal: second }, 'done').info).toMatchObject({
+      state: 'finished',
+      revivable: false,
+      result: 'done'
+    });
     expect(localAgentExecutionPrincipalIssued(second)).toBe(false);
     expect(agentForCaller({ localPrincipal: second })).toBeNull();
   });

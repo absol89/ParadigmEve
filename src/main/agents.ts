@@ -23,7 +23,7 @@ import { CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, configuredChatModelReque
 import { DEFAULT_CORE_CONNECTOR_NAME } from '../shared/types.js';
 import { logInfo, logWarn } from './logger.js';
 import { inheritWorkspace, releasePrimeWorkspace, bindAgentWorkspace } from './workspace.js';
-import { issueLocalAgentExecutionPrincipal, localAgentExecutionPrincipalIssued, revokeLocalAgentExecutionPrincipal, type LocalAgentBackendId, type LocalAgentExecutionPrincipal } from './local-agent-runtime.js';
+import { issueLocalAgentExecutionPrincipal, localAgentExecutionPrincipalIssued, normalizeLocalAgentEndpoint, revokeLocalAgentExecutionPrincipal, type LocalAgentBackendId, type LocalAgentExecutionPrincipal } from './local-agent-runtime.js';
 
 export const PRIME_ID = 'prime';
 
@@ -1540,7 +1540,7 @@ export function requestWorkerBootstraps(ids: readonly string[], runId?: string):
 
 /** Spawn creates new execution; existing runs/messages/revivals do not cross this gate. */
 function requireSpawnExecutionBackend(role: 'orchestrator' | 'worker', backend: AgentBackendId): void {
-  const status = agentBackendExecutionStatus(backend);
+  const status = agentBackendExecutionStatus(backend, undefined, role);
   if (status.support === 'supported') return;
   const detail = status.detail;
   throw new AgentError(
@@ -1553,6 +1553,21 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
   const { orchestrator, worker } = getConfig().execution;
   requireSpawnExecutionBackend('orchestrator', orchestrator);
   requireSpawnExecutionBackend('worker', worker);
+  if (worker === 'ollama') {
+    const settings = getConfig().agentRuntime.ollama;
+    if (!normalizeLocalAgentEndpoint(settings.endpoint)) {
+      throw new AgentError(
+        'AGENT_BACKEND_UNAVAILABLE: Ollama is selected as the worker backend, but its endpoint is missing or invalid. ' +
+          'Configure an HTTPS endpoint, or HTTP on loopback, before spawning workers. No run or worker was created.'
+      );
+    }
+    if (!settings.model.trim()) {
+      throw new AgentError(
+        'AGENT_BACKEND_UNAVAILABLE: Ollama is selected as the worker backend, but no Ollama model is configured. ' +
+          'Choose a model before spawning workers. No run or worker was created.'
+      );
+    }
+  }
   return { orchestrator, worker };
 }
 
@@ -1597,12 +1612,24 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
     if (label.length > MAX_LABEL_CHARS) {
       throw new AgentError(`Worker ${index + 1}'s label is too long (limit ${MAX_LABEL_CHARS} characters)`);
     }
-    const requested = usableDefaults(
-      normalizeModel(index, worker.model === undefined ? getConfig().multiAgent.defaultModel : worker.model),
-      normalizeReasoningEffort(index, worker.reasoning_effort === undefined ? getConfig().multiAgent.defaultReasoning : worker.reasoning_effort),
-      worker.model === undefined, worker.reasoning_effort === undefined, observedModels, defaultNotes);
-    const model = requested.model, reasoningEffort = requested.effort;
-    validateWorkerModel(index, model, reasoningEffort, observedModels);
+    let model: string | null = null;
+    let reasoningEffort: ReasoningEffort | null = null;
+    if (execution.worker === 'gpt-chat') {
+      const requested = usableDefaults(
+        normalizeModel(index, worker.model === undefined ? getConfig().multiAgent.defaultModel : worker.model),
+        normalizeReasoningEffort(index, worker.reasoning_effort === undefined ? getConfig().multiAgent.defaultReasoning : worker.reasoning_effort),
+        worker.model === undefined, worker.reasoning_effort === undefined, observedModels, defaultNotes);
+      model = requested.model;
+      reasoningEffort = requested.effort;
+      validateWorkerModel(index, model, reasoningEffort, observedModels);
+    } else if (execution.worker === 'ollama') {
+      if (worker.model !== undefined || worker.reasoning_effort !== undefined) {
+        throw new AgentError(
+          `Worker ${index + 1} selected Ollama through Settings, so ChatGPT model/reasoning overrides do not apply. ` +
+            'Configure the exact Ollama model in Agent execution settings and omit model/reasoning_effort from this worker.'
+        );
+      }
+    }
     // Composed once, here, and stored as *the* task. Everything downstream — the bootstrap
     // the browser types, the repeated-spawn match, the status table, the snapshot — then
     // sees the same single string a worker actually receives, with no second field to keep
@@ -2334,7 +2361,10 @@ function planFinish(agent: Agent, result: string): { info: AgentInfo; report: Ag
   // worker's chat is still there, still holds everything it learned, and is still the cheapest
   // place to put the next piece of work — so it sleeps rather than ends, unless its own context
   // has grown past the point where reopening it would achieve anything.
-  const terminal = ceilingCrossed(agent.info);
+  // App-owned local workers do not have a durable provider conversation to revive. Treat each
+  // accepted local task as one bounded execution and keep its history/report as a terminal
+  // broker row rather than advertising a "sleeping" worker whose model transcript is gone.
+  const terminal = ceilingCrossed(agent.info) || agent.backend === 'ollama' || agent.backend === 'custom';
   const now = Date.now();
   const info: AgentInfo = {
     ...agent.info,

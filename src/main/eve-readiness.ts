@@ -9,6 +9,7 @@ import {
   type SecureStorageInfo
 } from '../shared/types.js';
 import { effectiveCapabilities } from './config.js';
+import { normalizeLocalAgentEndpoint } from './local-agent-runtime.js';
 import { TUNNEL_ID_PATTERN } from './tunnel/index.js';
 
 export interface EveReadinessInput {
@@ -20,6 +21,26 @@ export interface EveReadinessInput {
   companionBrowser: CompanionBrowserStatus;
   /** Existing tunnel-binary resolution from the same AppState snapshot. */
   resolvedBinary: string | null;
+}
+
+function backendStatuses(input: EveReadinessInput): EveReadiness['backends'] {
+  const orchestrator = agentBackendExecutionStatus(input.config.execution.orchestrator, undefined, 'orchestrator');
+  let worker = agentBackendExecutionStatus(input.config.execution.worker, undefined, 'worker');
+  if (worker.backend === 'ollama' && worker.support === 'supported') {
+    const settings = input.config.agentRuntime.ollama;
+    const endpoint = normalizeLocalAgentEndpoint(settings.endpoint);
+    const model = settings.model.trim();
+    if (!endpoint || !model) {
+      const missing = [!endpoint ? 'a valid endpoint' : null, !model ? 'an Ollama model' : null].filter(Boolean).join(' and ');
+      worker = {
+        ...worker,
+        readiness: 'unavailable',
+        reason: 'ollama-worker-config-invalid',
+        detail: `Ollama is selected for workers but still needs ${missing} in Agent execution settings.`
+      };
+    }
+  }
+  return { orchestrator, worker };
 }
 
 function result(
@@ -34,10 +55,7 @@ function result(
     nextAction,
     summary,
     detail,
-    backends: {
-      orchestrator: agentBackendExecutionStatus(input.config.execution.orchestrator),
-      worker: agentBackendExecutionStatus(input.config.execution.worker)
-    }
+    backends: backendStatuses(input)
   };
 }
 
@@ -169,18 +187,15 @@ export function eveReadiness(
   // A selected unsupported executor remains a user boundary, but it does not block an
   // independently safe transport/browser repair above. Re-observation after that one repair
   // lands here without ever substituting a different backend for the user's saved choice.
-  const backends = {
-    orchestrator: agentBackendExecutionStatus(input.config.execution.orchestrator),
-    worker: agentBackendExecutionStatus(input.config.execution.worker)
-  };
-  const unsupported = Object.entries(backends).filter(([, status]) => status.support === 'unsupported');
-  if (unsupported.length > 0) {
+  const backends = backendStatuses(input);
+  const unavailable = Object.entries(backends).filter(([, status]) => status.readiness === 'unavailable');
+  if (unavailable.length > 0) {
     return result(
       input,
       'needs-user',
       'select-supported-backends',
       'Selected agent backend is unavailable',
-      unsupported.map(([role, status]) => `${role}: ${status.detail}`).join(' ')
+      unavailable.map(([role, status]) => `${role}: ${status.detail}`).join(' ')
     );
   }
 

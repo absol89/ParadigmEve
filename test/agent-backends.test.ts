@@ -50,17 +50,23 @@ describe('agent execution backend contract', () => {
     });
   });
 
-  it('does not treat GPT Work or Ollama inference reachability as agent execution', () => {
+  it('keeps Ollama worker execution role-scoped without promoting transport reachability to ready', () => {
     expect(agentBackendExecutionStatus('gpt-work')).toMatchObject({
       support: 'unsupported',
       readiness: 'unavailable',
       reason: 'gpt-work-executor-unavailable'
     });
-    expect(agentBackendExecutionStatus('ollama')).toMatchObject({
+    expect(agentBackendExecutionStatus('ollama', 'debug', 'worker')).toMatchObject({
+      support: 'supported',
+      readiness: 'unknown',
+      reason: null,
+      detail: null
+    });
+    expect(agentBackendExecutionStatus('ollama', 'debug', 'orchestrator')).toMatchObject({
       support: 'unsupported',
       readiness: 'unavailable',
-      reason: 'ollama-agent-runtime-unavailable',
-      detail: expect.stringContaining('inference may be reachable')
+      reason: 'ollama-orchestrator-unavailable',
+      detail: expect.stringContaining('worker executor')
     });
     expect(agentBackendExecutionStatus('custom')).toMatchObject({
       support: 'unsupported',

@@ -143,8 +143,11 @@ describe('Ollama agent model transport', () => {
   });
 
   it('does not promote transport reachability to agent backend readiness', () => {
-    expect(agentBackendExecutionStatus('ollama', 'debug')).toMatchObject({
-      support: 'unsupported', readiness: 'unavailable', reason: 'ollama-agent-runtime-unavailable'
+    expect(agentBackendExecutionStatus('ollama', 'debug', 'worker')).toMatchObject({
+      support: 'supported', readiness: 'unknown', reason: null
+    });
+    expect(agentBackendExecutionStatus('ollama', 'debug', 'orchestrator')).toMatchObject({
+      support: 'unsupported', readiness: 'unavailable', reason: 'ollama-orchestrator-unavailable'
     });
   });
 });

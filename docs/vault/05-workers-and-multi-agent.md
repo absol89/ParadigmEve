@@ -46,13 +46,15 @@ This separation is why a future configuration can mix a managed orchestrator wit
 workers without rebuilding the broker around a new identity model. Selection never means fallback:
 an unavailable or unimplemented backend is a visible user/setup boundary.
 
-In the current source line, GPT Chat remains the implemented end-to-end agent executor. Ollama has
-a bounded model/tool loop, OpenAI-compatible transport, durable endpoint/model settings,
-broker-issued run/worker execution principals and an app-authorized Core-tool adapter. Those pieces
-deliberately remain below the activation boundary: the backend status is still unavailable until
-worker startup, revival and finalization are wired through the broker end to end. GPT Work and custom
-remain unavailable agent executors. `/models` or `/chat/completions` reachability alone is never
-agent-execution readiness proof.
+In the current source line, GPT Chat is the end-to-end agent executor for the owning agent (Prime).
+Since 2.3.5, Ollama is a supported **worker** driver: Settings > Agent execution takes an
+OpenAI-compatible endpoint (HTTP only on loopback, HTTPS elsewhere) and an exact model id such as
+`gemma4:cloud`. Spawned Ollama workers never open a ChatGPT tab; the app runs a bounded model/tool
+loop with a broker-issued run/worker principal and the same live Core permissions. Each Ollama
+worker is one-shot: it finishes (or fails) as a terminal row, cannot be revived, and a restart
+fails any in-flight Ollama worker visibly instead of reconstructing its transcript. Ollama cannot
+be the agent driver. GPT Work and custom remain unavailable agent executors. `/models` or
+`/chat/completions` reachability alone is never agent-execution readiness proof.
 
 ## Run and worker identities
 
