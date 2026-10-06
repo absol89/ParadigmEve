@@ -78,7 +78,7 @@ describe('production Ollama worker executor', () => {
     await saveConfig({
       ...base,
       execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
-      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } },
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud' } },
       roots: [{ name: 'workspace', path: approved }],
       capabilities: { ...base.capabilities, read: true },
       multiAgent: { ...base.multiAgent, enabled: true }
@@ -89,7 +89,7 @@ describe('production Ollama worker executor', () => {
     const dropBrowser = onExecutorSpawnRequest('gpt-chat', browser);
     const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) =>
       String(input).endsWith('/api/tags')
-        ? Response.json({ models: [{ name: 'gemma4:cloud', remote_host: 'https://ollama.com' }] })
+        ? Response.json({ models: [{ name: 'fixture-model:cloud', remote_host: 'https://ollama.com' }] })
         : Response.json({ choices: [{ message: { content: 'OLLAMA_WORKER_OK' } }] }));
     vi.stubGlobal('fetch', fetch);
     const stop = startOllamaWorkerExecutor();
@@ -111,7 +111,7 @@ describe('production Ollama worker executor', () => {
         'http://127.0.0.1:11434/v1/chat/completions'
       ]);
       const request = fetch.mock.calls[1]?.[1] as RequestInit;
-      expect(JSON.parse(String(request.body))).toMatchObject({ model: 'gemma4:cloud', stream: false });
+      expect(JSON.parse(String(request.body))).toMatchObject({ model: 'fixture-model:cloud', stream: false });
     } finally {
       stop();
       dropBrowser();

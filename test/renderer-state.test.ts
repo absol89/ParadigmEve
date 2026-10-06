@@ -1073,7 +1073,7 @@ it('offers Ollama only as a worker driver and saves its dedicated runtime settin
   ]);
 
   (doc.getElementById('ollamaWorkerEndpoint') as HTMLInputElement).value = 'http://127.0.0.1:11434/v1';
-  (doc.getElementById('ollamaWorkerModel') as HTMLInputElement).value = 'gemma4:cloud';
+  (doc.getElementById('ollamaWorkerModel') as HTMLInputElement).value = 'fixture-model:cloud';
   worker.value = 'ollama';
   worker.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
   await vi.waitFor(() => expect(mounted.calls.at(-1)?.execution).toEqual({
@@ -1081,7 +1081,7 @@ it('offers Ollama only as a worker driver and saves its dedicated runtime settin
     worker: 'ollama'
   }));
   expect(mounted.calls.at(-1)?.agentRuntime).toEqual({
-    ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud', chatDirectTools: true }
+    ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud', chatDirectTools: true }
   });
 });
 

@@ -177,7 +177,7 @@ describe('Eve readiness projection', () => {
     const configured = config({
       onboarding: { complete: true },
       execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
-      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud' } }
     });
     expect(eveReadiness(input({ config: configured, status: status('connected', null) }), 'win32')).toMatchObject({
       state: 'ready',

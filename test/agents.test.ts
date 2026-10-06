@@ -279,8 +279,8 @@ describe('spawning a run', () => {
   });
 
   it.each([
-    ['not a url', 'gemma4:cloud', /endpoint is missing or invalid/],
-    ['http://192.168.1.20:11434/v1', 'gemma4:cloud', /endpoint is missing or invalid/],
+    ['not a url', 'fixture-model:cloud', /endpoint is missing or invalid/],
+    ['http://192.168.1.20:11434/v1', 'fixture-model:cloud', /endpoint is missing or invalid/],
     ['http://127.0.0.1:11434/v1', '  ', /no Ollama model is configured/]
   ] as const)('refuses Ollama workers with endpoint %j and model %j before any run', async (endpoint, model, message) => {
     const base = defaultConfig();
@@ -305,7 +305,7 @@ describe('spawning a run', () => {
       ...base,
       multiAgent: { ...base.multiAgent, enabled: true, maxWorkers: 3 },
       execution: { ...base.execution, worker: 'ollama' },
-      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud' } }
     });
     const browser = vi.fn();
     const local: string[] = [];
@@ -314,7 +314,7 @@ describe('spawning a run', () => {
     try {
       expect(() => spawn({ workers: [{ task: 'x', model: 'gpt-5.5' }], caller: prime })).toThrow(/omit model\/reasoning_effort/);
       const result = spawn({ workers: [{ task: 'summarize the notes' }], caller: prime });
-      expect(result.created[0]).toMatchObject({ model: 'gemma4:cloud', reasoningEffort: null });
+      expect(result.created[0]).toMatchObject({ model: 'fixture-model:cloud', reasoningEffort: null });
       expect(local).toEqual(['worker-1']);
       expect(browser).not.toHaveBeenCalled();
     } finally {

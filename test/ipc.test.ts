@@ -1120,13 +1120,13 @@ describe('settings writes from more than one UI', () => {
     const wanted = {
       ...base,
       execution: { orchestrator: 'gpt-chat' as const, worker: 'ollama' as const },
-      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud' } }
     };
     const first = await save(wanted, base);
     expect(first.ok, first.error).toBe(true);
     expect(getConfig()).toMatchObject({
       execution: { orchestrator: 'gpt-chat', worker: 'ollama' },
-      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:cloud' } }
+      agentRuntime: { ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud' } }
     });
 
     const live = getConfig();
