@@ -1447,7 +1447,7 @@ describe('observations', () => {
 
   it('amends a text-only browser user row when its upload pixels arrive on a later observation', async () => {
     await pair();
-    const conversationId = '51111111-2222-4333-8444-555555555555';
+    const conversationId = '6a5b4c3d-2222-4333-8444-555555555555';
     const messageId = 'd25a3a0e-84c2-4d73-8a3d-52732d19d9af';
     const first = await request('POST', '/events', { body: { conversationId, events: [
       { kind: 'user_message', time: 1789552400000, text: 'self test now', messageId }
