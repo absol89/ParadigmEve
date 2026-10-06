@@ -244,7 +244,10 @@ describe('restart recovery memory', () => {
       dueAt: 123
     }));
     expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('durable installation identity proves this exact conversation is Eve');
-    expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('do not wait for the periodic semantic heartbeat');
+    expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('newest user messages');
+    expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('Newer user corrections and newer verified state supersede older versioned instructions');
+    expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('Do not redo prerequisites the user has since said are complete');
+    expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('Do not wait for the periodic semantic heartbeat');
     expect(ports.markRecovery).toHaveBeenCalledWith(plan?.inputId, prime.activeTurnId);
   });
 

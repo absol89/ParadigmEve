@@ -455,6 +455,22 @@ describe('session store', () => {
     expect(recorded).toMatchObject({ inputId: 'app-input', attachments: [original] });
   });
 
+  it('refuses a stale page preview after an app receipt takes attachment custody', async () => {
+    const summary = await createSession({ title: 'capture receipt race' });
+    const base = { kind: 'user_message' as const, source: 'extension' as const, time: 100, messageId: 'native-user',
+      message: { text: 'upload', chars: 6, truncated: false } };
+    const page = { id: 'page-preview.webp', mimeType: 'image/webp', bytes: 12 };
+    const original = { id: 'original.png', mimeType: 'image/png', bytes: 24 };
+    await upsertMessageEvent(summary.id, base);
+    await upsertMessageEvent(summary.id, { ...base, source: 'app', inputId: 'app-input',
+      attachments: [{ id: 'staged', name: 'shot.png', mimeType: 'image/png', size: 24 }],
+      archivedAttachments: [{ attachmentId: 'staged', asset: original }] });
+    await upsertMessageEvent(summary.id, { ...base, assets: [page] });
+    const [recorded] = await readEvents(summary.id, { kinds: ['user_message'] });
+    expect(recorded).toMatchObject({ inputId: 'app-input', archivedAttachments: [{ attachmentId: 'staged', asset: original }] });
+    expect(recorded && recorded.kind === 'user_message' ? recorded.assets : 'missing').toBeUndefined();
+  });
+
   it('keeps the original anchor when provider creation time changes on reload, without merging sibling messages', async () => {
     const summary = await createSession({ title: 'provider timestamp revision' });
     const row = (messageId: string, providerMessageId: string) => ({
@@ -1827,14 +1843,17 @@ describe('handoff storage', () => {
     expect(chunkText('short brief', 1000)).toEqual(['short brief']);
   });
 
-  it('asks for user-authoritative handoffs up to the documented 30k-token ceiling', () => {
+  it('asks for user-authoritative, recency-first handoffs under the documented 30k-token ceiling', () => {
     const prompt = nativeHandoffPrompt();
     expect(prompt).toContain(HANDOFF_BRIEF_RULES);
     expect(prompt).toMatch(/user's messages as the highest-authority source/i);
-    expect(prompt).toMatch(/10,000[–-]30,000 tokens/i);
-    expect(prompt).toMatch(/~6,000-token brief is normally too short/i);
+    // 2.3.6: a current-state snapshot, not a 10k–30k archive of the whole chronology.
+    expect(prompt).toMatch(/newest user correction or instruction overrides older user instructions/i);
+    expect(prompt).toMatch(/Do not carry superseded release\/build\/version state forward/i);
+    expect(prompt).toMatch(/new continuation boundary/i);
+    expect(prompt).toMatch(/operational continuation snapshot/i);
     expect(prompt).toMatch(/Never exceed 30,000 tokens/i);
-    expect(prompt).toMatch(/lossless operational compression/i);
+    expect(prompt).not.toMatch(/10,000[–-]30,000 tokens/i);
     expect(prompt).toMatch(/failure.*root cause.*change.*verification/i);
     expect(prompt).toMatch(/PLANNED \/ DECIDED/i);
     expect(prompt).toMatch(/FAILED \/ UNRESOLVED/i);

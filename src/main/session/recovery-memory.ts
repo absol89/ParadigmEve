@@ -310,7 +310,7 @@ export async function queuePrimeRestartRecovery(conversationId: string): Promise
     ? ` Local session ${session.id} still records interrupted/open turn ${activeTurnId}; do not Stop it merely to deliver this wake.`
     : ` Local session ${session.id} was idle at restart.`;
   const agentName = getConfig().mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME;
-  const text = `[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nParadigmEve restarted and durable installation identity proves this exact conversation is ${agentName}.${turnContext} Resume coordination from this ${agentName} conversation now. Inspect durable session/repository/worker state, continue still-valid work, and do not wait for the periodic semantic heartbeat to rediscover it. Do not infer another owner from titles, recency, visible tabs or similar text.`;
+  const text = `[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nParadigmEve restarted and durable installation identity proves this exact conversation is ${agentName}.${turnContext} Resume coordination from this ${agentName} conversation now. Before acting on older handoff, wake, Plan, build, release, install, or provider text, inspect the newest user messages and the current durable session/repository/install/worker state. Newer user corrections and newer verified state supersede older versioned instructions; continue only work that is still current. Do not redo prerequisites the user has since said are complete unless current evidence contradicts them. Do not wait for the periodic semantic heartbeat to rediscover this chat, and do not infer another owner from titles, recency, visible tabs or similar text.`;
   try {
     const queued = await enqueueInput({
       id: inputId,
