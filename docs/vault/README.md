@@ -3,7 +3,7 @@
 > Not in an engineering mood? Start with the local [Eve HTML tour](../readme/index.html):
 > human problems first, tiny interactive demos, technical details only when you ask for them.
 
-> **Current source/manual line:** 2.3.4
+> **Current source/manual line:** 2.3.6
 > **Bridge protocol:** 15
 
 This folder is the fast, linked operational manual for how the current ParadigmEve source fits together. It is
@@ -36,7 +36,7 @@ state lives, and what to check when something breaks**. See [Self-reliant AI and
 | [07 — Plugins and connector refresh](07-plugins-and-connector-refresh.md) | How do external MCP integrations run and how does ChatGPT schema refresh stay safe? |
 | [08 — Persistence, security and filesystem](08-persistence-security-and-filesystem.md) | Where does state live, how does the durable chat archive work, what is encrypted, and how are filesystem/tool boundaries enforced? |
 | [09 — Build, install, update and release](09-build-install-update-release.md) | How does a source tree become a package and how is a private build applied? |
-| [10 — Current state and acceptance](10-current-state-and-acceptance.md) | What is true in the current 2.3.4 source, and what must be proved before packaging or calling a change complete? |
+| [10 — Current state and acceptance](10-current-state-and-acceptance.md) | What is true in the current 2.3.6 source, and what must be proved before packaging or calling a change complete? |
 | [11 — Debugging playbooks](11-debugging-playbooks.md) | What evidence should be collected first for the recurring hard failure classes? |
 | [12 — Self-reliant AI and the manual](12-self-reliant-ai-and-the-manual.md) | How should Eve use the manual and current evidence without exposing internal documentation mechanics unless they help? |
 | [13 — Schedule workspace and Eve routines](13-schedules-and-routines.md) | How do Schedule, `#schedule`, `#myweek`, `#routines`, `%schedule`, `%evecron` and evidence-backed Started/Done fit together? |
@@ -57,7 +57,8 @@ Do not duplicate these when they already answer the narrow question well:
 - [`docs/product/feature-spec-template.md`](../product/feature-spec-template.md) — generic template-project authority, retention, provenance and external-context questions.
 - [`docs/product/expenses.md`](../product/expenses.md) — Expenses dogfood contract for recurring intake, canonical structured data and optional raw evidence.
 - [`docs/release-notes/v2.2.2.md`](../release-notes/v2.2.2.md) — release notes for the stable Angel release.
-- [`docs/release-notes/v2.3.4.md`](../release-notes/v2.3.4.md) — release notes for the 2.3.4 source line.
+- [`docs/release-notes/v2.3.6.md`](../release-notes/v2.3.6.md) — first-user guide and release notes for the current 2.3.6 source line.
+- [`docs/release-notes/v2.3.4.md`](../release-notes/v2.3.4.md) — release notes for the previous public 2.3.4 line.
 - [`docs/release-notes/v2.3.3.md`](../release-notes/v2.3.3.md) — release notes for the 2.3.3 source line.
 - [`docs/product/README.md`](../product/README.md) — product direction and human goals.
 

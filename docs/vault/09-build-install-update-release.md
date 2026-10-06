@@ -12,8 +12,8 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current app source line is **2.3.4**. The earlier **App + Companion 2.2.2** Angel checkpoint remains
-part of the release history, and the current bridge protocol is **15**. A 2.3.4 package is not coherent
+The current app source line is **2.3.6**. The earlier **App + Companion 2.2.2** Angel checkpoint remains
+part of the release history, and the current bridge protocol is **15**. A 2.3.6 package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other.
 

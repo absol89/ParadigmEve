@@ -27,7 +27,7 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-10-02**, including current working-tree changes. App/extension **2.3.4 development**,
+Source alignment: **2026-10-06**, including current working-tree changes. App/extension **2.3.6 development**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -1886,22 +1886,22 @@ renderer, so changing a runtime environment variable cannot unlock a driver excl
 installed build. Non-shipping packages append `-debug` or `-dev` to their artifact name; shipping
 keeps the canonical public filenames used by release/update flows.
 
-For the current local **2.3.4** Windows self-test line, the laptop builds **x64 debug
+For the current local **2.3.6** Windows self-test line, the laptop builds **x64 debug
 only** so the implemented GPT Chat agent lane remains available. Preserve prior release and installer
-evidence; do not overwrite archived evidence while qualifying 2.3.4. A private Angel display copy may omit `-debug`
+evidence; do not overwrite archived evidence while qualifying 2.3.6. A private Angel display copy may omit `-debug`
 only when its filename remains visibly non-canonical (for example
 `ParadigmEve-2.2.4-x64-Angel-<hash>.exe`) and its recorded provenance still says the compiled
 flavor is debug. Never rename those bytes to the canonical shipping/update filename.
 Public arm64 artifacts are a separate release workflow and must never be substituted for
 the local debug artifact.
 
-The **2.3.4 line is cumulative over the public 2.3.3 release and the reviewed public 2.3.4 baseline**. Git provenance must say that plainly. Before
-packaging or claiming a 2.3.4 candidate, inspect
+The **2.3.6 line is cumulative over the public 2.3.4 release; 2.3.5 was an internal dogfood line whose accepted work ships in 2.3.6**. Git provenance must say that plainly. Before
+packaging or claiming a 2.3.6 candidate, inspect
 `git branch --show-current`, `git status`, recent history and the tracked release notes. A final
-release checkpoint must contain the accepted cumulative 2.3.4 work over that ancestry; package/version
+release checkpoint must contain the accepted cumulative 2.3.6 work over that ancestry; package/version
 declarations or a stale directory name do not prove ancestry. Do not create/switch a release
 branch from stale HEAD while leaving the real cumulative work only in the working tree.
-`docs/release-notes/v2.3.4.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
+`docs/release-notes/v2.3.6.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
 current. A dirty worktree is allowed during active integration, but it is not immutable release
 evidence and must be described honestly until checkpointed. `scripts/package.mjs` enforces this by
 default: packaging requires a clean target-version branch (or exact version tag) and tracked current
