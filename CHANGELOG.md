@@ -25,6 +25,8 @@ operation.
   chat reach vision models as image parts.
 - After an Ollama-started chat moves to ChatGPT, the first ChatGPT answer is recorded even when its tab
   is in the background, and the next message reaches the page instead of failing after 60 seconds.
+- Compact & Resume briefs and restart wakes put the newest user direction first: newer corrections and
+  verified state supersede older build/release/install instructions, and finished prerequisites are not redone.
 - Images you attach directly on the ChatGPT website are kept in Eve's archive as a preview (up to 1600 px
   WebP), copied from the image the page already shows; the signed ChatGPT link is never stored. The
   session tool can return them like any other archived image.

@@ -188,6 +188,30 @@ describe('ArchiveRuntime', () => {
     expect(archived.events[0]!.assets).toHaveLength(1);
   });
 
+  it('archives a browser upload captured after its text row was first seen', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-late-page-image';
+    const bytes = new TextEncoder().encode('page preview webp');
+    const preview: AssetRef = { id: 'preview.bin', mimeType: 'image/webp', bytes: bytes.byteLength };
+    let clock = 1_000;
+    const text = { ...user(1, 'self test now'), time: 1_000, source: 'extension', messageId: 'browser-user' } as SessionEvent;
+    let current: CurrentSessionArchiveSnapshot = { summary: summary(id), events: [text] };
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test', now: () => clock,
+      source: { listSessionIds: async () => [id], readSession: async () => current, readAsset: async (_s, assetId) => assetId === preview.id ? bytes : null } });
+    await runtime.start();
+    await runtime.drain();
+    clock = 6_000;
+    current = { summary: { ...summary(id), updatedAt: 300 }, events: [{ ...text, assets: [preview] } as SessionEvent] };
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    clock = 1_000 + PAGE_USER_RECEIPT_GRACE_MS;
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    const archived = await runtime.store.readSession(id);
+    expect(archived.events.map(event => event.eventId)).toEqual(['user:browser-user']);
+    expect(archived.events[0]!.assets).toHaveLength(1);
+  });
+
   it('publishes a page-authored user row once no app receipt can still arrive', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-page-authored';

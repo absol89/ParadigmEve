@@ -303,10 +303,22 @@ describe('fiber evidence on the render-item renderer', () => {
     return turnFiber;
   }
 
-  async function scan(item: Record<string, unknown>, value: Record<string, unknown> | null, user = userItem()) {
+  async function scan(item: Record<string, unknown>, value: Record<string, unknown> | null, user = userItem(),
+    options: { images?: string[]; model?: Record<string, unknown>; beforeReply?: Record<string, unknown> } = {}): Promise<Record<string, any>> {
     const body = exchange(6, USER_ID, '1+1', REPLY_ID, '<strong>2</strong>');
     const window = page(body).window as unknown as Window & typeof globalThis & Record<string, any>;
-    (window.document.querySelector(`[data-turn-key="${USER_ID}"]`) as any)['__reactFiber$live'] = renderItemExchange(item, value, user);
+    const fiber = renderItemExchange(item, value, user);
+    if (options.model) fiber.child!.sibling!.memoizedProps.message = options.model;
+    if (options.beforeReply) fiber.child!.sibling = {
+      memoizedProps: { item: options.beforeReply }, return: fiber, sibling: fiber.child!.sibling
+    };
+    (window.document.querySelector(`[data-turn-key="${USER_ID}"]`) as any)['__reactFiber$live'] = fiber;
+    const unit = window.document.querySelector('[data-chatgpt-search-unit-key$=":user"]')!;
+    for (const id of options.images ?? []) {
+      const image = window.document.createElement('img');
+      image.src = 'https://chatgpt.com/backend-api/estuary/content?id=' + id + '&sig=private';
+      unit.append(image);
+    }
     window.eval(fiberSource);
     const reply = new Promise<Record<string, any>>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('the helper never answered')), 2000);
@@ -317,7 +329,8 @@ describe('fiber evidence on the render-item renderer', () => {
       });
     });
     window.dispatchEvent(new window.MessageEvent('message', { data: { source: 'clf-fiber-ask', nonce: 'render-item' }, source: window }));
-    return reply;
+    const data = await reply;
+    return { ...data, imageStamps: [...unit.querySelectorAll('img')].map(node => node.getAttribute('data-clf-fiber-image')) };
   }
 
   it('reports a finished reply by its provider id, raw Markdown, rendered HTML and end of turn', async () => {
@@ -344,6 +357,114 @@ describe('fiber evidence on the render-item renderer', () => {
       expect(replies.map((message: any) => [message.rawMessageId, message.stable])).toEqual([[REPLY_ID, false]]);
       expect(data.turns[0].endMessageId).toBeNull();
     }
+  });
+
+  it.each(['file_00000000000000000000000000000077', 'file-0123456789abcdef'])('retains rendered-item uploads without a model message (%s)', async assetId => {
+    const file = { id: assetId, name: 'upload.png', size: 123, mime_type: 'image/png', url: 'must-not-cross-worlds' };
+    const data = await scan(assistantItem(), context(), userItem({ message: '', attachments: [file] }),
+      { images: [assetId, 'file_00000000000000000000000000000099'] });
+    expect(data.turns[0].messages[0]).toMatchObject({ role: 'user', rawText: '',
+      attachments: [{ id: assetId, name: 'upload.png', size: 123, mimeType: 'image/png' }] });
+    expect(data.turns[0].images).toEqual([expect.objectContaining({ messageId: USER_ID, assetId,
+      providerRole: 'user', providerStatus: 'finished_successfully', order: 0 })]);
+    // The exchange and its user unit overlap; one DOM node still gets one exact stamp.
+    expect(data.imageStamps[0]).toBeTruthy();
+    expect(data.imageStamps[1]).toBeNull();
+    expect(data.turns[0].imageTraces).toEqual([expect.objectContaining({ source: 'rendered-item', parts: 1, metaAtt: 1,
+      attachmentKeys: ['id', 'name', 'size', 'mime_type', 'url'] })]);
+    expect(JSON.stringify(data)).not.toMatch(/private|must-not-cross-worlds|estuary/);
+  });
+
+  // Live c14 (2026-10-06): a chatgpt.com upload left `attachments` empty; the item also carries
+  // chatGptImageAttachments, chatGptFileAttachments and images. Each list yields the exact file id.
+  it.each([
+    ['chatGptImageAttachments objects without a MIME type', { chatGptImageAttachments: [{ id: 'file_00000000000000000000000000000077', name: 'shot.png', size: 321, width: 800, height: 600 }] }],
+    ['images as typed pointers', { images: ['sediment://file_00000000000000000000000000000077'] }],
+    ['images as bare provider ids', { images: ['file_00000000000000000000000000000077'] }],
+    ['chatGptFileAttachments with an image MIME type and a fileId field', { chatGptFileAttachments: [{ fileId: 'file_00000000000000000000000000000077', mimeType: 'image/png' }] }]
+  ])('reads a browser upload from %s', async (_label, lists) => {
+    const assetId = 'file_00000000000000000000000000000077';
+    const data = await scan(assistantItem(), context(), userItem({ message: 'attached image', attachments: [], ...lists }),
+      { images: [assetId, 'file_00000000000000000000000000000099'] });
+    expect(data.turns[0].images).toEqual([expect.objectContaining({ messageId: USER_ID, assetId, providerRole: 'user' })]);
+    expect(data.imageStamps[0]).toBeTruthy();
+    expect(data.imageStamps[1]).toBeNull();
+    expect(data.turns[0].imageTraces[0]).toMatchObject({ source: 'rendered-item', parts: 1, metaAtt: 0, uploads: 1 });
+    expect(JSON.stringify(data.turns[0].imageTraces)).not.toContain('file_000');
+  });
+
+  it('records each upload list shape in the trace without values', async () => {
+    const data = await scan(assistantItem(), context(), userItem({ attachments: [],
+      chatGptImageAttachments: [{ id: 'file_00000000000000000000000000000077', name: 'secret-name.png', url: 'https://cdn.example/sig' }],
+      images: ['blob:https://chatgpt.com/abc'] }), { images: [] });
+    expect(data.turns[0].imageTraces[0].uploadShape).toEqual({
+      attachments: { len: 0, kind: 'none', keys: [] },
+      chatGptImageAttachments: { len: 1, kind: 'object', keys: ['id', 'name', 'url'] },
+      images: { len: 1, kind: 'string', keys: [] }
+    });
+    expect(JSON.stringify(data.turns[0].imageTraces)).not.toMatch(/secret-name|cdn\.example|blob:|sig/);
+  });
+
+  it('refuses a file list entry without an image MIME type or with two different ids', async () => {
+    const assetId = 'file_00000000000000000000000000000077';
+    const data = await scan(assistantItem(), context(), userItem({ attachments: [],
+      chatGptFileAttachments: [{ id: assetId }, { id: assetId, mimeType: 'application/pdf' }],
+      chatGptImageAttachments: [{ id: assetId, fileId: 'file_00000000000000000000000000000099' }],
+      images: ['https://chatgpt.com/backend-api/estuary/content?id=' + assetId] }), { images: [assetId] });
+    expect(data.turns[0].images).toEqual([]);
+    expect(data.imageStamps).toEqual([null]);
+  });
+
+  it('keeps the rendered user before a real model reply with a server timestamp', async () => {
+    const model = { id: REPLY_ID, author: { role: 'assistant' }, recipient: 'all', channel: 'final',
+      create_time: 1789552100, status: 'finished_successfully', end_turn: true,
+      content: { content_type: 'text', parts: ['The model answer'] }, metadata: {} };
+    const data = await scan(assistantItem(), context(), userItem(), { model });
+    expect(data.turns[0].messages.map((message: any) => [message.role, message.rawText])).toEqual([
+      ['user', '1+1'], ['assistant', 'The model answer']
+    ]);
+    expect(data.turns[0].endMessageId).toBe(REPLY_ID);
+  });
+
+  it('uses the real user model image identity instead of a conflicting rendered attachment', async () => {
+    const assetId = 'file_00000000000000000000000000000077';
+    const otherId = 'file_00000000000000000000000000000099';
+    const model = { id: USER_ID, author: { role: 'user' }, recipient: 'all', status: 'finished_successfully',
+      content: { content_type: 'multimodal_text', parts: [
+        { content_type: 'image_asset_pointer', asset_pointer: 'sediment://' + assetId }, 'Model user text'
+      ] }, metadata: {} };
+    const data = await scan(assistantItem(), context(), userItem({ attachments: [
+      { id: otherId, name: 'stale.png', mime_type: 'image/png', size: 12 }
+    ] }), { model, images: [assetId, otherId] });
+    expect(data.turns[0].messages[0]).toMatchObject({ role: 'user', rawText: 'Model user text' });
+    expect(data.turns[0].images.map((image: any) => image.assetId)).toEqual([assetId]);
+    expect(data.imageStamps[0]).toBeTruthy();
+    expect(data.imageStamps[1]).toBeNull();
+    expect(data.turns[0].imageTraces[0]).toMatchObject({ source: 'model', parts: 1 });
+  });
+
+  it('keeps rendered commentary before a timestamped model final in a mixed exchange', async () => {
+    const interimId = 'b0000004-0000-4000-8000-000000000004';
+    const model = { id: REPLY_ID, author: { role: 'assistant' }, recipient: 'all', channel: 'final',
+      create_time: 1789552100, status: 'finished_successfully', end_turn: true,
+      content: { content_type: 'text', parts: ['Final answer'] }, metadata: {} };
+    const beforeReply = assistantItem({ messageId: interimId, latestMessageId: interimId, sourceMessageIds: [interimId],
+      phase: 'commentary', completed: false, content: 'First update' });
+    const data = await scan(assistantItem(), context(), userItem(), { model, beforeReply });
+    expect(data.turns[0].messages.map((message: any) => message.rawText)).toEqual(['1+1', 'First update', 'Final answer']);
+  });
+
+  it('rejects invalid or non-image rendered attachments even when a DOM image offers an id', async () => {
+    const assetId = 'file_00000000000000000000000000000077';
+    const data = await scan(assistantItem(), context(), userItem({ attachments: [
+      { id: assetId, mime_type: 'text/plain', name: 'file.png', size: 123 },
+      { id: assetId, mime_type: 'image/png', mimeType: 'text/plain' },
+      { id: 'https://chatgpt.com/secret', mime_type: 'image/png' }
+    ] }), { images: [assetId] });
+    expect(data.turns[0].images).toEqual([]);
+    expect(data.turns[0].messages[0].attachments).toBeUndefined();
+    expect(data.imageStamps).toEqual([null]);
+    expect(data.turns[0].imageTraces[0]).toMatchObject({ parts: 0, metaAtt: 3 });
   });
 
   it('fails closed on contradictory identity, another conversation, or an unknown phase', async () => {

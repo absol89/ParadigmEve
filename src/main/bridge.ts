@@ -1315,6 +1315,30 @@ function parseObservations(input: unknown): ChatObservation[] {
     if (!raw || typeof raw !== 'object') continue;
     const item = raw as Record<string, unknown>;
     const kind = typeof item['kind'] === 'string' ? item['kind'] : '';
+    if (kind === 'page_image_trace') {
+      // Diagnostics never become stored conversation data. Revalidate every field;
+      // no URL, filename, text or arbitrary nested value is printed.
+      const keysValid = (keys: unknown): keys is string[] => Array.isArray(keys) && keys.length <= 16 &&
+        keys.every(key => typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(key));
+      if (typeof item['msg'] !== 'string' || !/^[0-9a-f]{8}$/i.test(item['msg']) ||
+          !['model', 'rendered-item'].includes(String(item['source'])) ||
+          !Number.isInteger(item['parts']) || Number(item['parts']) < 0 || Number(item['parts']) > 99 ||
+          !Number.isInteger(item['metaAtt']) || Number(item['metaAtt']) < 0 || Number(item['metaAtt']) > 99 ||
+          !keysValid(item['itemKeys']) || !keysValid(item['attachmentKeys'])) continue;
+      const uploads = Number.isInteger(item['uploads']) && Number(item['uploads']) >= 0 && Number(item['uploads']) <= 99 ? item['uploads'] : '?';
+      const rawShape = item['uploadShape'] && typeof item['uploadShape'] === 'object' ? item['uploadShape'] as Record<string, unknown> : {};
+      const shape: string[] = [];
+      for (const list of ['attachments', 'chatGptImageAttachments', 'chatGptFileAttachments', 'images']) {
+        const entry = rawShape[list] as Record<string, unknown> | undefined;
+        if (!entry || typeof entry !== 'object' || !Number.isInteger(entry['len']) || Number(entry['len']) < 0 || Number(entry['len']) > 99 ||
+            !['none', 'file-id', 'pointer', 'string', 'object', 'number', 'boolean'].includes(String(entry['kind'])) ||
+            !keysValid(entry['keys']) || entry['keys'].length > 12) continue;
+        shape.push(`${list}[${entry['len']}:${entry['kind']}${entry['keys'].length ? ':' + entry['keys'].join('|') : ''}]`);
+      }
+      logInfo(`page image trace msg=${item['msg']} source=${item['source']} parts=${item['parts']} metaAtt=${item['metaAtt']} uploads=${uploads} ` +
+        `itemKeys=${item['itemKeys'].join(',')} attachmentKeys=${item['attachmentKeys'].join(',')} uploadShape=${shape.join(',') || 'none'}`);
+      continue;
+    }
     if (!OBSERVATION_KINDS.has(kind)) continue;
     const time = typeof item['time'] === 'number' && Number.isFinite(item['time']) ? item['time'] : now;
     const observation: ChatObservation = {
@@ -1357,7 +1381,7 @@ function parseObservations(input: unknown): ChatObservation[] {
     if (kind === 'native_image') {
       if (typeof item['messageId'] !== 'string' ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item['messageId']) ||
-          typeof item['providerAssetId'] !== 'string' || !/^file_[A-Za-z0-9_-]{8,100}$/.test(item['providerAssetId']) ||
+          typeof item['providerAssetId'] !== 'string' || !/^file[_-][A-Za-z0-9_-]{8,100}$/.test(item['providerAssetId']) ||
           (item['providerRole'] !== 'tool' && item['providerRole'] !== 'assistant' && item['providerRole'] !== 'user')) continue;
       observation.messageId = item['messageId'];
       observation.providerAssetId = item['providerAssetId'];

@@ -1823,19 +1823,32 @@ async function verifiedPagePreview(item: ChatObservation): Promise<{ data: Buffe
  * original bytes from its own outbox, so a page copy of it is never added.
  */
 async function recordPageUserImage(sessionId: string, item: ChatObservation): Promise<number> {
-  if (!item.messageId || !item.previewDataUrl) return 0;
-  const message = (await readEvents(sessionId, { kinds: ['user_message'] }))
-    .findLast((event): event is Extract<SessionEvent, { kind: 'user_message' }> => event.kind === 'user_message' && event.messageId === item.messageId);
-  if (!message || message.inputId || message.archivedAttachments?.length) return 0;
-  const preview = await verifiedPagePreview(item);
-  if (!preview) {
-    logWarn('page user image preview unavailable: invalid preview');
+  if (!item.messageId) return 0;
+  const trace = (outcome: string) => logInfo(`page user image msg=${item.messageId!.slice(0, 8)} recorder=${outcome}`);
+  if (!item.previewDataUrl) {
+    trace(item.previewStatus === 'unavailable' ? `unavailable:${item.previewError ?? 'invalid'}` : 'pending');
     return 0;
   }
+  const message = (await readEvents(sessionId, { kinds: ['user_message'] }))
+    .findLast((event): event is Extract<SessionEvent, { kind: 'user_message' }> => event.kind === 'user_message' && event.messageId === item.messageId);
+  if (message?.inputId || message?.archivedAttachments?.length) { trace('app-input'); return 0; }
+  const preview = await verifiedPagePreview(item);
+  if (!preview) {
+    trace('invalid-preview');
+    return 0;
+  }
+  if ((message?.assets?.length ?? 0) >= 4) { trace('limit'); return 0; }
   const asset = await writeAsset(sessionId, preview.data, 'image/webp');
-  if ((message.assets ?? []).some(existing => existing.id === asset.id)) return 0;
-  const { seq: _seq, ...rest } = message;
-  const written = await upsertMessageEvent(sessionId, { ...rest, assets: [...message.assets ?? [], asset] });
+  if ((message?.assets ?? []).some(existing => existing.id === asset.id)) { trace('duplicate'); return 0; }
+  // The typed image descriptor proves the user message id even when its text row
+  // has not arrived yet. Commit custody now; the later text enriches this same
+  // canonical row, preserving its position, and an app receipt replaces page pixels.
+  const { seq: _seq, ...rest } = message ?? {
+    seq: 0, time: item.time, source: 'extension' as const, kind: 'user_message' as const,
+    messageId: item.messageId, message: { text: '', chars: 0, truncated: false }
+  };
+  const written = await upsertMessageEvent(sessionId, { ...rest, assets: [...message?.assets ?? [], asset] });
+  trace(written.changed ? message ? 'filed' : 'filed-before-text' : 'duplicate');
   return written.changed ? 1 : 0;
 }
 

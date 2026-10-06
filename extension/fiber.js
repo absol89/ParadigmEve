@@ -282,13 +282,97 @@
    * handoff was sent, answered with a full brief, and never collected. Identity must be unanimous:
    * `serverMessageId` agrees, and the item is the user message its exchange is keyed by.
    */
+  /**
+   * Rendered user items keep browser uploads in several lists. Live 2.3.6 c14 (2026-10-06): an image
+   * attached on chatgpt.com left `attachments` empty while ChatGPT showed it; the item also carries
+   * `chatGptImageAttachments`, `chatGptFileAttachments` and `images`. Every list is read the same way:
+   * only an explicit provider file id (a typed pointer, or an id field) is identity, and an image MIME
+   * type is required except in the two lists that hold nothing but images. DOM URLs never supply identity.
+   */
+  const USER_ITEM_UPLOAD_LISTS = ['attachments', 'chatGptImageAttachments', 'chatGptFileAttachments', 'images'];
+  const USER_ITEM_IMAGE_ONLY_LISTS = new Set(['chatGptImageAttachments', 'images']);
+  const PROVIDER_FILE_ID = /^file[_-][A-Za-z0-9_-]{8,100}$/;
+  const PROVIDER_FILE_POINTER = /^(?:sediment:\/\/(file_[A-Za-z0-9_-]{8,100})|file-service:\/\/(file-[A-Za-z0-9_-]{8,100}))$/;
+  function userItemFileId(value) {
+    if (typeof value !== 'string') return null;
+    if (PROVIDER_FILE_ID.test(value)) return value;
+    const pointer = PROVIDER_FILE_POINTER.exec(value);
+    return pointer ? pointer[1] || pointer[2] : null;
+  }
+  function userItemUpload(entry, imageOnly) {
+    if (typeof entry === 'string') {
+      const id = userItemFileId(entry);
+      return id && imageOnly ? { id, mime: null } : null;
+    }
+    if (!entry || typeof entry !== 'object') return null;
+    const ids = [entry.id, entry.fileId, entry.file_id, entry.assetId, entry.asset_pointer, entry.assetPointer]
+      .map(userItemFileId).filter(Boolean);
+    if (!ids.length || ids.some(other => other !== ids[0])) return null;
+    const mimes = [entry.mime_type, entry.mimeType, entry.contentType, entry.content_type]
+      .filter(value => typeof value === 'string' && value);
+    if (mimes.some(other => other !== mimes[0])) return null;
+    const mime = mimes[0] || null;
+    if (mime ? !/^image\/[a-z0-9.+-]{1,80}$/i.test(mime) : !imageOnly) return null;
+    const name = [entry.name, entry.fileName, entry.file_name].find(value => typeof value === 'string' && value.length > 0 && value.length <= 200) || null;
+    const size = [entry.size, entry.fileSize, entry.size_bytes].find(value => Number.isSafeInteger(value) && value >= 0 && value <= 512 * 1024 * 1024);
+    const width = Number.isInteger(entry.width) && entry.width > 0 && entry.width <= 30_000 ? entry.width : null;
+    const height = Number.isInteger(entry.height) && entry.height > 0 && entry.height <= 30_000 ? entry.height : null;
+    return { id: ids[0], mime, name, size: size ?? null, width, height };
+  }
+  function userItemUploads(item) {
+    const uploads = [];
+    const seen = new Set();
+    for (const list of USER_ITEM_UPLOAD_LISTS) {
+      const entries = Array.isArray(item[list]) ? item[list] : [];
+      for (const entry of entries.slice(0, 20)) {
+        const upload = userItemUpload(entry, USER_ITEM_IMAGE_ONLY_LISTS.has(list));
+        if (!upload || seen.has(upload.id)) continue;
+        seen.add(upload.id);
+        uploads.push(upload);
+        if (uploads.length >= 4) return uploads;
+      }
+    }
+    return uploads;
+  }
+  /** Shape only, for the field-key trace: list lengths, element types and element key names. */
+  function userItemUploadShape(item) {
+    const shape = {};
+    for (const list of USER_ITEM_UPLOAD_LISTS) {
+      const entries = Array.isArray(item[list]) ? item[list] : null;
+      if (!entries) continue;
+      const first = entries[0];
+      const kind = first === undefined ? 'none' : typeof first === 'string'
+        ? (PROVIDER_FILE_ID.test(first) ? 'file-id' : PROVIDER_FILE_POINTER.test(first) ? 'pointer' : 'string')
+        : first && typeof first === 'object' ? 'object' : typeof first;
+      const keys = first && typeof first === 'object' ? Object.keys(first).filter(key => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(key)).slice(0, 12) : [];
+      shape[list] = { len: Math.min(99, entries.length), kind, keys };
+    }
+    return shape;
+  }
+
   function renderUserItemMessage(item, exchangeKey) {
     if (!item || typeof item !== 'object' || item.type !== 'user-message') return null;
     const id = str(item.messageId);
     if (!id || !/^[a-zA-Z0-9._:-]{1,256}$/.test(id) || id !== exchangeKey) return null;
     if (item.serverMessageId !== undefined && item.serverMessageId !== null && item.serverMessageId !== id) return null;
-    if (typeof item.message !== 'string' || !item.message) return null;
-    return { id, author: { role: 'user' }, recipient: 'all', content: { content_type: 'text', parts: [item.message] }, metadata: {} };
+    if (typeof item.message !== 'string') return null;
+    // Render items, rather than model messages, now own browser uploads too. Copy only
+    // explicit provider file identity and image metadata; DOM URLs never supply identity.
+    const attachments = [];
+    const parts = [];
+    for (const upload of userItemUploads(item)) {
+      parts.push({ content_type: 'image_asset_pointer',
+        asset_pointer: (upload.id.startsWith('file_') ? 'sediment://' : 'file-service://') + upload.id,
+        ...(upload.width ? { width: upload.width } : {}), ...(upload.height ? { height: upload.height } : {}) });
+      if (upload.name && upload.size !== null) {
+        attachments.push({ id: upload.id, name: upload.name, size: upload.size, mime_type: upload.mime || 'image/png' });
+      }
+    }
+    if (!item.message && !parts.length) return null;
+    parts.push(item.message);
+    return { id, author: { role: 'user' }, recipient: 'all', status: 'finished_successfully',
+      content: { content_type: parts.length > 1 ? 'multimodal_text' : 'text', parts },
+      metadata: attachments.length ? { attachments } : {} };
   }
 
   /** The conversation this page shows, from its own address. */
@@ -320,22 +404,24 @@
    * read — climbing from the unit to the exchange and a bounded walk below it — so each unit's
    * message is reached directly.
    */
-  function exchangeMessagesOf(fiber, section) {
+  function exchangeMessagesOf(fiber, section, imageTraces) {
     const byId = new Map();
     let whole = null;
     let order = 0;
-    const items = new Set();
+    const items = new Map();
     const contexts = [];
-    const add = (value) => {
+    const add = (value, itemOrder) => {
       order++;
       if (!modelMessage(value) || byId.has(value.id)) return;
-      byId.set(value.id, { message: value, order });
+      byId.set(value.id, { message: value, order: itemOrder ?? order });
     };
     const read = (at) => {
       const props = at.memoizedProps;
       if (!props || typeof props !== 'object') return;
       if (props.item && typeof props.item === 'object' &&
-          (props.item.type === 'assistant-message' || props.item.type === 'user-message')) items.add(props.item);
+          (props.item.type === 'assistant-message' || props.item.type === 'user-message') && !items.has(props.item)) {
+        items.set(props.item, ++order);
+      }
       const value = props.value;
       if (value && typeof value === 'object' && typeof value.messageId === 'string' && typeof value.isStreaming === 'boolean' &&
           !contexts.includes(value)) contexts.push(value);
@@ -392,16 +478,40 @@
     const conversationId = pageConversationId();
     // The exchange is keyed by its own user message; that item comes first, as on the page.
     const exchangeKey = section && section.getAttribute ? str(section.getAttribute('data-turn-key')) : null;
-    for (const item of items) if (item.type === 'user-message') add(renderUserItemMessage(item, exchangeKey));
-    for (const item of items) if (item.type === 'assistant-message') add(renderItemMessage(item, contexts, conversationId));
+    for (const [item, itemOrder] of items) if (item.type === 'user-message') {
+      const message = renderUserItemMessage(item, exchangeKey);
+      if (item.messageId === exchangeKey && /^[0-9a-f-]{36}$/i.test(exchangeKey) && imageTraces.length < 4) {
+        const keys = value => value && typeof value === 'object' ? Object.keys(value)
+          .filter(key => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(key)).slice(0, 16) : [];
+        const files = Array.isArray(item.attachments) ? item.attachments : [];
+        const observed = byId.get(exchangeKey)?.message || message;
+        const imageParts = Array.isArray(observed?.content?.parts) ? observed.content.parts : [];
+        imageTraces.push({ msg: exchangeKey.slice(0, 8), source: byId.has(exchangeKey) ? 'model' : 'rendered-item',
+          parts: Math.min(99, imageParts.filter(part => part?.content_type === 'image_asset_pointer').length),
+          metaAtt: Math.min(99, files.length), uploads: Math.min(99, userItemUploads(item).length),
+          itemKeys: keys(item), attachmentKeys: keys(files[0]), uploadShape: userItemUploadShape(item) });
+      }
+      add(message, itemOrder);
+    }
+    for (const [item, itemOrder] of items) if (item.type === 'assistant-message') {
+      add(renderItemMessage(item, contexts, conversationId), itemOrder);
+    }
     if (whole &&[...byId.keys()].every(id => whole.some(message => message.id === id))) return whole.slice();
     if (byId.size === 0) return null;
     const time = entry => {
-      const raw = Number(entry.message.create_time);
-      return Number.isFinite(raw) ? raw : Infinity;
+      const raw = entry.message.create_time;
+      return typeof raw === 'number' && Number.isFinite(raw) ? raw : Infinity;
     };
-    return [...byId.values()]
-      .sort((left, right) => time(left) - time(right) || left.order - right.order)
+    const entries = [...byId.values()];
+    // Server timestamps cannot order a mixed model/render-item stream: rendered
+    // commentary has none. Retain its original unit discovery ordinal instead of
+    // moving it behind a timestamped final answer when synthesis runs at the end.
+    const allTimed = entries.every(entry => time(entry) !== Infinity);
+    return entries
+      // The rendered user has no create_time. Sorting missing times last put its
+      // causally earlier upload after a real model reply in mixed-renderer exchanges.
+      .sort((left, right) => Number(right.message.id === exchangeKey) - Number(left.message.id === exchangeKey) ||
+        (allTimed ? time(left) - time(right) : 0) || left.order - right.order)
       .map(entry => entry.message);
   }
 
@@ -828,9 +938,9 @@
         const part = content.parts[partOrder];
         if (!part || typeof part !== 'object' || part.content_type !== 'image_asset_pointer') continue;
         const pointer = str(part.asset_pointer);
-        const match = pointer && /^sediment:\/\/(file_[A-Za-z0-9_-]{8,100})$/.exec(pointer);
+        const match = pointer && /^(?:sediment:\/\/(file_[A-Za-z0-9_-]{8,100})|file-service:\/\/(file-[A-Za-z0-9_-]{8,100}))$/.exec(pointer);
         if (!match) continue;
-        const assetId = match[1];
+        const assetId = match[1] || match[2];
         const key = messageId + '\u0000' + assetId;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -871,7 +981,7 @@
           const assetId = url.searchParams.get('id');
           if (!assetId || !descriptorsByAsset.has(assetId)) continue;
           const list = nodesByAsset.get(assetId) || [];
-          list.push(node);
+          if (!list.includes(node)) list.push(node);
           nodesByAsset.set(assetId, list);
         } catch {
           // Provider URL is never copied or persisted; malformed nodes simply have no pixels.
@@ -1545,7 +1655,8 @@
       try {
         const fiber = fiberOf(section);
         if (!fiber) continue;
-        const messages = group.exchange ? exchangeMessagesOf(fiber, section) || turnMessagesOf(fiber) : turnMessagesOf(fiber);
+        const imageTraces = [];
+        const messages = group.exchange ? exchangeMessagesOf(fiber, section, imageTraces) || turnMessagesOf(fiber) : turnMessagesOf(fiber);
         const calls = callsOf(messages);
         const requests = requestIdsOf(messages);
         const turnBudget = { remaining: Math.min(MAX_TURN_TEXT, responseBudget.remaining) };
@@ -1560,7 +1671,7 @@
           calls.length === 0 &&
           requests.length === 0 &&
           renderedMessages.length === 0 &&
-          activities.length === 0 && generatedImages.length === 0 && !endMessageId
+          activities.length === 0 && generatedImages.length === 0 && imageTraces.length === 0 && !endMessageId
         ) continue;
         const index = out.length;
         const conversation = conversationEvidenceOf(fiber);
@@ -1574,7 +1685,8 @@
           requests,
           messages: renderedMessages,
           activities,
-          images: generatedImages
+          images: generatedImages,
+          ...(imageTraces.length ? { imageTraces } : {})
         };
         // The isolated-world renderer needs to know which visible section this exact Fiber
         // turn descriptor came from. Remember the desired ephemeral scan index now and apply

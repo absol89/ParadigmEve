@@ -1252,7 +1252,11 @@ export function upsertMessageEvent(
                 reasoningEffort: event.reasoningEffort ?? previous.reasoningEffort,
                 // A page row's assets are previews captured from ChatGPT. When Eve's own receipt for
                 // that send arrives with archived originals, the originals replace them, not join them.
-                assets: event.assets ?? (!previous.inputId && event.inputId && event.archivedAttachments?.length ? undefined : previous.assets),
+                // A page capture may have read the row before an app receipt committed,
+                // then decoded its preview asynchronously. Enforce custody here, inside
+                // the canonical writer, so that stale page snapshot cannot re-add pixels.
+                assets: previous.inputId && !event.inputId ? previous.assets :
+                  event.assets ?? (!previous.inputId && event.inputId && event.archivedAttachments?.length ? undefined : previous.assets),
                 ...(event.provider ?? previous.provider ? { provider: event.provider ?? previous.provider } : {}),
                 ...(event.voice ?? previous.voice ? { voice: true as const } : {}),
                 ...(event.archivedAttachments ?? previous.archivedAttachments

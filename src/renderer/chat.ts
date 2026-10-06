@@ -1820,7 +1820,14 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       box.append(you);
       const attachments = el('div', 'message-attachments');
       if (event.attachments?.length) attachments.append(...event.attachments.map(file => attachmentCard(file)));
-      const assets = event.assets?.filter(asset => ['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType)).slice(0, 4) ?? [];
+      // Browser-originated uploads can arrive as a later canonical revision with only their
+      // durable archived copy. Render those the same way as page-captured preview assets.
+      const imageAssets = [
+        ...(event.assets ?? []),
+        ...(event.archivedAttachments ?? []).map(row => row.asset)
+      ].filter(asset => ['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType));
+      const seenAssets = new Set<string>();
+      const assets = imageAssets.filter(asset => !seenAssets.has(asset.id) && !!seenAssets.add(asset.id)).slice(0, 4);
       if (event.attachments?.length || assets.length) box.append(attachments);
       // Native ChatGPT can prepend a blank paragraph. Ignore it only when a
       // complete instruction frame validates; keep the authored suffix exact.
@@ -2464,7 +2471,15 @@ function itemSignature(item: TimelineItem): string {
   const parts: Array<string | number> = [event.seq, event.time, event.kind, event.agent ?? ''];
   switch (event.kind) {
     case 'user_message':
-      parts.push(event.message.chars, event.authoredText ?? '', event.inputDelivery ?? '');
+      parts.push(
+        event.message.chars,
+        event.authoredText ?? '',
+        event.inputDelivery ?? '',
+        (event.attachments ?? []).map(file => [file.id, file.name, file.size, file.mimeType, file.preview ?? ''].join(':')).join(','),
+        (event.assets ?? []).map(asset => [asset.id, asset.mimeType, asset.bytes].join(':')).join(','),
+        (event.archivedAttachments ?? []).map(row =>
+          [row.attachmentId, row.asset.id, row.asset.mimeType, row.asset.bytes].join(':')).join(',')
+      );
       break;
     case 'progress':
     case 'chat_error':

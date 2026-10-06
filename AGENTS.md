@@ -995,6 +995,16 @@ bounded attachment metadata. They participate in the same turn/receipt chronolog
 render an attachment placeholder immediately. Native metadata grants no local file custody;
 later browser observations must preserve an app outbox's staged attachment ids and previews.
 
+The exchange render-item reader preserves explicit image attachment ids and MIME metadata,
+including image-only user items, and keeps the exchange's user before mixed model/rendered replies.
+Native pixels bind only by exact provider file id to a same-origin estuary image; DOM URLs never
+supply identity. Both sediment `file_` and file-service `file-` pointers are accepted end to end.
+A bounded valid page preview may precede its text: the recorder creates the empty canonical user
+row under the exact provider message id, then text enriches it without moving its origin. App
+receipts still replace page previews with staged originals. `page_image_trace` carries bounded
+field names/counts only through the existing journal to app.log; it is never conversation data.
+The recorder logs unavailable/invalid/duplicate/app-input outcomes rather than silently dropping them.
+
 Reads join only the relevant session's committed queue. `readActivityEvents()` does not flush
 every dirty metadata row. A reopened session hydrates a bounded journal tail; append tail and
 canonical map serve revisions/cursors. `tailFrom` states proven coverage and cannot be lowered

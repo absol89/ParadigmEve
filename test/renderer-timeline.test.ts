@@ -484,6 +484,33 @@ it.each([
   expect(attachments.querySelector('img')?.getAttribute('src')).toBe(dataUrl);
 });
 
+it('repaints a browser-authored text row when its archived image arrives in a later canonical revision', async () => {
+  const initial: SessionEvent = {
+    seq: 1, origin: 1, time: T0, source: 'extension', kind: 'user_message',
+    messageId: 'browser-upload', message: text('Here is a browser attached image')
+  };
+  const app = await boot([initial]);
+  const dataUrl = 'data:image/png;base64,YQ==';
+  const getImage = vi.fn(async () => ({ ok: true, data: dataUrl }));
+  (app.w as any).api.getSessionImage = getImage;
+
+  expect(app.w.document.querySelector('.said.is-user img')).toBeNull();
+  await app.append([{
+    ...initial,
+    seq: 2,
+    archivedAttachments: [{
+      attachmentId: 'file_browser_upload',
+      asset: { id: 'browser-upload.png', mimeType: 'image/png', bytes: 12 }
+    }]
+  }]);
+  await settle();
+
+  const row = app.w.document.querySelector('.said.is-user')!;
+  expect(row.textContent).toContain('Here is a browser attached image');
+  expect(getImage).toHaveBeenCalledWith(summary([]).id, 'browser-upload.png');
+  expect(row.querySelector('img')?.getAttribute('src')).toBe(dataUrl);
+});
+
 it('shows a native image-only message immediately as a card without a guessed caption or image fetch', async () => {
   const app = await boot([]);
   await app.append([{ seq: 1, time: T0, source: 'extension', kind: 'user_message', messageId: 'native-image-only',

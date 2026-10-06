@@ -6376,6 +6376,70 @@ describe('generation identity while ChatGPT mounts and reorders assistant sectio
  * "Unattributed activity", the first of them 194 ms after the premature end.
  */
 describe('a stop button that goes missing while the turn is still running', () => {
+  it('recovers an already recorded terminal exchange through its exact user owner', async () => {
+    live = await harness();
+    // React has mounted the replacement section in the Send baseline. Its unchanged DOM
+    // cannot claim the generation; the provider exchange must supply the missing identity.
+    const section = assistantTurn(live.document, 'recovered-section', []);
+    live.hook.observe(); await settle();
+    startGenerating(live.document);
+    const question = userTurn(live.document, 'recovered-q', 'attached image');
+    question.after(section);
+    live.hook.observe(); await settle();
+    const opened = emitted(live.sent, 'turn_start').at(-1)!.event.turnId;
+    const terminal = { turnId: 'provider-exchange', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      endMessageId: 'recovered-final', calls: [], activities: [], messages: [
+        { messageId: 'm-recovered-q', rawMessageId: 'm-recovered-q', role: 'user', stable: true, rawText: 'attached image', order: 0 },
+        { messageId: 'recovered-final', rawMessageId: 'recovered-final', role: 'assistant', stable: true, rawText: 'Received.', order: 1 }
+      ] };
+    await replyFiber([], [terminal]);
+    await live.hook.flush(); await settle();
+    expect(emitted(live.sent, 'assistant_message').at(-1)!.event).toMatchObject({ final: true, turnId: undefined });
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(0);
+
+    question.setAttribute('data-clf-fiber-turn', '0');
+    await bindFiberTurns([{ section, turn: terminal }]);
+    await live.hook.flush(); await settle();
+    expect(emitted(live.sent, 'assistant_message').at(-1)!.event).toMatchObject({ final: true, turnId: opened });
+    expect(emitted(live.sent, 'turn_end').map(row => row.event)).toEqual([
+      expect.objectContaining({ turnId: opened, outcome: 'completed' })
+    ]);
+    await bindFiberTurns([{ section, turn: terminal }]);
+    live.hook.observe(); await live.hook.flush(); await settle();
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(1);
+    // A stale native Stop control must not retain the closed generation or prevent a follow-up.
+    userTurn(live.document, 'recovered-next', 'reply was rendered');
+    live.hook.observe(); await live.hook.flush(); await settle();
+    expect(emitted(live.sent, 'turn_start')).toHaveLength(2);
+    expect(emitted(live.sent, 'turn_start').at(-1)!.event.turnId).not.toBe(opened);
+  });
+
+  it.each(['missing-user', 'wrong-user', 'foreign-conversation', 'unanswered-call'])(
+    'does not recover a remounted terminal exchange with %s evidence', async reason => {
+      live = await harness();
+      const section = assistantTurn(live.document, 'unowned-section', []);
+      live.hook.observe(); await settle();
+      startGenerating(live.document);
+      const question = userTurn(live.document, 'unowned-q', 'new question');
+      question.after(section);
+      live.hook.observe(); await settle();
+      question.setAttribute('data-clf-fiber-turn', '0');
+      await bindFiberTurns([{ section, turn: {
+        turnId: 'unowned-exchange',
+        conversationId: reason === 'foreign-conversation' ? 'ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee' : 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        endMessageId: 'unseen-old-final',
+        calls: reason === 'unanswered-call' ? [{ messageId: 'pending-call', tool: 'read_file', order: 0, answered: false }] : [],
+        messages: [
+          ...(reason === 'missing-user' ? [] : [{ messageId: 'provider-user', rawMessageId: reason === 'wrong-user' ? 'm-old-q' : 'm-unowned-q',
+            role: 'user', stable: true, rawText: 'new question' }]),
+          { messageId: 'unseen-old-final', rawMessageId: 'unseen-old-final', role: 'assistant', stable: true, rawText: 'Old final.' }
+        ]
+      } }]);
+      await live.hook.flush(); await settle();
+      expect(emitted(live.sent, 'turn_end')).toHaveLength(0);
+    }
+  );
+
   it('does not close a new turn with the previous answer remounted below its question (#746)', async () => {
     // #746, live on 2.1.20: a Loop continuation's turn was closed 112 ms after turn_start and the
     // next two hours of work had no owner. The finished previous answer, remounted where the new
@@ -7293,6 +7357,56 @@ describe('a stop button that goes missing while the turn is still running', () =
     expect(events[1]).toMatchObject({ messageId, providerAssetId: assetId, previewWidth: 1254, previewHeight: 1254 });
     expect(JSON.stringify(events)).not.toContain('sig=private');
     expect(JSON.stringify(events)).not.toContain('/backend-api/estuary/content');
+  });
+
+  it('forwards one bounded image trace per signature and drops invalid trace fields', async () => {
+    live = await harness();
+    const trace = { msg: '7a1c0f3e', source: 'rendered-item', parts: 0, metaAtt: 1,
+      itemKeys: ['type', 'messageId', 'attachments'], attachmentKeys: ['id', 'mime_type'] };
+    const turn = { turnId: 'trace-turn', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      calls: [], messages: [], activities: [], imageTraces: [trace] };
+    await replyFiber([], [turn]);
+    await replyFiber([], [turn]);
+    await live.hook.flush(); await settle();
+    expect(emitted(live.sent, 'page_image_trace').map(row => row.event)).toEqual([
+      expect.objectContaining(trace)
+    ]);
+    await replyFiber([], [{ ...turn, imageTraces: [
+      { ...trace, parts: 100 }, { ...trace, source: 'https://secret.invalid' },
+      { ...trace, itemKeys: ['https://secret.invalid?sig=private'] },
+      { ...trace, parts: 1, previewDataUrl: 'must-not-cross-worlds' }
+    ] }]);
+    await live.hook.flush(); await settle();
+    const rows = emitted(live.sent, 'page_image_trace').map(row => row.event);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ parts: 1 });
+    expect(JSON.stringify(rows)).not.toMatch(/secret|private|must-not-cross-worlds/);
+    await replyFiber([], [{ ...turn, imageTraces: [{ ...trace, attachmentKeys: Array(17).fill('id') }] }]);
+    await live.hook.flush(); await settle();
+    expect(emitted(live.sent, 'page_image_trace')).toHaveLength(2);
+  });
+
+  it('journals a browser upload and assistant prose in their model order before async pixels finish', async () => {
+    live = await harness();
+    const messageId = '7a1c0f3e-5b2d-4c8e-9f10-0123456789ab';
+    await replyFiber([], [{ turnId: 'browser-upload', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      endMessageId: 'browser-final', calls: [], activities: [],
+      messages: [
+        { messageId, rawMessageId: messageId, role: 'user', stable: true, rawText: 'Read my upload', order: 0,
+          attachments: [{ id: 'file-0123456789abcdef', name: 'shot.png', size: 12, mimeType: 'image/png' }] },
+        { messageId: 'browser-update', rawMessageId: 'browser-update', role: 'assistant', stable: true, rawText: 'First update', order: 1 },
+        { messageId: 'browser-final', rawMessageId: 'browser-final', role: 'assistant', stable: true, rawText: 'Final answer', order: 2 }
+      ], images: [{ messageId, assetId: 'file-0123456789abcdef', providerRole: 'user',
+        providerStatus: 'finished_successfully', order: 0, partOrder: 0 }]
+    }]);
+    await live.hook.flush(); await settle();
+    const rows = live.sent.filter(message => message.type === 'events')
+      .flatMap(message => message.entries ?? []).map(row => row.event)
+      .filter(event => ['user_message', 'assistant_message', 'native_image'].includes(event.kind));
+    expect(rows.filter(row => row.kind !== 'native_image').map(row => row.text)).toEqual([
+      'Read my upload', 'First update', 'Final answer'
+    ]);
+    expect(rows.find(row => row.kind === 'native_image')).toMatchObject({ providerAssetId: 'file-0123456789abcdef' });
   });
 
   it('mints no turn for a Fiber retry that releases the stale-Stop terminal latch', async () => {

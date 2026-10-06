@@ -1391,6 +1391,84 @@ describe('observations', () => {
     expect(receipted && receipted.kind === 'user_message' ? receipted.assets : 'missing').toBeUndefined();
   });
 
+  it('retains an early browser upload before its text and keeps later replies in first-arrival order', async () => {
+    await pair();
+    const conversationId = '41111111-2222-4333-8444-555555555555';
+    const messageId = '7a1c0f3e-5b2d-4c8e-9f10-0123456789ab';
+    const bytes = await sharp({ create: { width: 12, height: 8, channels: 3, background: '#cc3300' } }).webp().toBuffer();
+    const image = { kind: 'native_image', time: Date.now(), messageId,
+      providerAssetId: 'file-0123456789abcdef', providerRole: 'user', providerStatus: 'finished_successfully',
+      previewStatus: 'available', previewWidth: 12, previewHeight: 8,
+      previewDataUrl: 'data:image/webp;base64,' + bytes.toString('base64') };
+    const first = await request('POST', '/events', { body: { conversationId, events: [image] } });
+    expect(first.status).toBe(200);
+    const sessionId = first.body.sessionId;
+    const [placeholder] = await readEvents(sessionId, { kinds: ['user_message'] });
+    if (placeholder?.kind !== 'user_message') throw new Error('Expected the captured user row');
+    expect(placeholder).toMatchObject({ messageId, message: { text: '' }, assets: [{ mimeType: 'image/webp' }] });
+    await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'assistant_message', messageId: 'reply-first', time: image.time + 1, text: 'First update', state: 'streaming' },
+      { kind: 'assistant_message', messageId: 'reply-final', time: image.time + 2, text: 'Final reply', state: 'final', final: true }
+    ] } });
+    await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'user_message', messageId, time: image.time + 3, text: 'Read this image' }, image,
+      { kind: 'assistant_message', messageId: 'reply-first', time: image.time + 4, text: 'First update revised', state: 'streaming' }
+    ] } });
+    const { chronological } = await import('../src/shared/chronology.js');
+    const rows = chronological(await readEvents(sessionId, { kinds: ['user_message', 'assistant_message'] }));
+    expect(rows.map(row => row.kind === 'user_message' || row.kind === 'assistant_message' ? row.message.text : '')).toEqual([
+      'Read this image', 'First update revised', 'Final reply'
+    ]);
+    expect(rows[0]).toMatchObject({ origin: placeholder!.origin, assets: [expect.anything()] });
+    expect((rows[0] as { assets: unknown[] }).assets).toHaveLength(1);
+  });
+
+  it('logs bounded page image traces without storing trace data or URL values', async () => {
+    await pair();
+    const conversationId = '51111111-2222-4333-8444-555555555555';
+    const trace = { kind: 'page_image_trace', msg: '7a1c0f3e', source: 'rendered-item', parts: 0, metaAtt: 1,
+      itemKeys: ['type', 'messageId', 'attachments'], attachmentKeys: ['id', 'mime_type'],
+      url: 'https://secret.invalid?sig=private', text: 'private-upload-name.png' };
+    const lines: string[] = [];
+    const stop = onLog(entry => { if (entry.message.startsWith('page image trace ')) lines.push(entry.message); });
+    try {
+      const posted = await request('POST', '/events', { body: { conversationId, events: [
+        { kind: 'user_message', time: Date.now(), messageId: 'trace-anchor', text: 'anchor' },
+        trace, { ...trace, source: 'https://secret.invalid' }, { ...trace, parts: 100 },
+        { ...trace, attachmentKeys: ['https://secret.invalid'] }
+      ] } });
+      expect(posted.status).toBe(200);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('source=rendered-item parts=0 metaAtt=1');
+      expect(lines.join('\n')).not.toMatch(/secret|private|png/);
+      expect((await readEvents(posted.body.sessionId)).map(event => event.kind)).toEqual(['session_start', 'user_message']);
+    } finally { stop(); }
+  });
+
+  it('amends a text-only browser user row when its upload pixels arrive on a later observation', async () => {
+    await pair();
+    const conversationId = '51111111-2222-4333-8444-555555555555';
+    const messageId = 'd25a3a0e-84c2-4d73-8a3d-52732d19d9af';
+    const first = await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'user_message', time: 1789552400000, text: 'self test now', messageId }
+    ] } });
+    const sessionId = first.body.sessionId as string;
+    expect((await readEvents(sessionId, { kinds: ['user_message'] }))[0]).not.toHaveProperty('assets');
+
+    const bytes = await sharp({ create: { width: 12, height: 8, channels: 3, background: '#336699' } }).webp().toBuffer();
+    await request('POST', '/events', { body: { conversationId, events: [{
+      kind: 'native_image', time: 1789552405000, messageId, providerAssetId: 'file_00000000000000000000000000000077', providerRole: 'user',
+      providerStatus: 'finished_successfully', previewStatus: 'available', previewWidth: 12, previewHeight: 8,
+      previewDataUrl: 'data:image/webp;base64,' + bytes.toString('base64')
+    }] } });
+    const rows = await readEvents(sessionId, { kinds: ['user_message'] });
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row).toMatchObject({ messageId, message: { text: 'self test now' }, assets: [{ mimeType: 'image/webp' }] });
+    const { userMessageImageNotes } = await import('../src/main/mcp/session-tool.js');
+    expect(row.kind === 'user_message' ? userMessageImageNotes(row) : []).toEqual([`[image ${row.kind === 'user_message' ? row.assets![0]!.id : ''}]`]);
+  });
+
   it('derives inert Pins references only from a proven fresh authored row at bridge ingress', async () => {
     await pair();
     const conversationId = '17171717-2222-4333-8444-555555555555';

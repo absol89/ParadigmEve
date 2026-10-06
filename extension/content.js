@@ -1773,6 +1773,7 @@
     fiberSettled = null;
     pageToolsReported.clear();
     nativeImagesReported.clear();
+    pageImageTracesReported.clear();
     nativeImageCaptures.clear();
     nativeImageCaptureQueue.clear();
     nativeImageCaptureActiveTasks.clear();
@@ -3140,6 +3141,7 @@
   const messagesReported = new Map();
   /** Last metadata ownership emitted for each exact provider-message/generated-asset tuple. */
   const nativeImagesReported = new Map();
+  const pageImageTracesReported = new Map();
   /** Disposable pixel-capture state. Durable receipt/storage remains in the app session. */
   const nativeImageCaptures = new Map();
   const nativeImageCaptureQueue = new Map();
@@ -3341,7 +3343,7 @@
       const messageId = typeof entry.messageId === 'string' &&
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.messageId)
         ? entry.messageId : null;
-      const assetId = typeof entry.assetId === 'string' && /^file_[A-Za-z0-9_-]{8,100}$/.test(entry.assetId)
+      const assetId = typeof entry.assetId === 'string' && /^file[_-][A-Za-z0-9_-]{8,100}$/.test(entry.assetId)
         ? entry.assetId : null;
       const providerRole = entry.providerRole === 'tool' || entry.providerRole === 'assistant' || entry.providerRole === 'user' ? entry.providerRole : null;
       const providerChannel = entry.providerChannel === 'final' ? 'final' : null;
@@ -3370,9 +3372,32 @@
       images.push(image);
     }
     const keptImages = images.filter(image => !conflictingImages.has(image.messageId + '\u0000' + image.assetId));
+    const imageTraces = [];
+    for (const trace of (Array.isArray(raw.imageTraces) ? raw.imageTraces : []).slice(0, 4)) {
+      const keysValid = keys => Array.isArray(keys) && keys.length <= 16 &&
+        keys.every(key => typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(key));
+      if (!trace || !/^[0-9a-f]{8}$/i.test(trace.msg) ||
+          !['model', 'rendered-item'].includes(trace.source) ||
+          !Number.isInteger(trace.parts) || trace.parts < 0 || trace.parts > 99 ||
+          !Number.isInteger(trace.metaAtt) || trace.metaAtt < 0 || trace.metaAtt > 99 ||
+          !keysValid(trace.itemKeys) || !keysValid(trace.attachmentKeys)) continue;
+      // Upload-list shape: lengths, element kinds and element key names only, never values.
+      const uploadShape = {};
+      for (const list of ['attachments', 'chatGptImageAttachments', 'chatGptFileAttachments', 'images']) {
+        const entry = trace.uploadShape && typeof trace.uploadShape === 'object' ? trace.uploadShape[list] : undefined;
+        if (!entry || typeof entry !== 'object' || !Number.isInteger(entry.len) || entry.len < 0 || entry.len > 99 ||
+            !['none', 'file-id', 'pointer', 'string', 'object', 'number', 'boolean'].includes(entry.kind) ||
+            !keysValid(entry.keys) || entry.keys.length > 12) continue;
+        uploadShape[list] = { len: entry.len, kind: entry.kind, keys: [...entry.keys] };
+      }
+      const uploads = Number.isInteger(trace.uploads) && trace.uploads >= 0 && trace.uploads <= 99 ? trace.uploads : null;
+      imageTraces.push({ msg: trace.msg, source: trace.source, parts: trace.parts, metaAtt: trace.metaAtt,
+        ...(uploads !== null ? { uploads } : {}), itemKeys: [...trace.itemKeys], attachmentKeys: [...trace.attachmentKeys],
+        uploadShape });
+    }
     const endMessageId = cap(raw.endMessageId, 200);
     if (kept.length === 0 && requests.length === 0 && keptMessages.length === 0 &&
-        keptActivities.length === 0 && keptImages.length === 0 && !endMessageId) {
+        keptActivities.length === 0 && keptImages.length === 0 && imageTraces.length === 0 && !endMessageId) {
       return null;
     }
     return {
@@ -3385,7 +3410,8 @@
       requests,
       messages: keptMessages,
       activities: keptActivities,
-      images: keptImages
+      images: keptImages,
+      imageTraces
     };
   }
 
@@ -3844,6 +3870,8 @@
     // never be emitted under chat B's conversation id.
     const askedEpoch = epoch;
     const askedConversation = conversationId;
+    const askedGeneration = generating ? turnId : null;
+    const askedUserMessageId = openedUserMessageId;
     let requestOwnersComplete = true;
     // A page-model scan belongs to the generation that requested it, not to whichever one is
     // current when its asynchronous reply returns. Live 2026-08-31: an old final answered after
@@ -3937,6 +3965,37 @@
       }
     }
     if (committedResumeOwner?.answer) ownedPageTurn = committedResumeOwner.answer;
+    // React can replace the owned assistant node before the terminal scan. The exchange's
+    // exact user message is the surviving owner: both rendered sides must join the same
+    // scan-stamped provider descriptor, containing that user id and its terminal response.
+    // DOM adjacency or a previously unseen final alone never proves this relation.
+    let recoveredTerminalOwner = null;
+    if (!ownedPageTurn && !settled && askedGeneration && generating &&
+        turnId === askedGeneration && askedUserMessageId && openedUserMessageId === askedUserMessageId) {
+      const pageSections = CLF_DOM.turns();
+      const userRows = pageSections.filter(section => section.role === 'user');
+      const question = userRows.at(-1);
+      const questionIndex = question ? pageSections.indexOf(question) : -1;
+      if (questionIndex >= 0 && CLF_DOM.messagesIn(question).some(message =>
+        message.role === 'user' && message.id === askedUserMessageId)) {
+        const questionDescriptor = stampedFiberTurn(question, answer.turns, answer.scanToken);
+        const subsequent = pageSections.slice(questionIndex + 1).filter(section => section.role === 'assistant');
+        if (subsequent.length === 1) {
+          const candidate = stampedFiberTurn(subsequent[0], answer.turns, answer.scanToken);
+          if (candidate && candidate === questionDescriptor && candidate.endMessageId &&
+              !settledFinals.has(candidate.endMessageId) && candidate.conversationConflict !== true &&
+              !(candidate.calls || []).some(call => !call || call.answered !== true) &&
+              (!askedConversation || concreteConversation(candidate.conversationId) === askedConversation) &&
+              (candidate.messages || []).some(message => message.role === 'user' && message.stable &&
+                message.rawMessageId === askedUserMessageId) &&
+              (candidate.messages || []).some(message => message.role === 'assistant' &&
+                (message.rawMessageId === candidate.endMessageId || message.messageId === candidate.endMessageId))) {
+            ownedPageTurn = candidate;
+            recoveredTerminalOwner = subsequent[0];
+          }
+        }
+      }
+    }
     if (askedConversation) {
       // Validate ownership per Fiber object, not per scan.
       //
@@ -4001,7 +4060,7 @@
     // identity. Only the *newest* Fiber turn matching the assistant section this local
     // generation is currently bound to may inherit `turnId`; historical/reused matches still
     // prove the conversation made the call, but carry no durable turn id.
-    const activeLocalTurnId = exactOwner?.localTurnId || null;
+    const activeLocalTurnId = recoveredTerminalOwner ? askedGeneration : exactOwner?.localTurnId || null;
     // For local chronology, map the generation to the adjacent continuation answer too. Unlike
     // request identity above this still requires a real local turn id: even a committed Resume
     // proves which chat made a request, not that this document successfully journalled turn_start.
@@ -4058,6 +4117,12 @@
         if (CLF_DOM.conversationId() !== askedConversation) return;
       }
     }
+    // Recovery was proven before async continuation/correlation acknowledgements. A newer
+    // send or remount during those waits invalidates it; never publish under mutable ownership.
+    if (recoveredTerminalOwner && (!generating || turnId !== askedGeneration ||
+        openedUserMessageId !== askedUserMessageId ||
+        !recoveredTerminalOwner.node?.isConnected ||
+        stampedFiberTurn(recoveredTerminalOwner, answer.turns, answer.scanToken) !== ownedPageTurn)) return false;
     // A connector display name is presentation, never ownership. Diagnostics and recorder
     // evidence become ours only after the app has joined this page request id to actual local
     // MCP ingress and ACKed the exact conversation mapping.
@@ -4174,6 +4239,12 @@
       // The live generation owns the turn it is writing; a settled one is claimed only by
       // ChatGPT's own request id. See settledTurnOwner().
       const localOwner = index === activeTurnIndex ? activeLocalTurnId : settledOwners.get(turn) || null;
+      for (const trace of turn.imageTraces || []) {
+        const signature = JSON.stringify(trace);
+        if (pageImageTracesReported.get(trace.msg) === signature) continue;
+        pageImageTracesReported.set(trace.msg, signature);
+        emit({ kind: 'page_image_trace', ...trace });
+      }
       const items = [];
       let serial = 0;
       for (const message of turn.messages || []) {
@@ -4369,13 +4440,14 @@
     ) {
       fiberTerminalMessageId = answer.turns[activeTurnIndex].endMessageId;
       settledFinals.add(fiberTerminalMessageId);
-      const ended = generationTurn();
+      const ended = recoveredTerminalOwner || generationTurn();
       if (ended) {
         const local = endOutcome(ended);
         finishGeneration(ended, local.outcome === 'unknown' ? { outcome: 'completed' } : local, false);
       }
     }
     if (callsReported.size > 4000) callsReported.clear();
+    if (pageImageTracesReported.size > 2000) pageImageTracesReported.clear();
     if (messagesReported.size > 4000) messagesReported.clear();
     if (pageToolsReported.size > 4000) pageToolsReported.clear();
     if (nativeImagesReported.size > 2000) {
