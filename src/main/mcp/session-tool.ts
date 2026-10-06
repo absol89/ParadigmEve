@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { SessionEvent, SessionSummary, StoredText } from '../../shared/session.js';
 import { getSession, indexedSessions, readEvents } from '../session/store.js';
+import { recordedSessionImage } from '../session/input-history.js';
 import { noteCount, noteDetail } from './call-context.js';
 import { toolDeclaration } from './tool-declarations.js';
 import { expandStored, fail, guard, ok, type SurfaceRegistrar, type ToolResult } from './kernel.js';
@@ -98,9 +99,10 @@ interface SearchMatch {
 
 const inputSchema = z
   .object({
-    action: z.enum(['search', 'read']).describe('search discovers recordings; read inspects one explicit recording.'),
+    action: z.enum(['search', 'read', 'image']).describe('search discovers recordings; read inspects one explicit recording.'),
     query: z.string().max(500).optional().describe('search only. Omit to list the 30 newest recordings.'),
-    session_id: z.string().min(8).max(64).optional().describe('read only. Exact id returned by search.'),
+    session_id: z.string().min(8).max(64).optional().describe('read/image. Id from search.'),
+    image: z.string().refine((value) => /^[0-9a-f]{8,64}\.[a-z]{3,4}$/.test(value), 'not an image id').optional(),
     include: z
       .array(includeKind)
       .min(1)
@@ -120,7 +122,7 @@ const inputSchema = z
       .max(CURSOR_MAX_CHARS)
       .optional()
       .describe(
-        'A short token this tool printed earlier: update_cursor, continuation_cursor, older_cursor, read_cursor or next_cursor. Copy it exactly; it carries a checksum and a mistyped copy is refused.'
+        'A token this tool printed: update_cursor, continuation_cursor, older_cursor, read_cursor or next_cursor. Copy it exactly; a mistyped copy is refused.'
       )
   })
   .superRefine((input, ctx) => {
@@ -130,6 +132,7 @@ const inputSchema = z
           ctx.addIssue({ code: 'custom', path: [field], message: `${field} is only valid with action=read` });
         }
       }
+      if (input.image !== undefined) ctx.addIssue({ code: 'custom', path: ['image'], message: 'image is only valid with action=image' });
       if (input.cursor && input.query !== undefined) {
         ctx.addIssue({ code: 'custom', path: ['query'], message: 'A search continuation cursor already contains its query' });
       }
@@ -137,8 +140,16 @@ const inputSchema = z
     }
 
     if (!input.session_id) {
-      ctx.addIssue({ code: 'custom', path: ['session_id'], message: 'session_id is required with action=read' });
+      ctx.addIssue({ code: 'custom', path: ['session_id'], message: `session_id is required with action=${input.action}` });
     }
+    if (input.action === 'image') {
+      if (!input.image) ctx.addIssue({ code: 'custom', path: ['image'], message: 'image is required with action=image' });
+      for (const field of ['query', 'include', 'tool_call', 'cursor'] as const) {
+        if (input[field] !== undefined) ctx.addIssue({ code: 'custom', path: [field], message: `${field} is not valid with action=image` });
+      }
+      return;
+    }
+    if (input.image !== undefined) ctx.addIssue({ code: 'custom', path: ['image'], message: 'image is only valid with action=image' });
     if (input.query !== undefined) {
       ctx.addIssue({ code: 'custom', path: ['query'], message: 'query is only valid with action=search' });
     }
@@ -164,8 +175,9 @@ export function registerSessionTool(reg: SurfaceRegistrar): void {
         'Search and read this app’s local recordings, including other and concurrently running chats. ' +
         'action=search lists the 30 newest sessions when query is omitted, or finds recordings containing a term. ' +
         'action=read requires session_id and returns exact user/assistant text plus compact tool headlines, with E<number> refs for exact Pin sources. ' +
-        'To follow a running chat, pass the update_cursor from the previous read and only activity since then comes back. ' +
-        'Pass a short T… reference as tool_call to inspect exact arguments and result. Cursors are short tokens; copy them exactly.',
+        'To follow a running chat, pass the previous read’s update_cursor to get only newer activity. ' +
+        'Pass a short T… reference as tool_call to inspect exact arguments and result. Cursors are short tokens; copy them exactly. ' +
+        'action=image returns an archived image.',
       inputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     })),
@@ -173,9 +185,41 @@ export function registerSessionTool(reg: SurfaceRegistrar): void {
       guard('session', async () => {
         if (!reg.sessionToolsLive) return reg.featureDisabled('Session recording', 'Record sessions');
         if (input.action === 'search') return searchSessions(input.query, input.cursor);
+        if (input.action === 'image') return sessionImage(input.session_id!, input.image!);
         return readSession(input.session_id!, input.include, input.tool_call, input.cursor);
       })
   );
+}
+
+/** One image the session itself recorded; membership in the recording, never a path, grants it. */
+async function sessionImage(sessionId: string, imageId: string): Promise<ToolResult> {
+  if (!(await getSession(sessionId))) return fail(`No recorded session ${sessionId}. Use action=search to find it.`);
+  const image = await recordedSessionImage(sessionId, imageId);
+  if (!image) return fail(`Session ${sessionId} has no archived image ${imageId}. Read the session to list its image ids.`);
+  noteDetail(image.mimeType);
+  return { content: [
+    { type: 'text', text: `Archived image ${imageId} from session ${sessionId} (${image.mimeType}, ${Math.ceil(image.data.length / 1024)} KB).` },
+    { type: 'image', data: image.data.toString('base64'), mimeType: image.mimeType }
+  ] };
+}
+
+const NOTE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+/** Image ids a user message can be asked for, plus page images whose bytes were never archived. */
+export function userMessageImageNotes(event: Extract<SessionEvent, { kind: 'user_message' }>): string[] {
+  const archived = new Map((event.archivedAttachments ?? []).map(row => [row.attachmentId, row.asset]));
+  const notes: string[] = [];
+  const seen = new Set<string>();
+  for (const asset of event.assets ?? []) {
+    if (NOTE_IMAGE_TYPES.has(asset.mimeType) && !seen.has(asset.id)) { seen.add(asset.id); notes.push(`[image ${asset.id}]`); }
+  }
+  for (const attachment of event.attachments ?? []) {
+    const copy = archived.get(attachment.id);
+    if (copy && NOTE_IMAGE_TYPES.has(copy.mimeType)) {
+      if (!seen.has(copy.id)) { seen.add(copy.id); notes.push(`[image ${copy.id} ${flat(attachment.name, 120)}]`); }
+    } else if (/^image\//.test(attachment.mimeType)) notes.push(`[image ${flat(attachment.name, 120)}: not archived]`);
+  }
+  return notes;
 }
 
 async function searchSessions(queryInput?: string, cursorInput?: string): Promise<ToolResult> {
@@ -568,7 +612,8 @@ async function timelineItem(
     case 'user_message': {
       if (!include.has('user')) return null;
       const message = await exactStored(sessionId, event.message);
-      return item(event, `${when}${agent} E${event.seq} USER\n${message}`, `E${event.seq} USER message`);
+      const images = userMessageImageNotes(event);
+      return item(event, `${when}${agent} E${event.seq} USER\n${message}${images.length ? `\n${images.join('\n')}` : ''}`, `E${event.seq} USER message`);
     }
     case 'assistant_message': {
       if (!include.has('assistant')) return null;

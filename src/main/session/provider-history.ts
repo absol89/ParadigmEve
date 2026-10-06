@@ -45,7 +45,7 @@ export function providerRoute(provider: ChatProvider | null | undefined, endpoin
   return 'ollama-local';
 }
 
-interface ArchivedImage { sessionId: string; assetId: string; mimeType: string }
+interface ArchivedImage { sessionId: string; assetId: string; mimeType: string; name?: string }
 interface ArchivedFile {
   name: string;
   mimeType: string;
@@ -97,7 +97,7 @@ export async function archivedTurns(sessionId: string, options: { fullText?: boo
       for (const attachment of event.attachments ?? []) {
         const copy = archived.get(attachment.id);
         if (copy && archivableAttachment(attachment.mimeType) === 'image') {
-          images.push({ sessionId, assetId: copy.id, mimeType: copy.mimeType });
+          images.push({ sessionId, assetId: copy.id, mimeType: copy.mimeType, name: attachment.name });
           continue;
         }
         files.push({ name: attachment.name, mimeType: attachment.mimeType, ...(copy ? { assetId: copy.id } : { staged: attachment }) });
@@ -277,7 +277,12 @@ export async function chatGptCatchUp(sessionId: string, maxChars: number, imageS
       const text = await fileText(sessionId, file);
       lines.push(text !== null ? `[Attached file ${file.name}]\n${text}\n[End of ${file.name}]` : `[Attached file ${file.name} (${file.mimeType}) is not available as text]`);
     }
-    if (turn.images.length) lines.push(`[${turn.images.length} image(s) in this turn are kept in Eve's archive and are not attached here; ask the user to share any you need to see]`);
+    // Text only: free ChatGPT accounts have tight limits on chats with images. Each image is named
+    // by its archive id so the model can fetch exactly the one it needs with the session tool.
+    for (const image of turn.images) {
+      lines.push(`[Image kept in Eve's archive, not attached: ${image.name ? `${image.name}, ` : ''}${image.mimeType}. ` +
+        `To see it, call session with action=image, session_id=${image.sessionId}, image=${image.assetId}]`);
+    }
     blocks.push(lines.join('\n'));
   }
   const budget = Math.max(0, maxChars - header.length - footer.length - 200);

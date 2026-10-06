@@ -98,7 +98,8 @@ export async function recordDeliveredInput(entry: Readonly<InputEntry>): Promise
 /** Recorded membership, not a supplied filename, grants the renderer image access. */
 async function recordedImageAsset(sessionId: string, assetId: string): Promise<{ data: Buffer; mimeType: string } | null> {
   const events = await readEvents(sessionId, { kinds: ['user_message', 'native_image', 'tool_call'] });
-  const referenced = events.flatMap(event => event.kind === 'user_message' ? event.assets ?? [] :
+  const referenced = events.flatMap(event => event.kind === 'user_message'
+    ? [...event.assets ?? [], ...(event.archivedAttachments ?? []).map(row => row.asset)] :
     event.kind === 'native_image' ? event.asset ? [event.asset] : [] :
     event.kind === 'tool_call' ? event.call.assets ?? [] : [])
     .find(asset => asset.id === assetId && ['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType));
@@ -113,6 +114,11 @@ async function recordedImageAsset(sessionId: string, assetId: string): Promise<{
     await image.stats();
     return { data, mimeType: referenced.mimeType };
   } catch { return null; }
+}
+
+/** The decoded bytes of one image this session recorded, for a model reading its own archive. */
+export async function recordedSessionImage(sessionId: string, assetId: string): Promise<{ data: Buffer; mimeType: string } | null> {
+  return recordedImageAsset(sessionId, assetId);
 }
 
 export async function recordedInputImage(sessionId: string, assetId: string): Promise<string | null> {

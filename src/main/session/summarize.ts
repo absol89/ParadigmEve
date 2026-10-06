@@ -441,6 +441,7 @@ function build(
           ...(evidence.count !== null ? { detail: plural(evidence.count, 'session') } : {})
         };
       }
+      if (action === 'image') return { kind: 'session', tone: 'neutral', title: 'Viewed an archived image' };
       const toolCall = str(args['tool_call']);
       const cursor = str(args['cursor']);
       return {

@@ -26,6 +26,7 @@ import { friendlyError } from '../src/main/mcp/kernel.js';
 import { SURFACE_LIST, surfaceDefinition, type SurfaceId } from '../src/main/mcp/surfaces.js';
 import {
   appendEvent,
+  writeAsset,
   createSession,
   initSessionStore,
   rebindSession,
@@ -1616,6 +1617,36 @@ describe('capability gating', () => {
     expect(searchText.length).toBeLessThanOrEqual(12_000);
   });
 
+  it('lists a user message image by archive id and returns exactly that recorded image', async () => {
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'image archive target', conversationId: null });
+    const png = await sharp({ create: { width: 4, height: 3, channels: 3, background: '#c03' } }).png().toBuffer();
+    const asset = await writeAsset(recorded.id, png, 'image/png');
+    await appendEvent(recorded.id, {
+      time: 3_000, source: 'extension', kind: 'user_message',
+      message: { text: 'Look at this', truncated: false, chars: 12 },
+      assets: [asset],
+      attachments: [{ id: 'page-only', name: 'from-chatgpt.png', size: 10, mimeType: 'image/png' }]
+    });
+
+    const read = await core('tools/call', { name: 'session', arguments: { action: 'read', session_id: recorded.id } });
+    const readText = textOf(read);
+    expect(failed(read), readText).toBe(false);
+    expect(readText).toContain(`[image ${asset.id}]`);
+    expect(readText).toContain('[image from-chatgpt.png: not archived]');
+
+    const image = await core('tools/call', { name: 'session', arguments: { action: 'image', session_id: recorded.id, image: asset.id } });
+    expect(failed(image), textOf(image)).toBe(false);
+    const content = ((image as any).body?.result?.content ?? []) as Array<{ type: string; data?: string; mimeType?: string }>;
+    expect(content.find(part => part.type === 'image')).toMatchObject({ mimeType: 'image/png', data: png.toString('base64') });
+
+    // Membership in the recording grants access; an id the session never recorded does not.
+    const other = await createSession({ title: 'other session', conversationId: null });
+    const missing = await core('tools/call', { name: 'session', arguments: { action: 'image', session_id: other.id, image: asset.id } });
+    expect(failed(missing)).toBe(true);
+    expect(textOf(missing)).toContain('has no archived image');
+  });
+
   it('reads exact user and assistant prose, filters headlines, and expands a short session-local tool ref', async () => {
     ctx.sessionTools = true;
     const recorded = await createSession({ title: 'exact transcript target', conversationId: null });
@@ -1886,7 +1917,7 @@ describe('capability gating', () => {
     ctx.sessionTools = true;
     const advertised = toolList(await core('tools/list')).find((tool) => tool.name === 'session');
     expect(advertised?.inputSchema).toMatchObject({
-      properties: { action: { enum: ['search', 'read'] } },
+      properties: { action: { enum: ['search', 'read', 'image'] } },
       required: ['action']
     });
     expect(advertised?.inputSchema?.properties).not.toHaveProperty('limit');
