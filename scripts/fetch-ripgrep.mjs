@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RIPGREP } from './packaging-versions.mjs';
 import { parseTarget, PLATFORM_INFO } from './packaging-targets.mjs';
+import { downloadWithRetry } from './download-with-retry.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stagingRoot = path.join(root, 'resources', 'packaging', 'rg');
@@ -20,12 +21,7 @@ const devOutDir = path.join(root, 'resources', 'rg');
 const cacheDir = path.join(root, 'node_modules', '.cache', 'ripgrep');
 const say = (message) => process.stdout.write(`${message}\n`);
 
-async function download(url, target) {
-  if (existsSync(target)) return;
-  const res = await fetch(url, { headers: { 'user-agent': 'chat-on-steroids-build' } });
-  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
-  await writeFile(target, Buffer.from(await res.arrayBuffer()));
-}
+const download = (url, target) => downloadWithRetry(url, target);
 
 function extractArchive(archivePath, extension, outDir) {
   if (extension === 'zip') {

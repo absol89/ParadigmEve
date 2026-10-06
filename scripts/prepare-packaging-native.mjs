@@ -15,6 +15,7 @@ import { chmod, copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from 'no
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nativePrebuildDir, parseTarget, sharpPackagesFor, tarExecutableForPlatform } from './packaging-targets.mjs';
+import { downloadWithRetry } from './download-with-retry.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cacheDir = path.join(root, 'node_modules', '.cache', 'packaging-native');
@@ -28,12 +29,7 @@ function sha512FromIntegrity(integrity) {
   return Buffer.from(match[1], 'base64').toString('hex');
 }
 
-async function download(url, target) {
-  if (existsSync(target)) return;
-  const response = await fetch(url, { headers: { 'user-agent': 'chat-on-steroids-build' } });
-  if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
-  await writeFile(target, Buffer.from(await response.arrayBuffer()));
-}
+const download = (url, target) => downloadWithRetry(url, target);
 
 async function fileTree(dir, relative = '', files = new Map()) {
   if (!existsSync(dir)) return files;
