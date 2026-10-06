@@ -1747,7 +1747,8 @@ export interface ChatObservation {
   providerMessageId?: string;
   /** Exact non-secret provider asset id for a native generated image. */
   providerAssetId?: string;
-  providerRole?: 'tool' | 'assistant';
+  /** 'user' is an image the user attached on the ChatGPT page; it is filed on that user message. */
+  providerRole?: 'tool' | 'assistant' | 'user';
   providerChannel?: 'final';
   providerStatus?: 'in_progress' | 'finished_successfully';
   width?: number;
@@ -1800,6 +1801,44 @@ export interface PageCallEvidence {
   createTime?: number | null;
 }
 
+/** A decoded, bounded WebP preview from the page, or null when it fails any check. */
+async function verifiedPagePreview(item: ChatObservation): Promise<{ data: Buffer; width: number; height: number } | null> {
+  if (!item.previewDataUrl || !/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(item.previewDataUrl) ||
+      item.previewDataUrl.length > 512_100) return null;
+  const data = Buffer.from(item.previewDataUrl.slice(item.previewDataUrl.indexOf(',') + 1), 'base64');
+  if (data.length === 0 || data.length > 384_000) return null;
+  try {
+    const decoded = sharp(data, { limitInputPixels: 2_560_000, animated: false });
+    const info = await decoded.metadata();
+    if (info.format !== 'webp' || !info.width || !info.height || info.width > 1600 || info.height > 1600 ||
+        info.width * info.height > 2_560_000 || info.width !== item.previewWidth || info.height !== item.previewHeight) return null;
+    await decoded.stats();
+    return { data, width: info.width, height: info.height };
+  } catch { return null; }
+}
+
+/**
+ * An image the user attached on the ChatGPT page, filed on that exact user message so the archive,
+ * provider catch-up and the session tool all see it. A message Eve sent already archived the
+ * original bytes from its own outbox, so a page copy of it is never added.
+ */
+async function recordPageUserImage(sessionId: string, item: ChatObservation): Promise<number> {
+  if (!item.messageId || !item.previewDataUrl) return 0;
+  const message = (await readEvents(sessionId, { kinds: ['user_message'] }))
+    .findLast((event): event is Extract<SessionEvent, { kind: 'user_message' }> => event.kind === 'user_message' && event.messageId === item.messageId);
+  if (!message || message.inputId || message.archivedAttachments?.length) return 0;
+  const preview = await verifiedPagePreview(item);
+  if (!preview) {
+    logWarn('page user image preview unavailable: invalid preview');
+    return 0;
+  }
+  const asset = await writeAsset(sessionId, preview.data, 'image/webp');
+  if ((message.assets ?? []).some(existing => existing.id === asset.id)) return 0;
+  const { seq: _seq, ...rest } = message;
+  const written = await upsertMessageEvent(sessionId, { ...rest, assets: [...message.assets ?? [], asset] });
+  return written.changed ? 1 : 0;
+}
+
 /** Metadata-first persistence for one exact ChatGPT-native generated image. */
 async function recordNativeImage(
   sessionId: string,
@@ -1807,12 +1846,14 @@ async function recordNativeImage(
   base: { time: number; source: 'extension'; turnId?: string; agent?: string }
 ): Promise<number> {
   if (!item.messageId || !item.providerAssetId || !item.providerRole) return 0;
+  if (item.providerRole === 'user') return recordPageUserImage(sessionId, item);
+  const providerRole = item.providerRole;
   const metadata = await upsertNativeImageEvent(sessionId, {
     ...base,
     kind: 'native_image',
     messageId: item.messageId,
     providerAssetId: item.providerAssetId,
-    providerRole: item.providerRole,
+    providerRole,
     ...(item.providerChannel ? { providerChannel: item.providerChannel } : {}),
     ...(item.providerStatus ? { providerStatus: item.providerStatus } : {}),
     ...(item.width ? { width: item.width } : {}),
@@ -1843,7 +1884,7 @@ async function recordNativeImage(
       kind: 'native_image',
       messageId: item.messageId,
       providerAssetId: item.providerAssetId,
-      providerRole: item.providerRole,
+      providerRole,
       ...(item.providerChannel ? { providerChannel: item.providerChannel } : {}),
       ...(item.providerStatus ? { providerStatus: item.providerStatus } : {}),
       ...(item.width ? { width: item.width } : {}),
@@ -1862,7 +1903,7 @@ async function recordNativeImage(
       kind: 'native_image',
       messageId: item.messageId,
       providerAssetId: item.providerAssetId,
-      providerRole: item.providerRole,
+      providerRole,
       ...(item.providerChannel ? { providerChannel: item.providerChannel } : {}),
       ...(item.providerStatus ? { providerStatus: item.providerStatus } : {}),
       ...(item.width ? { width: item.width } : {}),

@@ -1358,7 +1358,7 @@ function parseObservations(input: unknown): ChatObservation[] {
       if (typeof item['messageId'] !== 'string' ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item['messageId']) ||
           typeof item['providerAssetId'] !== 'string' || !/^file_[A-Za-z0-9_-]{8,100}$/.test(item['providerAssetId']) ||
-          (item['providerRole'] !== 'tool' && item['providerRole'] !== 'assistant')) continue;
+          (item['providerRole'] !== 'tool' && item['providerRole'] !== 'assistant' && item['providerRole'] !== 'user')) continue;
       observation.messageId = item['messageId'];
       observation.providerAssetId = item['providerAssetId'];
       observation.providerRole = item['providerRole'];

@@ -1340,6 +1340,57 @@ describe('observations', () => {
     expect(progressiveRow && progressiveRow.kind === 'native_image' ? progressiveRow.asset : undefined).toBeUndefined();
   });
 
+  it('files an image the user attached on the ChatGPT page on that user message, never on one Eve sent', async () => {
+    await pair();
+    const conversationId = '31111111-2222-4333-8444-555555555555';
+    const pageMessage = '7a1c0f3e-5b2d-4c8e-9f10-0123456789ab';
+    const bytes = await sharp({ create: { width: 12, height: 8, channels: 3, background: '#cc3300' } }).webp().toBuffer();
+    const dataUrl = 'data:image/webp;base64,' + bytes.toString('base64');
+    const image = (messageId: string) => ({
+      kind: 'native_image', time: 1789552100100, messageId, providerAssetId: 'file_00000000000000000000000000000077', providerRole: 'user',
+      providerStatus: 'finished_successfully', width: 1920, height: 1080,
+      previewStatus: 'available', previewWidth: 12, previewHeight: 8, previewDataUrl: dataUrl,
+      src: 'https://chatgpt.com/backend-api/estuary/content?id=must-not-persist&sig=private'
+    });
+    const posted = await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'user_message', time: 1789552100000, text: 'and a last one sent by browser', messageId: pageMessage },
+      image(pageMessage)
+    ] } });
+    expect(posted.status).toBe(200);
+    const sessionId = posted.body.sessionId as string;
+    const [row] = await readEvents(sessionId, { kinds: ['user_message'] });
+    expect(row).toMatchObject({ messageId: pageMessage, assets: [{ mimeType: 'image/webp', bytes: bytes.length }] });
+    expect(await readEvents(sessionId, { kinds: ['native_image'] })).toEqual([]);
+    expect(JSON.stringify(row)).not.toContain('estuary');
+
+    // A second sighting of the same pixels adds nothing.
+    await request('POST', '/events', { body: { conversationId, events: [image(pageMessage)] } });
+    expect((await readEvents(sessionId, { kinds: ['user_message'] }))[0]).toMatchObject({ assets: [expect.anything()] });
+    expect(((await readEvents(sessionId, { kinds: ['user_message'] }))[0] as { assets?: unknown[] }).assets).toHaveLength(1);
+
+    // A message Eve sent keeps only its own archived original.
+    const sentMessage = '8b2d1f4a-6c3e-4d9f-8a21-123456789abc';
+    const { upsertMessageEvent } = await import('../src/main/session/store.js');
+    await upsertMessageEvent(sessionId, { time: 1789552200000, source: 'app', kind: 'user_message', messageId: sentMessage,
+      inputId: 'app-input', message: { text: 'sent from Eve', truncated: false, chars: 13 } });
+    await request('POST', '/events', { body: { conversationId, events: [image(sentMessage)] } });
+    const sent = (await readEvents(sessionId, { kinds: ['user_message'] })).find(event => event.kind === 'user_message' && event.messageId === sentMessage);
+    expect(sent && sent.kind === 'user_message' ? sent.assets : undefined).toBeUndefined();
+
+    // When the page capture wins the race, Eve's later receipt replaces it with the archived original.
+    const raced = '9c3e2a5b-7d4f-4e0a-9b32-23456789abcd';
+    await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'user_message', time: 1789552300000, text: 'raced', messageId: raced }, image(raced)
+    ] } });
+    await upsertMessageEvent(sessionId, { time: 1789552300000, source: 'app', kind: 'user_message', messageId: raced, inputId: 'raced-input',
+      message: { text: 'raced', truncated: false, chars: 5 },
+      attachments: [{ id: 'staged', name: 'shot.png', size: 9, mimeType: 'image/png' }],
+      archivedAttachments: [{ attachmentId: 'staged', asset: { id: 'abcdef0123456789.png', mimeType: 'image/png', bytes: 9 } }] });
+    const receipted = (await readEvents(sessionId, { kinds: ['user_message'] })).find(event => event.kind === 'user_message' && event.messageId === raced);
+    expect(receipted).toMatchObject({ inputId: 'raced-input', archivedAttachments: [expect.anything()] });
+    expect(receipted && receipted.kind === 'user_message' ? receipted.assets : 'missing').toBeUndefined();
+  });
+
   it('derives inert Pins references only from a proven fresh authored row at bridge ingress', async () => {
     await pair();
     const conversationId = '17171717-2222-4333-8444-555555555555';

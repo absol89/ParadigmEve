@@ -806,7 +806,8 @@
   }
 
   /**
-   * Public native generated-image outputs in ChatGPT's typed turn model.
+   * Public native generated-image outputs in ChatGPT's typed turn model, and since 2.3.6 the
+   * images a user attached on the ChatGPT page (providerRole 'user'), so Eve's archive keeps them.
    * Provider message + sediment file identity is authoritative; DOM is pixel evidence only.
    */
   function generatedImagesOf(sections, messages, exactImageNodes) {
@@ -816,7 +817,7 @@
     for (let index = 0; index < messages.length && out.length < MAX_GENERATED_IMAGES; index++) {
       const message = messages[index];
       if (!message || typeof message !== 'object' || hiddenMessage(message) || analysisMessage(message)) continue;
-      const role = message.author && (message.author.role === 'tool' || message.author.role === 'assistant')
+      const role = message.author && (message.author.role === 'tool' || message.author.role === 'assistant' || message.author.role === 'user')
         ? message.author.role : null;
       if (!role || message.recipient !== 'all' || neverTerminalChannel(message)) continue;
       const messageId = str(message.id);
@@ -860,7 +861,9 @@
     const nodesByAsset = new Map();
     for (const section of sections) {
       let nodes = [];
-      try { nodes = section.querySelectorAll(GENERATED_IMAGE); } catch { nodes = []; }
+      // Generated images carry the imagegen class; a user's upload does not. Either way only an
+      // image whose same-origin estuary URL names the exact provider file id is pixel evidence.
+      try { nodes = section.querySelectorAll(descriptorsByAsset.size ? `${GENERATED_IMAGE}, img` : GENERATED_IMAGE); } catch { nodes = []; }
       for (const node of nodes) {
         try {
           const url = new URL(node.currentSrc || node.src, location.href);
@@ -1615,7 +1618,7 @@
       const section = stampable[at];
       try {
         if (!section || !section.getAttribute) continue;
-        for (const node of section.querySelectorAll(GENERATED_IMAGE + ', [data-clf-fiber-image]')) {
+        for (const node of section.querySelectorAll(GENERATED_IMAGE + ', img[src*="/backend-api/estuary/content"], [data-clf-fiber-image]')) {
           const wantedImage = desiredImageStamps.get(node);
           const currentImage = node.getAttribute('data-clf-fiber-image');
           if (wantedImage === undefined) {

@@ -3343,7 +3343,7 @@
         ? entry.messageId : null;
       const assetId = typeof entry.assetId === 'string' && /^file_[A-Za-z0-9_-]{8,100}$/.test(entry.assetId)
         ? entry.assetId : null;
-      const providerRole = entry.providerRole === 'tool' || entry.providerRole === 'assistant' ? entry.providerRole : null;
+      const providerRole = entry.providerRole === 'tool' || entry.providerRole === 'assistant' || entry.providerRole === 'user' ? entry.providerRole : null;
       const providerChannel = entry.providerChannel === 'final' ? 'final' : null;
       const providerStatus = entry.providerStatus === 'in_progress' || entry.providerStatus === 'finished_successfully'
         ? entry.providerStatus : null;

@@ -274,7 +274,7 @@ interface TurnFixture {
   role?: 'user' | 'assistant';
   /** A visible `.markdown` block: its text, or markup when the test is about the markup. */
   rendered?: Array<string | { html: string }>;
-  images?: Array<{ assetId: string; clones?: number }>;
+  images?: Array<{ assetId: string; clones?: number; plain?: boolean }>;
   staleStamp?: string;
   conversationProps?: Record<string, unknown>;
 }
@@ -320,7 +320,7 @@ async function scan(
     for (const entry of turn.images ?? []) {
       for (let clone = 0; clone < Math.max(1, entry.clones ?? 1); clone++) {
         const wrapper = document.createElement('div');
-        wrapper.className = 'group/imagegen-image';
+        if (!entry.plain) wrapper.className = 'group/imagegen-image';
         const image = document.createElement('img');
         image.src = 'https://chatgpt.com/backend-api/estuary/content?id=' +
           encodeURIComponent(entry.assetId) + '&sig=private';
@@ -367,7 +367,7 @@ async function scan(
   const userMessageStamps = [...document.querySelectorAll('[data-testid^="conversation-turn-"]')].map((section) =>
     section.getAttribute('data-clf-user-message-id')
   );
-  const imageStamps = [...document.querySelectorAll('.group\\/imagegen-image img')].map(node =>
+  const imageStamps = [...document.querySelectorAll('section img')].map(node =>
     node.getAttribute('data-clf-fiber-image')
   );
   dom.window.close();
@@ -1012,6 +1012,39 @@ describe('the calls a turn says it made', () => {
     ]);
     expect(result.imageStamps).toHaveLength(6);
     expect(result.imageStamps.every(stamp => stamp?.startsWith(result.scanToken + ':0:'))).toBe(true);
+    expect(JSON.stringify(result.turns)).not.toContain('sig=private');
+  });
+
+  it('reports an image the user attached on the page by exact file id, matching a plain upload img', async () => {
+    const upload: Message = {
+      id: '7a1c0f3e-5b2d-4c8e-9f10-0123456789ab',
+      author: { role: 'user' },
+      recipient: 'all',
+      create_time: 1789552100.5,
+      status: 'finished_successfully',
+      content: {
+        content_type: 'multimodal_text',
+        parts: [
+          { content_type: 'image_asset_pointer', asset_pointer: 'sediment://file_00000000000000000000000000000077', width: 1920, height: 1080 },
+          'and a last one sent by browser'
+        ]
+      }
+    };
+    const result = await scan([], [{
+      id: 'turn-user-upload',
+      role: 'user',
+      messages: [upload],
+      images: [
+        { assetId: 'file_00000000000000000000000000000077', plain: true },
+        // An unrelated image in the same turn is never taken as pixel evidence.
+        { assetId: 'file_00000000000000000000000000000099', plain: true }
+      ]
+    }]);
+    expect(result.turns[0]?.images).toEqual([
+      expect.objectContaining({ messageId: upload.id, assetId: 'file_00000000000000000000000000000077',
+        providerRole: 'user', providerStatus: 'finished_successfully', width: 1920, height: 1080 })
+    ]);
+    expect(result.imageStamps.filter(Boolean)).toHaveLength(1);
     expect(JSON.stringify(result.turns)).not.toContain('sig=private');
   });
 

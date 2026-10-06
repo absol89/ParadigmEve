@@ -1250,7 +1250,9 @@ export function upsertMessageEvent(
                 inputDelivery: previous.inputDelivery === 'confirmed' ? 'confirmed' : event.inputDelivery ?? previous.inputDelivery,
                 model: event.model ?? previous.model,
                 reasoningEffort: event.reasoningEffort ?? previous.reasoningEffort,
-                assets: event.assets ?? previous.assets,
+                // A page row's assets are previews captured from ChatGPT. When Eve's own receipt for
+                // that send arrives with archived originals, the originals replace them, not join them.
+                assets: event.assets ?? (!previous.inputId && event.inputId && event.archivedAttachments?.length ? undefined : previous.assets),
                 ...(event.provider ?? previous.provider ? { provider: event.provider ?? previous.provider } : {}),
                 ...(event.voice ?? previous.voice ? { voice: true as const } : {}),
                 ...(event.archivedAttachments ?? previous.archivedAttachments
