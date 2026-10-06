@@ -24,11 +24,16 @@ vi.mock('../src/main/mcp/call-context.js', async importOriginal => ({
   currentCaller: () => fixture.caller
 }));
 
-vi.mock('../src/main/session/store.js', () => ({
+vi.mock('../src/main/session/store.js', async (original) => ({
+  ...(await original<typeof import('../src/main/session/store.js')>()),
   getSession: async (id: string) => id === fixture.summary.id ? fixture.summary : null,
-  readEvents: async (id: string) => id === fixture.summary.id ? [...fixture.events] : []
+  readEvents: async (id: string) => id === fixture.summary.id ? [...fixture.events] : [],
+  indexedSessions: async () => [fixture.summary]
 }));
-vi.mock('../src/main/plans.js', () => ({ listPlans: async () => fixture.plans }));
+vi.mock('../src/main/plans.js', async (original) => ({
+  ...(await original<typeof import('../src/main/plans.js')>()),
+  listPlans: async () => fixture.plans
+}));
 
 const { registerPinsTool, pinsToolSchema } = await import('../src/main/mcp/pins-tool.js');
 

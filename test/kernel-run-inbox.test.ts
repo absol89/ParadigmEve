@@ -23,7 +23,10 @@ vi.mock('../src/main/session/store.js', async (original) => ({
   ...await original<typeof import('../src/main/session/store.js')>(), conversationAttachment: async () => 'current'
 }));
 vi.mock('../src/main/session/input.js', () => ({ offerToolInput: async () => ({ messages: [], reminder: '' }), acknowledgeToolInput: async () => undefined, TOOL_INPUT_HEADER: '\n--- New instructions from the user ---\n' }));
-vi.mock('../src/main/plans.js', () => ({ archiveWorkerPlansForDeliveredReport: broker.archive }));
+vi.mock('../src/main/plans.js', async (original) => ({
+  ...(await original<typeof import('../src/main/plans.js')>()),
+  archiveWorkerPlansForDeliveredReport: broker.archive
+}));
 vi.mock('../src/main/config.js', async (original) => {
   const actual = await original<typeof import('../src/main/config.js')>();
   return {

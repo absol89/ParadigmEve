@@ -956,17 +956,74 @@ describe('desktop input delivery and helper ownership', () => {
   it('ACKs a fresh input only under its accepted exact user message and assigned conversation', async () => {
     live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack ? { ok: true } : { input: claimed() } })
+    }, (_document, dom) => {
+      // Model the live hidden/background-tab race: ChatGPT can accept Send and assign /c/<id>
+      // before Chrome schedules the ordinary transcript MutationObserver. The native receipt
+      // must therefore synchronize recorder identity without depending on that observer.
+      class DelayedMutationObserver {
+        observe() {}
+        disconnect() {}
+        takeRecords() { return []; }
+      }
+      (dom.window as any).MutationObserver = DelayedMutationObserver;
     });
     live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
       live!.dom.reconfigure({ url: `https://chatgpt.com/c/${chatA}` });
       userTurn(live!.document, 'fresh-desktop-user', text);
       live!.document.querySelector('#prompt-textarea')!.textContent = '';
-      live!.hook.observe();
     });
     expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: null })).toEqual({ ok: true });
     expect(live.sent.filter(message => message.type === 'desktop_input' && message.ack)).toEqual([
       expect.objectContaining({ id: inputId, owner: 'input-owner', conversationId: chatA, ack: true })
     ]);
+    expect(live.sent.filter(message => message.type === 'bind' && message.conversationId === chatA)).toHaveLength(1);
+
+    // The fresh home -> /c/<id> SPA transition must leave the recorder alive after the ACK.
+    // The app can answer activity only after that receipt has rebound the Ollama-born/local
+    // session, so exercise the identity gate and then record the first GPT answer in this same
+    // document. A native send receipt without this observation leaves Eve showing the question
+    // while ChatGPT's answer exists only on the website.
+    live.reply.set('activity', () => ({
+      ok: true,
+      data: {
+        entries: [],
+        stream: [],
+        userAnchors: [{ seq: 1, time: Date.now(), messageId: 'm-fresh-desktop-user' }],
+        nextSince: 2,
+        pendingTools: 0,
+        activeTurnId: null,
+        sessionId: 'adopted-local-session'
+      }
+    }));
+    await live.hook.pullActivity();
+    startGenerating(live.document);
+    const answer = assistantTurn(live.document, 'fresh-desktop-answer', []);
+    const prose = live.document.createElement('div');
+    prose.className = 'markdown';
+    prose.textContent = 'The adopted GPT chat answered.';
+    answer.append(prose);
+    live.hook.observe();
+    await settle();
+    await replyFiber([], [{
+      turnId: 'fresh-desktop-answer',
+      conversationId: chatA,
+      endMessageId: 'fresh-desktop-assistant',
+      calls: [],
+      messages: [{
+        messageId: 'fresh-desktop-assistant',
+        rawMessageId: 'fresh-desktop-assistant',
+        role: 'assistant',
+        stable: true,
+        rawText: 'The adopted GPT chat answered.',
+        renderedHtml: '<p>The adopted GPT chat answered.</p>'
+      }],
+      activities: []
+    }]);
+    await settle();
+    await live.hook.flush();
+    expect(emitted(live.sent, 'assistant_message').map(entry => entry.event)).toContainEqual(
+      expect.objectContaining({ messageId: 'fresh-desktop-assistant', text: 'The adopted GPT chat answered.' })
+    );
   });
 
   it('sends queued input into a live Voice call only in a pause after the last message', async () => {

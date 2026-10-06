@@ -23,6 +23,8 @@ operation.
 - Ollama chats can use Eve's Core tools directly (Setup → Ollama → *Use tools directly in Ollama chats*, on by
   default). With it off, the Ollama model keeps the conversation and hands tool work to a worker. Images in the
   chat reach vision models as image parts.
+- After an Ollama-started chat moves to ChatGPT, the first ChatGPT answer is recorded even when its tab
+  is in the background, and the next message reaches the page instead of failing after 60 seconds.
 - Open Archive Browser opens the existing archive pages at once and refreshes them in the background; it
   used to rebuild the whole archive first, which took minutes on a large archive. The Archive screen's copy
   is plainer, and the archive shows what you wrote rather than Eve's catch-up wrapper after a provider switch.

@@ -338,7 +338,7 @@ export function configureInputDelivery(hooks: InputDeliveryHooks): void { delive
 export const USER_TURN_START_WAIT_MS = 2 * 60_000;
 /** How long a recorded final answer must stand, with no tool call after it, before an unclosed turn counts as over. */
 export const OPEN_TURN_FINAL_QUIET_MS = 60_000;
-export async function sessionInputPolicy(sessionId: string, observedActivity?: InputActivity): Promise<{ queueAtFinish: boolean; canInject: boolean; directTurn: InputEntry['directTurn'] | null; browserAllowed: boolean; settled: boolean }> {
+export async function sessionInputPolicy(sessionId: string, observedActivity?: InputActivity): Promise<{ queueAtFinish: boolean; canInject: boolean; directTurn: InputEntry['directTurn'] | null; browserAllowed: boolean; settled: boolean; awaitingUserTurnStart: boolean }> {
   // A native ChatGPT send is recorded as a user_message before the provider necessarily publishes
   // its turn_start. During that short gap the durable session can still look idle (`activeTurnId`
   // is null), which used to let internal browser-only attention (notably the 22-minute heartbeat)
@@ -354,7 +354,7 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   const lastRecent = recent.at(-1);
   const awaitingUserTurnStart = lastRecent?.kind === 'user_message' && Date.now() - lastRecent.time < USER_TURN_START_WAIT_MS;
   const session = await getSession(sessionId);
-  if (!session?.conversationId || isChatBlocked(session.conversationId)) return { queueAtFinish: false, canInject: false, directTurn: null, browserAllowed: false, settled: false };
+  if (!session?.conversationId || isChatBlocked(session.conversationId)) return { queueAtFinish: false, canInject: false, directTurn: null, browserAllowed: false, settled: false, awaitingUserTurnStart };
   const localProviderTurn = session.activeTurnId?.startsWith(OLLAMA_TURN_PREFIX) === true;
   // A local Ollama stream lives in this archive but is not activity in the ChatGPT browser.
   // Treat it as a separate provider lane so an explicit switch can claim an idle ChatGPT page
@@ -394,7 +394,8 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
     browserAllowed: !awaitingUserTurnStart && (!astra || terminal) &&
       (quietlyFinished || (localProviderTurn && !activity.possible && !activity.exact) ||
         (!session.activeTurnId && !activity.possible && !activity.exact)),
-    settled: (terminal && (session.lastToolCallAt ?? 0) <= end.time) || (!astra && quietlyFinished) };
+    settled: (terminal && (session.lastToolCallAt ?? 0) <= end.time) || (!astra && quietlyFinished),
+    awaitingUserTurnStart };
 }
 async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
   if (entry.mode === 'finish' && entry.sessionId && entry.afterTurn !== true) {
@@ -437,9 +438,24 @@ async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
   }
   // Only a never-offered ordinary input may change routes after positive terminal evidence.
   // A tool handout or ambiguous browser claim retains its original exclusive custody.
-  return policy.browserAllowed && (entry.transportIntent !== 'tool' ||
+  if (policy.browserAllowed) return entry.transportIntent !== 'tool' ||
     (entry.mode === 'auto' && !entry.finishOwner && entry.purpose !== 'decision' && entry.state === 'queued' &&
-      entry.owner === null && entry.offeredAt === undefined && policy.settled));
+      entry.owner === null && entry.offeredAt === undefined && policy.settled);
+  // A user's untouched browser-only message may reach the exact Companion page even while an old
+  // activity grant still says that page is *possibly* working. This is the recovery path for a
+  // provider-adopted chat whose request-id/MCP stream survived but whose recorder missed the prior
+  // turn boundary: without it the app withheld the message until the 60-second pickup timeout, so
+  // the page never got to perform its stronger provider-idle/draft/voice checks. Keep automatic
+  // work, after-turn debt, live turns and current MCP work behind the conservative policy above.
+  if ((entry.purpose === undefined || entry.purpose === 'user') && entry.mode === 'auto' &&
+      entry.transportIntent === 'browser' && entry.state === 'queued' && entry.owner === null &&
+      entry.offeredAt === undefined && !entry.finishOwner && !entry.directTurn && !entry.recoveryTurnId &&
+      !policy.awaitingUserTurnStart && current?.conversationId === entry.conversationId &&
+      current.activeTurnId === null && inFlightToolCalls(current.conversationId) === 0) {
+    const activity = deliveryHooks?.activity?.(current) ?? { possible: false, exact: false };
+    if (!activity.exact) return true;
+  }
+  return false;
 }
 const inputListeners = new Set<() => void>();
 export function onInputChange(listener: () => void): () => void {

@@ -11325,6 +11325,16 @@
       const acknowledged = await ask({ type: 'desktop_input', id: message.id, conversationId: deliveredConversation, messageId: receipt.user?.id, owner: input.owner, lifetime: input.lifetime,
         ...(input.purpose === 'schedule' ? { purpose: 'schedule' } : {}), ack: true });
       const accepted = acknowledged?.data?.ok === true;
+      // A fresh native Send can acquire /c/<id> and its exact user row before the transcript
+      // MutationObserver is scheduled, especially in a hidden/background tab. The ACK above is
+      // the point where main has durably accepted that exact receipt and rebound an Ollama-born
+      // session to this ChatGPT conversation. Synchronize the service-worker tab mapping first,
+      // then let the recorder adopt the route immediately so the first GPT answer cannot exist
+      // only on the website until a throttled observation eventually runs.
+      if (accepted && !target && deliveredConversation && CLF_DOM.conversationId() === deliveredConversation && sendingTarget()) {
+        await bindConversation(deliveredConversation);
+        if (sendingTarget()) observe();
+      }
       // Stop/composer-clear may precede the exact user row. This receipt, not that early
       // native acceptance, owns retirement of the still-untouched prepared draft. A
       // rejected/cancelled claim, trusted edit, replacement editor or route preserves it.

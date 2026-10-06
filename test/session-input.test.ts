@@ -1772,6 +1772,44 @@ it('stops fencing browser delivery on a user message whose provider turn never s
   expect(await sessionInputPolicy(sessionId)).toMatchObject({ browserAllowed: true });
 });
 
+it('offers an untouched user browser send past stale possible activity so the exact page can prove it is safe', async () => {
+  binding.model = 'gpt-5-6-thinking';
+  binding.activeTurnId = null;
+  binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'previous-turn', time: now - 10 * 60_000 };
+  configureInputDelivery({
+    applyAutomation: automate,
+    changed,
+    activity: () => ({ possible: true, exact: false, model: 'unknown' })
+  });
+  const row = await seedLegacyInput({
+    ...input({ text: 'Send this image follow-up in the adopted GPT chat' }),
+    transportIntent: 'browser'
+  } as InputArgs & { transportIntent: 'browser' });
+  expect(await sessionInputPolicy(sessionId)).toMatchObject({ browserAllowed: false, awaitingUserTurnStart: false });
+  expect(await pendingBrowserInputs()).toEqual([
+    expect.objectContaining({ id: row.id, conversationId: binding.conversationId })
+  ]);
+  expect(await claimBrowserInput(row.id, 'adopted-gpt-page', binding.conversationId, true))
+    .toMatchObject({ id: row.id });
+});
+
+it('does not let automatic attention bypass stale possible activity', async () => {
+  binding.activeTurnId = null;
+  binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'previous-turn', time: now - 10 * 60_000 };
+  configureInputDelivery({
+    applyAutomation: automate,
+    changed,
+    activity: () => ({ possible: true, exact: false, model: 'unknown' })
+  });
+  const review = await enqueueChatReviewAttention(sessionId, {
+    key: 'heartbeat:stale-possible-activity',
+    sinceAt: 0,
+    untilAt: now
+  });
+  expect(review).toMatchObject({ purpose: 'attention' });
+  expect(await pendingBrowserInputs()).toEqual([]);
+});
+
 it('delivers authenticated LAN peer text as durable browser-only knowledge, never as user authority', async () => {
   binding.activeTurnId = null;
   binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'prime-idle', time: now - 1 };
