@@ -25,6 +25,9 @@ operation.
   chat reach vision models as image parts.
 - After an Ollama-started chat moves to ChatGPT, the first ChatGPT answer is recorded even when its tab
   is in the background, and the next message reaches the page instead of failing after 60 seconds.
+- Images sent from Eve to ChatGPT stay in the archive. A message read from the ChatGPT page waits up to
+  90 seconds for Eve's own record of it (input id and image copies) before it is archived, because
+  archived evidence is never rewritten.
 - Open Archive Browser opens the existing archive pages at once and refreshes them in the background; it
   used to rebuild the whole archive first, which took minutes on a large archive. The Archive screen's copy
   is plainer, and the archive shows what you wrote rather than Eve's catch-up wrapper after a provider switch.

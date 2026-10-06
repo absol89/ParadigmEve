@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AssetRef, SessionEvent, SessionSummary } from '../src/shared/session.js';
 import {
   ArchiveRuntime,
+  PAGE_USER_RECEIPT_GRACE_MS,
   type ArchiveRuntimeSource,
   type CurrentSessionArchiveSnapshot
 } from '../src/main/archive/archive-runtime.js';
@@ -146,6 +147,61 @@ describe('ArchiveRuntime', () => {
     expect(repaired.events.map(event => event.eventId)).toEqual(['user:user-first', 'assistant:assistant-first', 'user:user-late']);
     expect(repaired.events.map(event => event.eventSeq)).toEqual([1, 2, 3]);
     expect(repaired.manifest?.captureState).toBe('partial');
+  });
+
+  it('holds a fresh page user row until the app receipt adds its input id and image', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-late-receipt';
+    const bytes = new TextEncoder().encode('screenshot sent to GPT');
+    const copy: AssetRef = { id: 'shot.bin', mimeType: 'image/png', bytes: bytes.byteLength };
+    const errors: Error[] = [];
+    let clock = 1_000;
+    const page = { ...user(1, 'Sending the last screenshot'), time: 1_000, source: 'extension', messageId: 'native-user' } as SessionEvent;
+    const answer = { ...assistant(2, 'Seen it', true), time: 1_200, messageId: 'answer' } as SessionEvent;
+    let current: CurrentSessionArchiveSnapshot = { summary: summary(id), events: [page] };
+    const runtime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'runtime-test',
+      now: () => clock,
+      source: { listSessionIds: async () => [id], readSession: async () => current, readAsset: async (_session, assetId) => assetId === copy.id ? bytes : null },
+      onError: error => errors.push(error)
+    });
+    await runtime.start();
+    await runtime.drain();
+    // Within the receipt grace the bare page row is not published: published evidence is never rewritten.
+    expect((await runtime.store.readSession(id)).events).toEqual([]);
+
+    // The ACK lands ~100 ms later on the same message and brings the input id and the image copy.
+    clock = 1_300;
+    current = { summary: { ...summary(id), updatedAt: 300 }, events: [{
+      ...page, inputId: 'app-input', authoredText: 'Sending the last screenshot',
+      attachments: [{ id: 'staged', name: 'shot.png', size: bytes.byteLength, mimeType: 'image/png' }],
+      archivedAttachments: [{ attachmentId: 'staged', asset: copy }]
+    } as SessionEvent, answer] };
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+
+    const archived = await runtime.store.readSession(id);
+    expect(errors.map(error => error.message)).toEqual([]);
+    expect(archived.events.map(event => event.eventId)).toEqual(['user:native-user', 'assistant:answer']);
+    expect(archived.events[0]).toMatchObject({ appInputId: 'app-input' });
+    expect(archived.events[0]!.assets).toHaveLength(1);
+  });
+
+  it('publishes a page-authored user row once no app receipt can still arrive', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-page-authored';
+    let clock = 1_000;
+    const page = { ...user(1, 'typed on chatgpt.com'), time: 1_000, source: 'extension', messageId: 'page-user' } as SessionEvent;
+    const current: CurrentSessionArchiveSnapshot = { summary: summary(id), events: [page] };
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test', now: () => clock, source: sourceFor(current) });
+    await runtime.start();
+    await runtime.drain();
+    expect((await runtime.store.readSession(id)).events).toEqual([]);
+    clock = 1_000 + PAGE_USER_RECEIPT_GRACE_MS;
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    expect((await runtime.store.readSession(id)).events.map(event => event.eventId)).toEqual(['user:page-user']);
   });
 
   it('keeps archiving new evidence after source history is reordered instead of freezing at the reorder', async () => {

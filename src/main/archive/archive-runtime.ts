@@ -232,7 +232,16 @@ function attachmentTimestamp(at: number): string {
  * use that exception because their local bytes may still arrive. Unexpected later revisions of an
  * already archived logical id are handled separately by retaining the immutable archive event.
  */
-function knownMutableEvent(event: SessionEvent): boolean {
+/**
+ * A user row read from the ChatGPT page can precede the app's own receipt for the same message by
+ * up to the delivery timeout; the receipt adds the input id and the archived image copies (2.3.6
+ * c11: a GPT screenshot stayed out of the archive because the bare row was published ~100 ms
+ * earlier, and published evidence is never rewritten). Hold such a row back for this long.
+ */
+export const PAGE_USER_RECEIPT_GRACE_MS = 90_000;
+
+function knownMutableEvent(event: SessionEvent, now: number): boolean {
+  if (event.kind === 'user_message') return event.source === 'extension' && !event.inputId && now - event.time < PAGE_USER_RECEIPT_GRACE_MS;
   if (event.kind === 'assistant_message') return event.final !== true && event.state !== 'final';
   if (event.kind !== 'native_image') return false;
   if (event.asset) return false;
@@ -698,7 +707,7 @@ export class ArchiveRuntime {
         }
       }
       if (publishedIds?.has(eventId)) continue;
-      if (knownMutableEvent(source)) {
+      if (knownMutableEvent(source, this.now())) {
         context.partial = true;
         const historicalInterruptedAssistant = source.kind === 'assistant_message' && index < lastUserMessageIndex;
         if (!historicalInterruptedAssistant) break;
