@@ -28,17 +28,20 @@ describe('Archive IPC wiring', () => {
     expect(rebuild).toContain("sanitizeArchiveRendererError(error, 'Archive rebuild failed.')");
   });
 
-  it('rebuilds, verifies the runtime-owned index, then opens exactly the verified file', () => {
+  it('opens an existing verified site at once, rebuilding first only when it is missing', () => {
     const open = handlerBlock('archive:openStatic', 'plans:ensureSession');
+    const firstVerifyAt = open.indexOf('await verifiedArchiveStaticIndex(runtime.staticSiteTarget())');
     const rebuildAt = open.indexOf('await runtime.rebuildDerived()');
-    const targetAt = open.indexOf('runtime.staticSiteTarget()');
-    const verifyAt = open.indexOf('await verifiedArchiveStaticIndex');
+    const reverifyAt = open.indexOf('await verifiedArchiveStaticIndex', rebuildAt);
     const shellAt = open.indexOf('await shell.openPath(indexPath)');
 
-    expect(rebuildAt).toBeGreaterThanOrEqual(0);
-    expect(targetAt).toBeGreaterThan(rebuildAt);
-    expect(verifyAt).toBeGreaterThan(rebuildAt);
-    expect(shellAt).toBeGreaterThan(verifyAt);
+    expect(firstVerifyAt).toBeGreaterThanOrEqual(0);
+    expect(rebuildAt).toBeGreaterThan(firstVerifyAt);
+    expect(open).toContain("if (indexPath === null) {");
+    expect(reverifyAt).toBeGreaterThan(rebuildAt);
+    // A stale site refreshes behind the opened page instead of holding the button.
+    expect(open).toContain('archiveOpenRefresh = runtime.rebuildDerived()');
+    expect(shellAt).toBeGreaterThan(reverifyAt);
     expect(open).not.toContain('shell.openPath(payload');
     expect(open).toContain("sanitizeArchiveRendererError(error, 'Static archive could not be opened.')");
   });

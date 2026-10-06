@@ -367,12 +367,12 @@ describe('localized app interface', () => {
     const { setLanguage, t } = await import('../src/renderer/i18n.js');
     setLanguage('sv-SE');
     const cases: Record<string, string> = {
-      'Browse the local chat traces Eve has retained. The static HTML browser is a recovery view, not the archive authority.': 'Öppna en browser med dina lokalt sparade chattar. Arkivbrowsern är för att läsa chattar lokalt, den ändrar inte på källan.',
-      'The static archive browser is available through your local archive data.': 'Den statiska arkivbrowsern är tillgänglig genom din lokala arkivdata.',
+      'Read the chats Eve has saved on this computer. The Archive Browser is a read-only copy and never changes your chats.': 'Läs chattarna som Eve har sparat på den här datorn. Arkivbrowsern är en kopia som bara går att läsa och ändrar aldrig dina chattar.',
+      'The Archive Browser is ready. It opens in your default web browser.': 'Arkivbrowsern är klar. Den öppnas i din vanliga webbläsare.',
       'The static archive browser will be available after it is done syncing.': 'Den statiska arkivbrowsern blir tillgänglig när arkivet har synkat klart.',
       'Archive browser': 'Arkivbrowser',
       'Archive browser opened.': 'Arkivbrowsern öppnades.',
-      'Archive actions use ParadigmEve’s own archive runtime. This screen never asks for a filesystem path and never embeds local files.': 'Arkivåtgärder använder ParadigmEves egna arkivkörning. Den här skärmen frågar aldrig efter en filsökväg och bäddar aldrig in lokala filer.',
+      'The Archive Browser is a set of web pages saved on this computer. Opening it shows the latest saved copy right away and updates it in the background.': 'Arkivbrowsern är webbsidor som sparas på den här datorn. När du öppnar den visas den senast sparade kopian direkt, och den uppdateras i bakgrunden.',
       "Edit Eve's routines": 'Ändra Eves rutiner',
       'View and edit your availability and Eve’s routines in one place, with the times you are both free presented.': 'Se och redigera din tillgänglighet och Eves rutiner på samma ställe, med tiderna när ni båda är lediga tydligt presenterade.',
       'Edit Eve schedule here': 'Ändra Eves schema här',

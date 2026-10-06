@@ -64,7 +64,7 @@ function paintStatus(status: ArchiveRendererStatus): void {
   if (status.lastError) ui(error, 'textContent', () => t('Last archive error: {0}', [status.lastError]));
   recovery.dataset.ready = String(status.initialized && !status.disposed && status.lastDerivedAt !== null);
   ui(recovery, 'textContent', () => status.initialized && !status.disposed && status.lastDerivedAt !== null
-    ? t('The static archive browser is available through your local archive data.')
+    ? t('The Archive Browser is ready. It opens in your default web browser.')
     : t('The static archive browser will be available after it is done syncing.'));
 }
 
@@ -133,7 +133,7 @@ export function initArchiveSurface(): void {
   const head = el('header', 'archive-head');
   const heading = el('div', 'archive-heading');
   heading.append(el('span', 'archive-eyebrow', () => t('LOCAL RECOVERY')), el('h1', '', archiveWorkspaceLabel),
-  el('p', '', () => t('Browse the local chat traces Eve has retained. The static HTML browser is a recovery view, not the archive authority.')));
+  el('p', '', () => t('Read the chats Eve has saved on this computer. The Archive Browser is a read-only copy and never changes your chats.')));
   head.append(heading);
 
   const statusCard = el('section', 'archive-status-card');
@@ -158,7 +158,7 @@ export function initArchiveSurface(): void {
   actions.append(rebuild, open);
   const actionStatus = el('p', 'archive-action-status'); actionStatus.id = 'archiveActionStatus'; actionStatus.setAttribute('role', 'status');
 
-  const note = el('p', 'archive-boundary', () => t('Archive actions use ParadigmEve’s own archive runtime. This screen never asks for a filesystem path and never embeds local files.'));
+  const note = el('p', 'archive-boundary', () => t('The Archive Browser is a set of web pages saved on this computer. Opening it shows the latest saved copy right away and updates it in the background.'));
   root.append(head, statusCard, recoveryCard, actions, actionStatus, note);
   host().replaceChildren(root);
   rebuild.addEventListener('click', () => { void rebuildArchive(); });

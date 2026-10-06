@@ -1029,16 +1029,34 @@ export function registerIpc(
       throw new Error(sanitizeArchiveRendererError(error, 'Archive rebuild failed.'));
     }
   });
+  /** One background refresh at a time; repeated opens never stack full rebuilds. */
+  let archiveOpenRefresh: Promise<void> | null = null;
   handle('archive:openStatic', async (payload) => {
     z.undefined().parse(payload);
     const traceId = randomUUID().slice(0, 8);
     logInfo('archive open ' + traceId + ': requested');
     try {
       const runtime = requireArchiveRuntime();
-      logInfo('archive open ' + traceId + ': rebuild starting');
-      await runtime.rebuildDerived();
-      logInfo('archive open ' + traceId + ': rebuild complete');
-      const indexPath = await verifiedArchiveStaticIndex(runtime.staticSiteTarget());
+      // A full rebuild of a large archive takes minutes (436 chats took over 3 on 2026-10-06), so an
+      // existing site opens at once and refreshes behind it. Only a missing site is built first.
+      let indexPath = await verifiedArchiveStaticIndex(runtime.staticSiteTarget()).catch((error: unknown) => {
+        if (error instanceof Error && error.message === 'Archive static entry point is missing.') return null;
+        throw error;
+      });
+      if (indexPath === null) {
+        logInfo('archive open ' + traceId + ': no static site yet, rebuild starting');
+        await runtime.rebuildDerived();
+        logInfo('archive open ' + traceId + ': rebuild complete');
+        indexPath = await verifiedArchiveStaticIndex(runtime.staticSiteTarget());
+      } else {
+        const status = runtime.status();
+        if (!archiveOpenRefresh && (status.lastDerivedAt === null || (status.lastReconciledAt ?? 0) > status.lastDerivedAt)) {
+          logInfo('archive open ' + traceId + ': opening existing site, refresh queued');
+          archiveOpenRefresh = runtime.rebuildDerived().then(() => undefined, (error: unknown) =>
+            logWarn('archive open ' + traceId + ': background refresh failed: ' + (error instanceof Error ? error.message : String(error))))
+            .finally(() => { archiveOpenRefresh = null; });
+        }
+      }
       logInfo('archive open ' + traceId + ': static index verified');
       const error = await shell.openPath(indexPath);
       logInfo('archive open ' + traceId + ': open returned ' + (error ? 'error' : 'success'));

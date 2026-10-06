@@ -288,6 +288,24 @@ describe('ArchiveRuntime', () => {
     expect(chunk).toContain('Untitled.jpg');
   });
 
+  it('shows what the user wrote, not the provider catch-up wrapper that was sent', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-authored-text';
+    const event: SessionEvent = {
+      seq: 1, time: Date.parse('2026-10-06T00:17:43.381Z'), source: 'app', kind: 'user_message', messageId: 'switched-user',
+      message: { text: '[[PARADIGMEVE_CONTEXT:120]] CATCH-UP-WRAPPER\nNow on ChatGPT', chars: 60, truncated: false },
+      authoredText: 'Now on ChatGPT'
+    };
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test', source: sourceFor({ summary: summary(id), events: [event] }) });
+    await runtime.start();
+    await runtime.drain();
+    await runtime.rebuildDerived();
+    const generated = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    const chunk = await fs.readFile(generated.chunks[0]!, 'utf8');
+    expect(chunk).toContain('Now on ChatGPT');
+    expect(chunk).not.toContain('CATCH-UP-WRAPPER');
+  });
+
   it('keeps heavy tool output out of the shell/search corpus and writes it only to the selected-chat shard', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-heavy-static-chunk';

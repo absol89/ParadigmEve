@@ -1130,7 +1130,9 @@ export class ArchiveRuntime {
   private async viewItem(event: ArchiveEvent): Promise<ArchiveViewTranscriptItem | null> {
     const assets: ArchiveViewAsset[] = [];
     for (const asset of event.assets) assets.push(await this.viewAsset(asset, event.at));
-    const text = payloadString(event.payload, 'text');
+    // A user message carries what the user wrote beside what was sent; the sent text may be wrapped
+    // in Eve's provider catch-up context, which the archive reader should not see as the message.
+    const text = (event.kind === 'user_message' ? payloadString(event.payload, 'authoredText') : null) ?? payloadString(event.payload, 'text');
     if (event.kind === 'user_message' || event.kind === 'assistant_message' || event.kind === 'agent_message' || event.kind === 'progress' || event.kind === 'chat_error' || event.kind === 'note') {
       return {
         kind: 'message',

@@ -23,6 +23,9 @@ operation.
 - Ollama chats can use Eve's Core tools directly (Setup → Ollama → *Use tools directly in Ollama chats*, on by
   default). With it off, the Ollama model keeps the conversation and hands tool work to a worker. Images in the
   chat reach vision models as image parts.
+- Open Archive Browser opens the existing archive pages at once and refreshes them in the background; it
+  used to rebuild the whole archive first, which took minutes on a large archive. The Archive screen's copy
+  is plainer, and the archive shows what you wrote rather than Eve's catch-up wrapper after a provider switch.
 - Separate worker limits for GPT, local Ollama and Ollama Cloud workers. An Ollama worker keeps the model it
   was started with, even if the Setup model changes while it runs.
 - Moving an Ollama-started (or local-only) chat to ChatGPT works again. The ChatGPT catch-up no longer re-uploads
