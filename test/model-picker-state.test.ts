@@ -286,6 +286,42 @@ it('uses the alternate shell picker owner and portal without requiring the class
   expect(props.selectedPowerSelection).toBe(medium);
   expect(doc.querySelector('[data-model-picker-view]')).toBeNull();
 });
+it('reads GPT-6 Instant and thinking lanes as one family, and names "5.6" in full (ported from Chat On Steroids 2.1.31)', async () => {
+  // ChatGPT's picker as observed 2026-10-07: gpt-6 (Instant) and gpt-6-thinking (Medium, High) under one name,
+  // and older models by number alone. GPT-5.6 Sol is no longer offered.
+  page = new JSDOM('<form data-chatgpt-composer><div contenteditable="true" role="textbox"></div><button type="button" data-codex-intelligence-trigger data-selected-reasoning-effort="high">Select ChatGPT model</button><button type="submit">Send</button></form>',
+    { url: 'https://chatgpt.com/c/gpt6-picker', runScripts: 'outside-only' });
+  const win = page.window, doc = win.document;
+  Object.defineProperty(win.HTMLElement.prototype, 'getClientRects', { value() { return this.hidden ? [] : [{}]; } });
+  win.postMessage = (data: unknown) => queueMicrotask(() => win.dispatchEvent(new win.MessageEvent('message', { data, source: win as unknown as Window, origin: win.location.origin })));
+  const lanes = [
+    { powerSettingIndex: 0, model: 'gpt-6', modelLabel: 'GPT-6', reasoningEffort: 'none', sliderLabel: 'Instant', labels: { effort: 'Instant' } },
+    { powerSettingIndex: 1, model: 'gpt-6-thinking', modelLabel: 'GPT-6', reasoningEffort: 'medium' },
+    { powerSettingIndex: 2, model: 'gpt-6-thinking', modelLabel: 'GPT-6', reasoningEffort: 'high' },
+    { powerSettingIndex: 3, model: 'gpt-5-6-instant', modelLabel: '5.6', reasoningEffort: 'none', sliderLabel: 'Instant', labels: { effort: 'Instant' } },
+    { powerSettingIndex: 4, model: 'gpt-5-6-thinking', modelLabel: '5.6', reasoningEffort: 'high' }
+  ];
+  const props: any = { powerSelections: lanes, selectedPowerSelection: lanes[2],
+    modelListConfig: { options: [{ id: 'gpt-6', label: 'GPT-6', selected: true }] }, modelSelectionDisabled: false };
+  const trigger = doc.querySelector<HTMLElement>('[data-codex-intelligence-trigger]')!;
+  const fiber = { memoizedProps: props, return: null };
+  (trigger as any).__reactFiber$test = fiber;
+  trigger.addEventListener('keydown', (event: any) => {
+    if (event.key !== 'Enter' || doc.querySelector('[data-model-picker-view]')) return;
+    const menu = doc.createElement('div'); menu.setAttribute('role', 'menu');
+    const panel = doc.createElement('div'); panel.setAttribute('data-model-picker-view', '');
+    (panel as any).__reactFiber$test = fiber;
+    panel.innerHTML = '<div role="menuitem" data-model-picker-view-toggle></div><div role="menuitem" aria-keyshortcuts="ArrowLeft ArrowRight"></div>';
+    panel.addEventListener('keydown', (key: any) => { if (key.key === 'Escape') menu.remove(); });
+    menu.append(panel); doc.body.append(menu);
+  });
+  win.eval(fiberSource); win.eval(domSource);
+  const failures: unknown[] = [];
+  const models = await (win as any).CLF_DOM.inspectModelSettings(() => true, (reason: unknown) => failures.push(reason), () => {});
+  expect(failures).toEqual([]);
+  expect(models.find((model: any) => model.id === 'gpt-6')).toEqual({ id: 'gpt-6', label: 'GPT-6', efforts: ['none', 'medium', 'high'], aliases: ['gpt-6', 'gpt-6-thinking'] });
+  expect(models.find((model: any) => model.id === 'gpt-5-6')).toMatchObject({ label: 'GPT-5.6', efforts: ['none', 'high'] });
+});
 it('collapses equivalent intelligence and reasoning controls to one exact shell picker owner', async () => {
   page = new JSDOM('<form data-chatgpt-composer><div contenteditable="true" role="textbox"></div><button type="button" data-codex-intelligence-trigger data-selected-reasoning-effort="high">Select ChatGPT model</button><button type="button" data-composer-navigation-target="reasoning">Reasoning</button><button type="submit">Send</button></form>',
     { url: 'https://chatgpt.com/c/double-shell-picker', runScripts: 'outside-only' });

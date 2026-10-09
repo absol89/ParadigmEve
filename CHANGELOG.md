@@ -27,6 +27,10 @@ operation.
   now `ollama-local` or `ollama-cloud` with the model name. Acceptance tests prove a local Ollama chat stays
   complete and readable with no internet across a restart and an archive rebuild, and an Ollama Cloud chat
   stays readable once the cloud is unreachable.
+- ChatGPT's GPT-6 model menu is read correctly. It lists each model as two lanes (`gpt-6` for Instant,
+  `gpt-6-thinking` for Medium and High); they now form one GPT-6 choice with Instant, Medium and High, and a model
+  named by number alone reads in full (5.6 is GPT-5.6). GPT-5.6 Sol is no longer offered by ChatGPT. Ported from
+  Chat On Steroids 2.1.31.
 - The Archive Browser catches up with your newest chats. A chat created while the archive was being rebuilt was
   missing from the opened page for minutes, and every open queued another full rebuild (about three minutes on a
   450-chat archive, mostly the search index the page does not use). Opening now joins a refresh already under way

@@ -2085,23 +2085,57 @@
       const id = value => typeof value === 'string' && /^[a-zA-Z0-9._-]{1,80}$/.test(value) ? value : null;
       const group = value => typeof value === 'string' && /^[\p{L}\p{N}._ -]{1,80}$/u.test(value) && value.trim() === value ? value : null;
       const label = value => typeof value === 'string' && value.trim() && value.length <= 80 ? value.trim() : null;
-      const effort = value => ({ none:'none', instant:'none', minimal:'minimal', min:'low', low:'low', standard:'medium', medium:'medium', extended:'high', high:'high', xhigh:'xhigh', max:'max', ultra:'ultra', pro:'pro' })[value] || null;
-      const current = options.filter(option => option?.selected === true);
+      const effort = value => ({ none:'none', instant:'none', minimal:'minimal', min:'low', low:'low', standard:'medium', medium:'medium', extended:'high', high:'high', xhigh:'xhigh', 'extra high':'xhigh', max:'max', ultra:'ultra', pro:'pro' })[value] || null;
+      // The machine reasoningEffort is a lane's transport setting, not its identity: the
+      // Pro and Extra High lanes still report medium/max. The lane's visible label is what
+      // the picker offers, matching readPickerSnapshot's modelLane/thinkingEffort mapping.
+      // A translated label ("Sehr hoch") falls back to that transport value, where max is Extra High.
+      const laneEffort = c => shellProExecutionModel(c?.model) ? 'pro' :
+        effort(String(c?.labels?.effort ?? c?.sliderLabel ?? '').trim().toLowerCase()) ??
+        ((c?.labels?.effort ?? c?.sliderLabel) ? shellLaneTransportEffort(c?.reasoningEffort) : effort(c?.reasoningEffort));
+      const current = options.filter(o => o?.selected === true);
       if (current.length !== 1) return null;
       const version = group(current[0].id);
-      const versions = options.filter(option => option && option.disabled !== true).map(option => ({ id: group(option.id), label: label(option.label) }));
-      const choices = p.powerSelections.map(choice => ({ bucket: choice?.powerSettingIndex, id: id(choice?.model),
-        label: label(choice?.modelLabel), familyId: id(choice?.model), familyLabel: label(choice?.modelLabel), effort: effort(choice?.reasoningEffort),
-        available: p.modelSelectionDisabled !== true && choice?.disabled !== true &&
-          (!choice?.availability || choice.availability.status === 'available') && !p.modelSwitcherDenialsBySlug?.[choice?.model] }));
+      const versions = options.filter(o => o && o.disabled !== true).map(o => ({ id: group(o.id), label: label(o.label) }));
+      // The shell names older models by number alone ("5.6"); the September picker's own rule
+      // names them in full, so the list reads GPT-6, GPT-5.6, GPT-5.5 alike.
+      const modelName = value => { const name = label(value); return name && /^\d/.test(name) ? `GPT-${name}` : name; };
+      const choices = p.powerSelections.map(c => ({ bucket: c?.powerSettingIndex, id: id(c?.model),
+        label: modelName(c?.modelLabel), familyId: id(c?.model), familyLabel: modelName(c?.modelLabel), effort: laneEffort(c),
+        available: p.modelSelectionDisabled !== true && c?.disabled !== true &&
+          (!c?.availability || c.availability.status === 'available') && !p.modelSwitcherDenialsBySlug?.[c?.model] }));
       if (!version || !versions.length || versions.some(v => !v.id || !v.label) || !choices.length ||
-          choices.some(choice => !Number.isInteger(choice.bucket) || !choice.id || !choice.label || !choice.effort) ||
-          new Set(versions.map(v => v.id)).size !== versions.length || new Set(choices.map(choice => choice.bucket)).size !== choices.length || !versions.some(v => v.id === version)) return null;
-      const matches = choices.filter(choice => choice.id === id(selected.model) && choice.effort === effort(selected.reasoningEffort));
+          choices.some(c => !Number.isInteger(c.bucket) || !c.id || !c.label || !c.effort) ||
+          new Set(versions.map(v => v.id)).size !== versions.length || new Set(choices.map(c => c.bucket)).size !== choices.length || !versions.some(v => v.id === version)) return null;
+      // One model's Instant and thinking lanes are separate slugs under one name (gpt-6 and
+      // gpt-6-thinking, both "GPT-6"; observed 2026-10-07). They are one family, as the September
+      // picker had them, so the effort control offers Instant, Medium and High together. Lanes join
+      // only under one name in this version and with distinct efforts: a mixed group never merges.
+      // GPT-6's Instant lane is ChatGPT's automatic `gpt-6`, which its server may answer with the
+      // thinking lane; the fixed `gpt-6-instant` exists but no native view offers it (2026-10-08).
+      for (const name of new Set(choices.map(c => c.label))) {
+        const lanes = choices.filter(c => c.label === name);
+        if (lanes.length < 2 || new Set(lanes.map(c => c.effort)).size !== lanes.length) continue;
+        const shared = lanes.map(c => c.id).reduce((a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return a.slice(0, i); })
+          .replace(/[-._]+$/, '');
+        const family = id(shared) && /\d/.test(shared) ? shared : lanes[0].id;
+        for (const lane of lanes) lane.familyId = family;
+      }
+      const matches = choices.filter(c => c.id === id(selected.model) && c.effort === laneEffort(selected));
       if (matches.length !== 1 || (selected.powerSettingIndex !== undefined && selected.powerSettingIndex !== matches[0].bucket)) return null;
       return { version, currentBucket: matches[0].bucket, versions, choices };
     }
     return null;
+  }
+  /** Shell execution ids are provider identities, not localized presentation. */
+  function shellProExecutionModel(value) {
+    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return /^(?:pro|(?:gpt-?)?\d+(?:[.-]\d+)?-pro)$/.test(normalized);
+  }
+  /** A shell lane's transport effort when its label is translated. The Extra High lane sends max
+   * (English and German pages alike, 2026-10-09), as the September picker's non-Work max did. */
+  function shellLaneTransportEffort(value) {
+    return ({ none:'none', minimal:'minimal', low:'low', medium:'medium', high:'high', xhigh:'xhigh', max:'xhigh' })[value] ?? null;
   }
 
   function copySchema(value, budget, depth = 0) {
