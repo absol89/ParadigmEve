@@ -231,6 +231,50 @@ describe('ArchiveRuntime', () => {
     expect(chunk).not.toContain('POINTER-ID-MUST-NOT-SHOW');
   });
 
+  it('refreshes only the static site for a newly archived chat, coalescing repeated opens and telling the page', async () => {
+    // Live 2.3.7 c1 (2026-10-09): a chat created after a full rebuild started was missing from the
+    // opened Archive Browser for minutes, and each open queued another full three-minute rebuild.
+    const archiveRoot = await tempArchiveRoot();
+    const first = 'session-before-open';
+    const later = 'session-created-after';
+    const sessions: Record<string, CurrentSessionArchiveSnapshot> = {
+      [first]: { summary: summary(first), events: [{ ...user(1, 'older chat'), messageId: 'older-user' } as SessionEvent] }
+    };
+    const diagnostics: string[] = [];
+    const runtime = new ArchiveRuntime({
+      archiveRoot, writerVersion: 'runtime-test', onDiagnostic: message => diagnostics.push(message),
+      source: { listSessionIds: async () => Object.keys(sessions), readSession: async id => sessions[id] ?? null, readAsset: async () => null }
+    });
+    await runtime.start();
+    await runtime.drain();
+    await runtime.rebuildDerived();
+    expect(runtime.staticSiteStale()).toBe(false);
+    expect(runtime.refreshStaticSite()).toBeNull();
+    const target = runtime.staticSiteTarget();
+    const shellBefore = await fs.readFile(target.indexPath, 'utf8');
+    expect(shellBefore).toContain("script.src = 'status.js?'");
+
+    sessions[later] = { summary: summary(later), events: [{ ...user(1, 'NEWEST-CHAT-TEXT'), messageId: 'newest-user' } as SessionEvent] };
+    runtime.queueSessionReconcile(later);
+    await runtime.drain();
+    expect(runtime.staticSiteStale()).toBe(true);
+    const refresh = runtime.refreshStaticSite()!;
+    expect(refresh).not.toBeNull();
+    expect(runtime.refreshStaticSite()).toBe(refresh);
+    await refresh;
+    expect(diagnostics).toContain('derived rebuild kept the search index (site-only refresh)');
+    expect(runtime.staticSiteStale()).toBe(false);
+    const shellAfter = await fs.readFile(target.indexPath, 'utf8');
+    const generation = /data-archive-generation="(g-[a-f0-9]{32})"/.exec(shellAfter)![1]!;
+    expect(shellAfter).not.toBe(shellBefore);
+    const generated = await generatedStaticFiles(target.indexPath);
+    const chunks = await Promise.all(generated.chunks.map(chunk => fs.readFile(chunk, 'utf8')));
+    expect(chunks.some(chunk => chunk.includes('NEWEST-CHAT-TEXT'))).toBe(true);
+    const status = await fs.readFile(path.join(target.siteRoot, 'status.js'), 'utf8');
+    expect(status).toContain(`"generation":"${generation}"`);
+    expect(status).toContain('"updating":false');
+  });
+
   it('publishes a page-authored user row once no app receipt can still arrive', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-page-authored';

@@ -260,6 +260,33 @@ describe('static archive HTML', () => {
     dom.window.close();
   });
 
+  it('says when the archive is updating and moves to a newer generation the app published', async () => {
+    const generation = `g-${'a'.repeat(32)}`;
+    const newer = `g-${'b'.repeat(32)}`;
+    const html = renderLazyArchiveHtml({
+      searchPath: `data/${generation}/search.js`,
+      chats: [{ id: 'only', title: 'Only chat', chunkPath: `data/${generation}/chat-0-segment-0.js`, segmentCount: 1 }]
+    });
+    const dom = new JSDOM(html, { url: 'file:///C:/ParadigmEve/archive/site/index.html', runScripts: 'dangerously', pretendToBeVisual: true });
+    const window = dom.window as unknown as Window & Record<string, any>;
+    // It asks the published status script, a local file, never the network.
+    expect([...window.document.querySelectorAll('script[src]')].map(script => script.getAttribute('src'))).toContain('status.js?1');
+    const banner = window.document.querySelector<HTMLElement>('.archive-status')!;
+    expect(banner.hidden).toBe(true);
+    window.__EVE_ARCHIVE_STATUS__({ generation, updating: true });
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toContain('Updating the archive with your newest chats');
+    window.__EVE_ARCHIVE_STATUS__({ generation, updating: false });
+    expect(banner.hidden).toBe(true);
+    // Once the reader is using the page, a newer generation is offered rather than forced.
+    window.dispatchEvent(new window.Event('pointerdown'));
+    window.__EVE_ARCHIVE_STATUS__({ generation: newer, updating: false });
+    expect(banner.hidden).toBe(false);
+    expect(banner.textContent).toContain('Newer chats are ready.');
+    expect(banner.querySelector('button')?.textContent).toBe('Reload');
+    window.close();
+  });
+
   it('lazy-loads only the selected local chat and searches transcript-only authored text without retaining previous DOM', async () => {
     const generation = `g-${'a'.repeat(32)}`;
     const html = renderLazyArchiveHtml({

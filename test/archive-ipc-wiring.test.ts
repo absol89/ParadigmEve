@@ -40,7 +40,7 @@ describe('Archive IPC wiring', () => {
     expect(open).toContain("if (indexPath === null) {");
     expect(reverifyAt).toBeGreaterThan(rebuildAt);
     // A stale site refreshes behind the opened page instead of holding the button.
-    expect(open).toContain('archiveOpenRefresh = runtime.rebuildDerived()');
+    expect(open).toContain('runtime.refreshStaticSite()');
     expect(shellAt).toBeGreaterThan(reverifyAt);
     expect(open).not.toContain('shell.openPath(payload');
     expect(open).toContain("sanitizeArchiveRendererError(error, 'Static archive could not be opened.')");

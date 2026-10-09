@@ -451,6 +451,11 @@ export class ArchiveRuntime {
   private lastDerivedAt: number | null = null;
   private lastError: string | null = null;
   private lastIndexStats: ArchiveIndexStats | null = null;
+  /** When the evidence behind the published static site was read (a derive's start). */
+  private derivedSourceAt: number | null = null;
+  private derivedStartedAt = 0;
+  private runningDerived: Promise<ArchiveDerivedResult> | null = null;
+  private pendingSiteRefresh: Promise<ArchiveDerivedResult> | null = null;
 
   constructor(readonly options: ArchiveRuntimeOptions) {
     if (!path.isAbsolute(options.archiveRoot)) throw new Error('ARCHIVE_RUNTIME_ROOT_MUST_BE_ABSOLUTE');
@@ -579,12 +584,17 @@ export class ArchiveRuntime {
   /**
    * Rebuild the disposable index and static recovery site from canonical archive evidence.
    * Canonical reconciles drain first so derived views cannot publish an older projection.
+   * `searchIndex: false` republishes only the static site: the search index is the slow part of a
+   * full rebuild (over two minutes of three on a 447-chat archive, 2026-10-09) and the site does not use it.
    */
-  rebuildDerived(): Promise<ArchiveDerivedResult> {
+  rebuildDerived(options: { searchIndex?: boolean } = {}): Promise<ArchiveDerivedResult> {
     this.assertOpen();
-    const run = this.derivedQueue.catch(() => undefined).then(async () => {
+    const run: Promise<ArchiveDerivedResult> = this.derivedQueue.catch(() => undefined).then(async () => {
       await this.initialize();
       this.derivedBuilding = true;
+      this.runningDerived = run;
+      const sourceAt = this.now();
+      this.derivedStartedAt = sourceAt;
       try {
         // Set the gate before draining: commits arriving after this point stay dirty but cannot
         // start a new writer. Reconciles that already owned a pass finish before derived reads.
@@ -592,8 +602,12 @@ export class ArchiveRuntime {
         this.recordDiagnostic('derived rebuild start ' + memorySummary());
         const headers = await this.readDerivedSessionHeaders();
         this.recordDiagnostic('derived rebuild headers ready ' + headers.length + ' session(s) ' + memorySummary());
-        const index = await this.index.rebuild(this.indexDocuments(headers));
-        this.recordDiagnostic('derived rebuild indexed ' + index.documents + ' document(s) ' + memorySummary());
+        const index = options.searchIndex === false && this.lastIndexStats
+          ? this.lastIndexStats
+          : await this.index.rebuild(this.indexDocuments(headers));
+        this.recordDiagnostic(options.searchIndex === false && this.lastIndexStats
+          ? 'derived rebuild kept the search index (site-only refresh)'
+          : 'derived rebuild indexed ' + index.documents + ' document(s) ' + memorySummary());
         const target = this.staticSiteTarget();
         await ensureArchiveDirectory(target.archiveRoot, target.siteRoot, true);
         const viewHeaders = headers.map(header => this.archiveViewHeader(header));
@@ -603,6 +617,7 @@ export class ArchiveRuntime {
         this.recordDiagnostic('derived rebuild HTML published bytes=' + htmlBytes + ' ' + memorySummary());
         this.lastIndexStats = index;
         this.lastDerivedAt = this.now();
+        this.derivedSourceAt = sourceAt;
         this.lastError = null;
         return { index, chats: viewHeaders.length, staticSite: target };
       } catch (error) {
@@ -610,6 +625,7 @@ export class ArchiveRuntime {
         throw error;
       } finally {
         this.derivedBuilding = false;
+        if (this.runningDerived === run) this.runningDerived = null;
         // A commit may have arrived while the disposable views were reading archive evidence.
         // Give every such session its normal whole-session reconcile now that no derived reader
         // owns the files. Do not await here: callers that need canonical quiescence already use
@@ -621,6 +637,51 @@ export class ArchiveRuntime {
     });
     this.derivedQueue = run;
     return run;
+  }
+
+  /** Whether archive evidence changed after the published static site read it. */
+  staticSiteStale(): boolean {
+    return this.derivedSourceAt === null || (this.lastReconciledAt ?? 0) > this.derivedSourceAt;
+  }
+
+  /**
+   * Bring the static site up to date for a reader who just opened it, without stacking rebuilds:
+   * join a refresh already queued, or a running derive that started after the newest archived
+   * change, and otherwise queue one site-only refresh. Null when the site is already current.
+   * The opened page learns about it through `status.js`.
+   */
+  refreshStaticSite(): Promise<ArchiveDerivedResult> | null {
+    this.assertOpen();
+    if (this.pendingSiteRefresh) return this.pendingSiteRefresh;
+    if (this.runningDerived && (this.lastReconciledAt ?? 0) <= this.derivedStartedAt) {
+      void this.writeStaticStatus(true);
+      return this.runningDerived;
+    }
+    if (!this.staticSiteStale()) return null;
+    const run = this.rebuildDerived({ searchIndex: false });
+    this.pendingSiteRefresh = run;
+    void run.catch(() => undefined).finally(() => {
+      if (this.pendingSiteRefresh === run) this.pendingSiteRefresh = null;
+    });
+    void this.writeStaticStatus(true);
+    return run;
+  }
+
+  /**
+   * `site/status.js`: the published generation and whether a refresh is under way. The opened page
+   * polls it, says when newer chats are being added, and reloads into the newer generation.
+   */
+  private async writeStaticStatus(updating: boolean, generation?: string): Promise<void> {
+    try {
+      const target = this.staticSiteTarget();
+      const published = generation ?? await publishedStaticGeneration(target.archiveRoot, target.indexPath);
+      await ensureArchiveDirectory(target.archiveRoot, target.siteRoot, true);
+      const status = JSON.stringify({ generation: published ?? '', updating });
+      await atomicWriteStream(target.archiveRoot, path.join(target.siteRoot, 'status.js'), async append =>
+        append(`globalThis.__EVE_ARCHIVE_STATUS__&&globalThis.__EVE_ARCHIVE_STATUS__(${status});\n`));
+    } catch (error) {
+      this.recordDiagnostic('static status not written: ' + (error instanceof Error ? error.message : String(error)));
+    }
   }
 
   async search(query: string, options?: ArchiveIndexSearchOptions): Promise<readonly ArchiveIndexHit[]> {
@@ -1141,6 +1202,7 @@ export class ArchiveRuntime {
       });
       const htmlBytes = await atomicWriteStream(target.archiveRoot, target.indexPath, async append => append(html));
       published = true;
+      await this.writeStaticStatus(this.pendingSiteRefresh !== null && this.pendingSiteRefresh !== this.runningDerived, generation);
       const removed = await cleanupStaticGenerations(target.archiveRoot, dataRoot, generation, previousPublishedGeneration);
       if (removed > 0) this.recordDiagnostic(`derived rebuild cleaned ${removed} stale static generation(s)`);
       return htmlBytes;

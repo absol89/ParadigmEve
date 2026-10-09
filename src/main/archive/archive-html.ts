@@ -332,6 +332,7 @@ const STYLE = `
 .tool-call h4{margin:10px 0 5px;color:#999;font-size:11px;text-transform:uppercase;letter-spacing:.06em}.tool-call pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:9px;border-radius:7px;background:#0d0d0d;color:#d8d8d8;font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
 .asset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-top:12px}.asset-card{min-width:0;padding:10px;border:1px solid #363636;border-radius:10px;background:#181818}.asset-missing{border-color:#543c3c}
 .image-link{display:block;background:#0c0c0c;border-radius:7px;overflow:hidden;margin-bottom:9px}.image-link img{display:block;width:100%;max-height:320px;object-fit:contain}.asset-heading{display:flex;gap:8px;align-items:baseline;overflow-wrap:anywhere}.asset-kind{font-size:10px;text-transform:uppercase;color:#818181;letter-spacing:.08em}.asset-meta{color:#858585;font-size:11px;margin-top:5px}.asset-open,.continuation-card a{display:inline-block;color:#9bc4ff;margin-top:8px}.missing-state{color:#e1a9a9;font-size:12px;margin-top:7px;overflow-wrap:anywhere}
+.archive-status{position:sticky;top:0;z-index:5;padding:10px 16px;background:#20304a;color:#e6eefc;font-size:13px}.archive-status button{margin-left:8px;padding:3px 10px;border:1px solid #6d8fc7;border-radius:6px;background:#2c4670;color:#fff;cursor:pointer}
 @media(max-width:720px){.archive-shell{display:block}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid #333}.chat-list{max-height:220px;overflow:auto}.chat-panel{padding:24px 16px 60px}.message-user{margin-left:5%}}
 `;
 
@@ -599,6 +600,44 @@ const LAZY_SCRIPT = `
     order = order === 'newer' ? 'older' : 'newer';
     applySort();
   });
+  // The app republishes this page when newer chats are archived and says so in status.js.
+  // While a refresh runs, say so; once a newer generation is published, reload into it unless the
+  // reader has started using this page, then offer the reload instead.
+  const ownGeneration = document.documentElement.getAttribute('data-archive-generation') || '';
+  const banner = document.createElement('div');
+  banner.className = 'archive-status';
+  banner.setAttribute('role', 'status');
+  banner.hidden = true;
+  document.body.prepend(banner);
+  let touched = false;
+  for (const kind of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(kind, () => { touched = true; }, { once: true, passive: true });
+  globalThis.__EVE_ARCHIVE_STATUS__ = status => {
+    if (!status || typeof status !== 'object') return;
+    const newer = typeof status.generation === 'string' && /^g-[a-f0-9]{32}$/.test(status.generation) && status.generation !== ownGeneration;
+    if (newer) {
+      if (!touched) { location.reload(); return; }
+      banner.textContent = 'Newer chats are ready. ';
+      const reload = document.createElement('button');
+      reload.type = 'button';
+      reload.textContent = 'Reload';
+      reload.addEventListener('click', () => location.reload());
+      banner.append(reload);
+      banner.hidden = false;
+      return;
+    }
+    banner.textContent = 'Updating the archive with your newest chats…';
+    banner.hidden = status.updating !== true;
+  };
+  let statusPolls = 0;
+  const pollStatus = () => {
+    const script = document.createElement('script');
+    script.src = 'status.js?' + (++statusPolls);
+    script.addEventListener('load', () => script.remove());
+    script.addEventListener('error', () => script.remove());
+    document.body.append(script);
+  };
+  pollStatus();
+  setInterval(pollStatus, 5000);
   applySort();
   activate();
   filter();

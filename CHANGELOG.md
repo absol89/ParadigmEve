@@ -27,6 +27,11 @@ operation.
   now `ollama-local` or `ollama-cloud` with the model name. Acceptance tests prove a local Ollama chat stays
   complete and readable with no internet across a restart and an archive rebuild, and an Ollama Cloud chat
   stays readable once the cloud is unreachable.
+- The Archive Browser catches up with your newest chats. A chat created while the archive was being rebuilt was
+  missing from the opened page for minutes, and every open queued another full rebuild (about three minutes on a
+  450-chat archive, mostly the search index the page does not use). Opening now joins a refresh already under way
+  or starts one that rebuilds only the pages, the page says it is updating, and it reloads into the newer version
+  (or offers Reload once you have started reading).
 - %claude reaches the Claude Code that is really installed. When only the Claude desktop app installed it,
   its binary lives in a versioned folder under `%APPDATA%\Claude\claude-code` and was never on PATH, so Eve
   fell back to driving the desktop UI. ParadigmEve now puts the newest such build on the PATH of Eve's own
