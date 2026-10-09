@@ -149,6 +149,7 @@ let reachability = new WeakMap<ToolchainProbe, Map<string, { java: boolean; go: 
 export function resetToolchainCache(): void {
   cached = null;
   reachability = new WeakMap();
+  claudeReachability = new WeakMap();
 }
 
 /**
@@ -202,12 +203,73 @@ function discover(env: MutableEnvironment, probe: ToolchainProbe): Discovery {
 }
 
 /**
+ * The Claude Code CLI that the Claude desktop app manages, when `claude` is not on PATH.
+ *
+ * Claude Desktop (an MSIX package on Windows) downloads its own Claude Code binary to
+ * `%APPDATA%\Claude\claude-code\<version>\<build>\claude.exe` and never puts it on PATH; there is
+ * no npm, winget or ~/.local/bin install on such a machine. %claude used to run `claude --version`,
+ * find nothing, and fall back to driving the desktop UI (2.3.7, 2026-10-09). The newest version
+ * directory that actually holds the executable wins. Not cached: the desktop app replaces the
+ * directory on update while ParadigmEve keeps running.
+ */
+export function desktopClaudeCode(env: MutableEnvironment, probe: ToolchainProbe = realProbe): { dir: string; version: string } | null {
+  const appData = envValue(env, 'APPDATA');
+  if (!appData) return null;
+  const versions = probe.directories(path.join(appData, 'Claude', 'claude-code'))
+    .map((dir) => ({ dir, parts: /^(\d{1,4})\.(\d{1,4})\.(\d{1,6})$/.exec(path.basename(dir)) }))
+    .filter((entry): entry is { dir: string; parts: RegExpExecArray } => entry.parts !== null)
+    .sort((left, right) => {
+      for (let index = 1; index <= 3; index++) {
+        const delta = Number(right.parts[index]) - Number(left.parts[index]);
+        if (delta !== 0) return delta;
+      }
+      return 0;
+    });
+  for (const version of versions) {
+    for (const build of probe.directories(version.dir).sort()) {
+      if (probe.isFile(path.join(build, 'claude.exe'))) return { dir: build, version: path.basename(version.dir) };
+    }
+  }
+  return null;
+}
+
+/** Memoised per probe and exact PATH, like the Java/Go reachability scan. */
+let claudeReachability = new WeakMap<ToolchainProbe, Map<string, boolean>>();
+function claudeOnPath(env: MutableEnvironment, probe: ToolchainProbe): boolean {
+  const key = envValue(env, 'PATH') ?? '';
+  let cache = claudeReachability.get(probe);
+  if (!cache) {
+    cache = new Map();
+    claudeReachability.set(probe, cache);
+  }
+  const held = cache.get(key);
+  if (held !== undefined) return held;
+  const found = pathEntries(env).some((entry) => ['claude.exe', 'claude.cmd', 'claude.ps1'].some((name) => probe.isFile(path.join(entry, name))));
+  cache.set(key, found);
+  if (cache.size > 16) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  return found;
+}
+
+/**
  * Adds JAVA_HOME / GOROOT to a child environment when — and only when — the tool would
- * otherwise be unreachable. Returns what it added, for the log.
+ * otherwise be unreachable, and the desktop-managed Claude Code directory when `claude` is not
+ * on PATH. Only this child's PATH changes; the user's global PATH is never touched. Returns what
+ * it added, for the log.
  */
 export function ensureDevToolchain(env: MutableEnvironment, probe: ToolchainProbe = realProbe): string[] {
   if (process.platform !== 'win32') return [];
   const added: string[] = [];
+
+  if (!claudeOnPath(env, probe)) {
+    const claude = desktopClaudeCode(env, probe);
+    if (claude) {
+      prependPath(env, claude.dir);
+      added.push(`PATH+=Claude Code ${claude.version} (managed by Claude Desktop)`);
+    }
+  }
 
   const existingJavaHome = envValue(env, 'JAVA_HOME');
   const existingGoRoot = envValue(env, 'GOROOT');

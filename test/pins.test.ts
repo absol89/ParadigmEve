@@ -162,7 +162,7 @@ it('creates the six empty default Threads, including the #Eve how/appdata/claude
     state: 'pinned',
     collectionIds: [eve.id],
     description: expect.stringContaining('Talk to Claude'),
-    prompt: expect.stringContaining('Reach Claude through the first route')
+    prompt: expect.stringContaining('HOW TO REACH CLAUDE')
   });
   expect(claude.prompt).toContain('explicit go-ahead in their own words');
 
@@ -1230,7 +1230,17 @@ it('ships a generic %claude starter that reaches Claude by CLI, shared file or t
   expect(claude.prompt).toContain('exact conversation identity is authoritative');
   // A starter ships to every installation: nothing tied to one installation or one release batch.
   expect(claude.prompt).not.toMatch(/\b2\.\d+\.\d+\b|Eva\b|batch|clear-to-merge/);
-  // The first shipped prompt is kept only as a fingerprint, so untouched copies still upgrade.
-  expect(claude.supersededPromptSha256).toHaveLength(1);
+  // %claude is the mechanism, not a template: find the real Claude Code (Claude Desktop's own
+  // binary is not on PATH), stop on a CLI that is not signed in, carry a full work packet and
+  // prove delivery and attribution with a request tag. No remembered UI element numbers.
+  expect(claude.prompt).toContain('%APPDATA%\\Claude\\claude-code');
+  expect(claude.prompt).toContain('Not logged in');
+  expect(claude.prompt).toContain('WORK PACKET');
+  expect(claude.prompt).toMatch(/PE-REQ-<8 hex>/);
+  expect(claude.prompt).toContain('"is_error": false');
+  expect(claude.prompt).not.toMatch(/element 83/);
+  expect(claude.prompt).toContain('never use `--dangerously-skip-permissions`');
+  // Earlier shipped prompts are kept only as fingerprints, so untouched copies still upgrade.
+  expect(claude.supersededPromptSha256).toHaveLength(2);
   expect(claude.supersededPrompts).toBeUndefined();
 });

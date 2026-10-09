@@ -192,6 +192,51 @@ describe.runIf(process.platform === 'win32')('a parent whose own path is unusabl
  * variable is only safe while it is strictly additive, so the negatives below — an existing
  * value, a java already on PATH — matter more than the positive.
  */
+/**
+ * %claude on a machine where Claude Code exists only as Claude Desktop's own managed binary
+ * (2.3.7, 2026-10-09): `claude` was not on PATH, so Eve fell back to driving the desktop UI.
+ */
+describe.runIf(process.platform === 'win32')('the Claude Code CLI that Claude Desktop manages', () => {
+  const root = 'C:\\Users\\Eve Tester\\AppData\\Roaming\\Claude\\claude-code';
+  const desktopProbe = (files: string[]): ToolchainProbe => ({
+    isFile: (target) => files.includes(target),
+    directories: (target) => target === root
+      ? [`${root}\\2.1.9`, `${root}\\2.1.293`, `${root}\\2.1.288`, `${root}\\not-a-version`]
+      : target.startsWith(root + '\\2.1.') ? [`${target}\\83cb0bd7fed4`] : []
+  });
+  const env = (extra: Record<string, string> = {}) => normalizeEnvironment({
+    Path: 'C:\\Windows\\System32', SystemRoot: 'C:\\Windows', APPDATA: 'C:\\Users\\Eve Tester\\AppData\\Roaming', ...extra
+  });
+
+  it('puts the newest managed build on this child PATH, spaces and all', () => {
+    const child = env();
+    const added = ensureDevToolchain(child, desktopProbe([
+      `${root}\\2.1.288\\83cb0bd7fed4\\claude.exe`, `${root}\\2.1.293\\83cb0bd7fed4\\claude.exe`, `${root}\\2.1.9\\83cb0bd7fed4\\claude.exe`
+    ]));
+    expect(pathEntries(child)[0]).toBe(`${root}\\2.1.293\\83cb0bd7fed4`);
+    expect(added).toEqual(['PATH+=Claude Code 2.1.293 (managed by Claude Desktop)']);
+    expect(pathKeys(child)).toEqual(['Path']);
+  });
+
+  it('skips a version directory whose build lacks the executable', () => {
+    const child = env();
+    ensureDevToolchain(child, desktopProbe([`${root}\\2.1.288\\83cb0bd7fed4\\claude.exe`]));
+    expect(pathEntries(child)[0]).toBe(`${root}\\2.1.288\\83cb0bd7fed4`);
+  });
+
+  it('leaves a claude already on PATH alone', () => {
+    const child = env({ Path: 'C:\\Tools;C:\\Windows\\System32' });
+    expect(ensureDevToolchain(child, desktopProbe(['C:\\Tools\\claude.exe', `${root}\\2.1.293\\83cb0bd7fed4\\claude.exe`]))).toEqual([]);
+    expect(pathEntries(child)).toEqual(['C:\\Tools', 'C:\\Windows\\System32']);
+  });
+
+  it('adds nothing when no Claude Code is installed', () => {
+    const child = env();
+    expect(ensureDevToolchain(child, desktopProbe([]))).toEqual([]);
+    expect(pathEntries(child)).toEqual(['C:\\Windows\\System32']);
+  });
+});
+
 describe.runIf(process.platform === 'win32')('an unset developer toolchain', () => {
   beforeEach(() => resetToolchainCache());
 

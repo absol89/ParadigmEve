@@ -13,6 +13,16 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.7] — Readable everywhere
+
+### Fixed
+
+- %claude reaches the Claude Code that is really installed. When only the Claude desktop app installed it,
+  its binary lives in a versioned folder under `%APPDATA%\Claude\claude-code` and was never on PATH, so Eve
+  fell back to driving the desktop UI. ParadigmEve now puts the newest such build on the PATH of Eve's own
+  commands (never the user's global PATH). The %claude Thread carries a complete work packet, proves delivery
+  and attribution with a request tag, and stops and asks the user to sign in when Claude Code is not logged in.
+
 ## [2.3.6] — Talk, plan, delegate
 
 2.3.5 was an internal dogfood build and is not released publicly; its changes below ship with 2.3.6.
