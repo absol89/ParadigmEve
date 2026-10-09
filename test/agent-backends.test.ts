@@ -12,19 +12,20 @@ import {
 
 describe('agent execution backend contract', () => {
   it('keeps the exact stable ids and user-facing labels', () => {
-    expect(AGENT_BACKEND_IDS).toEqual(['gpt-chat', 'gpt-work', 'ollama', 'custom']);
+    expect(AGENT_BACKEND_IDS).toEqual(['gpt-chat', 'gpt-work', 'ollama', 'openrouter', 'custom']);
     expect(AGENT_BACKEND_LABELS).toEqual({
       'gpt-chat': 'GPT Chat',
       'gpt-work': 'GPT Work',
       ollama: 'Ollama',
+      openrouter: 'OpenRouter',
       custom: 'Custom OpenAI-compatible'
     });
   });
 
   it('uses one exact backend capability matrix for debug, dev, and shipping', () => {
-    expect(agentBackendsForBuild('debug')).toEqual(['gpt-chat', 'gpt-work', 'ollama', 'custom']);
-    expect(agentBackendsForBuild('dev')).toEqual(['gpt-work', 'ollama', 'custom']);
-    expect(agentBackendsForBuild('shipping')).toEqual(['gpt-work', 'ollama']);
+    expect(agentBackendsForBuild('debug')).toEqual(['gpt-chat', 'gpt-work', 'ollama', 'openrouter', 'custom']);
+    expect(agentBackendsForBuild('dev')).toEqual(['gpt-work', 'ollama', 'openrouter', 'custom']);
+    expect(agentBackendsForBuild('shipping')).toEqual(['gpt-work', 'ollama', 'openrouter']);
     expect(agentBackendAvailableInBuild('gpt-chat', 'debug')).toBe(true);
     expect(agentBackendAvailableInBuild('gpt-chat', 'dev')).toBe(false);
     expect(agentBackendAvailableInBuild('custom', 'dev')).toBe(true);

@@ -332,10 +332,14 @@ const configSchema = z.object({
           chatDirectTools: z.boolean().optional().default(true)
         })
         .optional()
-        .default({ endpoint: '', model: '', chatDirectTools: true })
+        .default({ endpoint: '', model: '', chatDirectTools: true }),
+      openrouter: z
+        .object({ model: z.string().trim().max(160).optional().default('') })
+        .optional()
+        .default({ model: '' })
     })
     .optional()
-    .default({ ollama: { endpoint: '', model: '', chatDirectTools: true } }),
+    .default({ ollama: { endpoint: '', model: '', chatDirectTools: true }, openrouter: { model: '' } }),
   // Deliberately no schema default: undefined means a legacy config written before this marker.
   // Fresh installs write false explicitly; completed onboarding is promoted to true by IPC only
   // after the live end-to-end checks have succeeded.
@@ -636,7 +640,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
   return {
     bridge: { companionFloor: '' },
     execution: { ...DEFAULT_AGENT_EXECUTION_SETTINGS },
-    agentRuntime: { ollama: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.ollama } },
+    agentRuntime: { ollama: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.ollama }, openrouter: { model: '' } },
     onboarding: { complete: false },
     roots: [],
     capabilities: firstLaunchCapabilities(platform, release),

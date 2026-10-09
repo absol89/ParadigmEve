@@ -23,6 +23,10 @@ operation.
   provider, sent only to openrouter.ai. Turns run through the same tool loop as Ollama chats (a model without tool
   support is asked plainly), switching to it mid-chat asks for consent like any provider switch, a chat locked to
   this computer refuses it, and the archive labels its turns `openrouter` with the model.
+- OpenRouter as a worker driver. Choose OpenRouter as the Worker driver in Agent execution and set the OpenRouter
+  worker model (for example `stepfun/step-5-preview`); workers then run through the same local tool loop with the
+  stored OpenRouter key. The model is frozen when a worker starts, a missing model refuses the spawn before any run
+  is created, and nothing falls back to another driver. The owning agent still runs in ChatGPT.
 
 ### Fixed
 

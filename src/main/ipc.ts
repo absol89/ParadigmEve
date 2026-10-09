@@ -234,7 +234,8 @@ const settingsPatch = z.object({
       endpoint: z.string().max(2048),
       model: z.string().max(160),
       chatDirectTools: z.boolean().optional()
-    }).strict()
+    }).strict(),
+    openrouter: z.object({ model: z.string().max(160) }).strict().optional()
   }).strict().optional(),
   capabilities: capabilityPatch,
   readOnly: z.boolean(),
@@ -420,6 +421,13 @@ function mergeSettings(
           current.agentRuntime.ollama.chatDirectTools,
           base.agentRuntime?.ollama.chatDirectTools ?? current.agentRuntime.ollama.chatDirectTools,
           wanted.agentRuntime.ollama.chatDirectTools ?? current.agentRuntime.ollama.chatDirectTools
+        )
+      },
+      openrouter: {
+        model: pick(
+          current.agentRuntime.openrouter?.model ?? '',
+          base.agentRuntime?.openrouter?.model ?? current.agentRuntime.openrouter?.model ?? '',
+          wanted.agentRuntime.openrouter?.model ?? current.agentRuntime.openrouter?.model ?? ''
         )
       }
     } : current.agentRuntime,

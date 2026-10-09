@@ -26,6 +26,14 @@ export interface EveReadinessInput {
 function backendStatuses(input: EveReadinessInput): EveReadiness['backends'] {
   const orchestrator = agentBackendExecutionStatus(input.config.execution.orchestrator, undefined, 'orchestrator');
   let worker = agentBackendExecutionStatus(input.config.execution.worker, undefined, 'worker');
+  if (worker.backend === 'openrouter' && worker.support === 'supported' && !input.config.agentRuntime.openrouter?.model.trim()) {
+    worker = {
+      ...worker,
+      readiness: 'unavailable',
+      reason: 'openrouter-worker-config-invalid',
+      detail: 'OpenRouter is selected for workers but still needs a model in Agent execution settings.'
+    };
+  }
   if (worker.backend === 'ollama' && worker.support === 'supported') {
     const settings = input.config.agentRuntime.ollama;
     const endpoint = resolveOllamaEndpoint(settings.endpoint);

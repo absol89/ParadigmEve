@@ -1069,6 +1069,7 @@ it('offers Ollama only as a worker driver and saves its dedicated runtime settin
     ['gpt-chat', false],
     ['gpt-work', false],
     ['ollama', false],
+    ['openrouter', false],
     ['custom', false]
   ]);
 
@@ -1081,7 +1082,8 @@ it('offers Ollama only as a worker driver and saves its dedicated runtime settin
     worker: 'ollama'
   }));
   expect(mounted.calls.at(-1)?.agentRuntime).toEqual({
-    ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud', chatDirectTools: true }
+    ollama: { endpoint: 'http://127.0.0.1:11434/v1', model: 'fixture-model:cloud', chatDirectTools: true },
+    openrouter: { model: '' }
   });
 });
 

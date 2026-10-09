@@ -1,7 +1,7 @@
 import { BUILD_FLAVOR, type BuildFlavor } from './build-flavor.js';
 
 /** Stable product vocabulary for agent execution backends. */
-export const AGENT_BACKEND_IDS = ['gpt-chat', 'gpt-work', 'ollama', 'custom'] as const;
+export const AGENT_BACKEND_IDS = ['gpt-chat', 'gpt-work', 'ollama', 'openrouter', 'custom'] as const;
 export type AgentBackendId = (typeof AGENT_BACKEND_IDS)[number];
 
 /** Exact labels shown anywhere this backend vocabulary is presented. */
@@ -9,6 +9,7 @@ export const AGENT_BACKEND_LABELS = {
   'gpt-chat': 'GPT Chat',
   'gpt-work': 'GPT Work',
   ollama: 'Ollama',
+  openrouter: 'OpenRouter',
   custom: 'Custom OpenAI-compatible'
 } as const satisfies Record<AgentBackendId, string>;
 
@@ -17,9 +18,9 @@ export const AGENT_BACKEND_LABELS = {
  * visibility authority: a backend absent here must not be offered by that flavor.
  */
 export const AGENT_BACKENDS_BY_BUILD_FLAVOR = {
-  debug: ['gpt-chat', 'gpt-work', 'ollama', 'custom'],
-  dev: ['gpt-work', 'ollama', 'custom'],
-  shipping: ['gpt-work', 'ollama']
+  debug: ['gpt-chat', 'gpt-work', 'ollama', 'openrouter', 'custom'],
+  dev: ['gpt-work', 'ollama', 'openrouter', 'custom'],
+  shipping: ['gpt-work', 'ollama', 'openrouter']
 } as const satisfies Record<BuildFlavor, readonly AgentBackendId[]>;
 
 export function agentBackendsForBuild(flavor: BuildFlavor = BUILD_FLAVOR): readonly AgentBackendId[] {
@@ -46,6 +47,10 @@ export interface AgentRuntimeSettings {
     /** Direct chat may run Core tools itself; false exposes only worker delegation. */
     chatDirectTools?: boolean;
   };
+  /** OpenRouter workers: the exact model id. The key is the one Settings stores for Goal. */
+  openrouter?: {
+    model: string;
+  };
 }
 
 /** Local Ollama daemon. It also serves `<model>:cloud` models once the user ran `ollama signin`. */
@@ -55,7 +60,8 @@ export const OLLAMA_CLOUD_ENDPOINT = 'https://ollama.com/v1';
 
 /** A blank Ollama endpoint means the local daemon. */
 export const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
-  ollama: { endpoint: '', model: '', chatDirectTools: true }
+  ollama: { endpoint: '', model: '', chatDirectTools: true },
+  openrouter: { model: '' }
 };
 
 export function defaultAgentExecutionSettings(flavor: BuildFlavor = BUILD_FLAVOR): AgentExecutionSettings {
@@ -81,6 +87,8 @@ export const AGENT_EXECUTION_UNAVAILABLE_REASONS = [
   'ollama-orchestrator-unavailable',
   'ollama-worker-config-invalid',
   'ollama-agent-runtime-unavailable',
+  'openrouter-orchestrator-unavailable',
+  'openrouter-worker-config-invalid',
   'custom-agent-runtime-unavailable'
 ] as const;
 export type AgentExecutionUnavailableReason = (typeof AGENT_EXECUTION_UNAVAILABLE_REASONS)[number];
@@ -152,6 +160,19 @@ export function agentBackendExecutionStatus(
       reason: 'ollama-orchestrator-unavailable',
       detail:
         'Ollama is available as a worker executor, but ParadigmEve still requires the owning agent/orchestrator to run through ChatGPT.'
+    };
+  }
+  if (backend === 'openrouter') {
+    if (role === 'worker') {
+      return { backend, label: AGENT_BACKEND_LABELS[backend], support: 'supported', readiness: 'unknown', reason: null, detail: null };
+    }
+    return {
+      backend,
+      label: AGENT_BACKEND_LABELS[backend],
+      support: 'unsupported',
+      readiness: 'unavailable',
+      reason: 'openrouter-orchestrator-unavailable',
+      detail: 'OpenRouter is available as a worker executor, but the owning agent/orchestrator still runs through ChatGPT.'
     };
   }
   return {

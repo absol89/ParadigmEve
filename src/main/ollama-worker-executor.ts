@@ -1,5 +1,5 @@
 /**
- * Production executor for one-shot Ollama workers.
+ * Production executor for one-shot Ollama and OpenRouter workers.
  *
  * The durable broker owns worker identity/lifecycle. This module owns only the process-local
  * model/tool loop for workers whose frozen backend is `ollama`. There is deliberately no
@@ -23,6 +23,7 @@ import { localAgentCoreTools } from './local-agent-tools.js';
 import { runLocalAgent } from './local-agent-runtime.js';
 import { createOllamaAgentModelRuntime } from './ollama-agent-runtime.js';
 import { ensureOllamaModel, resolveOllamaEndpoint } from './ollama-client.js';
+import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, openRouterModelInfo } from './openrouter-client.js';
 import { logInfo, logWarn } from './logger.js';
 import type { ToolContext } from './mcp/kernel.js';
 
@@ -46,24 +47,28 @@ function coreContext(): ToolContext {
   };
 }
 
-function failureNote(worker: WorkerSpawn, reason: string): string {
-  return `[${worker.id} failed] Ollama worker execution failed before it could report a result: ${reason}. ` +
+type LocalWorkerBackend = 'ollama' | 'openrouter';
+const backendName = (backend: LocalWorkerBackend): string => backend === 'openrouter' ? 'OpenRouter' : 'Ollama';
+
+function failureNote(worker: WorkerSpawn, reason: string, backend: LocalWorkerBackend = 'ollama'): string {
+  return `[${worker.id} failed] ${backendName(backend)} worker execution failed before it could report a result: ${reason}. ` +
     'No fallback backend was used.';
 }
 
-async function execute(worker: WorkerSpawn): Promise<void> {
+async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollama'): Promise<void> {
   const runKey = key(worker.runId, worker.id);
   if (inFlight.has(runKey)) return;
 
   const controller = new AbortController();
   inFlight.set(runKey, controller);
   const principal = issueWorkerExecutionPrincipal(worker.runId, worker.id);
-  if (!principal || principal.backend !== 'ollama' || !activateWorkerExecutionPrincipal(principal)) {
+  if (!principal || principal.backend !== backend || !activateWorkerExecutionPrincipal(principal)) {
     inFlight.delete(runKey);
+    const reason = `The broker could not issue and activate exact ${backendName(backend)} worker authority.`;
     failAgent(
       worker.id,
-      'The broker could not issue and activate exact Ollama worker authority.',
-      failureNote(worker, 'The broker could not issue and activate exact Ollama worker authority.'),
+      reason,
+      failureNote(worker, reason, backend),
       { revivable: false },
       worker.runId
     );
@@ -72,13 +77,21 @@ async function execute(worker: WorkerSpawn): Promise<void> {
 
   try {
     const settings = getConfig().agentRuntime.ollama;
-    const model = worker.model?.trim() || settings.model;
-    await ensureOllamaModel(model);
-    const tools = localAgentCoreTools(coreContext, principal);
+    const model = worker.model?.trim() || (backend === 'openrouter' ? getConfig().agentRuntime.openrouter?.model ?? '' : settings.model);
+    let routerKey: string | null = null;
+    let toolsSupported = true;
+    if (backend === 'openrouter') {
+      routerKey = (await openRouterKey())?.trim() || null;
+      if (!routerKey) throw new Error('OpenRouter needs an API key: add it in Settings → Agents & automation → API provider.');
+      toolsSupported = (await openRouterModelInfo(model))?.tools ?? true;
+    } else {
+      await ensureOllamaModel(model);
+    }
+    const tools = toolsSupported ? localAgentCoreTools(coreContext, principal) : [];
     const result = await runLocalAgent({
-      backend: 'ollama',
+      backend,
       principal,
-      endpoint: resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
+      endpoint: backend === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
       model,
       system:
         'You are a bounded ParadigmEve worker. Complete only the task you were given. ' +
@@ -86,23 +99,24 @@ async function execute(worker: WorkerSpawn): Promise<void> {
         'You cannot create workers of your own.',
       task: worker.task,
       tools,
-      runtime: createOllamaAgentModelRuntime(),
-      signal: controller.signal
+      runtime: routerKey ? createOpenRouterAgentModelRuntime(routerKey) : createOllamaAgentModelRuntime(),
+      signal: controller.signal,
+      ...(toolsSupported ? {} : { allowNoTools: true })
     });
     const finished = finishAgent({ localPrincipal: principal }, result.final);
     logInfo(
-      `multi-agent: ${worker.id} completed in Ollama runtime (${result.turns} turn(s), ${result.toolCalls} tool call(s)); state=${finished.info.state}`
+      `multi-agent: ${worker.id} completed in ${backendName(backend)} runtime (${result.turns} turn(s), ${result.toolCalls} tool call(s)); state=${finished.info.state}`
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const failed = failAgent(
       worker.id,
       reason,
-      failureNote(worker, reason),
+      failureNote(worker, reason, backend),
       { revivable: false },
       worker.runId
     );
-    if (failed) logWarn(`multi-agent: ${worker.id} Ollama execution failed: ${reason}`);
+    if (failed) logWarn(`multi-agent: ${worker.id} ${backendName(backend)} execution failed: ${reason}`);
   } finally {
     revokeWorkerExecutionPrincipal(principal);
     if (inFlight.get(runKey) === controller) inFlight.delete(runKey);
@@ -118,7 +132,7 @@ export function startOllamaWorkerExecutor(): () => void {
   const snapshot = snapshotSwarm();
   for (const run of snapshot?.activeRuns ?? []) {
     for (const row of run.agents) {
-      if (row.backend !== 'ollama' || row.info.role !== 'worker') continue;
+      if ((row.backend !== 'ollama' && row.backend !== 'openrouter') || row.info.role !== 'worker') continue;
       if (!['active', 'waking', 'detached'].includes(row.info.state)) continue;
       failAgent(
         row.info.id,
@@ -132,7 +146,21 @@ export function startOllamaWorkerExecutor(): () => void {
   }
 
   const dropSpawn = onExecutorSpawnRequest('ollama', (workers) => {
-    for (const worker of workers) void execute(worker);
+    for (const worker of workers) void execute(worker, 'ollama');
+  });
+  const dropRouterSpawn = onExecutorSpawnRequest('openrouter', (workers) => {
+    for (const worker of workers) void execute(worker, 'openrouter');
+  });
+  const dropRouterRevive = onExecutorReviveRequest('openrouter', (revivals) => {
+    for (const revival of revivals) {
+      failAgent(
+        revival.id,
+        'OpenRouter workers are one-shot and cannot be revived after completion.',
+        `[${revival.id} failed] This OpenRouter worker cannot be revived because its transcript is one-shot. Spawn a new worker instead.`,
+        { revivable: false },
+        revival.runId
+      );
+    }
   });
   const dropRevive = onExecutorReviveRequest('ollama', (revivals) => {
     for (const revival of revivals) {
@@ -149,6 +177,8 @@ export function startOllamaWorkerExecutor(): () => void {
   return () => {
     dropSpawn();
     dropRevive();
+    dropRouterSpawn();
+    dropRouterRevive();
     for (const controller of inFlight.values()) controller.abort();
     inFlight.clear();
   };

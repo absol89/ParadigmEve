@@ -96,7 +96,7 @@ function initAgentExecutionControls(): void {
   for (const id of ['agentOrchestratorBackend', 'agentWorkerBackend']) {
     const select = $<HTMLSelectElement>(id);
     const choices = id === 'agentOrchestratorBackend'
-      ? agentBackendsForBuild().filter((backend) => backend !== 'ollama')
+      ? agentBackendsForBuild().filter((backend) => backend !== 'ollama' && backend !== 'openrouter')
       : agentBackendsForBuild();
     select.replaceChildren(...choices.map((backend) => {
       const option = document.createElement('option');
@@ -837,7 +837,8 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark' } = {}): Prom
         endpoint: $<HTMLInputElement>('ollamaWorkerEndpoint').value.trim(),
         model: $<HTMLInputElement>('ollamaWorkerModel').value.trim(),
         chatDirectTools: $<HTMLInputElement>('ollamaChatDirectTools').checked
-      }
+      },
+      openrouter: { model: $<HTMLInputElement>('openrouterWorkerModel').value.trim() }
     },
     capabilities,
     readOnly,
@@ -1462,6 +1463,11 @@ function apply(next: AppState): void {
     $<HTMLInputElement>('ollamaWorkerModel'),
     (config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.model,
     (previousState?.config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).ollama.model
+  );
+  applyValue(
+    $<HTMLInputElement>('openrouterWorkerModel'),
+    (config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).openrouter?.model ?? '',
+    (previousState?.config.agentRuntime ?? DEFAULT_AGENT_RUNTIME_SETTINGS).openrouter?.model ?? ''
   );
   applyChecked(
     $<HTMLInputElement>('ollamaChatDirectTools'),
@@ -2529,6 +2535,7 @@ for (const id of [
   'agentWorkerBackend',
   'ollamaWorkerEndpoint',
   'ollamaWorkerModel',
+  'openrouterWorkerModel',
   'ollamaChatDirectTools',
   'maGptWorkers',
   'maOllamaLocalWorkers',

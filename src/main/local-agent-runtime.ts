@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentBackendId } from '../shared/agent-backends.js';
 
-export type LocalAgentBackendId = Extract<AgentBackendId, 'ollama' | 'custom'>;
+export type LocalAgentBackendId = Extract<AgentBackendId, 'ollama' | 'openrouter' | 'custom'>;
 
 export interface LocalAgentExecutionPrincipal {
   kind: 'local-agent';

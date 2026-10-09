@@ -1856,5 +1856,8 @@
   "All models": "Alla modeller",
   "Search to see more of {0} models.": "Sök för att se fler av {0} modeller.",
   "OpenRouter · {0}": "OpenRouter · {0}",
-  "OpenRouter · {0} (partial)": "OpenRouter · {0} (delvis)"
+  "OpenRouter · {0} (partial)": "OpenRouter · {0} (delvis)",
+  "OpenRouter worker model": "OpenRouter-modell för arbetare",
+  "Exact OpenRouter model id for OpenRouter workers, for example stepfun/step-5-preview. Uses the API provider key below.": "Exakt OpenRouter-modell-id för OpenRouter-arbetare, till exempel stepfun/step-5-preview. Använder API-leverantörens nyckel nedan.",
+  "stepfun/step-5-preview": "stepfun/step-5-preview"
 }

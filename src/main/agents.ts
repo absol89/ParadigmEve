@@ -748,7 +748,7 @@ export function issueWorkerExecutionPrincipal(runId: string, agentId: string): L
   const run = runs.get(runId);
   const agent = run?.agents.get(agentId);
   if (!run || !agent || agent.info.role !== 'worker' || unpublishedAgents.has(agent) || isOver(agent.info.state)) return null;
-  if (agent.backend !== 'ollama' && agent.backend !== 'custom') return null;
+  if (agent.backend !== 'ollama' && agent.backend !== 'openrouter' && agent.backend !== 'custom') return null;
   const key = localPrincipalKey(runId, agentId);
   const previous = localWorkerPrincipals.get(key);
   if (previous) revokeLocalAgentExecutionPrincipal(previous);
@@ -1139,7 +1139,7 @@ function workingWorkers(run: Run | null): Agent[] {
   );
 }
 
-type WorkerCapacityClass = 'gpt' | 'ollama-local' | 'ollama-cloud' | 'custom';
+type WorkerCapacityClass = 'gpt' | 'ollama-local' | 'ollama-cloud' | 'openrouter' | 'custom';
 
 function ollamaCapacityClass(model: string | null | undefined): WorkerCapacityClass {
   const configured = model?.trim() || getConfig().agentRuntime.ollama.model.trim();
@@ -1150,6 +1150,7 @@ function ollamaCapacityClass(model: string | null | undefined): WorkerCapacityCl
 
 function workerCapacityClass(backend: AgentBackendId | null, model?: string | null): WorkerCapacityClass {
   if (backend === 'ollama') return ollamaCapacityClass(model);
+  if (backend === 'openrouter') return 'openrouter';
   if (backend === 'gpt-chat' || backend === 'gpt-work') return 'gpt';
   return 'custom';
 }
@@ -1587,6 +1588,12 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
   const { orchestrator, worker } = getConfig().execution;
   requireSpawnExecutionBackend('orchestrator', orchestrator);
   requireSpawnExecutionBackend('worker', worker);
+  if (worker === 'openrouter' && !getConfig().agentRuntime.openrouter?.model.trim()) {
+    throw new AgentError(
+      'AGENT_BACKEND_UNAVAILABLE: OpenRouter is selected as the worker backend, but no OpenRouter model is configured. ' +
+        'Set the exact model id (for example stepfun/step-5-preview) in Agent execution settings before spawning workers. No run or worker was created.'
+    );
+  }
   if (worker === 'ollama') {
     const settings = getConfig().agentRuntime.ollama;
     if (!resolveOllamaEndpoint(settings.endpoint)) {
@@ -1667,6 +1674,15 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
       // Freeze the exact configured Ollama model on admission. Capacity, provenance and the
       // executor must not change underneath an already-created worker when Settings changes.
       model = getConfig().agentRuntime.ollama.model.trim() || null;
+    } else if (execution.worker === 'openrouter') {
+      if (worker.model !== undefined || worker.reasoning_effort !== undefined) {
+        throw new AgentError(
+          `Worker ${index + 1} selected OpenRouter through Settings, so ChatGPT model/reasoning overrides do not apply. ` +
+            'Configure the exact OpenRouter model in Agent execution settings and omit model/reasoning_effort from this worker.'
+        );
+      }
+      // Frozen on admission, like Ollama: Settings changes never move a created worker.
+      model = getConfig().agentRuntime.openrouter?.model.trim() || null;
     }
     // Composed once, here, and stored as *the* task. Everything downstream — the bootstrap
     // the browser types, the repeated-spawn match, the status table, the snapshot — then
@@ -2404,7 +2420,7 @@ function planFinish(agent: Agent, result: string): { info: AgentInfo; report: Ag
   // App-owned local workers do not have a durable provider conversation to revive. Treat each
   // accepted local task as one bounded execution and keep its history/report as a terminal
   // broker row rather than advertising a "sleeping" worker whose model transcript is gone.
-  const terminal = ceilingCrossed(agent.info) || agent.backend === 'ollama' || agent.backend === 'custom';
+  const terminal = ceilingCrossed(agent.info) || agent.backend === 'ollama' || agent.backend === 'openrouter' || agent.backend === 'custom';
   const now = Date.now();
   const info: AgentInfo = {
     ...agent.info,

@@ -119,6 +119,51 @@ describe('production Ollama worker executor', () => {
     }
   });
 
+  it('runs an OpenRouter worker with the stored key and its frozen model, and refuses one without a model', async () => {
+    const { initSecretsPath, setSecret, clearSecret } = await import('../src/main/secrets.js');
+    const { resetOpenRouterCatalogForTests } = await import('../src/main/openrouter-client.js');
+    initSecretsPath(dir);
+    resetOpenRouterCatalogForTests();
+    await setSecret('openRouterApiKey', 'or-worker-key');
+    const base = getConfig();
+    await saveConfig({
+      ...base,
+      execution: { orchestrator: 'gpt-chat', worker: 'openrouter' },
+      agentRuntime: { ...base.agentRuntime, openrouter: { model: 'stepfun/step-5-preview' } },
+      multiAgent: { ...base.multiAgent, enabled: true }
+    });
+    const browser = vi.fn();
+    const dropBrowser = onExecutorSpawnRequest('gpt-chat', browser);
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => String(input).endsWith('/models')
+      ? Response.json({ data: [{ id: 'stepfun/step-5-preview', name: 'Step 5', architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+        supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } }] })
+      : Response.json({ choices: [{ message: { content: 'OPENROUTER_WORKER_OK' } }] }));
+    vi.stubGlobal('fetch', fetch);
+    const stop = startOllamaWorkerExecutor();
+    try {
+      const started = spawn({ caller: { conversationId: 'prime-openrouter-executor' }, workers: [{ task: 'Return the bounded result.' }] });
+      // A Settings change after admission never moves the created worker.
+      await saveConfig({ ...getConfig(), agentRuntime: { ...getConfig().agentRuntime, openrouter: { model: 'other/model' } } });
+      await vi.waitFor(() => expect(workerInfo('worker-1', started.runId)).toMatchObject({ state: 'finished', result: 'OPENROUTER_WORKER_OK' }));
+      expect(browser).not.toHaveBeenCalled();
+      const chat = fetch.mock.calls.find((call) => String(call[0]) === 'https://openrouter.ai/api/v1/chat/completions')!;
+      const init = chat[1] as RequestInit;
+      expect((init.headers as Record<string, string>).authorization).toBe('Bearer or-worker-key');
+      expect(JSON.parse(String(init.body))).toMatchObject({ model: 'stepfun/step-5-preview', stream: false });
+      expect(fetch.mock.calls.every((call) => String(call[0]).startsWith('https://openrouter.ai/api/v1/'))).toBe(true);
+    } finally {
+      stop();
+      dropBrowser();
+      vi.unstubAllGlobals();
+      await clearSecret('openRouterApiKey');
+    }
+
+    resetAgentsForTests();
+    await saveConfig({ ...getConfig(), agentRuntime: { ...getConfig().agentRuntime, openrouter: { model: '' } } });
+    expect(() => spawn({ caller: { conversationId: 'prime-openrouter-missing' }, workers: [{ task: 'must not start' }] }))
+      .toThrow(/OpenRouter.*no OpenRouter model is configured.*No run or worker was created/i);
+  });
+
   it('rejects missing Ollama runtime settings before it creates a run and never falls back', async () => {
     const base = getConfig();
     await saveConfig({
