@@ -384,8 +384,8 @@ describe('fiber evidence on the render-item renderer', () => {
       .find((message: any) => message.rawMessageId === REPLY_ID).rawText;
     expect(await read('Done.\n\n\\[\\[PARADIGMEVE\\_GOAL:COMPLETE\\]\\]')).toBe('Done.\n\n[[PARADIGMEVE_GOAL:COMPLETE]]');
     expect(await read('## Title\n\n**bold** `code`\n2\\^10 = 1024 \\[ok\\] C:\\\\Users')).toBe('## Title\n\n**bold** `code`\n2^10 = 1024 [ok] C:\\Users');
-    expect(await read('```python\nx = a[0] ** 2  # note \\[\n```\n\n`C:\\Users\\[x]` and \\_after\\_'))
-      .toBe('```python\nx = a[0] ** 2  # note \\[\n```\n\n`C:\\Users\\[x]` and _after_');
+    expect(await read('```python\nx = a[0] ** 2  # note \\[\n```\n\n`C:\\Users\\x\\[y]` and \\_after\\_'))
+      .toBe('```python\nx = a[0] ** 2  # note \\[\n```\n\n`C:\\Users\\x\\[y]` and _after_');
   });
 
   it('keeps an unresolved GPT-6 reference as incomplete evidence, never as a stable answer', async () => {

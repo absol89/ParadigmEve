@@ -197,7 +197,7 @@ describe.runIf(process.platform === 'win32')('a parent whose own path is unusabl
  * (2.3.7, 2026-10-09): `claude` was not on PATH, so Eve fell back to driving the desktop UI.
  */
 describe.runIf(process.platform === 'win32')('the Claude Code CLI that Claude Desktop manages', () => {
-  const root = 'C:\\Users\\Eve Tester\\AppData\\Roaming\\Claude\\claude-code';
+  const root = 'C:\\Users\\example\\AppData\\Roaming\\Claude\\claude-code';
   const desktopProbe = (files: string[]): ToolchainProbe => ({
     isFile: (target) => files.includes(target),
     directories: (target) => target === root
@@ -205,7 +205,7 @@ describe.runIf(process.platform === 'win32')('the Claude Code CLI that Claude De
       : target.startsWith(root + '\\2.1.') ? [`${target}\\83cb0bd7fed4`] : []
   });
   const env = (extra: Record<string, string> = {}) => normalizeEnvironment({
-    Path: 'C:\\Windows\\System32', SystemRoot: 'C:\\Windows', APPDATA: 'C:\\Users\\Eve Tester\\AppData\\Roaming', ...extra
+    Path: 'C:\\Windows\\System32', SystemRoot: 'C:\\Windows', APPDATA: 'C:\\Users\\example\\AppData\\Roaming', ...extra
   });
 
   it('puts the newest managed build on this child PATH, spaces and all', () => {
