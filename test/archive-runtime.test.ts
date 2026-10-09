@@ -212,6 +212,25 @@ describe('ArchiveRuntime', () => {
     expect(archived.events[0]!.assets).toHaveLength(1);
   });
 
+  it('shows an interrupted GPT-6 reply that never resolved as missing words, not as the pointer', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-unresolved-reference';
+    const pointer = '::chatgpt-content-reference{index="0" source_message_id="POINTER-ID-MUST-NOT-SHOW"}';
+    const events = [
+      { ...user(1, 'first question'), messageId: 'user-first' } as SessionEvent,
+      { ...assistant(2, pointer, false), messageId: 'assistant-pointer' } as SessionEvent,
+      { ...user(3, 'second question'), messageId: 'user-second' } as SessionEvent
+    ];
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test', source: sourceFor({ summary: summary(id), events }) });
+    await runtime.start();
+    await runtime.drain();
+    await runtime.rebuildDerived();
+    const generated = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    const chunk = await fs.readFile(generated.chunks[0]!, 'utf8');
+    expect(chunk).toContain('ChatGPT sent only a reference to this reply');
+    expect(chunk).not.toContain('POINTER-ID-MUST-NOT-SHOW');
+  });
+
   it('publishes a page-authored user row once no app receipt can still arrive', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-page-authored';

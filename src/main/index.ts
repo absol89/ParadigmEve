@@ -31,6 +31,7 @@ import {
   readEvents
 } from './session/store.js';
 import { ArchiveRuntime } from './archive/archive-runtime.js';
+import { providerRoute } from './session/provider-history.js';
 import { enqueueLanPeerKnowledge } from './session/input.js';
 import {
   flushRecorder,
@@ -630,7 +631,8 @@ void app.whenReady().then(async () => {
       subscribeCommitted: onSessionProjectionCommit
     },
     onError: (error) => logWarn(`archive projection: ${error.message}`),
-    onDiagnostic: (message) => logInfo(`archive diagnostic: ${message}`)
+    onDiagnostic: (message) => logInfo(`archive diagnostic: ${message}`),
+    providerRoute
   });
   // Archive is a rebuildable projection of the canonical session store. Start it without making
   // app readiness wait on a large historical scan; subscribe-before-seed inside ArchiveRuntime

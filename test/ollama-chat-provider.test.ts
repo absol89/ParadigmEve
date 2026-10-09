@@ -40,8 +40,9 @@ vi.mock('../src/main/browser.js', () => ({ openInPreferredBrowser: async () => '
 const { defaultConfig, initConfigPath, saveConfig } = await import('../src/main/config.js');
 const { initSecretsPath, setSecret, clearSecret } = await import('../src/main/secrets.js');
 const { initDurableStore, flushDurable, resetDurableForTests, writeDurableNow } = await import('../src/main/durable.js');
-const { createSession, getSession, initSessionStore, readEvents, resetSessionStoreForTests, upsertMessageEvent, writeAsset } =
-  await import('../src/main/session/store.js');
+const { createSession, flushSessions, getSession, indexedSessions, initSessionStore, readAsset, readEvents, resetSessionStoreForTests,
+  upsertMessageEvent, writeAsset } = await import('../src/main/session/store.js');
+const { ArchiveRuntime } = await import('../src/main/archive/archive-runtime.js');
 const { registerIpc } = await import('../src/main/ipc.js');
 const { bridgePort, startBridge, stopBridge } = await import('../src/main/bridge.js');
 const input = await import('../src/main/session/input.js');
@@ -65,6 +66,9 @@ let pulled: string[] = [];
 let agentReplies: unknown[] = [];
 /** When set, Ollama's chat answer waits for it: proves a send returned before payload work. */
 let chatGate: Promise<void> | null = null;
+/** No internet: everything except loopback fails as an offline fetch does, and is recorded. */
+let offline = false;
+const offlineAttempts: string[] = [];
 function sse(chunks: string[]): Response {
   const body = chunks.map((chunk) => `data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
@@ -73,6 +77,10 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
   const url = String(resource instanceof Request ? resource.url : resource);
   // Fail closed: only the test's own bridge is real; any other unmocked host is a bug, never real network.
   if (url.startsWith(`http://127.0.0.1:${bridgePort()}/`)) return realFetch(resource as never, init);
+  if (offline && !url.startsWith('http://127.0.0.1:')) {
+    offlineAttempts.push(url);
+    throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }) });
+  }
   if (!url.startsWith('http://127.0.0.1:11434/') && !url.startsWith('https://ollama.com/')) throw new Error(`unexpected network request: ${url}`);
   const body = init?.body ? JSON.parse(String(init.body)) : null;
   ollamaRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
@@ -517,5 +525,120 @@ it('previews and enqueues a switch on a long cold chat promptly, preparing the O
   } finally {
     stopLog();
     chatGate = null;
+  }
+}, 60_000);
+
+
+/** Restart Eve's session store from disk, as an app restart does. */
+async function restartStore() {
+  await flushSessions();
+  resetSessionStoreForTests();
+  initSessionStore(directory);
+}
+
+/** The archive exactly as the app wires it, rebuilt from the canonical store. */
+async function rebuildArchive(name: string) {
+  const runtime = new ArchiveRuntime({
+    archiveRoot: `${directory}/${name}`, writerVersion: 'acceptance', providerRoute: history.providerRoute,
+    source: {
+      listSessionIds: async () => (await indexedSessions()).map((summary) => summary.id),
+      readSession: async (sessionId) => {
+        const summary = await getSession(sessionId);
+        return summary ? { summary, events: await readEvents(sessionId) } : null;
+      },
+      readAsset: async (sessionId, assetId) => await readAsset(sessionId, assetId)
+    }
+  });
+  await runtime.start();
+  await runtime.drain();
+  await runtime.rebuildDerived();
+  return runtime;
+}
+
+async function sendAndFinish(fields: Record<string, unknown>) {
+  const id = randomUUID();
+  const accepted = await send({ id, ...fields });
+  expect(accepted.ok, accepted.error).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  const sessionId = (await input.listInputs()).find((row) => row.id === id)!.deliveredSessionId!;
+  await finished(sessionId, `ollama-turn:${id}`);
+  return sessionId;
+}
+
+it('acceptance A: a local Ollama chat stays complete and readable with Eve offline, across a restart and an archive rebuild', async () => {
+  offline = true;
+  offlineAttempts.length = 0;
+  try {
+    replyText = 'First offline answer from the local model.';
+    const sessionId = await sendAndFinish({ provider: 'ollama', model: 'llama3.2', text: 'Are you there with no internet?' });
+    replyText = 'Second offline answer, still local.';
+    await sendAndFinish({ sessionId, provider: 'ollama', model: 'llama3.2', text: 'And a second question?' });
+
+    // Only the local daemon was asked; nothing tried to reach the internet.
+    expect(ollamaRequests.length).toBeGreaterThan(0);
+    expect(ollamaRequests.every((request) => request.url.startsWith('http://127.0.0.1:11434/'))).toBe(true);
+    expect(offlineAttempts).toEqual([]);
+
+    await restartStore();
+    const rows = (await readEvents(sessionId, { kinds: ['user_message', 'assistant_message'] }))
+      .map((event) => event.kind === 'user_message' || event.kind === 'assistant_message'
+        ? [event.kind, event.message.text, event.provider ? `${event.provider.id}:${event.provider.model}` : null, event.kind === 'assistant_message' ? event.final : null] : []);
+    expect(rows).toEqual([
+      ['user_message', 'Are you there with no internet?', 'ollama:llama3.2', null],
+      ['assistant_message', 'First offline answer from the local model.', 'ollama:llama3.2', true],
+      ['user_message', 'And a second question?', 'ollama:llama3.2', null],
+      ['assistant_message', 'Second offline answer, still local.', 'ollama:llama3.2', true]
+    ]);
+    expect(history.providerRoute({ id: 'ollama', model: 'llama3.2' })).toBe('ollama-local');
+
+    // The archive rebuilds from the local store alone and holds the words, not ids.
+    const runtime = await rebuildArchive('archive-offline-local');
+    try {
+      const archived = await runtime.store.readSession(sessionId);
+      const texts = archived.events.filter((event) => event.kind === 'user_message' || event.kind === 'assistant_message')
+        .map((event) => [event.kind, (event.payload as { text?: string }).text]);
+      expect(texts).toEqual([
+        ['user_message', 'Are you there with no internet?'],
+        ['assistant_message', 'First offline answer from the local model.'],
+        ['user_message', 'And a second question?'],
+        ['assistant_message', 'Second offline answer, still local.']
+      ]);
+      expect((await runtime.search('offline answer')).length).toBeGreaterThan(0);
+      expect(archived.events.filter((event) => event.kind === 'assistant_message').map((event) => event.provider))
+        .toEqual([expect.objectContaining({ provider: 'ollama-local', model: 'llama3.2' }), expect.objectContaining({ provider: 'ollama-local', model: 'llama3.2' })]);
+    } finally {
+      await runtime.dispose();
+    }
+    expect(offlineAttempts).toEqual([]);
+  } finally {
+    offline = false;
+  }
+}, 60_000);
+
+it('acceptance C: an Ollama Cloud chat is archived locally as cloud and stays readable once the cloud is unreachable', async () => {
+  offline = false;
+  replyText = 'An answer from Ollama Cloud.';
+  const sessionId = await sendAndFinish({ provider: 'ollama', model: 'gemma4:cloud', text: 'Hello cloud' });
+  expect(history.providerRoute({ id: 'ollama', model: 'gemma4:cloud' })).toBe('ollama-cloud');
+  const reply = (await readEvents(sessionId, { kinds: ['assistant_message'] }))[0];
+  expect(reply).toMatchObject({ final: true, provider: { id: 'ollama', model: 'gemma4:cloud' }, message: { text: 'An answer from Ollama Cloud.' } });
+
+  offline = true;
+  offlineAttempts.length = 0;
+  try {
+    await restartStore();
+    const runtime = await rebuildArchive('archive-offline-cloud');
+    try {
+      const archived = await runtime.store.readSession(sessionId);
+      const assistant = archived.events.find((event) => event.kind === 'assistant_message')!;
+      expect((assistant.payload as { text?: string }).text).toBe('An answer from Ollama Cloud.');
+      expect(assistant.provider).toMatchObject({ provider: 'ollama-cloud', model: 'gemma4:cloud' });
+    } finally {
+      await runtime.dispose();
+    }
+    // Reading the archived cloud chat needs no network at all.
+    expect(offlineAttempts).toEqual([]);
+  } finally {
+    offline = false;
   }
 }, 60_000);

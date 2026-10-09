@@ -17,6 +17,16 @@ operation.
 
 ### Fixed
 
+- GPT-6 replies reach Eve's chat and archive as their words. ChatGPT's GPT-6 renderer leaves only
+  `::chatgpt-content-reference{…}` in a reply and keeps the text as the DIL fallback Markdown of that same
+  message; ParadigmEve read the pointer, so replies showed as reference ids. The words are now read from the
+  fallback, without the escapes it adds outside code (ported from Chat On Steroids 2.1.31). A Voice reply that
+  points to another message takes that message's words. A reference whose words have not arrived stays an
+  incomplete row, does not complete its turn, is shown as waiting, and is repaired in place when the words come.
+- The archive keeps each turn's provider: Ollama turns were archived as ChatGPT without their model. They are
+  now `ollama-local` or `ollama-cloud` with the model name. Acceptance tests prove a local Ollama chat stays
+  complete and readable with no internet across a restart and an archive rebuild, and an Ollama Cloud chat
+  stays readable once the cloud is unreachable.
 - %claude reaches the Claude Code that is really installed. When only the Claude desktop app installed it,
   its binary lives in a versioned folder under `%APPDATA%\Claude\claude-code` and was never on PATH, so Eve
   fell back to driving the desktop UI. ParadigmEve now puts the newest such build on the PATH of Eve's own

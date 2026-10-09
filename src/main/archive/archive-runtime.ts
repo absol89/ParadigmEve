@@ -20,7 +20,8 @@ import {
   type ArchiveSessionManifest,
   type ArchiveSessionProjection
 } from '../../shared/archive.js';
-import type { AssetRef, SessionEvent, SessionSummary, StoredText } from '../../shared/session.js';
+import type { AssetRef, ChatProvider, SessionEvent, SessionSummary, StoredText } from '../../shared/session.js';
+import { isUnresolvedContentReference } from '../../shared/content-reference.js';
 import {
   createDiskArchiveIndex,
   type ArchiveIndexDocument,
@@ -82,6 +83,11 @@ export interface ArchiveRuntimeOptions {
   maxConcurrentReconciles?: number;
   onError?: (error: Error) => void;
   onDiagnostic?: (message: string) => void;
+  /**
+   * Which route a non-ChatGPT turn went to (`ollama-local` / `ollama-cloud`). Supplied by the app;
+   * without it an Ollama turn is archived as `ollama` with its model, never as ChatGPT.
+   */
+  providerRoute?: (provider: ChatProvider) => string;
 }
 
 export interface ArchiveStaticSiteTarget {
@@ -169,8 +175,11 @@ function archiveAssetKind(source: AssetRef, context: 'message' | 'tool' | 'nativ
   return 'unknown';
 }
 
-function providerIdentity(event: SessionEvent): ArchiveEvent['provider'] | undefined {
-  const model = event.kind === 'tool_call' ? event.call.model ?? event.model : event.model;
+function providerIdentity(event: SessionEvent, route?: (provider: ChatProvider) => string): ArchiveEvent['provider'] | undefined {
+  // A turn answered or sent through another provider keeps that provenance: the archive used to
+  // label every Ollama turn as ChatGPT and drop its model (2.3.7 acceptance, 2026-10-09).
+  const chatProvider = (event.kind === 'user_message' || event.kind === 'assistant_message') ? event.provider : undefined;
+  const model = chatProvider ? chatProvider.model : event.kind === 'tool_call' ? event.call.model ?? event.model : event.model;
   const conversationId = event.kind === 'session_start'
     ? event.conversationId ?? undefined
     : event.kind === 'tool_call'
@@ -183,8 +192,12 @@ function providerIdentity(event: SessionEvent): ArchiveEvent['provider'] | undef
   const safeModel = bounded(model);
   const safeConversation = bounded(conversationId);
   if (!messageId && !turnId && !safeModel && !safeConversation) return undefined;
+  let provider = 'chatgpt';
+  if (chatProvider) {
+    try { provider = bounded(route?.(chatProvider)) ?? chatProvider.id; } catch { provider = chatProvider.id; }
+  }
   return {
-    provider: 'chatgpt',
+    provider,
     ...(safeModel ? { model: safeModel } : {}),
     ...(safeConversation ? { conversationId: safeConversation } : {}),
     ...(messageId ? { messageId } : {}),
@@ -778,7 +791,7 @@ export class ArchiveRuntime {
       kind: event.kind,
       actor: actorFor(event),
       ...(event.kind === 'user_message' && bounded(event.inputId, 256) ? { appInputId: event.inputId } : {}),
-      ...(providerIdentity(event) ? { provider: providerIdentity(event) } : {}),
+      ...(providerIdentity(event, this.options.providerRoute) ? { provider: providerIdentity(event, this.options.providerRoute) } : {}),
       assets,
       sourceRefs,
       payload
@@ -1141,7 +1154,11 @@ export class ArchiveRuntime {
     for (const asset of event.assets) assets.push(await this.viewAsset(asset, event.at));
     // A user message carries what the user wrote beside what was sent; the sent text may be wrapped
     // in Eve's provider catch-up context, which the archive reader should not see as the message.
-    const text = (event.kind === 'user_message' ? payloadString(event.payload, 'authoredText') : null) ?? payloadString(event.payload, 'text');
+    const recorded = (event.kind === 'user_message' ? payloadString(event.payload, 'authoredText') : null) ?? payloadString(event.payload, 'text');
+    // A reply recorded only as ChatGPT's reference to its words is shown as missing words, not as the pointer.
+    const text = event.kind === 'assistant_message' && isUnresolvedContentReference(recorded)
+      ? '[ChatGPT sent only a reference to this reply; its words were not recorded.]'
+      : recorded;
     if (event.kind === 'user_message' || event.kind === 'assistant_message' || event.kind === 'agent_message' || event.kind === 'progress' || event.kind === 'chat_error' || event.kind === 'note') {
       return {
         kind: 'message',
