@@ -1844,5 +1844,6 @@
   "Ollama Cloud worker limit": "Gräns för Ollama Cloud-arbetare",
   "Maximum Ollama Cloud workers active at once.": "Högst så många Ollama Cloud-arbetare åt gången.",
   "Use tools directly in Ollama chats": "Använd verktyg direkt i Ollama-chattar",
-  "When off, Ollama keeps the conversation but delegates tool work to workers.": "När det är av behåller Ollama samtalet men lämnar verktygsarbete till arbetare."
+  "When off, Ollama keeps the conversation but delegates tool work to workers.": "När det är av behåller Ollama samtalet men lämnar verktygsarbete till arbetare.",
+  "Waiting for ChatGPT's reply text. So far ChatGPT has only sent a reference to it.": "Väntar på ChatGPT:s svarstext. Hittills har ChatGPT bara skickat en hänvisning till den."
 }

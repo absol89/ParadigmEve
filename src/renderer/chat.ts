@@ -6,6 +6,7 @@ import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
 import { renderAgentPlan } from './agent-plan.js';
 import { userPromptText } from '../shared/user-prompt.js';
+import { isUnresolvedContentReference } from '../shared/content-reference.js';
 import { preserveTimelineViewport } from './timeline-scroll.js';
 import { toolResultText } from './tool-result.js';
 import { communicationTitle, foldAgentCommunication } from './agent-communication.js';
@@ -1861,7 +1862,10 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       box.append(el('b', '', () => event.provider
         ? event.final ? t("Ollama · {0}", [event.provider.model]) : t("Ollama · {0} (partial)", [event.provider.model])
         : event.final ? 'ChatGPT' : t("ChatGPT (partial)")));
-      box.append(renderedMarkdown(event.message.text, event.renderedHtml));
+      // A GPT-6 reply can first arrive as only a reference to its words; never show the pointer as them.
+      box.append(isUnresolvedContentReference(event.message.text)
+        ? el('p', 'meta', () => t("Waiting for ChatGPT's reply text. So far ChatGPT has only sent a reference to it."))
+        : renderedMarkdown(event.message.text, event.renderedHtml));
       return box;
     }
     case 'native_image': {

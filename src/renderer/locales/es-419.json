@@ -1838,5 +1838,6 @@
   "Ollama Cloud worker limit": "Límite de agentes de trabajo de Ollama Cloud",
   "Maximum Ollama Cloud workers active at once.": "Máximo de agentes de trabajo de Ollama Cloud activos a la vez.",
   "Use tools directly in Ollama chats": "Usar herramientas directamente en los chats de Ollama",
-  "When off, Ollama keeps the conversation but delegates tool work to workers.": "Si está desactivado, Ollama mantiene la conversación pero delega el trabajo con herramientas a agentes de trabajo."
+  "When off, Ollama keeps the conversation but delegates tool work to workers.": "Si está desactivado, Ollama mantiene la conversación pero delega el trabajo con herramientas a agentes de trabajo.",
+  "Waiting for ChatGPT's reply text. So far ChatGPT has only sent a reference to it.": "Esperando el texto de la respuesta de ChatGPT. Hasta ahora ChatGPT solo envió una referencia a él."
 }

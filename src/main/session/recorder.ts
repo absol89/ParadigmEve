@@ -122,6 +122,24 @@ interface ProgressRecord {
   turnId?: string;
 }
 
+interface ChatgptContentReference {
+  sourceMessageId: string;
+}
+
+/**
+ * ChatGPT can transiently render a response as an internal content-reference wrapper instead of
+ * the referenced assistant body. The wrapper is evidence about which provider message exists, but
+ * it is not the answer itself. Keep the raw wrapper for forensics while refusing to promote it to a
+ * final assistant response; the source id gives a later real observation an exact recovery key.
+ */
+function chatgptContentReference(text: string | undefined): ChatgptContentReference | null {
+  if (!text?.startsWith('::chatgpt-content-reference{')) return null;
+  const marker = text.match(/^::chatgpt-content-reference\{([^}\r\n]{1,1000})\}/);
+  if (!marker) return null;
+  const source = marker[1]!.match(/(?:^|\s)source_message_id="([^"]{1,200})"(?:\s|$)/);
+  return source ? { sourceMessageId: source[1]! } : null;
+}
+
 const conversations = new Map<string, LiveConversation>();
 /** One full first-sight initialization per ChatGPT conversation at a time. */
 const sessionInitializations = new Map<string, Promise<string | null>>();
@@ -2210,7 +2228,9 @@ async function recordChatObservationsNow(
       }
       case 'assistant_message': {
         if (!item.messageId) continue;
-        const state = item.state ?? (item.final === true ? 'final' : 'streaming');
+        const contentReference = chatgptContentReference(item.text);
+        const reportedState = item.state ?? (item.final === true ? 'final' : 'streaming');
+        const state = contentReference ? 'streaming' : reportedState;
         // A reload can destroy the document-local generation id after this recorder already
         // made the only honest lifecycle verdict it could: unknown/failed/interrupted/stalled.
         // A new stable final reply is stronger evidence about Goal than that lost id, but an
@@ -2245,13 +2265,15 @@ async function recordChatObservationsNow(
           // Keep normal 15k–20k-token handoff-style answers inline rather than making the
           // local transcript itself look truncated while the continuation carries more.
           message: await storeText(sessionId, item.text ?? '', 256_000),
-          ...(item.renderedHtml
+          ...(!contentReference && item.renderedHtml
             ? { renderedHtml: await storeText(sessionId, item.renderedHtml, 120_000) }
             : {}),
           messageId: item.messageId,
           state,
           final: state === 'final',
-          ...(item.providerMessageId ? { providerMessageId: item.providerMessageId } : {}),
+          ...(item.providerMessageId ?? contentReference?.sourceMessageId
+            ? { providerMessageId: item.providerMessageId ?? contentReference!.sourceMessageId }
+            : {}),
           ...(goalEligible && state === 'final' ? { goalEligible: true } : {})
         }, { preferTime: item.authoredTime === true });
         const canonicalTurn = written.event.turnId;
@@ -2359,11 +2381,27 @@ async function recordChatObservationsNow(
         // the turn it names, but it must not tear down a newer active generation.
         if (!item.turnId) continue;
         if (live?.knownTurnEnds.has(item.turnId)) continue;
+        // A content-reference wrapper proves that ChatGPT has a source message, not what that
+        // message said. Do not let a sibling lifecycle event turn that unresolved wrapper into a
+        // completed local turn. The canonical assistant row remains streaming and carries the
+        // provider source id so a later real observation can replace it exactly.
+        const [latestAssistant] = item.outcome === 'completed'
+          ? await readRecentEvents(sessionId, 1, { kinds: ['assistant_message'] })
+          : [];
+        const unresolvedContentReference =
+          latestAssistant?.kind === 'assistant_message' &&
+          latestAssistant.turnId === item.turnId &&
+          chatgptContentReference(latestAssistant.message.text) !== null;
+        const outcome = unresolvedContentReference ? 'unknown' : item.outcome ?? 'unknown';
         await appendEvent(sessionId, {
           ...base,
           kind: 'turn_end',
-          outcome: item.outcome ?? 'unknown',
-          ...(item.detail ? { detail: item.detail } : {})
+          outcome,
+          ...(item.detail
+            ? { detail: item.detail }
+            : unresolvedContentReference
+              ? { detail: 'assistant content reference was recorded, but the referenced response body is still unavailable' }
+              : {})
         });
         // As above, durable journal state owns idempotency; in-memory state follows it.
         if (live) {
@@ -2371,13 +2409,13 @@ async function recordChatObservationsNow(
           if (live.turnId === item.turnId) activity.endedTurnId = item.turnId;
           live.knownTurnEnds.add(item.turnId);
           live.openTurns.delete(item.turnId);
-          live.lastTurnOutcome = item.outcome ?? 'unknown';
+          live.lastTurnOutcome = outcome;
           live.lastTurnStartedAt = endedStartedAt;
           // Only a completed end can be proven false by a later call: it is the one verdict
           // Goal acts on, and the one a reloaded page fabricates. A stop is the user's own
           // decision and the failure outcomes already belong to recovery.
           live.endedTurn =
-            live.turnId === item.turnId && item.outcome === 'completed'
+            live.turnId === item.turnId && outcome === 'completed'
               ? { turnId: item.turnId, startedAt: endedStartedAt, endedAt: item.time, requestIds: live.turnRequestIds }
               : null;
           live.turnRequestIds = new Set<string>();
@@ -2386,7 +2424,7 @@ async function recordChatObservationsNow(
             live.turnId = null;
           }
         }
-        if (item.outcome !== 'unknown') {
+        if (outcome !== 'unknown') {
           activity.meaningful = true;
           activity.at = Math.max(activity.at ?? 0, item.time);
           activity.terminal = true;

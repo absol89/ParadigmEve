@@ -264,6 +264,36 @@ describe('fiber evidence on the per-exchange renderer', () => {
       ['user-b', ['user-b', 'asst-b']]
     ]);
   });
+
+  it('resolves a Voice content-reference to the provider source message instead of archiving the pointer', async () => {
+    const sourceId = 'voice-source-a';
+    const finalId = 'voice-final-a';
+    const source = {
+      id: sourceId, author: { role: 'assistant' }, recipient: 'all', channel: 'final', create_time: 1786873699,
+      status: 'finished_successfully', end_turn: false,
+      content: { content_type: 'multimodal_text', parts: [
+        { content_type: 'audio_transcription', text: 'The spoken answer is preserved.' }
+      ] }, metadata: { is_visually_hidden_from_conversation: false }
+    };
+    const pointer = reply(finalId, `::chatgpt-content-reference{index="0" source_message_id="${sourceId}"}`);
+    const { data } = await scanPage(exchange(0, 'user-a', 'Voice question', finalId, 'The spoken answer is preserved.'), {
+      'user-a': exchangeFiber([{ turn: { messages: [user('user-a', 'Voice question'), source, pointer] } }])
+    });
+    const final = data.turns[0].messages.find((message: any) => message.rawMessageId === finalId);
+    expect(final).toMatchObject({ role: 'assistant', rawText: 'The spoken answer is preserved.' });
+    expect(final.referenceIncomplete).toBeUndefined();
+  });
+
+  it('marks a content-reference incomplete when its provider source message is unavailable', async () => {
+    const finalId = 'voice-final-missing';
+    const pointerText = '::chatgpt-content-reference{index="0" source_message_id="missing-source"}';
+    const pointer = reply(finalId, pointerText);
+    const { data } = await scanPage(exchange(0, 'user-a', 'Voice question', finalId, pointerText), {
+      'user-a': exchangeFiber([{ turn: { messages: [user('user-a', 'Voice question'), pointer] } }])
+    });
+    const final = data.turns[0].messages.find((message: any) => message.rawMessageId === finalId);
+    expect(final).toMatchObject({ role: 'assistant', rawText: pointerText, stable: false, referenceIncomplete: true });
+  });
 });
 
 /**
@@ -332,6 +362,38 @@ describe('fiber evidence on the render-item renderer', () => {
     const data = await reply;
     return { ...data, imageStamps: [...unit.querySelectorAll('img')].map(node => node.getAttribute('data-clf-fiber-image')) };
   }
+
+  // GPT-6 / DIL renderer (2026-10-08, from Chat On Steroids 2.1.31): content is only a reference to
+  // the item itself, and the words are the fallbackMarkdown of its own dil reference.
+  const dilReply = (fallbackMarkdown: string, source = REPLY_ID) => assistantItem({
+    content: `::chatgpt-content-reference{index="0" source_message_id="${REPLY_ID}"}`,
+    contentReferences: [{ type: 'dil', source_message_id: source, model_dil_v2: { fallbackMarkdown } }]
+  });
+
+  it('archives a GPT-6 DIL reply as its own fallback words, final and stable', async () => {
+    const data = await scan(dilReply('The **real** answer.'), context());
+    const reply = data.turns[0].messages.find((message: any) => message.rawMessageId === REPLY_ID);
+    expect(reply).toMatchObject({ role: 'assistant', rawText: 'The **real** answer.', stable: true });
+    expect(reply.referenceIncomplete).toBeUndefined();
+    expect(data.turns[0].endMessageId).toBe(REPLY_ID);
+    expect(JSON.stringify(data.turns[0].messages)).not.toContain('chatgpt-content-reference');
+  });
+
+  it('drops the escapes GPT-6 fallback Markdown adds outside code, as Markdown renders it', async () => {
+    const read = async (markdown: string) => (await scan(dilReply(markdown), context())).turns[0].messages
+      .find((message: any) => message.rawMessageId === REPLY_ID).rawText;
+    expect(await read('Done.\n\n\\[\\[PARADIGMEVE\\_GOAL:COMPLETE\\]\\]')).toBe('Done.\n\n[[PARADIGMEVE_GOAL:COMPLETE]]');
+    expect(await read('## Title\n\n**bold** `code`\n2\\^10 = 1024 \\[ok\\] C:\\\\Users')).toBe('## Title\n\n**bold** `code`\n2^10 = 1024 [ok] C:\\Users');
+    expect(await read('```python\nx = a[0] ** 2  # note \\[\n```\n\n`C:\\Users\\[x]` and \\_after\\_'))
+      .toBe('```python\nx = a[0] ** 2  # note \\[\n```\n\n`C:\\Users\\[x]` and _after_');
+  });
+
+  it('keeps an unresolved GPT-6 reference as incomplete evidence, never as a stable answer', async () => {
+    // A dil reference naming another message is not this reply's words.
+    const data = await scan(dilReply('Not this one', 'b0000009-0000-4000-8000-000000000009'), context());
+    const reply = data.turns[0].messages.find((message: any) => message.rawMessageId === REPLY_ID);
+    expect(reply).toMatchObject({ rawText: expect.stringContaining('::chatgpt-content-reference'), stable: false, referenceIncomplete: true });
+  });
 
   it('reports a finished reply by its provider id, raw Markdown, rendered HTML and end of turn', async () => {
     const data = await scan(assistantItem(), context());

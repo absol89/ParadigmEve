@@ -243,6 +243,56 @@
    * three ways — `final_answer`, `completed`, and a context that is not streaming — so a reply
    * still being written stays partial however complete its text already looks.
    */
+  /** A reply that is nothing but content references to other messages. */
+  const ONLY_CONTENT_REFERENCES = /^\s*(?:::chatgpt-content-reference\{[^}\n]*\}\s*)+$/;
+  /**
+   * The words of a rendered assistant item. ChatGPT's GPT-6 renderer (DIL, 2026-10-08, ported from
+   * Chat On Steroids 2.1.31) leaves only `::chatgpt-content-reference{…}` in `content` and keeps the
+   * reply as `fallbackMarkdown` on the one `dil` reference that names this same message, the text the
+   * page shows when its widget cannot render. Read before this, every GPT-6 reply reached Eve's chat
+   * and archive as a reference id. Anything else keeps its content; an unresolved wrapper stays the
+   * wrapper so the recorder can hold it as incomplete evidence.
+   */
+  function renderItemText(item) {
+    const content = typeof item?.content === 'string' ? item.content : '';
+    if (!ONLY_CONTENT_REFERENCES.test(content)) return content;
+    const id = str(item.messageId);
+    const own = (Array.isArray(item.contentReferences) ? item.contentReferences : []).filter(reference =>
+      reference && reference.type === 'dil' && id && reference.source_message_id === id &&
+      typeof reference.model_dil_v2?.fallbackMarkdown === 'string' && reference.model_dil_v2.fallbackMarkdown.trim());
+    return own.length === 1 ? unescapeFallbackMarkdown(own[0].model_dil_v2.fallbackMarkdown).slice(0, MAX_RENDERED_TEXT) : content;
+  }
+  /**
+   * The reply as the model wrote it. `fallbackMarkdown` keeps formatting but backslash-escapes every
+   * literal punctuation mark in plain text (GPT-6, 2026-10-09: `2\^10 = 1024 \[ok\]`), while code spans
+   * and fenced code keep theirs verbatim. Outside code each `\` before ASCII punctuation is dropped,
+   * as Markdown does on rendering.
+   */
+  function unescapeFallbackMarkdown(markdown) {
+    let fence = null;
+    return markdown.split('\n').map(line => {
+      const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+      if (fence) {
+        if (marker && marker[0] === fence[0] && marker.length >= fence.length && !line.slice(line.indexOf(marker) + marker.length).trim()) fence = null;
+        return line;
+      }
+      if (marker && !(marker[0] === '`' && line.slice(line.indexOf(marker) + marker.length).includes('`'))) { fence = marker; return line; }
+      let out = '';
+      for (let at = 0; at < line.length;) {
+        const char = line[at];
+        if (char === '\\' && /[!-\/:-@[-`{-~]/.test(line[at + 1] || '')) { out += line[at + 1]; at += 2; continue; }
+        if (char === '`') {
+          const run = /^`+/.exec(line.slice(at))[0];
+          const close = new RegExp(`(?<!\`)${run}(?!\`)`).exec(line.slice(at + run.length));
+          if (close) { const end = at + run.length + close.index + run.length; out += line.slice(at, end); at = end; continue; }
+          out += run; at += run.length; continue;
+        }
+        out += char; at++;
+      }
+      return out;
+    }).join('\n');
+  }
+
   function renderItemMessage(item, contexts, pageConversationId) {
     if (!item || typeof item !== 'object' || item.type !== 'assistant-message') return null;
     const id = str(item.messageId);
@@ -250,7 +300,8 @@
     if (item.latestMessageId !== undefined && item.latestMessageId !== null && item.latestMessageId !== id) return null;
     if (item.sourceMessageIds !== undefined && item.sourceMessageIds !== null &&
         (!Array.isArray(item.sourceMessageIds) || item.sourceMessageIds.some(source => source !== id))) return null;
-    if (typeof item.content !== 'string' || !item.content) return null;
+    const text = renderItemText(item);
+    if (!text) return null;
     const phase = item.phase === undefined || item.phase === null ? null : item.phase;
     if (phase !== null && !Object.prototype.hasOwnProperty.call(ITEM_CHANNELS, phase)) return null;
     const own = contexts.filter(context => context.messageId === id);
@@ -265,7 +316,7 @@
       ...(phase ? { channel: ITEM_CHANNELS[phase] } : {}),
       status: item.completed === true ? 'finished_successfully' : 'in_progress',
       end_turn: final,
-      content: { content_type: 'text', parts: [item.content] },
+      content: { content_type: 'text', parts: [text] },
       metadata: turnExchangeId ? { turn_exchange_id: turnExchangeId } : {},
       // A finished item's provider id is the server's final message id: durable without a creation
       // time, which render items do not carry. See authoredAssistantMessages.
@@ -712,6 +763,39 @@
   }
 
   /**
+   * ChatGPT Voice can publish a final text message that is only a pointer to another
+   * provider message, e.g. `::chatgpt-content-reference{index="0"
+   * source_message_id="..."}`. The local archive must never treat that transport token as
+   * the assistant's words. Parse only the exact observed wrapper and only an ordinary
+   * provider message id; everything else stays ordinary authored text.
+   */
+  function contentReference(value) {
+    if (typeof value !== 'string') return null;
+    const match = /^::chatgpt-content-reference\{index="(\d{1,3})"\s+source_message_id="([A-Za-z0-9._:-]{1,256})"\}\s*$/.exec(value.trim());
+    if (!match) return null;
+    return { index: Number(match[1]), sourceMessageId: match[2] };
+  }
+
+  /** Resolve a provider content-reference through messages already present in this exact turn. */
+  function resolvedAuthoredText(message, messagesById) {
+    let current = message;
+    const visited = new Set();
+    for (let depth = 0; depth < 4; depth++) {
+      const value = authoredText(current);
+      const reference = contentReference(value);
+      if (!reference) return { text: value, incomplete: false };
+      if (visited.has(reference.sourceMessageId)) return { text: value, incomplete: true };
+      visited.add(reference.sourceMessageId);
+      const source = messagesById.get(reference.sourceMessageId);
+      if (!source || source === current || source.author?.role !== 'assistant' || requestOf(source) || resultOf(source) ||
+          hiddenMessage(source) || analysisMessage(source)) return { text: value, incomplete: true };
+      current = source;
+    }
+    const value = authoredText(current);
+    return { text: value, incomplete: Boolean(contentReference(value)) };
+  }
+
+  /**
    * Public words of a `multimodal_text` message: plain string parts and the `text` of
    * `audio_transcription` parts (Voice), in part order. Null when it holds none.
    */
@@ -788,9 +872,12 @@
     const seen = new Set();
     const logicalIds = new Set();
     const thoughtParents = new Map();
+    const messagesById = new Map();
     if (!Array.isArray(messages)) return out;
     for (const candidate of messages) {
       if (thoughtMessage(candidate)) thoughtParents.set(str(candidate.id), candidate);
+      const candidateId = modelMessage(candidate) ? str(candidate.id) : null;
+      if (candidateId && !messagesById.has(candidateId)) messagesById.set(candidateId, candidate);
     }
     for (let index = 0; index < messages.length; index++) {
       if (!budget || budget.remaining <= 0) break;
@@ -802,7 +889,8 @@
       // Private reasoning, by ChatGPT's own routing. Never a transcript row.
       if (analysisMessage(message)) continue;
       const id = str(message.id);
-      const rawText = budgetedText(authoredText(message), budget, MAX_RENDERED_TEXT);
+      const resolved = resolvedAuthoredText(message, messagesById);
+      const rawText = budgetedText(resolved.text, budget, MAX_RENDERED_TEXT);
       if (!id || !rawText) continue;
       if (seen.has(id)) continue;
       seen.add(id);
@@ -820,6 +908,9 @@
       // The reload-durable identity needs no thought parent to be trustworthy.
       let stable = !collides && Boolean(createTime) && logicalId !== id && logicalId !== parentId;
       if (!collides && message.renderItemFinal === true) stable = true;
+      // A provider pointer whose source is absent is explicitly incomplete evidence. Keep the
+      // exact token for diagnosis, but never let a final-looking wrapper become stable prose.
+      if (resolved.incomplete) stable = false;
 
       // Live streaming can replace the raw text-message UUID while the same commentary block
       // keeps growing. The page already supplies a stronger relation: public commentary is a
@@ -858,6 +949,7 @@
         messageId: logicalId,
         role: 'assistant',
         stable,
+        ...(resolved.incomplete ? { referenceIncomplete: true } : {}),
         rawText,
         order: index,
         createTime
@@ -1168,6 +1260,7 @@
         rawMessageId: assistantCandidates[c].id,
         role: 'assistant',
         stable: assistantCandidates[c].stable,
+        ...(assistantCandidates[c].referenceIncomplete ? { referenceIncomplete: true } : {}),
         order: assistantCandidates[c].order,
         createTime: assistantCandidates[c].createTime,
         rawText: assistantCandidates[c].rawText,

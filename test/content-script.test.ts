@@ -3218,6 +3218,96 @@ describe('recording authored message text', () => {
 });
 
 describe('canonical Fiber transcript ingestion in 1.8', () => {
+  const contentReference = (messageId: string) => `::chatgpt-content-reference{index="0" source_message_id="${messageId}"}`;
+  const dilHtml = (messageId: string, text: string) =>
+    `<div data-dil-source-message-id="${messageId}" data-chatgpt-copy-reference="0" data-markdown-copy="contents">` +
+    `<div data-dil-message-id="${messageId}"><p>${text}</p></div></div>`;
+
+  it('archives the readable spoken reply when Voice exposes a content-reference token beside DIL content', async () => {
+    live = await harness();
+    const messageId = '0017fdb9-735a-413c-b9ab-30988db8ef3c';
+    const spoken = 'I found the exact voice-session recording problem and I am checking the recorder path now.';
+    await replyFiber([], [{
+      turnId: 'oct9-voice-reply',
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      endMessageId: messageId,
+      calls: [],
+      messages: [{ messageId, rawMessageId: messageId, role: 'assistant', stable: true,
+        rawText: contentReference(messageId), renderedHtml: dilHtml(messageId, spoken) }],
+      activities: []
+    }]);
+    await live.hook.flush();
+    await settle();
+
+    expect(emitted(live.sent, 'assistant_message').at(-1)!.event).toMatchObject({
+      messageId,
+      text: spoken,
+      renderedHtml: dilHtml(messageId, spoken),
+      final: true
+    });
+  });
+
+  it('keeps an interrupted Voice reply readable instead of persisting its content-reference token', async () => {
+    live = await harness();
+    startGenerating(live.document);
+    const section = assistantTurn(live.document, 'oct9-interrupted-voice', []);
+    section.setAttribute('data-clf-fiber-turn', '0');
+    live.hook.observe();
+    await settle();
+    const localTurn = emitted(live.sent, 'turn_start').at(-1)!.event.turnId as string;
+    const messageId = '034d93e3-c28e-441c-ac8b-20cfcbb3cfd0';
+    const spoken = 'I have the first clue. I am checking whether the reference can be resolved before the turn is replaced.';
+    const descriptor = {
+      turnId: 'oct9-interrupted-voice',
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      endMessageId: null,
+      calls: [],
+      messages: [{ messageId, rawMessageId: messageId, role: 'assistant', stable: true,
+        rawText: contentReference(messageId), renderedHtml: dilHtml(messageId, spoken) }],
+      activities: []
+    };
+    await replyFiber([], [descriptor], {
+      pageTurnId: 'oct9-interrupted-voice', localTurnId: localTurn,
+      pageTurn: { id: 'oct9-interrupted-voice', node: section, nodes: [section] }
+    });
+    await live.hook.flush();
+    userTurn(live.document, 'oct9-followup', 'Check why the reply did not reach Eve');
+    live.hook.observe();
+    await settle();
+
+    expect(emitted(live.sent, 'assistant_message').filter(entry => entry.event.messageId === messageId).at(-1)!.event)
+      .toMatchObject({ turnId: localTurn, text: spoken, final: false });
+    expect(emitted(live.sent, 'turn_end').at(-1)!.event).toMatchObject({ turnId: localTurn, outcome: 'interrupted' });
+  });
+
+  it('returns to ordinary text capture after Voice without archiving a later content-reference token', async () => {
+    live = await harness();
+    const voiceId = 'bbe0bf06-da59-4aeb-b713-b599a0f85dac';
+    const textId = 'f8d2d0c9-8fea-4a10-8ce8-b49b373ff9fc';
+    const voiceReply = 'I found a strong clue in the exact session.';
+    const typedReply = 'The October 9 recording confirms the readable reply is present in the rendered response.';
+    await replyFiber([], [{
+      turnId: 'oct9-last-voice', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', endMessageId: voiceId, calls: [],
+      messages: [{ messageId: voiceId, rawMessageId: voiceId, role: 'assistant', stable: true,
+        rawText: contentReference(voiceId), renderedHtml: dilHtml(voiceId, voiceReply) }], activities: []
+    }]);
+    await live.hook.flush();
+    await replyFiber([], [{
+      turnId: 'oct9-return-to-text', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', endMessageId: textId, calls: [],
+      messages: [{ messageId: textId, rawMessageId: textId, role: 'assistant', stable: true,
+        rawText: contentReference(textId), renderedHtml: dilHtml(textId, typedReply) }], activities: []
+    }]);
+    await live.hook.flush();
+    await settle();
+
+    const archived = emitted(live.sent, 'assistant_message').map(entry => entry.event)
+      .filter(event => event.messageId === voiceId || event.messageId === textId);
+    expect(archived.map(event => [event.messageId, event.text, event.final])).toEqual([
+      [voiceId, voiceReply, true],
+      [textId, typedReply, true]
+    ]);
+  });
+
   it('records a raw-provider-ID-only revision without changing canonical message identity', async () => {
     live = await harness();
     const section = assistantTurn(live.document, 'provider-id-revision-turn', []);

@@ -3257,11 +3257,38 @@
     const messages = [];
     const messageIndex = new Map();
     const conflictingMessages = new Set();
+    const contentReference = value => {
+      if (typeof value !== 'string') return null;
+      const match = /^::chatgpt-content-reference\{index="(\d{1,3})"\s+source_message_id="([A-Za-z0-9._:-]{1,256})"\}\s*$/.exec(value.trim());
+      return match ? { index: Number(match[1]), sourceMessageId: match[2] } : null;
+    };
+    const dilText = (renderedHtml, reference, messageId, rawMessageId) => {
+      if (!renderedHtml || !reference) return null;
+      // DIL is ChatGPT's own rendered content for this exact provider message. Require the
+      // reference id to agree with the provider identity we already have, then require both
+      // DIL identity attributes in the HTML before reading any text. This deliberately has
+      // no generic "strip HTML" fallback: unrelated rendered chrome must never become prose.
+      if (reference.sourceMessageId !== rawMessageId && reference.sourceMessageId !== messageId) return null;
+      try {
+        const template = document.createElement('template');
+        template.innerHTML = renderedHtml;
+        const roots = [...template.content.querySelectorAll('[data-dil-source-message-id]')]
+          .filter(node => node.getAttribute('data-dil-source-message-id') === reference.sourceMessageId);
+        if (roots.length !== 1) return null;
+        const messages = [...roots[0].querySelectorAll('[data-dil-message-id]')]
+          .filter(node => node.getAttribute('data-dil-message-id') === reference.sourceMessageId);
+        if (messages.length !== 1) return null;
+        const value = (messages[0].textContent || '').replace(/\u00a0/g, ' ').trim();
+        return value || null;
+      } catch {
+        return null;
+      }
+    };
     for (const entry of (Array.isArray(raw.messages) ? raw.messages : []).slice(0, FIBER_MAX_MESSAGES)) {
       if (!entry || typeof entry !== 'object') continue;
       const messageId = cap(entry.messageId, 200);
       if (!messageId) continue;
-      const rawText = typeof entry.rawText === 'string' ? entry.rawText.slice(0, 256_000) : '';
+      const providerText = typeof entry.rawText === 'string' ? entry.rawText.slice(0, 256_000) : '';
       const attachments = entry.role === 'user' && Array.isArray(entry.attachments) ? entry.attachments.slice(0, 4).filter(file =>
         file && typeof file.id === 'string' && file.id.length > 0 && file.id.length <= 100 && typeof file.name === 'string' && file.name.length > 0 && file.name.length <= 200 &&
         /^image\/[a-z0-9.+-]{1,80}$/i.test(file.mimeType) && Number.isSafeInteger(file.size) && file.size >= 0 && file.size <= 512 * 1024 * 1024)
@@ -3269,6 +3296,9 @@
       // Whole markup or none, for the same reason the wire bound above drops it.
       const renderedHtml =
         typeof entry.renderedHtml === 'string' && entry.renderedHtml.length <= 120_000 ? entry.renderedHtml : '';
+      const reference = entry.role === 'user' ? null : contentReference(providerText);
+      const readable = dilText(renderedHtml, reference, messageId, cap(entry.rawMessageId, 200));
+      const rawText = readable || providerText;
       if (!rawText && !renderedHtml && !attachments.length) continue;
       const message = {
         messageId,

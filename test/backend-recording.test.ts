@@ -7,6 +7,7 @@ import { initDurableStore, flushDurable, resetDurableForTests } from '../src/mai
 import { observeRequestCorrelation, requestCorrelation } from '../src/main/session/correlation.js';
 import { recordToolCall, recordChatObservations, recordRequestEvidence, sessionForConversation, flushRecorder, resetRecorderForTests } from '../src/main/session/recorder.js';
 import { appendEvent, createSession, flushSessions, initSessionStore, readActivityEvents, readAsset, readEvents, readRecentEvents, resetSessionStoreForTests, unsetSessionRootForTests, upsertMessageEvent } from '../src/main/session/store.js';
+import { archivedTurns } from '../src/main/session/provider-history.js';
 
 let dir = '';
 const gate = () => { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; };
@@ -110,6 +111,89 @@ it('exact evidence bypasses a blocked canonical transcript write without inventi
     expect(await recordRequestEvidence('conv-evidence', [{ kind: 'tool_evidence', time: Date.now(), fiberConversationId: 'conv-evidence', calls: [{ requestId: 'fast-proof', messageId: 'tool', tool: 'read', order: 0, answered: false }] }])).toBe(id);
     expect(requestCorrelation('fast-proof')?.sessionId).toBe(id);
   } finally { release.resolve(); await transcript; spy.mockRestore(); }
+});
+
+it('keeps a ChatGPT content-reference wrapper incomplete instead of archiving it as the assistant answer', async () => {
+  const sessionId = await sessionForConversation('conv-content-reference');
+  const time = Date.now();
+  const sourceMessageId = '0017fdb9-735a-413c-b9ab-30988db8ef3c';
+  const wrapper = `::chatgpt-content-reference{index="0" source_message_id="${sourceMessageId}"}\nsvg**Read a recorded session**`;
+  await recordChatObservations('conv-content-reference', [
+    { kind: 'turn_start', time, turnId: 'turn-content-reference' },
+    { kind: 'assistant_message', time: time + 1, turnId: 'turn-content-reference', messageId: 'wrapper-row', text: wrapper, state: 'final', final: true },
+    { kind: 'turn_end', time: time + 2, turnId: 'turn-content-reference', outcome: 'completed' }
+  ]);
+
+  const messages = await readEvents(sessionId!, { kinds: ['assistant_message'] });
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({
+    kind: 'assistant_message',
+    messageId: 'wrapper-row',
+    providerMessageId: sourceMessageId,
+    state: 'streaming',
+    final: false
+  });
+  expect(messages[0]!.kind === 'assistant_message' && messages[0]!.message.text).toBe(wrapper);
+  const [end] = await readRecentEvents(sessionId!, 1, { kinds: ['turn_end'] });
+  expect(end).toMatchObject({ kind: 'turn_end', turnId: 'turn-content-reference', outcome: 'unknown' });
+  expect(end?.kind === 'turn_end' && end.detail).toContain('referenced response body is still unavailable');
+  expect(await archivedTurns(sessionId!)).toEqual([]);
+});
+
+it('repairs an incomplete content-reference row when the referenced assistant message arrives later', async () => {
+  const sessionId = await sessionForConversation('conv-content-reference-recovery');
+  const time = Date.now();
+  const sourceMessageId = '0017fdb9-735a-413c-b9ab-30988db8ef3d';
+  await recordChatObservations('conv-content-reference-recovery', [{
+    kind: 'assistant_message', time, turnId: 'turn-content-reference-recovery', messageId: 'wrapper-recovery-row',
+    text: `::chatgpt-content-reference{index="0" source_message_id="${sourceMessageId}"}`,
+    state: 'final', final: true
+  }]);
+
+  await recordChatObservations('conv-content-reference-recovery', [{
+    kind: 'assistant_message', time: time + 1, turnId: 'turn-content-reference-recovery', messageId: sourceMessageId,
+    text: 'Recovered exact assistant response.', state: 'final', final: true
+  }]);
+
+  const messages = await readEvents(sessionId!, { kinds: ['assistant_message'] });
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({
+    kind: 'assistant_message',
+    messageId: 'wrapper-recovery-row',
+    providerMessageId: sourceMessageId,
+    state: 'final',
+    final: true
+  });
+  expect(messages[0]!.kind === 'assistant_message' && messages[0]!.message.text).toBe('Recovered exact assistant response.');
+  expect((await archivedTurns(sessionId!)).map(turn => [turn.role, turn.text])).toEqual([
+    ['assistant', 'Recovered exact assistant response.']
+  ]);
+});
+
+it('turns a GPT-6 self-reference row into its real words when the same message later resolves', async () => {
+  // GPT-6 (DIL): the reply first reaches the recorder as a reference to itself, then as its words
+  // under the same provider message id. One canonical row, never the pointer as the answer.
+  const conversation = 'conv-gpt6-self-reference';
+  const sessionId = await sessionForConversation(conversation);
+  const time = Date.now();
+  const messageId = '6a5b4c3d-0000-4000-8000-000000000001';
+  await recordChatObservations(conversation, [{
+    kind: 'assistant_message', time, turnId: 'turn-gpt6', messageId,
+    text: `::chatgpt-content-reference{index="0" source_message_id="${messageId}"}`, state: 'final', final: true
+  }, { kind: 'turn_end', time: time + 1, turnId: 'turn-gpt6', outcome: 'completed' }]);
+  const pending = await readEvents(sessionId!, { kinds: ['assistant_message', 'turn_end'] });
+  expect(pending.find(event => event.kind === 'assistant_message')).toMatchObject({ state: 'streaming', final: false });
+  // A final-looking wrapper does not complete the turn.
+  expect(pending.find(event => event.kind === 'turn_end')).toMatchObject({ outcome: 'unknown' });
+  expect(await archivedTurns(sessionId!)).toEqual([]);
+
+  await recordChatObservations(conversation, [{
+    kind: 'assistant_message', time: time + 2, turnId: 'turn-gpt6', messageId, text: 'The real GPT-6 answer.', state: 'final', final: true
+  }]);
+  const messages = await readEvents(sessionId!, { kinds: ['assistant_message'] });
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({ messageId, state: 'final', final: true, message: { text: 'The real GPT-6 answer.' } });
+  expect((await archivedTurns(sessionId!)).map(turn => [turn.role, turn.text])).toEqual([['assistant', 'The real GPT-6 answer.']]);
 });
 
 it('concurrent headerless calls share one initialized unattributed bucket', async () => {

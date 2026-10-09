@@ -2553,3 +2553,18 @@ it('clears a delivered check when later model activity arrives without a timer',
   expect(app.w.document.querySelector('.input-receipt')).toBe(receipt);
   expect(receipt.hidden).toBe(true);
 });
+
+it('shows a GPT-6 reply that so far is only a reference as waiting, then its real words in place', async () => {
+  const pointer = { seq: 1, origin: 1, time: T0 + 1000, source: 'extension', kind: 'assistant_message', messageId: 'gpt6-reply',
+    turnId: 'gpt6-turn', state: 'streaming', final: false,
+    message: text('::chatgpt-content-reference{index="0" source_message_id="POINTER-ID-MUST-NOT-SHOW"}') } as SessionEvent;
+  const { w, append } = await boot([pointer]);
+  const row = () => [...w.document.querySelectorAll('.ev-assistant_message')];
+  expect(row()).toHaveLength(1);
+  expect(row()[0]!.textContent).toContain("Waiting for ChatGPT's reply text");
+  expect(row()[0]!.textContent).not.toContain('POINTER-ID-MUST-NOT-SHOW');
+  await append([{ ...pointer, seq: 2, state: 'final', final: true, message: text('The real GPT-6 answer.') } as SessionEvent]);
+  expect(row()).toHaveLength(1);
+  expect(row()[0]!.textContent).toContain('The real GPT-6 answer.');
+  expect(row()[0]!.textContent).not.toContain('Waiting for');
+});

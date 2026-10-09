@@ -1186,9 +1186,15 @@ export function upsertMessageEvent(
       // evidence; never collapse distinct authored segments by working-turn tuple
       // or matching text. Legacy observations without a provider UUID keep their key.
       const providerMessageId = event.kind === 'assistant_message' ? event.providerMessageId : undefined;
-      const providerMatches = providerMessageId
+      // A recorder may first know an assistant row only through ChatGPT's content-reference
+      // wrapper. In that case the referenced provider UUID is persisted as providerMessageId while
+      // the wrapper keeps its own page messageId. If the real row later arrives with that UUID as
+      // its messageId but no separate providerMessageId, it is the exact same provider message and
+      // should repair the canonical row instead of creating a second assistant response.
+      const providerIdentity = event.kind === 'assistant_message' ? providerMessageId ?? event.messageId : undefined;
+      const providerMatches = providerIdentity
         ? [...entry.messages.entries()].filter(([, candidate]) => candidate.kind === 'assistant_message' &&
-            candidate.providerMessageId === providerMessageId)
+            candidate.providerMessageId === providerIdentity)
         : [];
       const key = !entry.messages.has(directKey) && providerMatches.length === 1 ? providerMatches[0]![0] : directKey;
       const previous = entry.messages.get(key);
