@@ -11616,6 +11616,11 @@
     return lastTrustedComposerInteractionAt > 0 &&
       Date.now() - lastTrustedComposerInteractionAt < BROWSER_REPAIR_TYPING_GRACE_MS;
   }
+  function appInternalDraft(text) {
+    const value = typeof text === 'string' ? text.trim() : '';
+    return value.startsWith('[[PARADIGMEVE-CHAT-REVIEW:v1]]') ||
+      value.startsWith('[Eve: the ChatGPT Voice call in this chat just ended.]');
+  }
 
   function inputReuseSafe() {
     const rows = CLF_DOM.messages();
@@ -11924,6 +11929,15 @@
         void (async () => {
           const observedEpoch = epoch;
           const expectedTerminal = fiberTerminalMessageId;
+          // Chrome restore can resurrect ParadigmEve's own unsent heartbeat/checkpoint text in a
+          // redundant copy of Prime. Only duplicate cleanup asks for this, and only the two
+          // explicit internal prompt families are eligible. Human-authored/restored drafts remain
+          // protected even if the current document has not seen a trusted key event yet.
+          const composer = CLF_DOM.composer();
+          const staleInternalDraft = message.discardInternalDraft === true &&
+            !trustedComposerTakenOver && !trustedComposerTyping() && !CLF_DOM.hasComposerAttachments() &&
+            appInternalDraft(composer?.textContent || '') ? (composer?.textContent || '') : '';
+          if (staleInternalDraft) CLF_DOM.clearPromptExact(staleInternalDraft);
           const terminal = !generating && CLF_DOM.generating()
             ? await confirmedProviderTerminal() : false;
           // A terminal probe may capture a newer final revision. Persist it before

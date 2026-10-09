@@ -209,4 +209,82 @@ describe('archive reboot/offline acceptance', () => {
     expect(offlineSource.readAsset).not.toHaveBeenCalled();
     await rebootedRuntime.dispose();
   });
+
+  it('keeps uploaded attachment bytes and metadata through runtime recreation and a forced static rebuild', async () => {
+    const parent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'eve-archive-reboot-upload-')));
+    tempRoots.push(parent);
+    const archiveRoot = path.join(parent, 'archive');
+    const sessionId = 'session-reboot-upload';
+    const attachmentId = 'attachment-pdf';
+    const assetId = 'upload-copy.pdf';
+    const bytes = new TextEncoder().encode('%PDF-1.7\nretained upload across reboot\n%%EOF');
+    const expectedHash = createHash('sha256').update(bytes).digest('hex');
+    const at = Date.parse('2026-10-09T16:40:00.000Z');
+    const snapshot: CurrentSessionArchiveSnapshot = {
+      summary: { ...summary(sessionId), title: 'Uploaded attachment recovery', updatedAt: at },
+      events: [{
+        seq: 1,
+        time: at,
+        source: 'app',
+        kind: 'user_message',
+        messageId: 'user-with-upload',
+        inputId: 'input-with-upload',
+        message: { text: 'Keep this PDF in the archive.', chars: 29, truncated: false },
+        attachments: [{ id: attachmentId, name: 'Dinner notes.pdf', size: bytes.byteLength, mimeType: 'application/pdf' }],
+        archivedAttachments: [{ attachmentId, asset: { id: assetId, mimeType: 'application/pdf', bytes: bytes.byteLength } }]
+      }]
+    };
+    const firstRuntime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'acceptance-upload-first',
+      source: {
+        listSessionIds: async () => [sessionId],
+        readSession: async id => id === sessionId ? snapshot : null,
+        readAsset: async (_id, requested) => requested === assetId ? bytes : null
+      }
+    });
+
+    await firstRuntime.start();
+    await firstRuntime.drain();
+    const archivedBefore = await firstRuntime.store.readSession(sessionId);
+    expect(archivedBefore.events[0]!.assets[0]).toMatchObject({
+      kind: 'file',
+      captureState: 'retained',
+      fileName: 'Dinner notes.pdf',
+      blob: { sha256: expectedHash, byteLength: bytes.byteLength, mimeType: 'application/pdf' }
+    });
+    await firstRuntime.rebuildDerived();
+    await firstRuntime.dispose();
+
+    const offlineSource: ArchiveRuntimeSource = {
+      listSessionIds: vi.fn(async () => { throw new Error('rebooted archive must use retained canonical evidence'); }),
+      readSession: vi.fn(async () => { throw new Error('rebooted archive must not reread live sessions'); }),
+      readAsset: vi.fn(async () => { throw new Error('rebooted archive must not reread staged attachments'); })
+    };
+    const rebootedRuntime = new ArchiveRuntime({ archiveRoot, writerVersion: 'acceptance-upload-reboot', source: offlineSource });
+    await rebootedRuntime.initialize();
+
+    const archivedAfter = await rebootedRuntime.store.readSession(sessionId);
+    const retained = archivedAfter.events[0]!.assets[0]!;
+    expect(retained).toMatchObject({
+      kind: 'file',
+      captureState: 'retained',
+      fileName: 'Dinner notes.pdf',
+      blob: { sha256: expectedHash, byteLength: bytes.byteLength, mimeType: 'application/pdf' }
+    });
+    const inspection = await rebootedRuntime.store.blobs.inspect(retained.blob!);
+    expect(inspection.state).toBe('present');
+    if (inspection.state !== 'present') throw new Error('retained upload blob missing after reboot');
+    expect(new Uint8Array(await fs.readFile(inspection.path))).toEqual(bytes);
+
+    const rebuilt = await rebootedRuntime.rebuildDerived();
+    const staticFiles = await generatedChunk(rebuilt.staticSite.indexPath);
+    expect(staticFiles.chunk).toContain('Dinner notes.pdf');
+    expect(staticFiles.chunk).toContain('attachments/2026-10-09T16-40-00.000Z__Dinner%20notes.pdf');
+    expect(await fs.readFile(path.join(rebuilt.staticSite.siteRoot, 'attachments', '2026-10-09T16-40-00.000Z__Dinner notes.pdf'))).toEqual(Buffer.from(bytes));
+    expect(offlineSource.listSessionIds).not.toHaveBeenCalled();
+    expect(offlineSource.readSession).not.toHaveBeenCalled();
+    expect(offlineSource.readAsset).not.toHaveBeenCalled();
+    await rebootedRuntime.dispose();
+  });
 });

@@ -45,6 +45,7 @@ const DEFAULT_MAX_ASSET_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_SESSION_ASSET_BYTES = 512 * 1024 * 1024;
 const DEFAULT_MAX_OVERFLOW_TEXT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_RECONCILES = 4;
+const DEFAULT_STATIC_REFRESH_DEBOUNCE_MS = 1_000;
 const STATIC_GENERATION_RE = /^g-[a-f0-9]{32}$/u;
 const STATIC_GENERATION_FILE_RE = /^(?:search|chat-\d+|chat-\d+-segment-\d+)\.js$/u;
 const STATIC_SEGMENT_TARGET_BYTES = 512 * 1024;
@@ -81,6 +82,8 @@ export interface ArchiveRuntimeOptions {
   maxSessionAssetBytes?: number;
   maxOverflowTextBytes?: number;
   maxConcurrentReconciles?: number;
+  /** Coalesce live canonical commits before republishing the already-built static browser view. */
+  staticRefreshDebounceMs?: number;
   onError?: (error: Error) => void;
   onDiagnostic?: (message: string) => void;
   /**
@@ -435,6 +438,7 @@ export class ArchiveRuntime {
   private readonly maxSessionAssetBytes: number;
   private readonly maxOverflowTextBytes: number;
   private readonly maxConcurrentReconciles: number;
+  private readonly staticRefreshDebounceMs: number;
   private readonly onError?: (error: Error) => void;
   private readonly onDiagnostic?: (message: string) => void;
   private readonly reconciles = new Map<string, ReconcileState>();
@@ -456,6 +460,9 @@ export class ArchiveRuntime {
   private derivedStartedAt = 0;
   private runningDerived: Promise<ArchiveDerivedResult> | null = null;
   private pendingSiteRefresh: Promise<ArchiveDerivedResult> | null = null;
+  private staticRefreshTimer: NodeJS.Timeout | null = null;
+  private sourceRevision = 0;
+  private derivedRevision = 0;
 
   constructor(readonly options: ArchiveRuntimeOptions) {
     if (!path.isAbsolute(options.archiveRoot)) throw new Error('ARCHIVE_RUNTIME_ROOT_MUST_BE_ABSOLUTE');
@@ -467,6 +474,7 @@ export class ArchiveRuntime {
     this.maxSessionAssetBytes = options.maxSessionAssetBytes ?? DEFAULT_MAX_SESSION_ASSET_BYTES;
     this.maxOverflowTextBytes = options.maxOverflowTextBytes ?? DEFAULT_MAX_OVERFLOW_TEXT_BYTES;
     this.maxConcurrentReconciles = options.maxConcurrentReconciles ?? DEFAULT_MAX_CONCURRENT_RECONCILES;
+    this.staticRefreshDebounceMs = options.staticRefreshDebounceMs ?? DEFAULT_STATIC_REFRESH_DEBOUNCE_MS;
     this.onError = options.onError;
     this.onDiagnostic = options.onDiagnostic;
     for (const [label, value] of [
@@ -479,6 +487,9 @@ export class ArchiveRuntime {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error(`ARCHIVE_RUNTIME_INVALID_LIMIT: ${label}`);
     }
     if (this.maxConcurrentReconciles > 32) throw new Error('ARCHIVE_RUNTIME_INVALID_LIMIT: concurrent reconciles');
+    if (!Number.isSafeInteger(this.staticRefreshDebounceMs) || this.staticRefreshDebounceMs < 0 || this.staticRefreshDebounceMs > 60_000) {
+      throw new Error('ARCHIVE_RUNTIME_INVALID_LIMIT: static refresh debounce');
+    }
     this.store = new ArchiveStore(options.archiveRoot, { writerVersion: options.writerVersion, now: this.now });
     this.index = createDiskArchiveIndex(options.archiveRoot);
   }
@@ -547,7 +558,9 @@ export class ArchiveRuntime {
           await this.store.publishSession(projection);
           this.lastReconciledSessionId = sessionId;
           this.lastReconciledAt = this.now();
+          this.sourceRevision += 1;
           this.lastError = null;
+          this.scheduleStaticRefresh();
         }
       } catch (error) {
         this.recordError(error);
@@ -618,6 +631,7 @@ export class ArchiveRuntime {
         this.lastIndexStats = index;
         this.lastDerivedAt = this.now();
         this.derivedSourceAt = sourceAt;
+        this.derivedRevision = this.sourceRevision;
         this.lastError = null;
         return { index, chats: viewHeaders.length, staticSite: target };
       } catch (error) {
@@ -641,7 +655,21 @@ export class ArchiveRuntime {
 
   /** Whether archive evidence changed after the published static site read it. */
   staticSiteStale(): boolean {
-    return this.derivedSourceAt === null || (this.lastReconciledAt ?? 0) > this.derivedSourceAt;
+    return this.derivedSourceAt === null || this.sourceRevision > this.derivedRevision;
+  }
+
+  /**
+   * Once a static archive has been published, keep it following durable archive commits. The page's
+   * five-second status poll can only observe generations that main has actually published; without
+   * this bridge an already-open archive remains stale until another Open/Rebuild IPC happens.
+   */
+  private scheduleStaticRefresh(): void {
+    if (this.disposed || this.derivedSourceAt === null || this.staticRefreshTimer) return;
+    this.staticRefreshTimer = setTimeout(() => {
+      this.staticRefreshTimer = null;
+      if (this.disposed || !this.staticSiteStale()) return;
+      void this.refreshStaticSite()?.catch(error => this.recordError(error));
+    }, this.staticRefreshDebounceMs);
   }
 
   /**
@@ -730,6 +758,8 @@ export class ArchiveRuntime {
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
+    if (this.staticRefreshTimer) clearTimeout(this.staticRefreshTimer);
+    this.staticRefreshTimer = null;
     this.unsubscribe?.();
     this.unsubscribe = null;
     await this.drain();

@@ -10,7 +10,7 @@ Eve can work with folders you choose, keep Plans and saved context, use helper c
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download ParadigmEve</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.3.6.md">First-user guide &amp; release notes</a>
+  <a href="docs/release-notes/v2.3.7.md">First-user guide &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -49,7 +49,7 @@ You do **not** have to enable all of that to use Eve.
 5. Add Eve in ChatGPT, then open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
-For the friendly walkthrough — including exactly which settings start limited, which ones I recommend turning on, and where they live — read **[Meet Eve: the 2.3.6 first-user guide and release notes](docs/release-notes/v2.3.6.md)**.
+For the friendly walkthrough — including exactly which settings start limited, which ones I recommend turning on, and where they live — read **[Meet Eve: the 2.3.7 first-user guide and release notes](docs/release-notes/v2.3.7.md)**.
 
 ## Safe first, then convenient
 
@@ -80,7 +80,7 @@ Once the basic connection works, the setup I like is:
 
 My own setup uses four worker slots. Two is the fresh-install default and is friendlier to accounts that hit ChatGPT rate limits quickly.
 
-The exact switches, paths, and the more permissive options are explained in the **[2.3.6 first-user guide](docs/release-notes/v2.3.6.md)** so this README can stay readable.
+The exact switches, paths, and the more permissive options are explained in the **[2.3.7 first-user guide](docs/release-notes/v2.3.7.md)** so this README can stay readable.
 
 ## Plans stay with the work
 
@@ -152,19 +152,18 @@ Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Ch
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
 
-## What changed in 2.3.6
+## What changed in 2.3.7
 
-2.3.6 makes one Eve chat much more flexible about who answers and how its history survives the switch:
+2.3.7 makes Eve more provider-neutral and makes the local archive/recovery path much easier to trust:
 
-- Chat turns can run through ChatGPT, local Ollama, or Ollama Cloud while staying in one local conversation and archive.
-- Provider switches show what earlier history is about to be shared, and a per-chat **Local only** option can keep a conversation off ChatGPT and Ollama Cloud.
-- Ollama model discovery now separates models on this computer from Ollama Cloud and exposes vision-capable models from the live catalog.
-- Images and text attachments are retained in Eve's archive so later turns can still use them after provider changes; images attached directly on chatgpt.com are captured too.
-- The first ChatGPT answer after an Ollama-started conversation is recorded reliably, and follow-up messages no longer get stranded behind stale activity after the provider handoff.
-- ChatGPT Voice replies are recorded, Compact & Resume waits for a live call to end, and queued Eve messages can be sent in the next quiet pause.
-- The Archive Browser opens immediately and refreshes in the background instead of making a large archive rebuild block the button.
+- **OpenRouter** can answer ordinary Eve chat turns and can also run workers with Eve's approved local tools. Worker failures stay attributed to OpenRouter and never silently fall back to another backend.
+- **GPT-6** appears as one model family with Instant, Medium, and High lanes, and its current ChatGPT renderer is captured as readable answer text instead of opaque content-reference pointers.
+- **Archive Browser** opens immediately, catches up automatically as durable chats change, and keeps retained attachments readable after restart without needing the original provider.
+- Local Ollama, Ollama Cloud, OpenRouter, and ChatGPT turns preserve their provider/model provenance in the same durable conversation.
+- A restarted Chrome session no longer leaves a redundant Prime tab showing Eve's own internal heartbeat or post-Voice checkpoint as an unsent draft; real human drafts remain protected.
+- The Agents & automation settings layout keeps worker-model fields readable instead of collapsing their descriptions.
 
-Read the full **[2.3.6 first-user guide and release notes](docs/release-notes/v2.3.6.md)** or browse the **[CHANGELOG](CHANGELOG.md)** for the running history.
+Read the full **[2.3.7 first-user guide and release notes](docs/release-notes/v2.3.7.md)** or browse the **[CHANGELOG](CHANGELOG.md)** for the running history.
 
 ## Requirements
 
@@ -207,6 +206,6 @@ Thanks to everyone testing the awkward edge cases, reporting what breaks, and he
 
 ---
 
-**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[First-user guide & release notes](docs/release-notes/v2.3.6.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
+**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[First-user guide & release notes](docs/release-notes/v2.3.7.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
 
 <p align="center"><sub>ParadigmEve is not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>

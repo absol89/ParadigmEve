@@ -1727,9 +1727,10 @@ describe('app-owned retained tab pool', () => {
     const worker = await budget({ recent: 5 });
     expect(worker.tabsRemove.mock.calls.map(call => call[0])).toEqual([4]);
   });
-  it('never removes copies of a protected active conversation', async () => {
+  it('protects the elected active conversation while retiring a proven-safe redundant copy', async () => {
     const worker = await budget({ protectDuplicate: true, retired: true });
-    expect(worker.tabsRemove.mock.calls.map(call => call[0]).sort()).toEqual([2, 5]);
+    expect(worker.tabsRemove.mock.calls.map(call => call[0]).sort()).toEqual([2, 4, 5]);
+    expect(worker.tabsRemove).not.toHaveBeenCalledWith(3);
   });
   it('orders terminal retirement by work time without evicting other waiting chats', async () => {
     const worker = await budget({ reverseActivity: true, recent: 5, retired: true });

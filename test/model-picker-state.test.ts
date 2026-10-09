@@ -312,6 +312,10 @@ it('reads GPT-6 Instant and thinking lanes as one family, and names "5.6" in ful
     const panel = doc.createElement('div'); panel.setAttribute('data-model-picker-view', '');
     (panel as any).__reactFiber$test = fiber;
     panel.innerHTML = '<div role="menuitem" data-model-picker-view-toggle></div><div role="menuitem" aria-keyshortcuts="ArrowLeft ArrowRight"></div>';
+    panel.querySelector('[aria-keyshortcuts]')!.addEventListener('keydown', (key: any) => {
+      const at = lanes.indexOf(props.selectedPowerSelection) + (key.key === 'ArrowRight' ? 1 : -1);
+      if (lanes[at]) props.selectedPowerSelection = lanes[at];
+    });
     panel.addEventListener('keydown', (key: any) => { if (key.key === 'Escape') menu.remove(); });
     menu.append(panel); doc.body.append(menu);
   });
@@ -321,6 +325,14 @@ it('reads GPT-6 Instant and thinking lanes as one family, and names "5.6" in ful
   expect(failures).toEqual([]);
   expect(models.find((model: any) => model.id === 'gpt-6')).toEqual({ id: 'gpt-6', label: 'GPT-6', efforts: ['none', 'medium', 'high'], aliases: ['gpt-6', 'gpt-6-thinking'] });
   expect(models.find((model: any) => model.id === 'gpt-5-6')).toMatchObject({ label: 'GPT-5.6', efforts: ['none', 'high'] });
+  // The grouped family is actionable, not discovery-only: Eve can move between GPT-6's
+  // automatic Instant lane and its thinking lanes while preserving the provider's exact slug.
+  expect(await (win as any).CLF_DOM.selectModelSettings('gpt-6', 'none')).toBe(true);
+  expect(props.selectedPowerSelection).toBe(lanes[0]);
+  expect(await (win as any).CLF_DOM.selectModelSettings('gpt-6', 'medium')).toBe(true);
+  expect(props.selectedPowerSelection).toBe(lanes[1]);
+  expect(await (win as any).CLF_DOM.selectModelSettings('gpt-6', 'high')).toBe(true);
+  expect(props.selectedPowerSelection).toBe(lanes[2]);
 });
 it('collapses equivalent intelligence and reasoning controls to one exact shell picker owner', async () => {
   page = new JSDOM('<form data-chatgpt-composer><div contenteditable="true" role="textbox"></div><button type="button" data-codex-intelligence-trigger data-selected-reasoning-effort="high">Select ChatGPT model</button><button type="button" data-composer-navigation-target="reasoning">Reasoning</button><button type="submit">Send</button></form>',

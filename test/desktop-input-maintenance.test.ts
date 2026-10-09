@@ -162,6 +162,47 @@ it('prefers the active duplicate tab for a conversation when electing a new dura
   expect(h.create).not.toHaveBeenCalled();
 });
 
+it('restart with duplicate Prime tabs elects one input target and retires only an app-owned stale draft duplicate', async () => {
+  const h = await worker([{ id: firstId, conversationId: secondId, recoveryTurnId: 'prime-restart-turn' }]);
+  h.tabs.push(
+    { id: 7, active: false, url: `https://chatgpt.com/c/${secondId}` },
+    { id: 8, active: true, url: `https://chatgpt.com/c/${secondId}` }
+  );
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'duplicate-prime', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 1 });
+  await h.authorizeDocument({ tab: { id: 8 }, documentId: 'elected-prime', frameId: 0, url: h.tabs[1]!.url }, { navigationEpoch: 1 });
+  const baseFetch = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation(async (url, init) => {
+    const reply = await baseFetch(url, init);
+    if (new URL(url).pathname !== '/status') return reply;
+    return { ...reply, json: async () => ({ ok: true,
+      inputs: [{ id: firstId, conversationId: secondId, recoveryTurnId: 'prime-restart-turn' }],
+      managedConversations: [secondId], nonDiscardableConversations: [secondId], background: true }) };
+  });
+  h.sendMessage.mockImplementation(async (tabId, message): Promise<any> => {
+    if (message.type === 'clf-desktop-input') return { ok: true };
+    if (message.type === 'clf-tab-close-check') return {
+      ok: true,
+      safe: tabId === 7 && message.discardInternalDraft === true,
+      conversationId: secondId,
+      navigationEpoch: 1
+    };
+    return { ok: true, ready: true };
+  });
+  h.remove.mockImplementation(async id => { h.tabs.splice(h.tabs.findIndex(tab => tab.id === id), 1); });
+
+  await h.maintain();
+
+  expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toEqual([
+    [8, { type: 'clf-desktop-input', id: firstId, conversationId: secondId, recoveryTurnId: 'prime-restart-turn' }]
+  ]);
+  expect(h.sendMessage).toHaveBeenCalledWith(7, {
+    type: 'clf-tab-close-check', conversationId: secondId, discardInternalDraft: true
+  }, { documentId: 'duplicate-prime' });
+  expect(h.remove).toHaveBeenCalledExactlyOnceWith(7);
+  expect(h.create).not.toHaveBeenCalled();
+  expect(h.tabs.map(tab => tab.id)).toEqual([8]);
+});
+
 it('carries the direct-turn offer only to the elected existing conversation', async () => {
   const directTurn = { id: 'tool-free-turn', startedAt: 1000 };
   const h = await worker([{ id: firstId, conversationId: secondId, directTurn }]);

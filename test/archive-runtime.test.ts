@@ -275,6 +275,48 @@ describe('ArchiveRuntime', () => {
     expect(status).toContain('"updating":false');
   });
 
+  it('automatically republishes an already-open static archive after a durable session commit', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-live-static-sync';
+    let listener: ((sessionId: string) => void) | null = null;
+    let current: CurrentSessionArchiveSnapshot = {
+      summary: summary(id, 'Live voice archive'),
+      events: [{ ...user(1, 'older durable turn'), messageId: 'voice-old' } as SessionEvent]
+    };
+    const runtime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'runtime-test',
+      staticRefreshDebounceMs: 0,
+      source: {
+        listSessionIds: async () => [id],
+        readSession: async () => current,
+        readAsset: async () => null,
+        subscribeCommitted: next => { listener = next; return () => { listener = null; }; }
+      }
+    });
+
+    await runtime.start();
+    await runtime.drain();
+    await runtime.rebuildDerived();
+    const before = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    expect((await Promise.all(before.chunks.map(chunk => fs.readFile(chunk, 'utf8')))).join('\n')).not.toContain('NEW VOICE TURN');
+
+    current = {
+      summary: { ...summary(id, 'Live voice archive'), updatedAt: 500 },
+      events: [
+        { ...user(1, 'older durable turn'), messageId: 'voice-old' } as SessionEvent,
+        { ...assistant(2, 'NEW VOICE TURN', true), messageId: 'voice-new', time: 500 } as SessionEvent
+      ]
+    };
+    listener!(id);
+    await runtime.drain();
+    await vi.waitFor(async () => expect(runtime.staticSiteStale()).toBe(false));
+
+    const after = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    expect((await Promise.all(after.chunks.map(chunk => fs.readFile(chunk, 'utf8')))).join('\n')).toContain('NEW VOICE TURN');
+    await runtime.dispose();
+  });
+
   it('publishes a page-authored user row once no app receipt can still arrive', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-page-authored';

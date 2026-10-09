@@ -2695,6 +2695,15 @@ input.num {
   min-width: 132px;
 }
 
+/* Free-text settings share the row with explanatory copy. Keep their width
+   bounded, rather than letting the generic input width collapse the copy. */
+.setting > input[type='text'],
+.setting > input[type='url'] {
+  flex: 0 1 46%;
+  width: 46%;
+  min-width: 0;
+}
+
 /* The row's button is its action; the explanation is the thing that yields. Left shrinkable
    it clipped to "Select mod" rather than letting the hint ellipsize. */
 .setting .btn {

@@ -278,8 +278,7 @@ describe('static archive HTML', () => {
     expect(banner.textContent).toContain('Updating the archive with your newest chats');
     window.__EVE_ARCHIVE_STATUS__({ generation, updating: false });
     expect(banner.hidden).toBe(true);
-    // Once the reader is using the page, a newer generation is offered rather than forced.
-    window.dispatchEvent(new window.Event('pointerdown'));
+    // A newer generation must be offered even before any reader interaction.
     window.__EVE_ARCHIVE_STATUS__({ generation: newer, updating: false });
     expect(banner.hidden).toBe(false);
     expect(banner.textContent).toContain('Newer chats are ready.');

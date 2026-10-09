@@ -590,6 +590,13 @@ describe('one synchronous page snapshot per observer turn', () => {
     const composer = live.document.getElementById('prompt-textarea')!;
     composer.textContent = 'Unsent user draft';
     expect(await check()).toMatchObject({ safe: false });
+    expect(await live.runtimeMessage({ type: 'clf-tab-close-check', conversationId, discardInternalDraft: true }))
+      .toMatchObject({ safe: false });
+    expect(composer.textContent).toBe('Unsent user draft');
+    composer.textContent = '[[PARADIGMEVE-CHAT-REVIEW:v1]]\ninternal after-turn heartbeat';
+    expect(await live.runtimeMessage({ type: 'clf-tab-close-check', conversationId, discardInternalDraft: true }))
+      .toMatchObject({ safe: true, conversationId });
+    expect(composer.textContent).toBe('');
     composer.textContent = '';
     const api = (live.window as any).CLF_DOM;
     const original = api.hasComposerAttachments;

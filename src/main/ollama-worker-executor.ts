@@ -136,9 +136,9 @@ export function startOllamaWorkerExecutor(): () => void {
       if (!['active', 'waking', 'detached'].includes(row.info.state)) continue;
       failAgent(
         row.info.id,
-        'ParadigmEve restarted while this one-shot Ollama worker was running, so its local model transcript cannot be resumed.',
-        `[${row.info.id} failed] ParadigmEve restarted while this one-shot Ollama worker was running. ` +
-          'Its local model transcript is intentionally not reconstructed; spawn a replacement if the task is still needed.',
+        `ParadigmEve restarted while this one-shot ${backendName(row.backend)} worker was running, so its model transcript cannot be resumed.`,
+        `[${row.info.id} failed] ParadigmEve restarted while this one-shot ${backendName(row.backend)} worker was running. ` +
+          'Its model transcript is intentionally not reconstructed; spawn a replacement if the task is still needed.',
         { revivable: false },
         run.runId
       );

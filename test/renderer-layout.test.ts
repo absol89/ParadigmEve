@@ -485,6 +485,15 @@ describe('the settings sheet', () => {
     expect(css.indexOf('.setting select {')).toBeGreaterThan(css.indexOf("input[type='number'],"));
   });
 
+  it('keeps worker model text fields from collapsing their setting descriptions', () => {
+    for (const id of ['ollamaWorkerModel', 'openrouterWorkerModel']) {
+      const input = document.getElementById(id)!;
+      expect(input.getAttribute('type')).toBe('text');
+      expect(input.closest('.setting')?.querySelector('.setting-text')).not.toBeNull();
+    }
+    expect(css).toMatch(/\.setting > input\[type='text'\],\s*\.setting > input\[type='url'\]\s*\{\s*flex: 0 1 46%;\s*width: 46%;/);
+  });
+
   /** The row's action never shrinks; its explanation is the thing that ellipsizes. */
   it('never shrinks the button in a settings row', () => {
     expect(rule('.setting .btn')).toContain('flex: 0 0 auto');

@@ -49,7 +49,7 @@ Persisted pairing from yesterday cannot satisfy post-install recovery readiness 
 
 ## Browser repair authority
 
-The current 2.3.6 source line uses **bridge protocol 15**.
+The current 2.3.7 source line uses **bridge protocol 15**.
 Model discovery excludes command-marked handover and worker tabs. The page also refuses discovery
 while it has a command marker, active command attempt or command journal gate, so opening the model
 picker cannot replace the composer owned by that command. Background-window reconciliation leaves

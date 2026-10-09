@@ -3,17 +3,17 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.3.6 source line and the acceptance gates to use before packaging, installing, or calling a change
+2.3.7 source line and the acceptance gates to use before packaging, installing, or calling a change
 complete. Public release or installed-runtime status needs its own release/runtime evidence; source
 version alone does not prove either one.
 
 ## Current product state
 
-- Current source package/app line: **2.3.6**.
+- Current source package/app line: **2.3.7**.
 - The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.3.6 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.3.6 runtime.
+- A 2.3.7 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.3.7 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.

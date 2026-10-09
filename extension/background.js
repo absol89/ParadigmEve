@@ -2786,7 +2786,10 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
     const conversationId = conversationForTab(tab);
     if (!Number.isInteger(tab.id) || tab.pinned) continue;
     const duplicate = keeper.get(conversationId) !== tab.id && remaining.some(other => other.id !== tab.id && conversationForTab(other) === conversationId);
-    if (protectedChats.has(conversationId)) continue;
+    // A pending/recovery input protects the conversation's elected page, not every redundant
+    // Chrome-restore copy of that same conversation. Let an exact duplicate reach the page-side
+    // close proof; that proof still refuses human drafts, live work and ambiguous documents.
+    if (protectedChats.has(conversationId) && !duplicate) continue;
     // App policy can release an idle page without retiring its durable worker/chat.
     // Keep the selected page for reading; terminal/duplicate cleanup keeps its own rules.
     if (!duplicate && !retired.has(conversationId) && !closable.has(conversationId)) continue;
@@ -2804,6 +2807,7 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
       if (current.pinned || (idlePage && current.active) || conversationFromUrl(current.url) !== conversationId || current.pendingUrl) continue;
 
       const proof = await tabReply(tab.id, { type: 'clf-tab-close-check', conversationId,
+        ...(duplicate ? { discardInternalDraft: true } : {}),
         ...(cancelledDecisions.length ? { cancelledDecisions } : {}) }, { documentId: source.documentId });
       if (proof?.safe !== true || proof.conversationId !== conversationId || proof.navigationEpoch !== source.navigationEpoch || !ownsDocument(source)) continue;
       const latest = await chrome.tabs.get(tab.id);

@@ -20,6 +20,7 @@ const {
   finishAgent,
   issueWorkerExecutionPrincipal,
   onExecutorSpawnRequest,
+  offerMessages,
   pendingCount,
   resetAgentsForTests,
   restoreSwarm,
@@ -126,18 +127,36 @@ describe('production Ollama worker executor', () => {
     resetOpenRouterCatalogForTests();
     await setSecret('openRouterApiKey', 'or-worker-key');
     const base = getConfig();
+    const approved = path.join(dir, 'openrouter-executor');
+    await fs.mkdir(approved, { recursive: true });
+    await fs.writeFile(path.join(approved, 'note.txt'), 'OPENROUTER TOOL OK\n', 'utf8');
     await saveConfig({
       ...base,
       execution: { orchestrator: 'gpt-chat', worker: 'openrouter' },
       agentRuntime: { ...base.agentRuntime, openrouter: { model: 'stepfun/step-5-preview' } },
+      roots: [{ name: 'workspace', path: approved }],
+      capabilities: { ...base.capabilities, read: true },
       multiAgent: { ...base.multiAgent, enabled: true }
     });
+    setWorkspaceFor('chat:prime-openrouter-executor', { virtual: '/workspace', real: approved });
     const browser = vi.fn();
     const dropBrowser = onExecutorSpawnRequest('gpt-chat', browser);
-    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => String(input).endsWith('/models')
-      ? Response.json({ data: [{ id: 'stepfun/step-5-preview', name: 'Step 5', architecture: { input_modalities: ['text'], output_modalities: ['text'] },
-        supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } }] })
-      : Response.json({ choices: [{ message: { content: 'OPENROUTER_WORKER_OK' } }] }));
+    let completion = 0;
+    const fetch = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      if (String(input).endsWith('/models')) {
+        return Response.json({ data: [{ id: 'stepfun/step-5-preview', name: 'Step 5', architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } }] });
+      }
+      completion += 1;
+      if (completion === 1) {
+        return Response.json({ choices: [{ message: { content: '', tool_calls: [{
+          id: 'read-note',
+          type: 'function',
+          function: { name: 'read', arguments: JSON.stringify({ paths: ['note.txt'] }) }
+        }] } }] });
+      }
+      return Response.json({ choices: [{ message: { content: 'OPENROUTER_WORKER_OK' } }] });
+    });
     vi.stubGlobal('fetch', fetch);
     const stop = startOllamaWorkerExecutor();
     try {
@@ -146,10 +165,16 @@ describe('production Ollama worker executor', () => {
       await saveConfig({ ...getConfig(), agentRuntime: { ...getConfig().agentRuntime, openrouter: { model: 'other/model' } } });
       await vi.waitFor(() => expect(workerInfo('worker-1', started.runId)).toMatchObject({ state: 'finished', result: 'OPENROUTER_WORKER_OK' }));
       expect(browser).not.toHaveBeenCalled();
-      const chat = fetch.mock.calls.find((call) => String(call[0]) === 'https://openrouter.ai/api/v1/chat/completions')!;
-      const init = chat[1] as RequestInit;
+      expect(offerMessages('prime').map((message) => message.text).join('\n')).toContain('OPENROUTER_WORKER_OK');
+      const chats = fetch.mock.calls.filter((call) => String(call[0]) === 'https://openrouter.ai/api/v1/chat/completions');
+      expect(chats).toHaveLength(2);
+      const init = chats[0]![1] as RequestInit;
       expect((init.headers as Record<string, string>).authorization).toBe('Bearer or-worker-key');
       expect(JSON.parse(String(init.body))).toMatchObject({ model: 'stepfun/step-5-preview', stream: false });
+      const secondBody = JSON.parse(String((chats[1]![1] as RequestInit).body));
+      expect(secondBody.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', content: expect.stringContaining('OPENROUTER TOOL OK'), tool_call_id: 'read-note' })
+      ]));
       expect(fetch.mock.calls.every((call) => String(call[0]).startsWith('https://openrouter.ai/api/v1/'))).toBe(true);
     } finally {
       stop();
@@ -162,6 +187,80 @@ describe('production Ollama worker executor', () => {
     await saveConfig({ ...getConfig(), agentRuntime: { ...getConfig().agentRuntime, openrouter: { model: '' } } });
     expect(() => spawn({ caller: { conversationId: 'prime-openrouter-missing' }, workers: [{ task: 'must not start' }] }))
       .toThrow(/OpenRouter.*no OpenRouter model is configured.*No run or worker was created/i);
+  });
+
+  it('fails an OpenRouter worker in place when its provider call fails and never falls back to GPT', async () => {
+    const { initSecretsPath, setSecret, clearSecret } = await import('../src/main/secrets.js');
+    const { resetOpenRouterCatalogForTests } = await import('../src/main/openrouter-client.js');
+    initSecretsPath(dir);
+    resetOpenRouterCatalogForTests();
+    await setSecret('openRouterApiKey', 'or-worker-key');
+    const base = getConfig();
+    await saveConfig({
+      ...base,
+      execution: { orchestrator: 'gpt-chat', worker: 'openrouter' },
+      agentRuntime: { ...base.agentRuntime, openrouter: { model: 'fixture/tool-model' } },
+      multiAgent: { ...base.multiAgent, enabled: true }
+    });
+    const browser = vi.fn();
+    const dropBrowser = onExecutorSpawnRequest('gpt-chat', browser);
+    const fetch = vi.fn(async (input: string | URL | Request) => String(input).endsWith('/models')
+      ? Response.json({ data: [{ id: 'fixture/tool-model', name: 'Fixture tool model', architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+        supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } }] })
+      : new Response('provider down', { status: 503 }));
+    vi.stubGlobal('fetch', fetch);
+    const stop = startOllamaWorkerExecutor();
+    try {
+      const started = spawn({ caller: { conversationId: 'prime-openrouter-failure' }, workers: [{ task: 'must fail here' }] });
+      await vi.waitFor(() => expect(workerInfo('worker-1', started.runId)).toMatchObject({
+        state: 'failed',
+        revivable: false,
+        result: expect.stringContaining('OPENROUTER_HTTP_ERROR: 503')
+      }));
+      expect(browser).not.toHaveBeenCalled();
+      expect(pendingCount('prime', started.runId)).toBe(1);
+      const report = offerMessages('prime').map((message) => message.text).join('\n');
+      expect(report).toContain('OpenRouter worker execution failed');
+      expect(report).toContain('No fallback backend was used');
+    } finally {
+      stop();
+      dropBrowser();
+      vi.unstubAllGlobals();
+      await clearSecret('openRouterApiKey');
+    }
+  });
+
+  it('reports an interrupted OpenRouter worker as OpenRouter after restart', async () => {
+    const base = getConfig();
+    await saveConfig({
+      ...base,
+      execution: { orchestrator: 'gpt-chat', worker: 'openrouter' },
+      agentRuntime: { ...base.agentRuntime, openrouter: { model: 'fixture/tool-model' } },
+      multiAgent: { ...base.multiAgent, enabled: true }
+    });
+    const started = spawn({ caller: { conversationId: 'prime-openrouter-restart' }, workers: [{ task: 'in flight' }] });
+    const snapshot = structuredClone(snapshotSwarm()!);
+    const run = snapshot.activeRuns?.find((row) => row.runId === started.runId);
+    const worker = run?.agents.find((row) => row.info.id === 'worker-1');
+    if (!worker) throw new Error('worker snapshot missing');
+    worker.backend = 'openrouter';
+    worker.info.state = 'active';
+    resetAgentsForTests();
+    restoreSwarm(snapshot);
+
+    const stop = startOllamaWorkerExecutor();
+    try {
+      expect(workerInfo('worker-1', started.runId)).toMatchObject({
+        state: 'failed',
+        revivable: false,
+        result: expect.stringMatching(/OpenRouter worker.*cannot be resumed/i)
+      });
+      expect(pendingCount('prime', started.runId)).toBe(1);
+      expect(offerMessages('prime').map((message) => message.text).join('\n'))
+        .toMatch(/restart.*OpenRouter worker/i);
+    } finally {
+      stop();
+    }
   });
 
   it('rejects missing Ollama runtime settings before it creates a run and never falls back', async () => {

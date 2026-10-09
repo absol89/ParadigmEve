@@ -601,21 +601,18 @@ const LAZY_SCRIPT = `
     applySort();
   });
   // The app republishes this page when newer chats are archived and says so in status.js.
-  // While a refresh runs, say so; once a newer generation is published, reload into it unless the
-  // reader has started using this page, then offer the reload instead.
+  // While a refresh runs, say so; once a newer generation is published, offer a manual
+  // reload without interrupting the reader, even if they have not interacted yet.
   const ownGeneration = document.documentElement.getAttribute('data-archive-generation') || '';
   const banner = document.createElement('div');
   banner.className = 'archive-status';
   banner.setAttribute('role', 'status');
   banner.hidden = true;
   document.body.prepend(banner);
-  let touched = false;
-  for (const kind of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(kind, () => { touched = true; }, { once: true, passive: true });
   globalThis.__EVE_ARCHIVE_STATUS__ = status => {
     if (!status || typeof status !== 'object') return;
     const newer = typeof status.generation === 'string' && /^g-[a-f0-9]{32}$/.test(status.generation) && status.generation !== ownGeneration;
     if (newer) {
-      if (!touched) { location.reload(); return; }
       banner.textContent = 'Newer chats are ready. ';
       const reload = document.createElement('button');
       reload.type = 'button';

@@ -26,7 +26,8 @@ operation.
 - OpenRouter as a worker driver. Choose OpenRouter as the Worker driver in Agent execution and set the OpenRouter
   worker model (for example `stepfun/step-5-preview`); workers then run through the same local tool loop with the
   stored OpenRouter key. The model is frozen when a worker starts, a missing model refuses the spawn before any run
-  is created, and nothing falls back to another driver. The owning agent still runs in ChatGPT.
+  is created, provider failures stay visibly OpenRouter-owned, restart interruption is reported as OpenRouter, and
+  nothing falls back to another driver. The owning agent still runs in ChatGPT.
 
 ### Fixed
 
@@ -51,6 +52,16 @@ operation.
   450-chat archive, mostly the search index the page does not use). Opening now joins a refresh already under way
   or starts one that rebuilds only the pages, the page says it is updating, and it reloads into the newer version
   (or offers Reload once you have started reading).
+- Once the static Archive Browser has been opened, a later durable session commit schedules a bounded republish so
+  current Voice/text turns become browseable without a reboot or another full manual rebuild.
+- Retained attachment blobs survive restart and an offline archive rebuild with their filename and stable
+  content-addressed bytes, so the static archive does not need the original staged upload to keep the file.
+- Restart recovery may see duplicate restored Prime tabs, but a pending internal input now protects the elected
+  Prime rather than every duplicate. A redundant duplicate can be retired only after page-side proof, and only
+  ParadigmEve's own known chat-review/post-Voice drafts may be cleared; human drafts, attachments and live work
+  remain protected.
+- The Agents & automation worker-model text inputs keep a bounded width, preventing the Ollama/OpenRouter fields
+  from squeezing their setting descriptions into a narrow unreadable column.
 - %claude reaches the Claude Code that is really installed. When only the Claude desktop app installed it,
   its binary lives in a versioned folder under `%APPDATA%\Claude\claude-code` and was never on PATH, so Eve
   fell back to driving the desktop UI. ParadigmEve now puts the newest such build on the PATH of Eve's own
