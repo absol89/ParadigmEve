@@ -186,7 +186,8 @@ const api = {
   setCustomProviderKey: (value: string) => call<AppState>('secret:set', { value, key: 'customProviderApiKey' }),
   setOllamaKey: (value: string) => call<AppState>('secret:set', { value, key: 'ollamaApiKey' }),
   listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud'; cloud: boolean; installed: boolean; vision?: boolean }>>('ollama:models'),
-  providerPreview: (id: string, provider: { id: 'ollama'; model: string } | null, traceId?: string) =>
+  listOpenRouterModels: () => call<{ models: Array<{ id: string; name: string; route: 'openrouter'; vision: boolean; tools: boolean; contextLength: number | null; free: boolean }>; hasKey: boolean }>('openrouter:models'),
+  providerPreview: (id: string, provider: { id: 'ollama' | 'openrouter'; model: string } | null, traceId?: string) =>
     call<ProviderSwitchPreview>('sessions:providerPreview', { id, provider, ...(traceId ? { traceId } : {}) }),
   providerSwitchMark: (id: string, step: string, ms: number) => call<boolean>('diagnostics:providerSwitchMark', { id, step, ms }),
   setSessionLocalOnly: (id: string, localOnly: boolean) => call<SessionSummary | null>('sessions:setLocalOnly', { id, localOnly }),

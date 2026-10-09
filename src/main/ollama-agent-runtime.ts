@@ -91,6 +91,12 @@ function parseArguments(raw: unknown): unknown {
 
 function completionFrom(payload: unknown): LocalAgentCompletion {
   if (!payload || typeof payload !== 'object') throw new Error('OLLAMA_PROTOCOL_ERROR: response was not an object');
+  // OpenAI-compatible routers (OpenRouter) can report a provider failure inside a 200 response.
+  const failure = (payload as { error?: { message?: unknown; code?: unknown } }).error;
+  if (failure && typeof failure === 'object') {
+    const message = typeof failure.message === 'string' ? failure.message.replace(/[\r\n\t]+/g, ' ').slice(0, 240) : 'provider error';
+    throw new Error(`PROVIDER_ERROR${failure.code !== undefined ? ` ${String(failure.code).slice(0, 20)}` : ''}: ${message}`);
+  }
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== 'object') {
     throw new Error('OLLAMA_PROTOCOL_ERROR: response had no completion choice');
@@ -119,35 +125,40 @@ function completionFrom(payload: unknown): LocalAgentCompletion {
 }
 
 /**
- * OpenAI-compatible chat transport used by the dedicated Ollama worker runtime.
- * No OpenRouter/Goal vendor fields are sent. Tool authority remains in runLocalAgent().
+ * OpenAI-compatible chat transport used by the dedicated Ollama worker runtime, and by Ollama and
+ * OpenRouter chats with their own headers. No Goal vendor fields are sent. Tool authority remains
+ * in runLocalAgent().
  */
-export function createOllamaAgentModelRuntime(fetchImpl: typeof fetch = globalThis.fetch): LocalAgentModelRuntime {
+export function createOllamaAgentModelRuntime(
+  fetchImpl: typeof fetch = globalThis.fetch,
+  options: { headers?: (endpoint: string) => Promise<Record<string, string>>; label?: string } = {}
+): LocalAgentModelRuntime {
+  const headersFor = options.headers ?? ollamaHeaders;
+  const label = options.label ?? 'OLLAMA';
   return {
     async complete(request: LocalAgentModelRequest): Promise<LocalAgentCompletion> {
       const response = await fetchImpl(`${request.endpoint}/chat/completions`, {
         method: 'POST',
         redirect: 'error',
-        headers: await ollamaHeaders(request.endpoint),
+        headers: await headersFor(request.endpoint),
         body: JSON.stringify({
           model: request.model,
           stream: false,
           messages: request.messages.map(openAiMessage),
-          tools: request.tools.map((tool) => ({
-            type: 'function',
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.inputSchema
-            }
-          }))
+          // A model without tool support is asked plainly; an empty tools array can make a router refuse it.
+          ...(request.tools.length ? {
+            tools: request.tools.map((tool) => ({
+              type: 'function',
+              function: { name: tool.name, description: tool.description, parameters: tool.inputSchema }
+            }))
+          } : {})
         }),
         signal: request.signal
       });
       const raw = await boundedText(response);
       if (!response.ok) {
         const detail = raw.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 240);
-        throw new Error(`OLLAMA_HTTP_ERROR: ${response.status}${detail ? `: ${detail}` : ''}`);
+        throw new Error(`${label}_HTTP_ERROR: ${response.status}${detail ? `: ${detail}` : ''}`);
       }
       let payload: unknown;
       try {

@@ -30,7 +30,8 @@ export type ProviderRoute = ChatProviderRoute;
 export const PROVIDER_ROUTE_LABELS: Record<ProviderRoute, string> = {
   chatgpt: 'ChatGPT (OpenAI)',
   'ollama-local': 'Ollama on this computer',
-  'ollama-cloud': 'Ollama Cloud'
+  'ollama-cloud': 'Ollama Cloud',
+  openrouter: 'OpenRouter'
 };
 
 /** Ollama's cloud model ids end in `cloud` (`gemma4:cloud`, `gpt-oss:120b-cloud`). */
@@ -41,6 +42,8 @@ export function isOllamaCloudModel(model: string): boolean {
 /** Where a turn's history actually goes. A loopback daemon serving a cloud model is still cloud. */
 export function providerRoute(provider: ChatProvider | null | undefined, endpoint = resolveOllamaEndpoint()): ProviderRoute {
   if (!provider) return 'chatgpt';
+  // OpenRouter is always a remote service, whichever model it routes to.
+  if (provider.id === 'openrouter') return 'openrouter';
   if (!endpoint || endpoint.startsWith('https://') || isOllamaCloudModel(provider.model) || knownCloudModel(provider.model)) return 'ollama-cloud';
   return 'ollama-local';
 }
@@ -406,19 +409,19 @@ export async function ollamaConversation(sessionId: string, vision: boolean | nu
  */
 export async function admitChatProvider(input: {
   sessionId: string | null;
-  provider?: 'ollama';
+  provider?: ChatProvider['id'];
   model: string | null;
   providerConsent?: ProviderSwitchConsent;
   localOnly?: true;
 }, session: { id: string; localOnly?: boolean; provider?: ChatProvider; providerAuthorizations?: ChatProviderRoute[] } | null): Promise<void> {
   if (!input.sessionId) {
-    if (input.localOnly && providerRoute(input.provider === 'ollama' && input.model ? { id: 'ollama', model: input.model } : null) !== 'ollama-local') {
+    if (input.localOnly && providerRoute(input.provider && input.model ? { id: input.provider, model: input.model } : null) !== 'ollama-local') {
       throw new Error('This new chat is local only, so it needs a model on this computer, not a cloud model.');
     }
     return;
   }
   if (!session) throw new Error('This chat no longer exists');
-  const provider: ChatProvider | null = input.provider === 'ollama' && input.model ? { id: 'ollama', model: input.model } : null;
+  const provider: ChatProvider | null = input.provider && input.model ? { id: input.provider, model: input.model } : null;
   const from = providerRoute(session.provider);
   const to = providerRoute(provider);
   const authorized = session.providerAuthorizations ?? [];

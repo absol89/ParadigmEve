@@ -1845,5 +1845,16 @@
   "Maximum Ollama Cloud workers active at once.": "Högst så många Ollama Cloud-arbetare åt gången.",
   "Use tools directly in Ollama chats": "Använd verktyg direkt i Ollama-chattar",
   "When off, Ollama keeps the conversation but delegates tool work to workers.": "När det är av behåller Ollama samtalet men lämnar verktygsarbete till arbetare.",
-  "Waiting for ChatGPT's reply text. So far ChatGPT has only sent a reference to it.": "Väntar på ChatGPT:s svarstext. Hittills har ChatGPT bara skickat en hänvisning till den."
+  "Waiting for ChatGPT's reply text. So far ChatGPT has only sent a reference to it.": "Väntar på ChatGPT:s svarstext. Hittills har ChatGPT bara skickat en hänvisning till den.",
+  "OpenRouter model": "OpenRouter-modell",
+  "OpenRouter is not reachable": "OpenRouter går inte att nå",
+  "Free": "Gratis",
+  "Images": "Bilder",
+  "No tools": "Inga verktyg",
+  "tokens context": "tokens kontext",
+  "Add your OpenRouter key in Settings → Agents & automation → API provider to send.": "Lägg in din OpenRouter-nyckel under Inställningar → Agenter och automatisering → API-leverantör för att skicka.",
+  "All models": "Alla modeller",
+  "Search to see more of {0} models.": "Sök för att se fler av {0} modeller.",
+  "OpenRouter · {0}": "OpenRouter · {0}",
+  "OpenRouter · {0} (partial)": "OpenRouter · {0} (delvis)"
 }

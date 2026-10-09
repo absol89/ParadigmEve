@@ -54,12 +54,12 @@ const inputArgsBase = z.object({
    * Provider for this one turn. Absent means ChatGPT in the browser. A chat may switch provider
    * between turns; the session archive stays the single history both providers read.
    */
-  provider: z.enum(['ollama']).optional(),
+  provider: z.enum(['ollama', 'openrouter']).optional(),
   /** A new Ollama chat that starts locked to this computer (Local only ticked before the first send). */
   localOnly: z.literal(true).optional(),
   /** The switch scope the user confirmed in the composer (see provider-history.ts). */
   providerConsent: z.object({
-    to: z.enum(['chatgpt', 'ollama-local', 'ollama-cloud']),
+    to: z.enum(['chatgpt', 'ollama-local', 'ollama-cloud', 'openrouter']),
     messages: z.number().int().nonnegative(),
     images: z.number().int().nonnegative(),
     files: z.number().int().nonnegative()
@@ -103,12 +103,13 @@ function validateOpeningContext(
       message: 'Agent replacement is only valid for a top-level fresh chat'
     });
   }
-  if (input.provider === 'ollama') {
+  if (input.provider) {
+    const name = input.provider === 'openrouter' ? 'OpenRouter' : 'Ollama';
     const refuse = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
-    if (!input.model?.trim()) refuse('model', 'Choose an Ollama model before sending');
-    if (input.reasoningEffort !== null || input.nativeMode) refuse('reasoningEffort', 'ChatGPT thinking levels do not apply to Ollama');
+    if (!input.model?.trim()) refuse('model', `Choose an ${name} model before sending`);
+    if (input.reasoningEffort !== null || input.nativeMode) refuse('reasoningEffort', `ChatGPT thinking levels do not apply to ${name}`);
     if (input.claimAgentIdentity || input.replaceAgentIdentityFrom) refuse('provider', "Eve's own agent conversation stays in ChatGPT");
-    if (input.automation && input.automation !== 'off') refuse('automation', 'Goal and Loop run in ChatGPT; turn them off to send to Ollama');
+    if (input.automation && input.automation !== 'off') refuse('automation', `Goal and Loop run in ChatGPT; turn them off to send to ${name}`);
     if (input.stages?.length || input.mode === 'finish') refuse('mode', 'Staged plans and finish tasks run in ChatGPT');
     if (input.contextQuiltId) refuse('contextQuiltId', 'Thread context openings run in ChatGPT');
   }
@@ -485,7 +486,8 @@ let chain: Promise<unknown> = Promise.resolve();
 const offered = new Map<string, number>();
 const terminal = (row: InputEntry): boolean => ['sent', 'cancelled', 'failed'].includes(row.state);
 /** Rows answered in-process by a local provider. The browser and tool transports never claim them. */
-export const isLocalProviderInput = (row: Pick<InputEntry, 'provider'>): boolean => row.provider === 'ollama';
+/** Rows ParadigmEve answers in-process (Ollama, OpenRouter): never offered to the browser. */
+export const isLocalProviderInput = (row: Pick<InputEntry, 'provider'>): boolean => row.provider === 'ollama' || row.provider === 'openrouter';
 const preparable = (row: InputEntry): boolean => !isLocalProviderInput(row) && (row.state === 'queued' ||
   (row.state === 'browser' && row.requiresAuthorization === true && row.sendAuthorizedAt === undefined));
 const needsHistory = (row: InputEntry): boolean => row.purpose !== 'decision' && !row.historyRecorded &&
@@ -740,7 +742,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
         throw new Error('The current Eve conversation is still live or ambiguous; refresh before replacing it');
       }
     }
-    const local = input.provider === 'ollama';
+    const local = input.provider === 'ollama' || input.provider === 'openrouter';
     if (local && input.mode !== 'auto') input.mode = 'auto';
     const policy = input.sessionId && !local ? await sessionInputPolicy(input.sessionId) : null;
     const requestedMode = input.mode;

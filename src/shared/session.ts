@@ -490,13 +490,16 @@ export function originTitle(origin: SessionOrigin, source: string | null): strin
  * browser, which covers every chat recorded before 2.3.5. The model id is the provider's own
  * exact id (for example `gemma4:cloud`), passed through without family-specific handling.
  */
+/** Providers ParadigmEve answers in-process, beside ChatGPT in the browser. */
+export type ChatProviderId = 'ollama' | 'openrouter';
+
 export interface ChatProvider {
-  id: 'ollama';
+  id: ChatProviderId;
   model: string;
 }
 
 /** Privacy destination that may receive this chat's archived history after explicit user approval. */
-export type ChatProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud';
+export type ChatProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud' | 'openrouter';
 
 /** Local frontend id for an Ollama chat. Never a ChatGPT conversation, never opened in a browser. */
 export const OLLAMA_CONVERSATION_PREFIX = 'ollama-';

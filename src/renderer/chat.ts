@@ -1860,7 +1860,9 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
     case 'assistant_message': {
       const box = el('div', 'said');
       box.append(el('b', '', () => event.provider
-        ? event.final ? t("Ollama · {0}", [event.provider.model]) : t("Ollama · {0} (partial)", [event.provider.model])
+        ? event.provider.id === 'openrouter'
+          ? event.final ? t("OpenRouter · {0}", [event.provider.model]) : t("OpenRouter · {0} (partial)", [event.provider.model])
+          : event.final ? t("Ollama · {0}", [event.provider.model]) : t("Ollama · {0} (partial)", [event.provider.model])
         : event.final ? 'ChatGPT' : t("ChatGPT (partial)")));
       // A GPT-6 reply can first arrive as only a reference to its words; never show the pointer as them.
       box.append(isUnresolvedContentReference(event.message.text)
@@ -3699,7 +3701,7 @@ async function refreshInputQueue(): Promise<void> {
     const reflectsReceipt = (candidate: SessionSummary | undefined): boolean => {
       if (!candidate || !delivered.deliveredAt || candidate.conversationId !== delivered.conversationId) return false;
       // An Ollama turn has no browser model receipt; the session's provider is its proof.
-      if (delivered.provider === 'ollama') return candidate.provider?.model === delivered.model;
+      if (delivered.provider === 'ollama' || delivered.provider === 'openrouter') return candidate.provider?.id === delivered.provider && candidate.provider.model === delivered.model;
       if (delivered.model !== null) {
         const observed = candidate.selectedModel;
         return observed?.conversationId === candidate.conversationId && observed.model === delivered.model &&
@@ -4050,7 +4052,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   if (switching) markProviderSwitch(switchTrace, 'before-send', switchStartedAt);
   if (providerConsent === false) return false;
   if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
-  const providerIntent = provider ? { provider: 'ollama' as const, ...(composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
+  const providerIntent = provider ? { provider: provider.id, ...(provider.id === 'ollama' && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
   const consentIntent = providerConsent ? { providerConsent } : {};
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
   const mode = chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;

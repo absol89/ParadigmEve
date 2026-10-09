@@ -15,6 +15,15 @@ operation.
 
 ## [2.3.7] — Readable everywhere
 
+### Added
+
+- OpenRouter as a chat provider beside ChatGPT and Ollama. Pick OpenRouter in the composer's provider switch and
+  choose any of its models (free ones first, with image and tool support marked), for example StepFun's
+  `stepfun/step-5-preview`. It uses the OpenRouter key already stored in Settings → Agents & automation → API
+  provider, sent only to openrouter.ai. Turns run through the same tool loop as Ollama chats (a model without tool
+  support is asked plainly), switching to it mid-chat asks for consent like any provider switch, a chat locked to
+  this computer refuses it, and the archive labels its turns `openrouter` with the model.
+
 ### Fixed
 
 - GPT-6 replies reach Eve's chat and archive as their words. ChatGPT's GPT-6 renderer leaves only

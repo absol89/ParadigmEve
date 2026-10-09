@@ -28,6 +28,7 @@ import { effectiveCapabilities, getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
 import { ensureOllamaModel, ollamaModelCapabilities, resolveOllamaEndpoint } from '../ollama-client.js';
 import { createOllamaAgentModelRuntime } from '../ollama-agent-runtime.js';
+import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, openRouterModelInfo } from '../openrouter-client.js';
 import { issueLocalAgentExecutionPrincipal, revokeLocalAgentExecutionPrincipal, runLocalAgent, type LocalAgentMessage } from '../local-agent-runtime.js';
 import { localChatCoreTools } from '../local-chat-tools.js';
 import type { ToolContext } from '../mcp/kernel.js';
@@ -112,7 +113,7 @@ export function deliverLocalInput(entry: InputEntry): Promise<void> {
 
 async function run(entry: InputEntry): Promise<void> {
   if (!isLocalProviderInput(entry) || !entry.model) return;
-  const provider: ChatProvider = { id: 'ollama', model: entry.model };
+  const provider: ChatProvider = { id: entry.provider === 'openrouter' ? 'openrouter' : 'ollama', model: entry.model };
   if (!getConfig().sessions.record) {
     // Without the archive there is no history to give the model, and no place for its reply.
     await claimAndFail(entry, 'Ollama chats need session recording. Turn recording on in Settings and send again.');
@@ -150,6 +151,8 @@ async function claimAndFail(entry: InputEntry, reason: string): Promise<void> {
   changed();
 }
 
+const providerName = (provider: ChatProvider): string => provider.id === 'openrouter' ? 'OpenRouter' : 'Ollama';
+
 async function answer(sessionId: string, entry: InputEntry, provider: ChatProvider): Promise<void> {
   const turnId = `${OLLAMA_TURN_PREFIX}${entry.id}`;
   const controller = new AbortController();
@@ -176,17 +179,30 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
     return pending;
   };
   try {
-    await appendEvent(sessionId, { time: startedAt, source: 'app', kind: 'turn_start', turnId, detail: `Ollama · ${provider.model}` });
+    await appendEvent(sessionId, { time: startedAt, source: 'app', kind: 'turn_start', turnId, detail: `${providerName(provider)} · ${provider.model}` });
     changed();
-    await ensureOllamaModel(provider.model);
-    const capabilities = await ollamaModelCapabilities(provider.model);
-    const vision = capabilities ? capabilities.includes('vision') : null;
     const settings = getConfig().agentRuntime.ollama;
+    // OpenRouter: the key Settings stores for Goal, its catalog for image and tool support.
+    const routerKey = provider.id === 'openrouter' ? (await openRouterKey())?.trim() || null : null;
+    if (provider.id === 'openrouter' && !routerKey) {
+      throw new ProviderCapabilityError('OpenRouter needs an API key. Add it in Settings → Agents & automation → API provider, then send again.');
+    }
+    let vision: boolean | null;
+    let toolsSupported = true;
+    if (provider.id === 'openrouter') {
+      const info = await openRouterModelInfo(provider.model);
+      vision = info ? info.vision : null;
+      toolsSupported = info ? info.tools : true;
+    } else {
+      await ensureOllamaModel(provider.model);
+      const capabilities = await ollamaModelCapabilities(provider.model);
+      vision = capabilities ? capabilities.includes('vision') : null;
+    }
     const direct = settings.chatDirectTools !== false;
     const messages = await ollamaConversation(sessionId, vision, chatSystemPrompt(direct));
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: `chat:${sessionId}`, agentId: turnId });
     try {
-      const tools = await localChatCoreTools({
+      const tools = !toolsSupported ? [] : await localChatCoreTools({
         getContext: chatToolContext,
         principal,
         sessionId,
@@ -196,31 +212,31 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
       const result = await runLocalAgent({
         backend: 'ollama',
         principal,
-        endpoint: resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
+        endpoint: provider.id === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
         model: provider.model,
         system: '',
         task: '',
         initialMessages: messages as LocalAgentMessage[],
         tools,
-        runtime: createOllamaAgentModelRuntime(),
+        runtime: routerKey ? createOpenRouterAgentModelRuntime(routerKey) : createOllamaAgentModelRuntime(),
         signal: controller.signal,
         allowNoTools: true
       });
       reply = result.final;
-      logInfo(`session ${sessionId}: Ollama ${provider.model} local-agent turn used ${result.toolCalls} tool call(s)`);
+      logInfo(`session ${sessionId}: ${providerName(provider)} ${provider.model} local-agent turn used ${result.toolCalls} tool call(s)`);
     } finally {
       revokeLocalAgentExecutionPrincipal(principal);
     }
     if (!reply.trim()) throw new Error(`${provider.model} returned an empty reply.`);
     await write('final');
     await appendEvent(sessionId, { time: Date.now(), source: 'app', kind: 'turn_end', turnId, outcome: 'completed' });
-    logInfo(`session ${sessionId}: Ollama ${provider.model} answered input ${entry.id} in ${Date.now() - startedAt} ms`);
+    logInfo(`session ${sessionId}: ${providerName(provider)} ${provider.model} answered input ${entry.id} in ${Date.now() - startedAt} ms`);
   } catch (error) {
     const stopped = controller.signal.aborted;
     if (reply && reply !== written) await write(stopped ? 'streaming' : 'final');
     else await pending;
     if (!stopped) {
-      const reason = error instanceof ProviderCapabilityError ? error.message : `Ollama (${provider.model}) failed: ${(error as Error).message}`;
+      const reason = error instanceof ProviderCapabilityError ? error.message : `${providerName(provider)} (${provider.model}) failed: ${(error as Error).message}`;
       await appendEvent(sessionId, { time: Date.now(), source: 'app', kind: 'chat_error', message: { text: reason, truncated: false, chars: reason.length } })
         .catch(() => undefined);
       logWarn(`session ${sessionId}: ${reason}`);

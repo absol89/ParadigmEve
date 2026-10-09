@@ -81,6 +81,7 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
     offlineAttempts.push(url);
     throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }) });
   }
+  if (url.startsWith('https://openrouter.ai/api/v1/')) return openRouterFetch(url, init);
   if (!url.startsWith('http://127.0.0.1:11434/') && !url.startsWith('https://ollama.com/')) throw new Error(`unexpected network request: ${url}`);
   const body = init?.body ? JSON.parse(String(init.body)) : null;
   ollamaRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
@@ -104,6 +105,25 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
   }
   return new Response('not found', { status: 404 });
 };
+
+// ---------------------------------------------------------------- fake OpenRouter
+
+const routerRequests: Array<{ url: string; body: any; headers: Record<string, string> }> = [];
+let routerReply = 'Hello from OpenRouter';
+async function openRouterFetch(url: string, init?: RequestInit): Promise<Response> {
+  const body = init?.body ? JSON.parse(String(init.body)) : null;
+  routerRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
+  if (url === 'https://openrouter.ai/api/v1/models') return Response.json({ data: [
+    { id: 'stepfun/step-5-preview', name: 'StepFun: Step 5 Preview', context_length: 1000000,
+      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+      supported_parameters: ['tools', 'response_format', 'reasoning'], pricing: { prompt: '0', completion: '0' } },
+    { id: 'plain/no-tools', name: 'Plain', context_length: 8192,
+      architecture: { input_modalities: ['text'], output_modalities: ['text'] }, supported_parameters: [], pricing: { prompt: '0.000001', completion: '0.000002' } },
+    { id: 'images/only', name: 'Image maker', architecture: { input_modalities: ['text'], output_modalities: ['image'] }, supported_parameters: [] }
+  ] });
+  if (url === 'https://openrouter.ai/api/v1/chat/completions') return Response.json({ choices: [{ message: { content: routerReply } }] });
+  return new Response('not found', { status: 404 });
+}
 
 async function post(route: string, body: unknown) {
   const response = await realFetch(`http://127.0.0.1:${bridgePort()}${route}`, {
@@ -142,6 +162,8 @@ beforeEach(async () => {
   await writeDurableNow('session-input', []);
   input.resetInputForTests();
   ollamaRequests.length = 0;
+  routerRequests.length = 0;
+  routerReply = 'Hello from OpenRouter';
   pulled = [];
   agentReplies = [];
   replyText = 'Hello from Ollama';
@@ -642,3 +664,71 @@ it('acceptance C: an Ollama Cloud chat is archived locally as cloud and stays re
     offline = false;
   }
 }, 60_000);
+
+
+const { resetOpenRouterCatalogForTests } = await import('../src/main/openrouter-client.js');
+
+it('answers an OpenRouter chat with the stored key and archives it as OpenRouter', async () => {
+  resetOpenRouterCatalogForTests();
+  await setSecret('openRouterApiKey', 'or-test-key');
+  try {
+    routerReply = 'Step 5 says hello.';
+    const sessionId = await sendAndFinish({ provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'Hello Step 5' });
+    const rows = await readEvents(sessionId, { kinds: ['user_message', 'assistant_message'] });
+    expect(rows.find((event) => event.kind === 'assistant_message')).toMatchObject({
+      final: true, provider: { id: 'openrouter', model: 'stepfun/step-5-preview' }, message: { text: 'Step 5 says hello.' }
+    });
+    expect(history.providerRoute({ id: 'openrouter', model: 'stepfun/step-5-preview' })).toBe('openrouter');
+    const chat = routerRequests.find((request) => request.url.endsWith('/chat/completions'))!;
+    expect(chat.headers.authorization).toBe('Bearer or-test-key');
+    expect(chat.headers['X-Title']).toBe('ParadigmEve');
+    expect(chat.body).toMatchObject({ model: 'stepfun/step-5-preview', stream: false });
+    expect(Array.isArray(chat.body.tools) && chat.body.tools.length > 0).toBe(true);
+    // The key goes to OpenRouter only, never to Ollama.
+    expect(ollamaRequests.every((request) => !JSON.stringify(request.headers).includes('or-test-key'))).toBe(true);
+
+    const runtime = await rebuildArchive('archive-openrouter');
+    try {
+      const assistant = (await runtime.store.readSession(sessionId)).events.find((event) => event.kind === 'assistant_message')!;
+      expect(assistant.provider).toMatchObject({ provider: 'openrouter', model: 'stepfun/step-5-preview' });
+    } finally {
+      await runtime.dispose();
+    }
+  } finally {
+    await clearSecret('openRouterApiKey');
+  }
+});
+
+it('asks a model without tool support plainly, and says clearly when the OpenRouter key is missing', async () => {
+  resetOpenRouterCatalogForTests();
+  await setSecret('openRouterApiKey', 'or-test-key');
+  try {
+    await sendAndFinish({ provider: 'openrouter', model: 'plain/no-tools', text: 'Plain question' });
+    const chat = routerRequests.find((request) => request.url.endsWith('/chat/completions'))!;
+    expect(chat.body.tools).toBeUndefined();
+  } finally {
+    await clearSecret('openRouterApiKey');
+  }
+  routerRequests.length = 0;
+  const id = randomUUID();
+  expect((await send({ id, provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'No key yet' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  const sessionId = (await input.listInputs()).find((row) => row.id === id)!.deliveredSessionId!;
+  const events = await finished(sessionId, `ollama-turn:${id}`);
+  expect(events.find((event) => event.kind === 'chat_error')).toMatchObject({ message: { text: expect.stringContaining('OpenRouter needs an API key') } });
+  expect(events.filter((event) => event.kind === 'turn_end').at(-1)).toMatchObject({ outcome: 'failed' });
+  expect(routerRequests.some((request) => request.url.endsWith('/chat/completions'))).toBe(false);
+});
+
+it('keeps OpenRouter out of local-only chats and asks before handing a chat to it', async () => {
+  // A new chat cannot start local only on OpenRouter.
+  const refused = await send({ id: randomUUID(), provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'secret', localOnly: true });
+  expect(refused.ok).toBe(false);
+
+  const sessionId = await sendAndFinish({ provider: 'ollama', model: 'llama3.2', text: 'A local start' });
+  const preview = await history.providerSwitchPreview(sessionId, { id: 'openrouter', model: 'stepfun/step-5-preview' });
+  expect(preview).toMatchObject({ switching: true, to: 'openrouter', toLabel: 'OpenRouter' });
+  // Without that consent the send is refused.
+  const unconsented = await send({ id: randomUUID(), sessionId, provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'Go remote' });
+  expect(unconsented.ok).toBe(false);
+});

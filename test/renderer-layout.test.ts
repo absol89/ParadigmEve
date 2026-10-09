@@ -622,8 +622,9 @@ describe('provider adoption in the composer', () => {
     const start = provider.indexOf('export function providerSwitchPossible');
     const end = provider.indexOf('/**', start + 10);
     const body = provider.slice(start, end);
-    expect(body).toContain("const from = session.provider ? routeOf(session.provider.model) : 'chatgpt'");
-    expect(body).toContain("const to = provider ? routeOf(provider.model) : 'chatgpt'");
+    // Routes come from the provider itself (OpenRouter is always remote), never from a model id alone.
+    expect(body).toContain('const from = routeOfProvider(session.provider)');
+    expect(body).toContain('const to = routeOfProvider(provider)');
     expect(body).not.toContain('session.provider?.model');
     expect(body).toContain('!session.providerAuthorizations?.includes(to)');
   });
