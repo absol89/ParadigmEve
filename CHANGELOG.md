@@ -27,6 +27,8 @@ operation.
   now `ollama-local` or `ollama-cloud` with the model name. Acceptance tests prove a local Ollama chat stays
   complete and readable with no internet across a restart and an archive rebuild, and an Ollama Cloud chat
   stays readable once the cloud is unreachable.
+- A finished turn no longer stays open for ten minutes when ChatGPT answered within seconds of a turn Eve
+  had to claim without seeing its Send (Chat On Steroids #1226/#1233).
 - ChatGPT's GPT-6 model menu is read correctly. It lists each model as two lanes (`gpt-6` for Instant,
   `gpt-6-thinking` for Medium and High); they now form one GPT-6 choice with Instant, Medium and High, and a model
   named by number alone reads in full (5.6 is GPT-5.6). GPT-5.6 Sol is no longer offered by ChatGPT. Ported from
