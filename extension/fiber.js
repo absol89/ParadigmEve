@@ -260,7 +260,11 @@
     const own = (Array.isArray(item.contentReferences) ? item.contentReferences : []).filter(reference =>
       reference && reference.type === 'dil' && id && reference.source_message_id === id &&
       typeof reference.model_dil_v2?.fallbackMarkdown === 'string' && reference.model_dil_v2.fallbackMarkdown.trim());
-    return own.length === 1 ? unescapeFallbackMarkdown(own[0].model_dil_v2.fallbackMarkdown).slice(0, MAX_RENDERED_TEXT) : content;
+    // Rich replies may have several DIL blocks pointing at the same provider message.
+    // A shared fallback represents the complete reply, not one paragraph per widget.
+    // Never concatenate differing fallbacks: their ordering/completeness is unproven.
+    const fallbacks = [...new Set(own.map(reference => reference.model_dil_v2.fallbackMarkdown))];
+    return fallbacks.length === 1 ? unescapeFallbackMarkdown(fallbacks[0]).slice(0, MAX_RENDERED_TEXT) : content;
   }
   /**
    * The reply as the model wrote it. `fallbackMarkdown` keeps formatting but backslash-escapes every

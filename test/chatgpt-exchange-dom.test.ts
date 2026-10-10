@@ -379,6 +379,18 @@ describe('fiber evidence on the render-item renderer', () => {
     expect(JSON.stringify(data.turns[0].messages)).not.toContain('chatgpt-content-reference');
   });
 
+  it('archives one complete fallback shared by several rich DIL references', async () => {
+    const item = dilReply('The **whole** response.');
+    (item as any).contentReferences = [
+      { type: 'dil', source_message_id: REPLY_ID, model_dil_v2: { fallbackMarkdown: 'The **whole** response.' } },
+      { type: 'dil', source_message_id: REPLY_ID, model_dil_v2: { fallbackMarkdown: 'The **whole** response.' } }
+    ];
+    const data = await scan(item, context());
+    const reply = data.turns[0].messages.find((message: any) => message.rawMessageId === REPLY_ID);
+    expect(reply).toMatchObject({ rawText: 'The **whole** response.', stable: true });
+    expect(reply.referenceIncomplete).toBeUndefined();
+  });
+
   it('drops the escapes GPT-6 fallback Markdown adds outside code, as Markdown renders it', async () => {
     const read = async (markdown: string) => (await scan(dilReply(markdown), context())).turns[0].messages
       .find((message: any) => message.rawMessageId === REPLY_ID).rawText;
