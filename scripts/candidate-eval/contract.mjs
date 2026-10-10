@@ -9,10 +9,19 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HarnessError, atomicWrite, canonicalJson, git, packageHash, sha256, sha256File, toPosix } from './core.mjs';
 import { Journal } from './journal.mjs';
 
 export const CONTRACT_SCHEMA_VERSION = 1;
+
+const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/** Hash of the harness code itself: a run is only comparable under the code that froze it. */
+export function harnessSha256() {
+  const files = fs.readdirSync(HARNESS_DIR).filter(name => name.endsWith('.mjs')).sort();
+  return sha256(files.map(name => `${name}\0${sha256File(path.join(HARNESS_DIR, name))}`).join('\n'));
+}
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -181,6 +190,7 @@ export function freezeContract({ specFile, machine, runDir, now = Date.now() }) 
     experimentId: spec.experimentId,
     frozenAt: now,
     specSha256: sha256(specText),
+    harnessSha256: harnessSha256(),
     ...verifyOwner(spec, machine),
     machine: {
       productRepo: path.resolve(repo),
@@ -220,6 +230,9 @@ export function loadContract(runDir) {
   if (sha256(canonicalJson(contract)) !== contractHash) throw new HarnessError('CONTRACT_TAMPERED', 'contract.json does not match its hash');
   const journalHash = new Journal(absRunDir).state().contractHash;
   if (journalHash !== contractHash) throw new HarnessError('CONTRACT_TAMPERED', 'contract hash differs from the one the journal was created with');
+  if (contract.harnessSha256 !== harnessSha256()) {
+    throw new HarnessError('HARNESS_CHANGED', 'the harness code differs from the code that froze this run; freeze a new run');
+  }
   const check = (entry, what) => {
     const target = path.join(absRunDir, entry.file);
     if (!fs.existsSync(target) || sha256File(target) !== entry.sha256) throw new HarnessError('CONTRACT_TAMPERED', `${what} (${entry.file}) changed`);

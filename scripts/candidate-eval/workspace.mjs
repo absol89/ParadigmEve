@@ -75,6 +75,22 @@ export function materializeFixture(contract, taskId, dir) {
   git(dir, ['init', '--quiet', '--initial-branch=fixture'], { noHooksDir: hooks });
   git(dir, ['config', 'core.autocrlf', 'false'], { noHooksDir: hooks });
   git(dir, ['add', '--all'], { noHooksDir: hooks });
+  // Filesystems without exec bits or symlinks (Windows) cannot carry 100755/120000 through the
+  // checkout, so restore the fixture's exact index modes; the blobs themselves are identical.
+  const wanted = new Map();
+  for (const line of git(repo, ['ls-tree', '-r', '-z', task.fixture.tree]).split('\0').filter(Boolean)) {
+    const [meta, file] = line.split('\t');
+    const [mode, , blob] = meta.split(' ');
+    wanted.set(file, { mode, blob });
+  }
+  for (const line of git(dir, ['ls-files', '--stage', '-z'], { noHooksDir: hooks }).split('\0').filter(Boolean)) {
+    const [meta, file] = line.split('\t');
+    const [mode, blob] = meta.split(' ');
+    const expected = wanted.get(file);
+    if (expected && expected.blob === blob && expected.mode !== mode) {
+      git(dir, ['update-index', '--cacheinfo', `${expected.mode},${blob},${file}`], { noHooksDir: hooks });
+    }
+  }
   git(dir, ['commit', '--quiet', '--no-gpg-sign', '-m', `fixture ${taskId}`], { env: FIXTURE_IDENTITY, noHooksDir: hooks });
   const tree = git(dir, ['rev-parse', 'HEAD^{tree}'], { noHooksDir: hooks }).trim();
   if (tree !== task.fixture.tree) throw new HarnessError('WORKSPACE_MISMATCH', `materialized tree ${tree} differs from fixture ${task.fixture.tree}`);

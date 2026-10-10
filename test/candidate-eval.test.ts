@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 // @ts-ignore The Phase-0 candidate-eval harness is intentionally plain ESM JavaScript.
-import { freezeContract, loadContract } from '../scripts/candidate-eval/contract.mjs';
+import { freezeContract, harnessSha256, loadContract } from '../scripts/candidate-eval/contract.mjs';
 // @ts-ignore The Phase-0 candidate-eval harness is intentionally plain ESM JavaScript.
 import * as harness from '../scripts/candidate-eval/harness.mjs';
 // @ts-ignore The Phase-0 candidate-eval harness is intentionally plain ESM JavaScript.
@@ -44,8 +44,11 @@ write(path.join(product, 'test', 'helpers.mjs'), 'export const helper = 1;\n');
 write(path.join(product, 'package.json'), '{ "name": "fixture" }\n');
 write(path.join(product, 'docs', 'readme.md'), '# fixture\n');
 write(path.join(product, 'docs', 'skills.md'), '# Skills\n\n## Test-first\n\nWrite the failing test first.\n\n## Other\n\nUnrelated.\n');
+write(path.join(product, 'scripts', 'run.sh'), '#!/bin/sh\nexit 0\n');
 git(product, 'init', '-q', '-b', 'main');
 git(product, 'add', '-A');
+// An executable file: workspaces must reproduce its mode even where the filesystem cannot.
+git(product, 'update-index', '--chmod=+x', 'scripts/run.sh');
 git(product, 'commit', '-q', '-m', 'base');
 const baseCommit = git(product, 'rev-parse', 'HEAD');
 write(path.join(product, 'src', 'calc.mjs'), FIXED);
@@ -140,6 +143,7 @@ describe('candidate-eval Phase 0 harness', { timeout: 120_000 }, () => {
     const run = newRun('integrity');
     const contract = loadContract(run);
     expect(contract.contractHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(contract.harnessSha256).toBe(harnessSha256());
     expect(contract.strategies['test-first'].source).toMatchObject({ kind: 'vault-section', commit: fixCommit, heading: 'Test-first' });
     const skill = fs.readFileSync(path.join(run, contract.strategies['test-first'].file), 'utf8');
     expect(skill).toMatch(/^---\nname: test-first\ndescription: /);
