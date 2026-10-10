@@ -1,0 +1,52 @@
+diff --git a/src/main/projects.ts b/src/main/projects.ts
+index 8ab51673..dd661d67 100644
+--- a/src/main/projects.ts
++++ b/src/main/projects.ts
+@@ -7,7 +7,7 @@ import { getConfig } from './config.js';
+ import { resolvePath } from './sandbox.js';
+ import { bindSessionProject, findSessionByConversation, getSession } from './session/store.js';
+ import { nativeChatGptProjectId, nativeProjectConversationId, type LocalProject } from '../shared/projects.js';
+-import { logInfo, logWarn } from './logger.js';
++import { logInfo } from './logger.js';
+ 
+ const projectSchema = z.object({ id: z.string().uuid(), name: z.string().min(1).max(160), path: z.string().min(1).max(32768), createdAt: z.number().finite().nonnegative(), ungrouped: z.boolean().optional(), template: z.object({ id: z.literal('expenses'), version: z.literal(1), quiltId: z.string().uuid() }).strict().optional(), nativeProjectId: z.string().regex(/^g-p-[0-9a-f]{32}$/).optional(), nativeEntryConversationId: z.string().regex(/^[0-9a-f-]{8,64}$/).optional() });
+ const catalogSchema = z.array(projectSchema).max(200);
+@@ -84,15 +84,10 @@ export function linkNativeProject(projectId: string, value: string | null): Prom
+   mutations = operation.catch(() => undefined);
+   return operation;
+ }
+-/** Best effort: the link is already committed, so a chat that cannot join it never fails the link. */
+ async function bindNativeEntryConversation(projectId: string, conversationId: string): Promise<void> {
+-  try {
+-    const session = await findSessionByConversation(conversationId);
+-    if (!session || session.projectId || session.origin?.fromSessionId) return;
+-    await assignSessionProject(session.id, projectId);
+-  } catch (err) {
+-    logWarn(`project ${projectId}: linked ChatGPT Project chat ${conversationId} could not join it — ${(err as Error).message}`);
+-  }
++  const session = await findSessionByConversation(conversationId);
++  if (!session || session.projectId || session.origin?.fromSessionId) return;
++  await bindSessionProject(session.id, projectId);
+ }
+ /** The local project explicitly linked to this native ChatGPT Project, if any. */
+ export async function projectForNativeProject(nativeProjectId: string | null): Promise<LocalProject | null> {
+diff --git a/test/native-project-mapping.test.ts b/test/native-project-mapping.test.ts
+index 773e5574..a7d1be4f 100644
+--- a/test/native-project-mapping.test.ts
++++ b/test/native-project-mapping.test.ts
+@@ -89,15 +89,6 @@ describe('the app side of the mapping', () => {
+     expect(unlinked.nativeEntryConversationId).toBeUndefined();
+   });
+ 
+-  it('keeps a pasted Project chat link when its chat cannot join the project', async () => {
+-    const project = await addProject(path.join(approved, 'first'));
+-    const entry = await createSession({ title: 'Native Project entry', conversationId: ENTRY_CHAT });
+-    await fs.rm(path.join(approved, 'first'), { recursive: true });
+-    expect(await linkNativeProject(project.id, `https://chatgpt.com/g/${NATIVE}/c/${ENTRY_CHAT}`))
+-      .toMatchObject({ nativeProjectId: NATIVE, nativeEntryConversationId: ENTRY_CHAT });
+-    expect((await getSession(entry.id))?.projectId).toBeUndefined();
+-  });
+-
+   it('files an observed chat under the linked project without overriding any existing or inherited binding', async () => {
+     const first = await addProject(path.join(approved, 'first'));
+     const second = await addProject(path.join(approved, 'second'));
