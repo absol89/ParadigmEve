@@ -211,20 +211,30 @@ export function guardWorkspace(contract, attempt) {
   return { ok: blocking.length === 0, reasons, changed, safeToInspect: true };
 }
 
-/** Lines added/removed under src/, the patch-size measure used for ranking. */
+/**
+ * Patch-size measures used for ranking. `srcLines` counts changed lines under src/, which joining
+ * statements onto one line games (Phase-0 run 2); `srcChars` counts changed non-whitespace
+ * characters under src/, which layout cannot shrink. `testFiles` counts touched test files.
+ */
 export function diffStats(dir, fromCommit, toCommit, hooks) {
   const numstat = git(dir, ['diff', '--numstat', fromCommit, toCommit], { noHooksDir: hooks }).trim();
   let srcLines = 0;
   let totalLines = 0;
   let files = 0;
+  let testFiles = 0;
   for (const line of numstat ? numstat.split('\n') : []) {
     const [added, removed, file] = line.split('\t');
     const lines = (Number(added) || 0) + (Number(removed) || 0);
     totalLines += lines;
     files += 1;
     if (file.startsWith('src/')) srcLines += lines;
+    if (/\.test\.[cm]?[jt]sx?$/.test(file)) testFiles += 1;
   }
-  return { files, totalLines, srcLines };
+  const srcDiff = git(dir, ['diff', '--unified=0', fromCommit, toCommit, '--', 'src'], { noHooksDir: hooks });
+  const srcChars = srcDiff.split('\n')
+    .filter(line => (line.startsWith('+') || line.startsWith('-')) && !line.startsWith('+++') && !line.startsWith('---'))
+    .reduce((sum, line) => sum + line.slice(1).replace(/\s+/g, '').length, 0);
+  return { files, totalLines, srcLines, srcChars, testFiles };
 }
 
 /**

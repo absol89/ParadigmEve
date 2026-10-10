@@ -352,6 +352,7 @@ function eligibility(contract, state, attempt) {
 function compareBy(contract, a, b) {
   for (const key of contract.selection.order) {
     const value = attempt => key === 'srcLines' ? attempt.frozen.stats.srcLines
+      : key === 'srcChars' ? attempt.frozen.stats.srcChars
       : key === 'files' ? attempt.frozen.stats.files
       : key === 'cost' ? costOf(contract, attempt)
       : key === 'ordinal' ? attempt.ordinal
@@ -418,20 +419,29 @@ export function verdict(runDir) {
       const attempts = attemptsFor(state, taskId, arm);
       const selection = latestSelection(state, taskId, arm);
       const winner = selection?.winner ? state.attempts.get(selection.winner) : null;
-      const verifiedAt = winner ? Math.max(...state.evals.filter(r => r.attemptId === winner.id && r.outcome === 'pass').map(r => r.startedAt + r.durationMs)) : null;
-      const firstStart = attempts.length ? Math.min(...attempts.filter(a => a.startedAt).map(a => a.startedAt)) : null;
+      // Active time only: an attempt's own agent wall time plus its own T1/T2 evaluation. Idle gaps
+      // between commands and the T3 run made at selection time are excluded (run 2 counted them).
+      const activeMs = a => (a.wallMs ?? 0) + state.evals.filter(r => r.attemptId === a.id && r.tier !== 'T3').reduce((sum, r) => sum + r.durationMs, 0);
+      const eligible = new Set((selection?.table ?? []).filter(row => row.eligible).map(row => row.attemptId));
+      let elapsed = 0;
+      let timeToVerifiedMs = null;
+      for (const a of [...attempts].sort((x, y) => x.ordinal - y.ordinal)) {
+        elapsed += activeMs(a);
+        if (timeToVerifiedMs === null && eligible.has(a.id)) timeToVerifiedMs = elapsed;
+      }
+      const verified = attempts.filter(a => eligible.has(a.id));
       arms[arm] = {
-        attempts: attempts.map(a => ({ id: a.id, strategyId: a.strategyId, state: a.state, flags: a.flags, cost: costOf(contract, a) ?? null, wallMs: a.wallMs ?? null, evalMs: evalMs(state, a.id), toolUses: a.usage?.toolUses ?? null, similarity: a.frozen?.referenceSimilarity ?? null })),
+        attempts: attempts.map(a => ({ id: a.id, strategyId: a.strategyId, state: a.state, flags: a.flags, cost: costOf(contract, a) ?? null, wallMs: a.wallMs ?? null, evalMs: evalMs(state, a.id), toolUses: a.usage?.toolUses ?? null, testFiles: a.frozen?.stats.testFiles ?? null, similarity: a.frozen?.referenceSimilarity ?? null })),
         selected: Boolean(selection),
         winner: winner?.id ?? null,
-        winnerSrcLines: winner?.frozen.stats.srcLines ?? null,
+        winnerSize: winner ? winner.frozen.stats[contract.successCriteria.patchSizeMeasure ?? 'srcLines'] : null,
         cost: attempts.reduce((sum, a) => sum + (costOf(contract, a) ?? 0), 0),
         agentWallMs: attempts.reduce((sum, a) => sum + (a.wallMs ?? 0), 0),
         evalMs: attempts.reduce((sum, a) => sum + evalMs(state, a.id), 0),
-        // Measured: from the arm's first start to the end of its winner's last passing tier (sequential execution).
-        timeToVerifiedMs: winner && firstStart ? verifiedAt - firstStart : null,
-        // Projection only: what a parallel run would have taken (fastest verified candidate's own time).
-        projectedParallelMs: winner ? Math.min(...attempts.filter(a => latestSelection(state, taskId, arm)?.table.find(r => r.attemptId === a.id && r.eligible && r.t3 === 'pass')).map(a => (a.wallMs ?? 0) + evalMs(state, a.id))) : null
+        // Measured, sequential: active time from the arm's first attempt to its first T1/T2-verified one.
+        timeToVerifiedMs,
+        // Projection only: the fastest verified attempt's own active time, as if all ran in parallel.
+        projectedParallelMs: verified.length ? Math.min(...verified.map(activeMs)) : null
       };
     }
     const A = arms.A;
@@ -442,7 +452,7 @@ export function verdict(runDir) {
   const aVerified = tasks.filter(task => task.arms.A?.winner).length;
   const bVerified = tasks.filter(task => task.arms.B?.winner).length;
   const both = tasks.filter(task => task.arms.A?.winner && task.arms.B?.winner);
-  const bSmaller = both.filter(task => task.arms.B.winnerSrcLines < task.arms.A.winnerSrcLines).length;
+  const bSmaller = both.filter(task => task.arms.B.winnerSize < task.arms.A.winnerSize).length;
   const criterionA = bVerified >= aVerified + 1;
   const criterionB = bVerified === aVerified && bSmaller >= contract.successCriteria.smallerPatchTasks;
   const budgetOk = tasks.every(task => task.budgetOk);

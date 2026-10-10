@@ -11,6 +11,8 @@ import * as harness from '../scripts/candidate-eval/harness.mjs';
 import { Journal } from '../scripts/candidate-eval/journal.mjs';
 // @ts-ignore The Phase-0 candidate-eval harness is intentionally plain ESM JavaScript.
 import { sha256 } from '../scripts/candidate-eval/core.mjs';
+// @ts-ignore The Phase-0 candidate-eval harness is intentionally plain ESM JavaScript.
+import { diffStats } from '../scripts/candidate-eval/workspace.mjs';
 
 /**
  * Phase-0 candidate-eval harness. Each run uses a tiny synthetic product repository with one bug
@@ -339,6 +341,26 @@ describe('candidate-eval Phase 0 harness', { timeout: 120_000 }, () => {
     expect(result.criteria).toMatchObject({ aVerified: 0, bVerified: 1, criterionA: true, budgetOk: true });
     expect(result.outcome).toBe('B_BETTER');
     expect(result.tasks[0].arms.B.timeToVerifiedMs).toBeGreaterThan(0);
+  });
+
+  it('measures patch size so that joining statements onto one line cannot shrink it', () => {
+    const repo = path.join(root, 'size');
+    write(path.join(repo, 'src', 'a.ts'), 'export function f() {\n  return 1;\n}\n');
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'base');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    const measure = (text: string) => {
+      write(path.join(repo, 'src', 'a.ts'), text);
+      git(repo, 'commit', '-q', '-am', 'change');
+      const stats = diffStats(repo, base, 'HEAD', path.join(root, 'no-hooks'));
+      git(repo, 'reset', '-q', '--hard', base);
+      return stats;
+    };
+    const spread = measure('export function f() {\n  try {\n    return g();\n  } catch {\n    return 1;\n  }\n}\n');
+    const squashed = measure('export function f() {\n  try { return g(); } catch { return 1; }\n}\n');
+    expect(squashed.srcLines).toBeLessThan(spread.srcLines);
+    expect(squashed.srcChars).toBe(spread.srcChars);
   });
 
   it('recovers from a torn journal tail and interrupted steps without reusing identities', async () => {

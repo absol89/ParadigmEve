@@ -9,7 +9,10 @@
     "note": "The ParadigmEve worker broker cannot be driven from the operating session; every arm uses this same backend, model and agent type."
   },
   "scope": {
-    "allowedPaths": ["src/**", "test/**/*.test.ts"],
+    "allowedPaths": [
+      "src/**",
+      "test/**/*.test.ts"
+    ],
     "protectedPaths": [
       "package.json",
       "package-lock.json",
@@ -25,53 +28,174 @@
     ]
   },
   "strategies": [
-    { "id": "baseline", "kind": "file", "path": "strategies/baseline.md", "description": "Conventional single-worker workflow" },
-    { "id": "test-first-bug-fix", "kind": "vault-section", "path": "docs/vault/14-coding-skills.md", "heading": "Test-first bug fix", "commit": "ad63fa9a" },
-    { "id": "debug-systematically", "kind": "vault-section", "path": "docs/vault/14-coding-skills.md", "heading": "Debug systematically", "commit": "ad63fa9a" },
-    { "id": "refactor-safely", "kind": "vault-section", "path": "docs/vault/14-coding-skills.md", "heading": "Refactor safely", "commit": "ad63fa9a" }
+    {
+      "id": "baseline",
+      "kind": "file",
+      "path": "strategies/baseline.md",
+      "description": "Conventional single-worker workflow"
+    },
+    {
+      "id": "test-first-bug-fix",
+      "kind": "vault-section",
+      "path": "docs/vault/14-coding-skills.md",
+      "heading": "Test-first bug fix",
+      "commit": "ad63fa9a"
+    },
+    {
+      "id": "debug-systematically",
+      "kind": "vault-section",
+      "path": "docs/vault/14-coding-skills.md",
+      "heading": "Debug systematically",
+      "commit": "ad63fa9a"
+    },
+    {
+      "id": "refactor-safely",
+      "kind": "vault-section",
+      "path": "docs/vault/14-coding-skills.md",
+      "heading": "Refactor safely",
+      "commit": "ad63fa9a"
+    }
   ],
   "arms": {
-    "A": ["baseline"],
-    "B": ["test-first-bug-fix", "debug-systematically", "refactor-safely"]
+    "A": [
+      "baseline"
+    ],
+    "B": [
+      "test-first-bug-fix",
+      "debug-systematically",
+      "refactor-safely"
+    ]
   },
   "tasks": [
     {
       "id": "projects-native-link",
       "title": "Native Project link binds a chat to a missing project folder",
       "bugReport": "tasks/projects-native-link.md",
-      "fixture": { "baseCommit": "ad63fa9a", "patches": ["fixtures/projects-native-link.patch"] },
-      "reference": { "commit": "06f8ce98", "paths": ["src"] },
-      "oracle": [{ "path": "test/native-project-mapping.test.ts", "fromCommit": "ad63fa9a" }],
-      "subsystemTests": ["test/native-project-mapping.test.ts", "test/projects.test.ts", "test/kernel-project-workspace.test.ts"]
+      "fixture": {
+        "baseCommit": "ad63fa9a",
+        "patches": [
+          "fixtures/projects-native-link.patch"
+        ]
+      },
+      "reference": {
+        "commit": "06f8ce98",
+        "paths": [
+          "src"
+        ]
+      },
+      "oracle": [
+        {
+          "path": "test/native-project-mapping.test.ts",
+          "fromCommit": "ad63fa9a"
+        }
+      ],
+      "subsystemTests": [
+        "test/native-project-mapping.test.ts",
+        "test/projects.test.ts",
+        "test/kernel-project-workspace.test.ts"
+      ]
     },
     {
       "id": "archive-page-user-receipt",
       "title": "Page user rows are archived before their app receipt",
       "bugReport": "tasks/archive-page-user-receipt.md",
-      "fixture": { "baseCommit": "ad63fa9a", "patches": ["fixtures/archive-page-user-receipt.patch"] },
-      "reference": { "commit": "60fb6b0f", "paths": ["src"] },
-      "oracle": [{ "path": "test/archive-runtime.test.ts", "fromCommit": "ad63fa9a" }],
-      "subsystemTests": ["test/archive-runtime.test.ts", "test/archive-reboot-offline-acceptance.test.ts", "test/archive-preload.test.ts"]
+      "fixture": {
+        "baseCommit": "ad63fa9a",
+        "patches": [
+          "fixtures/archive-page-user-receipt.patch"
+        ]
+      },
+      "reference": {
+        "commit": "60fb6b0f",
+        "paths": [
+          "src"
+        ]
+      },
+      "oracle": [
+        {
+          "path": "test/archive-runtime.test.ts",
+          "fromCommit": "ad63fa9a"
+        }
+      ],
+      "subsystemTests": [
+        "test/archive-runtime.test.ts",
+        "test/archive-reboot-offline-acceptance.test.ts",
+        "test/archive-preload.test.ts"
+      ]
     },
     {
       "id": "bridge-compaction-unattributed",
       "title": "Compacting chat reloaded for its replacement's unattributed calls",
       "bugReport": "tasks/bridge-compaction-unattributed.md",
-      "fixture": { "baseCommit": "7e393cb4^", "patches": [] },
-      "reference": { "commit": "7e393cb4", "paths": ["src"] },
-      "oracle": [{ "path": "test/bridge.test.ts", "fromCommit": "7e393cb4" }],
-      "subsystemTests": ["test/bridge.test.ts", "test/bridge-done-repair-silence.test.ts"]
+      "fixture": {
+        "baseCommit": "7e393cb4^",
+        "patches": []
+      },
+      "reference": {
+        "commit": "7e393cb4",
+        "paths": [
+          "src"
+        ]
+      },
+      "oracle": [
+        {
+          "path": "test/bridge.test.ts",
+          "fromCommit": "7e393cb4"
+        }
+      ],
+      "subsystemTests": [
+        "test/bridge.test.ts",
+        "test/bridge-done-repair-silence.test.ts"
+      ]
     }
   ],
   "ladder": {
-    "T1": { "cmd": ["node", "node_modules/vitest/vitest.mjs", "run", "{oracle}"], "timeoutMs": 600000 },
-    "T2": { "cmd": ["node", "node_modules/typescript/bin/tsc", "--noEmit", "-p", "tsconfig.json"], "timeoutMs": 600000 },
-    "T3": { "cmd": ["node", "node_modules/vitest/vitest.mjs", "run", "{subsystemTests}"], "timeoutMs": 900000 }
+    "T1": {
+      "cmd": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "{oracle}"
+      ],
+      "timeoutMs": 600000
+    },
+    "T2": {
+      "cmd": [
+        "node",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit",
+        "-p",
+        "tsconfig.json"
+      ],
+      "timeoutMs": 600000
+    },
+    "T3": {
+      "cmd": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "{subsystemTests}"
+      ],
+      "timeoutMs": 900000
+    }
   },
-  "budget": { "metric": "totalTokens", "armBMultiplier": 3.5, "perAttemptWallMs": 2400000 },
-  "selection": { "order": ["srcLines", "files", "cost", "ordinal"], "topForT3": 2 },
+  "budget": {
+    "metric": "totalTokens",
+    "armBMultiplier": 3.5,
+    "perAttemptWallMs": 2400000
+  },
+  "selection": {
+    "order": [
+      "srcChars",
+      "files",
+      "cost",
+      "ordinal"
+    ],
+    "topForT3": 2
+  },
   "successCriteria": {
     "smallerPatchTasks": 2,
-    "text": "B is better if (a) B has a verified winner (T0-T3) on at least one more task than A, or (b) both arms verify the same number of tasks and B's winner has a strictly smaller src diff on at least 2 tasks; in both cases B's summed cost must stay within 3.5x A's on every task. Otherwise record NOT_BETTER: do not branch for this task class. A halted or incomplete run is INCONCLUSIVE. A blind human quality ranking is not part of this verdict."
+    "text": "B is better if (a) B has a verified winner (T0-T3) on at least one more task than A, or (b) both arms verify the same number of tasks and B's winner has a strictly smaller src diff (changed non-whitespace characters, srcChars) on at least 2 tasks; in both cases B's summed cost must stay within 3.5x A's on every task. Otherwise record NOT_BETTER: do not branch for this task class. A halted or incomplete run is INCONCLUSIVE. A blind human quality ranking is not part of this verdict.",
+    "patchSizeMeasure": "srcChars"
   }
 }
