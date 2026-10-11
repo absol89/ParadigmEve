@@ -5,10 +5,11 @@ import { expect, it, vi } from 'vitest';
 const source = readFileSync('extension/background.js', 'utf8');
 const code = source.slice(source.indexOf('let backgroundWindowFlight = null;'), source.indexOf('\nasync function deliverDesktopInputs'));
 type Tab = { id: number; windowId: number; url: string; pinned?: boolean };
-function harness(initial: Tab[], cached?: number) {
+function harness(initial: Tab[], cached?: number, mirrored?: number) {
   const tabs = new Map(initial.map(tab => [tab.id, { ...tab }]));
   const windows = new Map([...new Set(initial.map(tab => tab.windowId))].map(id => [id, { id }]));
   const stored: Record<string, unknown> = cached === undefined ? {} : { chatBackgroundWindow: cached };
+  const local: Record<string, unknown> = mirrored === undefined ? {} : { chatBackgroundWindowMirror: mirrored };
   let next = 100;
   const create = vi.fn(async (options: { url: string; windowId: number }) => {
     const tab = { id: next++, windowId: options.windowId, url: options.url };
@@ -24,21 +25,29 @@ function harness(initial: Tab[], cached?: number) {
   });
   const windowUpdate = vi.fn(async (id: number) => ({ id }));
   const api = vm.runInNewContext(`${code}\n({ createChatTab, reconcileBackgroundWindow })`, {
-    URL, URLSearchParams, Promise, cleanConversationId: (value: unknown) => typeof value === 'string' ? value : null,
+    URL, URLSearchParams, Promise, isChatGptUrl: (value: string) => /^https:\/\/(chatgpt\.com|chat\.openai\.com)\//.test(value), cleanConversationId: (value: unknown) => typeof value === 'string' ? value : null,
     conversationForTab: (tab: Tab) => new URL(tab.url).pathname.match(/^\/c\/(.+)$/)?.[1] ?? null,
     chrome: {
-      storage: { session: {
-        get: async () => ({ ...stored }),
-        set: async (values: object) => { Object.assign(stored, values); },
-        remove: async (key: string) => { delete stored[key]; }
-      } },
+      storage: {
+        session: {
+          get: async () => ({ ...stored }),
+          set: async (values: object) => { Object.assign(stored, values); },
+          remove: async (key: string) => { delete stored[key]; }
+        },
+        local: {
+          get: async () => ({ ...local }),
+          set: async (values: object) => { Object.assign(local, values); },
+          remove: async (key: string) => { delete local[key]; }
+        }
+      },
       tabs: { query: async () => [...tabs.values()].map(tab => ({ ...tab })), create, move, get },
-      windows: { create: windowCreate, update: windowUpdate, get: async (id: number) => {
-        if (!windows.has(id)) throw new Error('Window closed'); return windows.get(id);
+      windows: { create: windowCreate, update: windowUpdate, get: async (id: number, options?: { populate?: boolean }) => {
+        if (!windows.has(id)) throw new Error('Window closed');
+        return { ...windows.get(id), type: 'normal', ...(options?.populate ? { tabs: [...tabs.values()].filter(tab => tab.windowId === id) } : {}) };
       } }
     }
   }) as { createChatTab(url: string, background: boolean, active?: boolean): Promise<Tab>; reconcileBackgroundWindow(policy: object): Promise<boolean> };
-  return { ...api, tabs, stored, create, move, get, windowCreate, windowUpdate };
+  return { ...api, tabs, stored, local, create, move, get, windowCreate, windowUpdate };
 }
 const policy = { background: true, managedConversations: ['main', 'worker'] };
 
@@ -142,4 +151,30 @@ it('reuses a surviving warm catalog helper after browser restart and a new disco
 it('does not adopt a conversation or personal page carrying a catalog-looking query', async () => {
   const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/c/personal?cos-model-catalog=11111111-1111-1111-1111-111111111111' }]);
   expect(await app.reconcileBackgroundWindow({ background: true })).toBe(false);
+});
+
+// Ported from Chat On Steroids 2.1.34 (d5211066): session storage is cleared on every extension
+// reload (each self-update), so the window id is mirrored to local storage and adopted only while
+// that window still holds nothing but ChatGPT tabs.
+it('adopts its mirrored Background chats window after an extension reload', async () => {
+  const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/c/main' }], undefined, 9);
+  await app.createChatTab('https://chatgpt.com/c/recovered', true, false);
+  expect(app.create).toHaveBeenCalledWith(expect.objectContaining({ windowId: 9 }));
+  expect(app.windowCreate).not.toHaveBeenCalled();
+  expect(app.stored.chatBackgroundWindow).toBe(9);
+});
+
+it("refuses a mirrored window that also holds one of the user's own tabs", async () => {
+  const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/c/main' }, { id: 2, windowId: 9, url: 'https://example.com/' }], undefined, 9);
+  await app.createChatTab('https://chatgpt.com/c/recovered', true, false);
+  expect(app.windowCreate).toHaveBeenCalledTimes(1);
+  expect(app.tabs.get(2)!.windowId).toBe(9);
+  expect(app.local.chatBackgroundWindowMirror).not.toBe(9);
+});
+
+it('mirrors a newly created Background chats window to local storage', async () => {
+  const app = harness([]);
+  await app.createChatTab('https://chatgpt.com/c/first', true, false);
+  const id = app.windowCreate.mock.results[0]!.value;
+  expect(app.local.chatBackgroundWindowMirror).toBe((await id).id);
 });

@@ -309,3 +309,14 @@ it('uses existing process custody for nested exec and write_stdin across a conve
   const continued = await call(requestId, `text(await tools.write_stdin({session_id:${processId},chars:"owner\\r",yield_time_ms:1000}));`);
   expect(text(continued)).toContain('OWNED_RESULT');
 });
+
+// Ported from Chat On Steroids 2.1.34 (27e5d1f0, #1287).
+it('explains a "not a function" from a tool this connector does not offer', async () => {
+  const who = await identity();
+  const response = await call(who.requestId, 'try { await tools.not_a_core_tool({}); } catch (error) { text(String(error)); }');
+  const all = text(response);
+  expect(all).toContain('not a function');
+  expect(all).toContain('UNKNOWN_TOOL_NAMES: this script used tools.not_a_core_tool, which');
+  const checked = await call(who.requestId, 'text(typeof tools.not_a_core_tool);');
+  expect(text(checked)).not.toContain('UNKNOWN_TOOL_NAMES');
+});

@@ -465,6 +465,11 @@ QuickJS runs in a disposable Node Worker with no ambient Node, filesystem or net
 Children reuse the same registrar, validation, handler and dispatcher, inherit exact caller proof
 and recheck live permissions/roots. Each child records fresh evidence; only the outer response
 owns input, agent inbox and automatic terminal-result delivery. Finish signals remain direct.
+A script that calls `tools.<name>` for a name this surface does not offer (a feature check such
+as `typeof tools.x` does not count) gets one extra `UNKNOWN_TOOL_NAMES` text item at the end of
+its result. It names the connector that owns the tool, says when Core declares it but it is not enabled,
+and, when two connectors share a Secure Tunnel ID, says that ChatGPT can then send a script to the
+wrong connector. It changes neither `isError` nor what the script ran.
 
 Only explicitly emitted text/images enter the result, except Windows Desktop's `sky.get_window_state`
 adapter automatically forwards its native MCP image blocks. Its returned value contains only
@@ -685,6 +690,11 @@ so use its accessors rather than creating both `Path` and `PATH`. Preserve inher
 override an explicit reachable toolchain. `exec-hints.ts` repairs only provable narrow shell
 mismatches and otherwise abstains. Ambiguous globs/control flow keep original command semantics.
 Search exit 1 can mean no matches; git/build/mutation failure must not be relabeled success.
+ChatGPT gives the model a tool's structured result rather than its text, so `exec_command`'s
+advisory `Note:` lines (batch exit codes, benign exits, recovery hints, a still-running identical
+command from the same chat and folder) also travel in structured `supplemental_context`, and the
+kernel appends delivery's own app context (input, inbox, background output) there after them.
+A still-running identical command is only noted; the new launch is never refused.
 
 `cmds` runs sequential sections in **one shell**, preserving cwd/environment. Continue after
 ordinary nonzero exits and report section exits plus the first nonzero aggregate status. Random

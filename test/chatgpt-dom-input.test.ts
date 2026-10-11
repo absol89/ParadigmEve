@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const source = readFileSync(new URL('../extension/chatgpt-dom.js', import.meta.url), 'utf8');
 interface DomApi {
   insertPrompt(text: string, mode?: boolean | 'append', failure?: (reason: string) => void): boolean;
-  enterProject(entry: { id: string; sourceConversationId: string }, current?: () => boolean): Promise<boolean>;
+  enterProject(entry: { id: string; sourceConversationId: string }, current?: () => boolean, failure?: (reason: string) => void): Promise<boolean>;
   composerActions(): { host: HTMLElement; before: HTMLElement | null } | null;
   composerVisible(): boolean;
   generating(): boolean;
@@ -167,13 +167,14 @@ describe('composer identity', () => {
   });
 });
 
+// Ported from Chat On Steroids 2.1.34 (d46f5ab7, 1a38096b, 8e7af659, 16859e6e).
 describe('native Project entry readiness', () => {
   const entry = { id: 'g-p-11111111222233334444555555555555', sourceConversationId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
   const projectUrl = `https://chatgpt.com/g/${entry.id}-example/project`;
-  function sourceLink() {
+  function sourceLink(markup = `<a href="${projectUrl}"><span data-testid="project-folder-icon"></span>Project</a>`) {
     dom.reconfigure({ url: `https://chatgpt.com/c/${entry.sourceConversationId}` });
     const header = document.createElement('header');
-    header.innerHTML = `<a href="${projectUrl}"><span data-testid="project-folder-icon"></span>Project</a>`;
+    header.innerHTML = markup;
     document.body.prepend(header);
     return header.querySelector('a')!;
   }
@@ -198,6 +199,123 @@ describe('native Project entry readiness', () => {
     expect(clicks).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['the October 2026 header link', `<a href="/g/${entry.id}/project" data-discover="true"><span><span><svg></svg></span><span>Homelab</span></span></a>`]
+  ])('enters through %s, which no longer carries the folder icon test id', async (_shape, markup) => {
+    // Measured 2026-10-01: every Compact & resume from a Project chat failed with "could not
+    // open the source Project" because the header link lost data-testid="project-folder-icon".
+    const link = sourceLink(markup);
+    box.textContent = '';
+    link.addEventListener('click', event => { event.preventDefault(); dom.reconfigure({ url: projectUrl }); box.replaceWith(box.cloneNode(true)); });
+    expect(await api.enterProject(entry)).toBe(true);
+  });
+
+  it('enters through the current Project chrome link when it is no longer inside header or banner', async () => {
+    // Measured 2026-10-04: the native Project-home link is still exact and same-origin, but
+    // ChatGPT moved it out of both <header> and [role="banner"]. Restricting discovery to those
+    // two old shells leaves zero candidates and Compact & resume fails before Send.
+    dom.reconfigure({ url: `https://chatgpt.com/c/${entry.sourceConversationId}` });
+    const chrome = document.createElement('div');
+    chrome.innerHTML = `<a href="/g/${entry.id}/project" data-discover="true"><span>Homelab</span></a>`;
+    document.body.prepend(chrome);
+    const link = chrome.querySelector('a')!;
+    box.textContent = '';
+    const clicks = vi.fn((event: Event) => {
+      event.preventDefault();
+      dom.reconfigure({ url: projectUrl });
+      box.replaceWith(box.cloneNode(true));
+    });
+    link.addEventListener('click', clicks);
+    const entered = api.enterProject(entry);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await entered).toBe(true);
+    expect(clicks).toHaveBeenCalledTimes(1);
+  });
+
+  it('never uses an exact Project-home link rendered only inside a conversation turn', async () => {
+    dom.reconfigure({ url: `https://chatgpt.com/c/${entry.sourceConversationId}` });
+    user('Earlier turn');
+    const turn = document.querySelector('section[data-testid^="conversation-turn"]')!;
+    const transcriptLink = document.createElement('a');
+    transcriptLink.href = `/g/${entry.id}/project`;
+    transcriptLink.textContent = 'Project link quoted in chat';
+    turn.querySelector('[data-message-author-role="user"]')!.append(transcriptLink);
+    const transcriptClicks = vi.fn((event: Event) => event.preventDefault());
+    transcriptLink.addEventListener('click', transcriptClicks);
+    const entered = api.enterProject(entry);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(transcriptClicks).not.toHaveBeenCalled();
+    expect(await entered).toBe(false);
+  });
+
+  it('accepts the Project home when ChatGPT keeps the same editor element', async () => {
+    // Measured 2026-10-01: from a Project chat, the header link leads to the Project home in
+    // the same editor element. Waiting for a new editor failed every Compact & resume there.
+    const link = sourceLink(`<a href="/g/${entry.id}/project"><span>Homelab</span></a>`);
+    box.textContent = '';
+    user('Earlier turn');
+    const turn = document.querySelector('section[data-testid^="conversation-turn"]')!;
+    const kept = box;
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      dom.reconfigure({ url: `https://chatgpt.com/g/${entry.id}/project` });
+      dom.window.setTimeout(() => turn.remove(), 300);
+    });
+    const entered = api.enterProject(entry);
+    await vi.advanceTimersByTimeAsync(200);
+    // Still the source's turns on screen: not entered yet.
+    let settled = false; void entered.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await entered).toBe(true);
+    expect(document.getElementById('prompt-textarea')).toBe(kept);
+  });
+
+  it('enters while turns of an earlier page stay mounted but undisplayed', async () => {
+    // Measured 2026-10-01: the app's tab keeps its redirect steps as hidden pages, turns included.
+    const link = sourceLink(`<a href="/g/${entry.id}/project"><span>Homelab</span></a>`);
+    box.textContent = '';
+    user('Earlier turn');
+    const turn = document.querySelector('section[data-testid^="conversation-turn"]')!;
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      dom.reconfigure({ url: `https://chatgpt.com/g/${entry.id}/project` });
+      const kept = document.createElement('div');
+      kept.setAttribute('data-app-shell-page-surface', 'true'); kept.style.display = 'none';
+      turn.replaceWith(kept); kept.append(turn);
+    });
+    expect(await api.enterProject(entry)).toBe(true);
+    expect(turn.isConnected).toBe(true);
+  });
+
+  it('ignores the header of an earlier page ChatGPT keeps undisplayed', async () => {
+    // Measured 2026-10-01: a replacement tab's header held the Project link twice, one on a kept,
+    // undisplayed page. Counting both refused the only real link and the resume failed.
+    const link = sourceLink(`<div data-app-shell-page-surface="true" style="display:none"><a href="/g/${entry.id}/project"><span>Homelab</span></a></div><a href="/g/${entry.id}/project"><span>Homelab</span></a>`);
+    const shown = document.querySelectorAll('header a')[1]!;
+    box.textContent = '';
+    const clicks = vi.fn((event: Event) => { event.preventDefault(); dom.reconfigure({ url: `https://chatgpt.com/g/${entry.id}/project` }); });
+    shown.addEventListener('click', clicks);
+    expect(await api.enterProject(entry)).toBe(true);
+    expect(clicks).toHaveBeenCalledTimes(1);
+    void link;
+  });
+
+  it('refuses two header links to the same Project instead of guessing', async () => {
+    const link = sourceLink(`<a href="/g/${entry.id}/project"><span>A</span></a><a href="/g/${entry.id}/project"><span>B</span></a>`);
+    box.textContent = '';
+    const clicks = vi.fn((event: Event) => event.preventDefault());
+    document.querySelectorAll('header a').forEach(node => node.addEventListener('click', clicks));
+    const failure = vi.fn();
+    const entered = api.enterProject(entry, undefined, failure);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(await entered).toBe(false);
+    expect(failure).toHaveBeenCalledWith('source-ready-timeout:last=candidate-count-2');
+    expect(clicks).not.toHaveBeenCalled();
+    void link;
+  });
+
   it('gives the native transition its own deadline after source loading', async () => {
     const link = sourceLink();
     box.textContent = '';
@@ -219,7 +337,7 @@ describe('native Project entry readiness', () => {
     expect(clicks).toBe(1);
   });
 
-  it('lets a large source chat take longer than the transition deadline to load (upstream #212/#457)', async () => {
+  it('lets a large source chat take longer than the transition deadline to load (#212)', async () => {
     // The published reproduction: a source ready at 13 s failed against the old shared 12 s.
     const link = sourceLink();
     box.textContent = '';
@@ -243,25 +361,102 @@ describe('native Project entry readiness', () => {
     let clicks = 0;
     link.addEventListener('click', event => { event.preventDefault(); clicks++; });
     box.textContent = '';
-    const entered = api.enterProject(entry);
+    const failure = vi.fn();
+    const entered = api.enterProject(entry, undefined, failure);
     await vi.advanceTimersByTimeAsync(12_500);
     expect(clicks).toBe(1);
     expect(await entered).toBe(false);
+    expect(failure).toHaveBeenCalledWith('transition-timeout:last=source-route');
   });
 
-  it.each(['missing', 'draft', 'cancelled', 'foreign-route'])('never clicks an unready or retired source: %s', async reason => {
+  it('clicks again when ChatGPT rewrites the source route under the first click', async () => {
+    // Measured 2026-10-10: a replacement tab opens /c/<id>; ChatGPT rewrites it to /g/<id>/c/<chat>
+    // and then to /g/<id>-<name>/c/<chat>. A click between the two was taken by the router and
+    // dropped by the second rewrite, so the entry timed out on the source chat (8 of 14 attempts).
+    const link = sourceLink(`<a href="/g/${entry.id}/project"><span>Homelab</span></a>`);
+    box.textContent = '';
+    let clicks = 0;
+    link.addEventListener('click', event => {
+      event.preventDefault(); clicks++;
+      if (clicks === 1) {
+        // The router's own rewrite takes this click away.
+        dom.window.setTimeout(() => dom.reconfigure({ url: `https://chatgpt.com/g/${entry.id}-homelab/c/${entry.sourceConversationId}` }), 200);
+        return;
+      }
+      dom.reconfigure({ url: projectUrl });
+    });
+    const entered = api.enterProject(entry);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await entered).toBe(true);
+    expect(clicks).toBe(2);
+  });
+
+  it('stops clicking after two rewrites and still gives up within the transition deadline', async () => {
+    const link = sourceLink(`<a href="/g/${entry.id}/project"><span>Homelab</span></a>`);
+    box.textContent = '';
+    let clicks = 0;
+    link.addEventListener('click', event => {
+      event.preventDefault(); clicks++;
+      dom.window.setTimeout(() => dom.reconfigure({ url: `https://chatgpt.com/g/${entry.id}-v${clicks}/c/${entry.sourceConversationId}` }), 100);
+    });
+    const failure = vi.fn();
+    const entered = api.enterProject(entry, undefined, failure);
+    await vi.advanceTimersByTimeAsync(12_500);
+    expect(await entered).toBe(false);
+    expect(clicks).toBe(3);
+    expect(failure).toHaveBeenCalledWith(expect.stringMatching(/^transition-timeout:last=source-route/));
+  });
+
+  it('reports a Project route whose editor never becomes ready after the one click', async () => {
+    const link = sourceLink();
+    box.textContent = '';
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      dom.reconfigure({ url: projectUrl });
+      box.remove();
+    });
+    const failure = vi.fn();
+    const entered = api.enterProject(entry, undefined, failure);
+    await vi.advanceTimersByTimeAsync(12_500);
+    expect(await entered).toBe(false);
+    expect(failure).toHaveBeenCalledWith('transition-timeout:last=composer-not-ready');
+  });
+
+  it('reports visible source turns as the last observation when the Project transition times out', async () => {
+    const link = sourceLink();
+    box.textContent = '';
+    user('Earlier turn');
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      dom.reconfigure({ url: projectUrl });
+    });
+    const failure = vi.fn();
+    const entered = api.enterProject(entry, undefined, failure);
+    await vi.advanceTimersByTimeAsync(12_500);
+    expect(await entered).toBe(false);
+    expect(failure).toHaveBeenCalledWith('transition-timeout:last=source-turns-remain');
+  });
+
+  it.each([
+    ['missing', 'source-ready-timeout:last=source-not-ready'],
+    ['draft', 'source-ready-timeout:last=source-not-ready'],
+    ['cancelled', 'current-lost'],
+    ['foreign-route', 'wrong-route-before-click']
+  ])('never clicks an unready or retired source: %s', async (reason, expectedFailure) => {
     const link = sourceLink();
     box.textContent = reason === 'draft' ? 'Keep my draft' : '';
     box.remove();
     let current = true;
     const clicks = vi.fn((event: Event) => event.preventDefault());
     link.addEventListener('click', clicks);
-    const entered = api.enterProject(entry, () => current);
+    const failure = vi.fn();
+    const entered = api.enterProject(entry, () => current, failure);
     if (reason === 'cancelled') current = false;
     if (reason === 'foreign-route') dom.reconfigure({ url: 'https://chatgpt.com/c/bbbbbbbb-1111-4222-8333-444444444444' });
     if (reason !== 'missing') document.querySelector('form')!.prepend(box);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await entered).toBe(false);
+    expect(failure).toHaveBeenCalledWith(expectedFailure);
     expect(clicks).not.toHaveBeenCalled();
     if (reason === 'draft') expect(box.textContent).toBe('Keep my draft');
   });

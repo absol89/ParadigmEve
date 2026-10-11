@@ -642,6 +642,8 @@ export interface BackgroundTerminalInfo {
   cwd: string;
   pid: number;
   tty: boolean;
+  /** Wall-clock start, for notes such as an identical command still running. */
+  startedAt: number;
 }
 
 interface ProcessEntry {
@@ -650,6 +652,7 @@ interface ProcessEntry {
   cwd: string;
   hookCommand: string;
   tty: boolean;
+  startedAt: number;
   initialExecCommandActive: boolean;
   /** Cursor into this process's own completed buffer; offers never consume bytes. */
   delivery?: { offset: number; offer?: { end: number; publication: OutputPublication } };
@@ -739,6 +742,7 @@ export class UnifiedExecProcessManager {
         cwd: request.displayCwd,
         hookCommand: request.hookCommand,
         tty: request.tty,
+        startedAt: Date.now(),
         initialExecCommandActive: true
       });
     }
@@ -918,7 +922,8 @@ export class UnifiedExecProcessManager {
         command: entry.hookCommand,
         cwd: entry.cwd,
         pid: entry.process.pid,
-        tty: entry.tty
+        tty: entry.tty,
+        startedAt: entry.startedAt
       }));
   }
 

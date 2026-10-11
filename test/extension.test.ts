@@ -465,6 +465,12 @@ class FakeStorageArea {
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     this.data = next;
   }
+
+  async remove(keys: string[] | string): Promise<void> {
+    const next = { ...this.data };
+    for (const key of Array.isArray(keys) ? keys : [keys]) delete next[key];
+    this.data = next;
+  }
 }
 
 interface WorkerHarness {
@@ -480,6 +486,8 @@ interface WorkerHarness {
   navigateTab(tabId: number, url: string): Promise<void>;
   /** Fires the extension install/update lifecycle event. */
   installed(reason?: string): Promise<void>;
+  /** Fires the browser-startup lifecycle event. */
+  startup(): Promise<void>;
   /** Fires the periodic maintenance alarm this worker schedules for itself. */
   fireAlarm(name?: string): Promise<void>;
   /** Registers the browser document that owns subsequent tab-scoped messages. */
@@ -532,6 +540,7 @@ function loadWorker(options: {
   const tabCreatedListeners: Array<(tab: { id?: number; url?: string; pendingUrl?: string }) => void> = [];
   const tabUpdatedListeners: Array<(tabId: number, changeInfo: { url?: string; status?: string }) => void> = [];
   const installedListeners: Array<(details: { reason: string }) => void> = [];
+  const startupListeners: Array<() => void> = [];
   const alarmListeners: Array<(alarm: { name: string }) => void> = [];
   const knownTabs = new Map<
     number,
@@ -565,7 +574,6 @@ function loadWorker(options: {
     documentNumbers.set(tabId, 0);
     return created;
   };
-  const event = () => ({ addListener: () => undefined });
   const chrome = {
     storage: { local: options.local, session: options.session },
     runtime: {
@@ -581,7 +589,7 @@ function loadWorker(options: {
           installedListeners.push(fn);
         }
       },
-      onStartup: event()
+      onStartup: { addListener(fn: () => void) { startupListeners.push(fn); } }
     },
     windows: { update: windowsUpdate, get: options.windowsGet ?? (async () => ({ focused: true })) },
     scripting: {
@@ -653,6 +661,10 @@ function loadWorker(options: {
     async fireAlarm(name = 'clf-bridge-drain') {
       for (const fn of alarmListeners) fn({ name });
       for (let turn = 0; turn < 12; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+    async startup() {
+      for (const fn of startupListeners) fn();
+      for (let turn = 0; turn < 6; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
     },
     async installed(reason = 'update') {
       for (const fn of installedListeners) fn({ reason });
@@ -1962,6 +1974,35 @@ describe('worker settings authority', () => {
     }
   );
 
+  // Ported from Chat On Steroids 2.1.34 (16859e6e).
+  it('carries the pre-click message with the dispatch and the proof that a click never reached ChatGPT', async () => {
+    const posted: Record<string, unknown>[] = [];
+    const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
+      const url = new URL(input);
+      if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+      if (url.pathname === '/compact' && init.method === 'POST') {
+        posted.push(JSON.parse(String(init.body || '{}')));
+        return response(200, { ok: true });
+      }
+      return response(404, {});
+    });
+    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch,
+      tabsGet: async () => ({ id: 44, url: `https://chatgpt.com/c/${CHAT}` }) });
+    await worker.registerTab(44);
+    await worker.send({ type: 'bind', conversationId: CHAT }, 44);
+    const token = '0123456789abcdef0123456789abcdef';
+
+    await worker.send({ type: 'compact', conversationId: CHAT, token, sourceDispatch: true, before: 'm-before' }, 44);
+    await worker.send({ type: 'compact', conversationId: CHAT, token, sourceUndelivered: true, newestUserMessage: 'm-before', documentSince: 1_791_650_000_000 }, 44);
+    // The document time only qualifies the message it reports; alone it carries nothing.
+    await worker.send({ type: 'compact', conversationId: CHAT, token, sourceUndelivered: true, documentSince: 1_791_650_000_000 }, 44);
+
+    expect(posted[0]).toMatchObject({ token, sourceDispatch: true, before: 'm-before' });
+    expect(posted[1]).toMatchObject({ token, sourceUndelivered: true, newestUserMessage: 'm-before', documentSince: 1_791_650_000_000 });
+    expect(posted[2]).toMatchObject({ token, sourceUndelivered: true });
+    expect(posted[2]).not.toHaveProperty('documentSince');
+  });
+
   it.each(['new-chat', 'other-chat', 'pending-navigation'])('checks the current Chrome route for compaction after %s', async scenario => {
     const currentUrl = scenario === 'other-chat' ? 'https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
       : `https://chatgpt.com/g/g-p-abcdef1234567890abcdef1234567890/c/${CHAT}`;
@@ -2554,6 +2595,16 @@ describe('extension command delivery', () => {
     expect(fetch.mock.calls.every(([input]) => new URL(String(input)).pathname !== '/commands')).toBe(true);
     expect(backgroundSource).toContain("const RETRY_ALARM = 'clf-bridge-drain'");
     expect(backgroundSource).not.toContain("call('/commands'");
+  });
+
+  // Ported from Chat On Steroids 2.1.34 (d5211066): window ids are only valid for one browser
+  // session, so the Background chats window mirror never survives a browser start.
+  it('drops the mirrored Background chats window id when the browser starts', async () => {
+    const local = new FakeStorageArea({ ...paired, chatBackgroundWindowMirror: 9 });
+    const worker = loadWorker({ local, session: new FakeStorageArea() });
+    await worker.startup();
+    expect((await local.get('chatBackgroundWindowMirror')).chatBackgroundWindowMirror).toBeUndefined();
+    expect((await local.get('token')).token).toBe(paired.token);
   });
 
   it('re-injects the recorder into already-open ChatGPT tabs after an extension reload', async () => {

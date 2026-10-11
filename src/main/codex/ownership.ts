@@ -42,6 +42,25 @@ export const UNATTENDED_EXEC_NOTICE_MS = 120_000;
 /** At most this many running-terminal reminders per result. Completed output is paged. */
 const NOTICES_PER_KIND = 3;
 
+/**
+ * Live processes this caller opened with exactly this command text in exactly this folder.
+ *
+ * A retry after a lost tool answer starts the same long command again while the first copy is
+ * still running. Callers only use this for a note; it never refuses a launch, because running a
+ * command twice on purpose is legitimate. Ported from Chat On Steroids 2.1.34 (a9247655).
+ */
+export function runningIdenticalExec(
+  principal: string | null | undefined,
+  command: string,
+  displayCwd: string
+): Array<{ processId: number; startedAt: number }> {
+  if (!principal) return [];
+  const owned = processIdsOwnedBy(principal);
+  return unifiedExecManager.listProcesses()
+    .filter(process => owned.has(process.processId) && process.command === command && process.cwd === displayCwd)
+    .map(({ processId, startedAt }) => ({ processId, startedAt }));
+}
+
 /** Owners, keyed by the process id `exec_command` handed back as `session_id`. */
 const owners = new Map<number, string | null>();
 

@@ -11325,3 +11325,73 @@ it('retires an already armed ordinary Goal repair when its conversation is now A
     expect(((await request('GET', '/status')).body.repairs ?? []).filter((r: any) => r.conversationId === chat)).toEqual([]);
   } finally { resetGoalStateForTests(); await setSecret('openRouterApiKey', ''); await saveConfig(previous); vi.useRealTimers(); }
 });
+
+// Ported from Chat On Steroids 2.1.34 (16859e6e).
+/**
+ * 2026-10-10, native-Project E2E: an armed handoff click that never reached ChatGPT has no marker,
+ * so the transaction waited for one forever. A document loaded after the click that still shows
+ * the pre-click newest user message proves it was never received, and only that hands it back.
+ */
+describe('releasing a handoff click ChatGPT never received', () => {
+  async function armed(conversationId: string, before?: string) {
+    await pair();
+    await request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'keep going', messageId: `m-${conversationId}` }] }
+    });
+    const token = (await request('POST', '/compact', { body: { conversationId } })).body.token as string;
+    expect((await request('POST', '/compact', { body: { conversationId, token, sourceAttempt: true } })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { conversationId, token, sourceDispatch: true, ...(before ? { before } : {}) }
+    })).body.armed).toBe(true);
+    return token;
+  }
+  const undelivered = (conversationId: string, token: string, newestUserMessage: string, documentSince: number) =>
+    request('POST', '/compact', { body: { conversationId, token, sourceUndelivered: true, newestUserMessage, documentSince } });
+
+  it('hands the click back once a later idle document still shows the pre-click newest message, and allows one new Send', async () => {
+    vi.useFakeTimers();
+    try {
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ad01';
+      const token = await armed(conversationId, 'm-before');
+      const dispatchedAt = continuationByToken(token)!.sourceSend.dispatchedAt!;
+      await vi.advanceTimersByTimeAsync(20_000);
+      const released = await undelivered(conversationId, token, 'm-before', dispatchedAt + 10_000);
+      expect(released.status).toBe(200);
+      expect(continuationByToken(token)?.sourceSend.state).toBe('attempted-unresolved');
+      expect((await request('POST', '/compact', { body: { conversationId, token, sourceDispatch: true, before: 'm-before' } })).body.armed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['a newer user message is on the page (the click may have landed)', 'm-handoff', 10_000, 20_000],
+    ['the document predates the click', 'm-before', -1, 20_000],
+    ['the click was armed less than 15 s ago', 'm-before', 1_000, 5_000]
+  ])('keeps the click armed when %s', async (_why, newest, since, wait) => {
+    vi.useFakeTimers();
+    try {
+      const conversationId = `a1a1a1a1-0000-4000-8000-0000000ad1${String(wait).slice(0, 2)}`;
+      const token = await armed(conversationId, 'm-before');
+      const dispatchedAt = continuationByToken(token)!.sourceSend.dispatchedAt!;
+      await vi.advanceTimersByTimeAsync(wait);
+      expect((await undelivered(conversationId, token, newest, dispatchedAt + since)).status).toBe(409);
+      expect(continuationByToken(token)?.sourceSend.state).toBe('dispatched-unresolved');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a click armed without a recorded pre-click message (older pages) armed', async () => {
+    vi.useFakeTimers();
+    try {
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ad03';
+      const token = await armed(conversationId);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect((await undelivered(conversationId, token, 'm-before', Date.now())).status).toBe(409);
+      expect(continuationByToken(token)?.sourceSend.state).toBe('dispatched-unresolved');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

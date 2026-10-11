@@ -845,6 +845,19 @@ async function dispatchTracked(
     const added = pluginManager.redactResult({ content: delivered.content.slice(baseResult.content.length) });
     delivered = { ...delivered, content: [...baseResult.content, ...added.content as ToolResult['content']] };
   }
+  // ChatGPT gives the model a tool's structuredContent, not its text, when a tool has one. Core
+  // owns those shapes (exec_command, write_stdin); project the app appendices added above into
+  // `supplemental_context` once, without changing the tool data. A handler may already have put
+  // its own notes there; keep them ahead of what delivery appended. Ported from Chat On Steroids
+  // 5616a278 (#186) and 2.1.34 (7c719fee).
+  if (surface === 'core' && delivered.structuredContent) {
+    const supplemental = delivered.content.slice(baseResult.content.length)
+      .filter((part): part is Extract<ToolContent, { type: 'text' }> => part.type === 'text')
+      .map(part => part.text).join('\n');
+    const own = delivered.structuredContent['supplemental_context'];
+    const merged = [typeof own === 'string' ? own : '', supplemental].filter(Boolean).join('\n');
+    if (supplemental) delivered = { ...delivered, structuredContent: { ...delivered.structuredContent, supplemental_context: merged } };
+  }
   const recorderStartedAt = Date.now();
   // Event duration includes identity/handler/delivery work. Recorder and local HTTP finish
   // are measured separately because a row cannot contain the time of its own later commit.

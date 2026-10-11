@@ -91,7 +91,7 @@ export function buildServer(ctx: ToolContext, surface: SurfaceId, observe?: (con
       registerDesktopTools(nested);
     }
     return nested.invokeNested(name, args, parent);
-  }, { windowsDesktop: windowsDesktopCodeMode });
+  }, { windowsDesktop: windowsDesktopCodeMode, surface });
 
   // Cheap self-check on a property the tests assert and the design depends on: a surface
   // may register fewer tools than it declares — permissions decide that — but it may never

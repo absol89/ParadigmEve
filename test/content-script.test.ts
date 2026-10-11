@@ -12072,6 +12072,41 @@ describe('the Compact & resume control', () => {
       'Nothing to compact yet'
     );
   });
+
+  // Ported from Chat On Steroids 2.1.34 (16859e6e).
+  it("replaces an earlier attempt's own unsent handoff request instead of refusing it as a user draft", async () => {
+    // Measured 2026-10-10: a cancelled attempt left "[[CLF-HANDOFF:<old>]]…" in the box, ChatGPT
+    // restored it on every load, and the next Compact & resume was refused as "a draft is already
+    // in ChatGPT".
+    live = await harness(undefined, {
+      activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, pendingTools: 0, job: null } }),
+      compact: (message) => ({
+        ok: true,
+        data: message.sourceAttempt ? { allowed: true, checkpoint: { state: 'attempted-unresolved', messageId: null } }
+          : message.sourceDispatch ? { armed: true }
+          : message.sourceLost ? { aborted: true }
+          : {
+              started: true,
+              token: 'manual-after-residue',
+              prompt: '[[CLF-HANDOFF:manual-after-residue]]\n\nwrite the brief',
+              job: { sessionId: 's1', stage: 'handoff-pending', busy: true, handoffId: null, error: null }
+            }
+      })
+    });
+    live.hook.injectControl();
+    // The same instruction under the earlier attempt's marker; an edited one stays the person's
+    // draft ("preserves a stale COS handoff draft including user edits"). ChatGPT's editor keeps
+    // paragraphs as elements, so its text runs the marker straight into the instruction.
+    live.document.querySelector('#prompt-textarea')!.textContent = '[[CLF-HANDOFF:5WSsl9TgeKgVVLCILXp8cQ]]write the brief';
+
+    await live.hook.startCompact();
+
+    const compacts = live.sent.filter((message) => message.type === 'compact');
+    expect(compacts.some(message => typeof message.sourceError === 'string' && /A draft is already/.test(message.sourceError))).toBe(false);
+    expect(compacts.some(message => message.sourceDispatch === true)).toBe(true);
+    expect(composerText(live.document)).not.toContain('5WSsl9TgeKgVVLCILXp8cQ');
+  });
+
 });
 
 /**
@@ -13077,7 +13112,10 @@ the carried handoff behind a lost reply`;
    * as history, which is what left the chat with no app session and every later tool call
    * without a provable caller.
    */
-  it.each(['success', 'wrong-link', 'retarget', 'stale-editor'])(
+  // ChatGPT keeps the same editor element into the Project home (2026-10-01), so 'kept-editor'
+  // enters too; only the source chat still on screen after the click does not. Ported from Chat On
+  // Steroids 2.1.34 without its failure-detail diagnostics.
+  it.each(['success', 'kept-editor', 'wrong-link', 'retarget', 'source-still-shown'])(
     'Project resume enters through the source native link and fences the send: %s', async outcome => {
     const project = 'g-p-11111111222233334444555555555555';
     const source = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -13100,6 +13138,7 @@ the carried handoff behind a lost reply`;
           const editor = document.getElementById('prompt-textarea')!;
           editor.replaceWith(editor.cloneNode(true));
         }
+        if (outcome === 'source-still-shown') userTurn(document, 'source-turn', 'An earlier turn of the source chat');
         header.remove();
       });
       document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
@@ -13114,10 +13153,16 @@ the carried handoff behind a lost reply`;
       expect.objectContaining({ conversationId: source, projectEntry: true })
     ]);
     expect(clicks).toBe(outcome === 'wrong-link' ? 0 : 1);
-    expect(sends, JSON.stringify(live.sent.filter(message => ['ack', 'compact'].includes(String(message.type))))).toBe(outcome === 'success' ? 1 : 0);
-    expect(live.sent.filter(message => message.type === 'ack')).toEqual([
-      expect.objectContaining(outcome === 'success' ? { status: 'sent', conversationId: destination } : { status: 'failed' })
+    const enters = outcome === 'success' || outcome === 'kept-editor';
+    expect(sends, JSON.stringify(live.sent.filter(message => ['ack', 'compact'].includes(String(message.type))))).toBe(enters ? 1 : 0);
+    const acks = live.sent.filter(message => message.type === 'ack');
+    expect(acks).toEqual([
+      expect.objectContaining(enters ? { status: 'sent', conversationId: destination } : { status: 'failed' })
     ]);
+    if (!enters) {
+      const error = String(acks[0]?.error);
+      expect(error).toContain('ChatGPT could not open the source Project through its native link; nothing was sent');
+    }
   });
 
   it('acquires its id when a Project route names the fresh chat', async () => {
@@ -14646,7 +14691,29 @@ the carried handoff behind a lost reply`;
     expect(acks.map((ack) => ack.status)).toEqual(['sent']);
     expect(live.sent.filter((message) => message.type === 'redeem')).toHaveLength(1);
   });
-});
+
+  // Ported from Chat On Steroids 2.1.34 (16859e6e).
+  it('proves a failed Project-entry source tab safe to retire, and only for its own command', async () => {
+    const source = '6aca5f65-65a0-83e9-990e-b7cc899edb50';
+    let release!: (value: unknown) => void;
+    const redeemed = new Promise(resolve => { release = resolve; });
+    let proof: any;
+    live = await harness(`https://chatgpt.com/c/${source}?clf=cmd-entry-failed&clf_project=1#clf=cmd-entry-failed&clf_project=1`, {
+      redeem: () => redeemed,
+      ack: async message => {
+        proof = await live!.runtimeMessage({ type: 'clf-tab-close-check', conversationId: source,
+          failedCommand: { id: message.id, client: message.client } });
+        return { ok: true };
+      }
+    });
+    (live.window as any).CLF_DOM.enterProject = async () => false;
+    release({ ok: true, command: { id: 'cmd-entry-failed', type: 'resume', text: 'the brief', agent: null,
+      projectEntry: { id: 'g-p-11111111222233334444555555555555', sourceConversationId: source } } });
+    await settle(400);
+    expect(proof).toMatchObject({ safe: true, conversationId: source });
+    expect(await live.runtimeMessage({ type: 'clf-tab-close-check', conversationId: source,
+      failedCommand: { id: 'foreign-command', client: 'foreign-client' } })).toMatchObject({ safe: false });
+  });});
 
 /**
  * The context meter, and compaction that starts itself.
@@ -19068,5 +19135,61 @@ ParadigmEve is compacting this conversation.`, 'TASK\n\n- Continue.', {
     });
     expect(compact).toContainEqual(expect.objectContaining({ type: 'compact', conversationId: CHAT, token, sourceMessageId: USER_ID }));
     expect(compact).toContainEqual(expect.objectContaining({ type: 'compact', conversationId: CHAT, token, summary: 'TASK\n\n- Continue.' }));
+  });
+});
+
+// Ported from Chat On Steroids 2.1.34 (16859e6e).
+describe('releasing a handoff click ChatGPT never received (page)', () => {
+  const token = '0123456789abcdef0123456789abcdef';
+  const job = (stage = 'handoff-pending') => ({ sessionId: 's1', stage, automatic: false, busy: true, handoffId: null, error: null, token,
+    sourceSend: { state: 'dispatched-unresolved', messageId: null, before: 'm-before', dispatchedAt: 1_700_000_000_000 - 20_000 } });
+  let armed = false;
+  async function start(before: (document: Document) => void = () => undefined) {
+    const releases: Array<Record<string, any>> = [];
+    // The ticket arrives with the first explicit pull, after each test has shaped the page.
+    armed = false;
+    live = await harness(undefined, {
+      activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, pendingTools: 0, job: armed ? job() : null } }),
+      compact: message => {
+        if (message.sourceUndelivered) { releases.push(message); return { ok: true, data: { released: true, job: job('done') } }; }
+        return { ok: true, data: {} };
+      }
+    }, before);
+    return releases;
+  }
+  const drain = async () => { for (let i = 0; i < 6; i++) { await settle(); await new Promise(resolve => setTimeout(resolve, 0)); } };
+
+  it('releases once from a settled page that shows the pre-click question as newest twice', async () => {
+    const releases = await start(document => { userTurn(document, 'before', 'Keep going', { sent: false }); });
+    armed = true;
+    await live!.hook.pullActivity();
+    await drain();
+    expect(releases).toEqual([expect.objectContaining({ token, sourceUndelivered: true, newestUserMessage: 'm-before' })]);
+  });
+
+  it('does not release when the handoff turn appears between the two reads', async () => {
+    const releases = await start(document => { userTurn(document, 'before', 'Keep going', { sent: false }); });
+    const scheduled = live!.window.setTimeout;
+    live!.window.setTimeout = ((fn: () => void, ms?: number) => {
+      if (ms === 3_000) userTurn(live!.document, 'handoff', '[[CLF-HANDOFF:0123456789abcdef0123456789abcdef]]write the brief', { sent: false });
+      return scheduled(fn, ms);
+    }) as typeof scheduled;
+    armed = true;
+    await live!.hook.pullActivity();
+    await drain();
+    expect(releases).toEqual([]);
+  });
+
+  it('does not release from a transcript that hydrates empty and then shows the handoff turn', async () => {
+    const releases = await start();
+    armed = true;
+    const pull = live!.hook.pullActivity();
+    await settle();
+    // Empty while hydrating: no proof yet. Then the full transcript, with the handoff ChatGPT holds.
+    userTurn(live!.document, 'before', 'Keep going', { sent: false });
+    userTurn(live!.document, 'handoff', '[[CLF-HANDOFF:0123456789abcdef0123456789abcdef]]write the brief', { sent: false });
+    await pull;
+    await drain();
+    expect(releases).toEqual([]);
   });
 });

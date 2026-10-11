@@ -8851,6 +8851,8 @@
   }
 
   async function maybeResumePendingCompaction(forId = conversationId, forEpoch = epoch) {
+    if (job && job.stage === 'handoff-pending' && job.sourceSend?.state === 'dispatched-unresolved' &&
+        !(await releaseUndeliveredHandoff(forId, forEpoch))) return;
     const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
     if (!source || nativeBusy || localError) return;
     if (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved') return;
@@ -8869,6 +8871,52 @@
     if (automatic || recovery) void ask({ type: 'focus_tab', conversationId: forId }).catch(() => undefined);
     await startCompact(automatic, recovery);
   }
+  /**
+   * Proves to the app that an armed handoff click never reached ChatGPT, so it may be sent once.
+   *
+   * Only a document loaded after the click can say so, and only once ChatGPT is idle: it then
+   * shows the chat as ChatGPT holds it, and an accepted handoff would be its newest user message.
+   * The newest one still being the message that was newest before the click is the proof. The
+   * app checks the same facts again before it releases anything. Ported from Chat On Steroids
+   * 2.1.34 (16859e6e).
+   */
+  const UNDELIVERED_READY_MS = 30_000;
+  const UNDELIVERED_SECOND_READ_MS = 3_000;
+  async function releaseUndeliveredHandoff(forId, forEpoch) {
+    const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
+    if (!source || source.state !== 'dispatched-unresolved' || typeof source.before !== 'string' || !source.before ||
+        !Number.isFinite(source.dispatchedAt) || nativeBusy) return false;
+    const here = () => alive && conversationId === forId && epoch === forEpoch && CLF_DOM.conversationId() === forId;
+    if (!here() || !(performance.timeOrigin > source.dispatchedAt) || Date.now() - source.dispatchedAt < 15_000) return false;
+    // This is the one path that may send a handoff a second time, so its proof is read only from
+    // a settled page: a reloaded transcript can hydrate in steps, and one shown for a moment
+    // without its newest turn would still name the pre-click question as newest. The view must be
+    // the pickup's ready one (an editable composer, nothing running) and must already show that
+    // pre-click question; the verdict is then read twice, a few seconds apart.
+    const editable = () => {
+      const box = CLF_DOM.composer();
+      return Boolean(box?.isConnected && CLF_DOM.composerVisible() && box.getAttribute('contenteditable') !== 'false' &&
+        box.getAttribute('aria-disabled') !== 'true');
+    };
+    const newestUser = () => CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id ?? null;
+    const settledView = () => editable() && !generating && !CLF_DOM.generating() && pendingTools === 0 &&
+      CLF_DOM.messages().some(row => row.role === 'user' && row.id === source.before);
+    if (!(await waitPageView(() => settledView() || null, here, UNDELIVERED_READY_MS, 250)) || !here()) return false;
+    if (newestUser() !== source.before) return false;
+    await new Promise(resolve => setTimeout(resolve, UNDELIVERED_SECOND_READ_MS));
+    if (!here() || nativeBusy || !settledView()) return false;
+    const newest = newestUser();
+    if (newest !== source.before) return false;
+    const reply = await ask({
+      type: 'compact', conversationId: forId, token: job.token, sourceUndelivered: true,
+      newestUserMessage: newest, documentSince: Math.floor(performance.timeOrigin)
+    });
+    if (!here() || !reply || reply.ok !== true || reply.data?.released !== true) return false;
+    if (reply.data.job) job = reply.data.job;
+    localError = '';
+    return true;
+  }
+
 
   /**
    * Brings the conversation to a standstill so its recording can be copied.
@@ -8999,7 +9047,15 @@
       nativePhase = 'prompting';
       renderControl();
       const squeeze = (value) => String(value || '').replace(/\s+/g, '');
-      const existing = CLF_DOM.composer();
+      let existing = CLF_DOM.composer();
+      // An earlier attempt's own handoff request, left in the box by a cancel or a reload while it
+      // was being composed; ChatGPT restores that draft on every load. It is this app's text, not
+      // the person's, yet it refused every later attempt as "a draft is already in ChatGPT". Its
+      // marker is the proof, and attachments still protect a real draft (Chat On Steroids 2.1.34).
+      if (handoffResidue(existing, prompt) && squeeze(existing.textContent) !== squeeze(prompt)) {
+        CLF_DOM.clearPromptExact(existing.textContent);
+        existing = CLF_DOM.composer();
+      }
       const occupiedByOtherDraft =
         Boolean(existing && (existing.textContent || '').trim()) &&
         squeeze(existing?.textContent) !== squeeze(prompt);
@@ -9041,7 +9097,9 @@
       // The at-most-once cut, and the last thing before the click. Exactly one document takes
       // this transition; past it the prompt may be with ChatGPT already — send() clicks first
       // and only then watches for acceptance — so no page is ever offered it again.
-      const armed = await ask({ type: 'compact', conversationId: forId, token, sourceDispatch: true });
+      const before = CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id;
+      const armed = await ask({ type: 'compact', conversationId: forId, token, sourceDispatch: true,
+        ...(typeof before === 'string' && before ? { before } : {}) });
       if (!current()) return;
       if (!armed || armed.ok !== true || !armed.data || armed.data.armed !== true) {
         CLF_DOM.clearPromptExact(prompt);
@@ -9093,6 +9151,22 @@
 
   // Mirrors src/shared/session.ts: a fresh-chat composer may send a `\` hard break after the marker.
   const CONTINUATION_MARKER = /^\s*\[\[CLF-(HANDOFF|RESUME):([A-Za-z0-9_-]{16,64})\]\](?:\\?\s|$)/;
+  /**
+   * A composer holding only an earlier attempt's unsent handoff request, exactly as this app typed
+   * it: the same instruction under another token's marker, with no attachment. Any edit makes it
+   * the person's draft again, which is preserved (#134).
+   */
+  // ChatGPT's editor keeps paragraphs as elements, so in its text the marker runs straight into the
+  // instruction ("]]Chat On Steroids…"); CONTINUATION_MARKER, which wants a space, missed it live.
+  const HANDOFF_MARKED = /^\s*\[\[CLF-HANDOFF:[A-Za-z0-9_-]{16,64}\]\]/;
+  /** A composer holding a handoff request this app typed (any attempt's), and no attachment. */
+  function handoffMarked(box) {
+    return Boolean(box && HANDOFF_MARKED.test(box.textContent || '') && !CLF_DOM.hasComposerAttachments());
+  }
+  function handoffResidue(box, prompt) {
+    const body = text => String(text || '').replace(HANDOFF_MARKED, '').replace(/\s+/g, '');
+    return handoffMarked(box) && !!body(box.textContent) && body(box.textContent) === body(prompt);
+  }
   const continuationReconciliations = new Map();
   /**
    * Proof key → how the app answered the marker: `committed` is ownership proof for the
@@ -11494,10 +11568,10 @@
     return alive && !generating && !CLF_DOM.generating() && route &&
       (url.searchParams.get(PLUGIN_REFRESH_MARKER) === id || url.searchParams.get(LEGACY_PLUGIN_REFRESH_MARKER) === id);
   }
-  function waitPageView(read, current, milliseconds) {
+  function waitPageView(read, current, milliseconds, tickMs = 0) {
     return new Promise(resolve => {
-      let busy = false, dirty = false, done = false;
-      const finish = value => { if (done) return; done = true; pageViewChecks.delete(check); observer.disconnect(); clearTimeout(timer); resolve(value); };
+      let busy = false, dirty = false, done = false, tick = null;
+      const finish = value => { if (done) return; done = true; pageViewChecks.delete(check); observer.disconnect(); clearTimeout(timer); if (tick) clearInterval(tick); resolve(value); };
       const check = async () => {
         if (done) return;
         if (!current()) return finish(null);
@@ -11509,7 +11583,9 @@
       };
       const observer = new MutationObserver(check); observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
       pageViewChecks.add(check);
-      const timer = setTimeout(() => finish(null), milliseconds); void check();
+      const timer = setTimeout(() => finish(null), milliseconds);
+      if (tickMs > 0) tick = setInterval(() => void check(), tickMs);
+      void check();
     });
   }
   // The App Id a management page shows, under the old hash or the newer path route (upstream 839716d).
@@ -11913,9 +11989,17 @@
         return false;
       }
       if (message.type === 'clf-tab-close-check') {
+        // A fresh chat the app opened, or the source chat it opened only to follow its Project link
+        // for Compact & resume; both are the app's own tab for that one command. The entry tab never
+        // binds its source chat as this page's own, so the chat it may show is the one the app opened
+        // it on (Chat On Steroids 2.1.34).
+        const failedEntry = () => OPENED_PROJECT_ENTRY && !!OPENED_CONVERSATION && !conversationId &&
+          CLF_DOM.conversationId() === OPENED_CONVERSATION;
         const failedBootstrap = message.failedCommand?.id === startupCommandId && message.failedCommand?.client === RUN_ID &&
-          markerId() === startupCommandId && !OPENED_CONVERSATION && !conversationId && commandsHandled.has(startupCommandId) &&
+          markerId() === startupCommandId && commandsHandled.has(startupCommandId) &&
+          ((!OPENED_CONVERSATION && !conversationId) || failedEntry()) &&
           (!commandAttempt || (commandAttempt.id === startupCommandId && commandAttempt.phase === 'failed'));
+        const shownConversation = failedBootstrap && failedEntry() ? OPENED_CONVERSATION : conversationId;
         // Maintenance carries the app's terminal tombstone for this exact claimed
         // document. Revocation is independent of whether the renderer is safe to close.
         const retired = (Array.isArray(message.cancelledDecisions) ? message.cancelledDecisions : [])
@@ -11944,7 +12028,7 @@
           // authorizing closure; the final answer must survive the document.
           if (terminal) { await flush(); observe(); }
           sendResponse({ conversationId: CLF_DOM.conversationId(), navigationEpoch: epoch,
-            safe: alive && epoch === observedEpoch && message.conversationId === conversationId && CLF_DOM.conversationId() === conversationId &&
+            safe: alive && epoch === observedEpoch && message.conversationId === shownConversation && CLF_DOM.conversationId() === shownConversation &&
               !generating && pendingTools === 0 && (!CLF_DOM.generating() ||
                 (terminal && expectedTerminal === fiberTerminalMessageId && fiberTurnFor(currentAssistantTurn())?.endMessageId === expectedTerminal)) && !desktopInputBusy && !modelCatalogBusy && !pluginRefreshBusy && !desktopDecision &&
               ((!commandAttempt && !commandJournalGate) || failedBootstrap) && (!message.failedCommand || failedBootstrap) &&

@@ -1555,6 +1555,31 @@ var CLF_DOM = (() => {
     }, []);
   }
 
+  /**
+   * Whether a node belongs to an earlier page ChatGPT keeps mounted but undisplayed. Its workspace
+   * keeps each step of a redirect as such a page: a tab opened on /c/<id> and moved into the chat's
+   * Project holds the chat two more times, editor, header and turns included (measured 2026-10-01).
+   */
+  function onKeptPage(node) {
+    for (let page = node?.closest?.('[data-app-shell-page-surface]'); page;
+      page = page.parentElement?.closest('[data-app-shell-page-surface]')) {
+      if (getComputedStyle(page).display === 'none') return true;
+    }
+    return false;
+  }
+
+  /** Reject stale transition editors that are hidden only by CSS. */
+  function composerCssVisible(node) {
+    return safe(() => {
+      if (!node || onKeptPage(node)) return false;
+      for (let parent = node; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      }
+      return true;
+    }, false);
+  }
+
   function composer() {
     return safe(() => {
       const legacy = document.querySelector('#prompt-textarea');
@@ -2641,53 +2666,125 @@ var CLF_DOM = (() => {
    */
   const PROJECT_SOURCE_READY_MS = 60_000;
   const PROJECT_TRANSITION_MS = 12_000;
+  // enterProject and its two helpers below are Chat On Steroids 2.1.34's (d46f5ab7, 1a38096b,
+  // 8e7af659, 16859e6e): the Project link lost its folder-icon test id and left <header>, ChatGPT
+  // now keeps one editor element from the chat to the Project home, and its route rewrite can drop
+  // the first click.
+  /** Clicks again after ChatGPT's own route rewrite drops the first one; two rewrites are seen. */
+  const PROJECT_RECLICKS = 2;
 
-  /** Enter a Project through its source chat's native link. Cold /project loads can error. */
-  async function enterProject(entry, stillCurrent = () => true) {
-    if (!entry || !/^g-p-[0-9a-f]{32}$/.test(entry.id) || conversationId() !== entry.sourceConversationId) return false;
+  /**
+   * Enter a Project through its source chat's native link. Cold /project loads can error.
+   * The failure callback reports only which existing fail-closed boundary ended the attempt; it
+   * does not change navigation, retry, ownership or Send behavior.
+   */
+  async function enterProject(entry, stillCurrent = () => true, failure = () => {}) {
+    const reportFailure = reason => { try { failure(reason); } catch {} };
+    if (!entry || !/^g-p-[0-9a-f]{32}$/.test(entry.id) || conversationId() !== entry.sourceConversationId) {
+      reportFailure('invalid-entry');
+      return false;
+    }
+    // The exact same-origin Project-home target is the native entry. ChatGPT has moved this
+    // control across several shells: its folder icon lost a test id in early October, then the
+    // link itself moved outside both <header> and [role="banner"]. Do not bind navigation to
+    // either wrapper. Instead reject quoted/transcript links and hidden kept pages, then require
+    // one visible provider link to this exact Project. Ambiguity still fails closed.
+    const projectLinks = () => [...document.querySelectorAll('a[href]')].filter(link =>
+      !link.closest(`${OWN_SURFACES}, ${TURN}`) && composerCssVisible(link) &&
+      new URL(link.href, location.href).origin === location.origin &&
+      projectHomeId(new URL(link.href, location.href).pathname) === entry.id);
     return new Promise(resolve => {
-      let clicked = false, done = false, sourceComposer = null;
-      const interrupt = event => { if (event.isTrusted) finish(false); };
-      const finish = result => {
+      let clicked = false, done = false, lastObservation = 'source-not-ready';
+      // Where the source chat was when the link was clicked, and how many times its own route
+      // rewrite has since taken that click away.
+      let clickedPath = '', reclicks = 0;
+      const interrupt = event => { if (event.isTrusted) finish(false, 'user-interrupted'); };
+      const finish = (result, reason = 'unknown') => {
         if (done) return;
-        done = true; observer.disconnect(); clearTimeout(timer);
+        done = true; observer.disconnect(); clearTimeout(timer); clearInterval(routeWatch);
         document.removeEventListener('pointerdown', interrupt, true);
         document.removeEventListener('keydown', interrupt, true);
+        if (!result) reportFailure(reason);
         resolve(result);
       };
       const check = () => {
         if (done) return;
-        if (!stillCurrent()) return finish(false);
-        if (clicked && projectHomeId() === entry.id && composer()?.isConnected && composer() !== sourceComposer && !turns().length) return finish(true);
+        if (!stillCurrent()) return finish(false, 'current-lost');
+        // Since October 2026 ChatGPT keeps the same editor element from the chat to the Project
+        // home, so a new editor is no evidence. The Project route with the source's turns gone and
+        // an empty, writable editor is; the caller still refuses to send while a chat id remains.
+        // Turns of the earlier pages ChatGPT keeps mounted, undisplayed, are not on this page.
+        if (clicked && projectHomeId() === entry.id) {
+          if (!composer()?.isConnected || !composerSubmitReady()) {
+            lastObservation = 'composer-not-ready';
+            return;
+          }
+          if (turns().some(turn => !onKeptPage(turn.node))) {
+            lastObservation = 'source-turns-remain';
+            return;
+          }
+          return finish(true);
+        }
         if (conversationId() !== entry.sourceConversationId) {
-          if (projectHomeId() !== entry.id) finish(false);
+          if (projectHomeId() !== entry.id) finish(false, clicked ? 'wrong-route-after-click' : 'wrong-route-before-click');
           return;
         }
-        if (clicked) return;
-        // The native header arrives before the source chat finishes loading. Its link
-        // alone is not readiness: an early click can be swallowed during hydration and
-        // would also leave us comparing the destination editor with a null source.
+        if (clicked) {
+          // A replacement tab opens the source at /c/<id>, and ChatGPT then rewrites that route
+          // twice (/g/<project>/c/<id>, then the same with the Project's name). A click that lands
+          // between the two is taken by the router and then dropped by its own second rewrite: the
+          // tab stays on the source chat and the entry timed out (measured 2026-10-10, 8 of 14
+          // Compact & resume attempts in a Project). The source route changing under the click is
+          // that drop, so the same single link is clicked again.
+          if (location.pathname !== clickedPath && reclicks < PROJECT_RECLICKS) {
+            const links = projectLinks();
+            if (links.length === 1) {
+              reclicks++;
+              clickedPath = location.pathname;
+              lastObservation = 'source-route-rewritten';
+              links[0].click();
+              return check();
+            }
+          }
+          lastObservation = 'source-route';
+          return;
+        }
+        // The native Project chrome can arrive before the source chat finishes loading. Its link
+        // alone is not readiness: an early click can be swallowed during hydration.
         // Preserve the source draft/generation and spend our one click only once its
         // actual editor is mounted and ready.
         const source = composer();
-        if (!source?.isConnected || !composerSubmitReady() || hasComposerAttachments()) return;
-        const links = [...document.querySelectorAll('header a[href], [role="banner"] a[href]')].filter(link =>
-          link.querySelector('[data-testid="project-folder-icon"]') && !link.closest(OWN_SURFACES) &&
-          new URL(link.href, location.href).origin === location.origin && projectHomeId(new URL(link.href, location.href).pathname) === entry.id);
-        if (links.length !== 1) return;
-        sourceComposer = source;
+        if (!source?.isConnected || !composerSubmitReady() || hasComposerAttachments()) {
+          lastObservation = 'source-not-ready';
+          return;
+        }
+        const links = projectLinks();
+        if (links.length !== 1) {
+          lastObservation = 'candidate-count-' + links.length;
+          return;
+        }
         clicked = true;
+        clickedPath = location.pathname;
+        lastObservation = 'source-route';
         // Loading the source and following its link are separate page transitions.
         // Reuse the same deadline timer; source loading must not consume the budget
         // for observing the replacement editor after the one permitted click.
         clearTimeout(timer);
-        timer = setTimeout(() => finish(false), PROJECT_TRANSITION_MS);
+        timer = setTimeout(
+          () => finish(false, 'transition-timeout:last=' + lastObservation),
+          PROJECT_TRANSITION_MS
+        );
         links[0].click();
         check();
       };
       const observer = new MutationObserver(check);
       observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
-      let timer = setTimeout(() => finish(false), PROJECT_SOURCE_READY_MS);
+      // A route rewrite through history.replaceState changes no DOM by itself.
+      const routeWatch = setInterval(check, 250);
+      let timer = setTimeout(
+        () => finish(false, 'source-ready-timeout:last=' + lastObservation),
+        PROJECT_SOURCE_READY_MS
+      );
       document.addEventListener('pointerdown', interrupt, true);
       document.addEventListener('keydown', interrupt, true);
       check();

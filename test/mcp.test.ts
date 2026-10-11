@@ -957,13 +957,14 @@ describe('model-facing surfaces', () => {
     // surface measures today (Windows Core ~39.5 KB after the Expenses read/mutation split plus
     // the 2.2.3 Pins/Thread, plan-continuity and heartbeat lifecycle additions, ~40.45 KB after the
     // 2.2.8 Pins prompt/Heart actions, ~41.16 KB after publishing the Expenses facts field contract,
-    // without which record callers cannot form a valid facts object, ~41.64 KB after `move_eve_here`; Desktop 10,116
+    // without which record callers cannot form a valid facts object, ~41.64 KB after `move_eve_here`, ~41.93 KB after exec results gained the
+    // `supplemental_context` field that carries app notes to the model; Desktop 10,116
     // bytes on 2026-09-10) rather than at a
     // round number well above it: a budget with room to spare is a budget that never
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 41_750 : 41_550);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 42_000 : 41_800);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
@@ -998,8 +999,10 @@ describe('model-facing surfaces', () => {
                 // Windows carries `WINDOWS_SHELL_GUIDANCE` in the same description, and that text
                 // is quoted verbatim from Codex's own shell spec — it is not ours to trim to fit a
                 // budget. The non-Windows number is the one that says whether *our* additions have
-                // grown, so both are asserted rather than one loose bound covering both.
-                ? (process.platform === 'win32' ? 3_800 : 3_500)
+                // grown, so both are asserted rather than one loose bound covering both. 2.3.8 adds
+                // the optional `supplemental_context` output field (~90 bytes) that carries app notes
+                // to a model which only sees structured results.
+                ? (process.platform === 'win32' ? 3_900 : 3_600)
                 : 3_000;
       expect(bytes, `${tool.name} schema is ${bytes} bytes`).toBeLessThan(budget);
     }
@@ -3781,6 +3784,10 @@ describe('exec_command and write_stdin', () => {
     expect(brokenText).not.toContain('is a result, not a failure');
     // One exit code stands for two commands; the note says which one it came from.
     expect(brokenText).toContain('Batch: command 2 exited 3; the other command exited 0.');
+    // ChatGPT shows the model the structured result, so the notes have to be there too (Chat On
+    // Steroids 2.1.34, 7c719fee).
+    expect(broken.body.result?.structuredContent?.supplemental_context).toContain('Note: Batch: command 2 exited 3; the other command exited 0.');
+    expect(broken.body.result?.structuredContent?.output).not.toContain('Batch: command 2 exited');
   }, 60_000);
 
   it.skipIf(!IS_WINDOWS)('scopes parser recovery to its failed batch command after an earlier mutation', async () => {
@@ -4468,6 +4475,60 @@ describe('exec sessions belong to the chat that opened them', () => {
       await unifiedExecManager.terminateProcess(sessionId);
     }
   });
+  // Ported from Chat On Steroids 2.1.34 (a9247655).
+  it('names a still-running identical command from the same chat, and still starts the new one', async () => {
+    expect(prove('wfr_duplicate_first', 'conv-duplicate')).toBe('stored');
+    expect(prove('wfr_duplicate_retry', 'conv-duplicate')).toBe('stored');
+    expect(prove('wfr_duplicate_stranger', 'conv-duplicate-stranger')).toBe('stored');
+    const cmd = IS_WINDOWS ? 'Start-Sleep -Seconds 30' : 'sleep 30';
+    const sessionOf = (result: Awaited<ReturnType<typeof asChat>>) =>
+      Number(textOf(result).match(/Process running with session ID (\d+)/)?.[1]);
+    const started: number[] = [];
+    try {
+      const first = await asChat('wfr_duplicate_first', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(first));
+      expect(Number.isInteger(started[0]), textOf(first)).toBe(true);
+      expect(textOf(first)).not.toContain('still running from earlier');
+
+      // Another chat running the same command is its own business.
+      const stranger = await asChat('wfr_duplicate_stranger', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(stranger));
+      expect(textOf(stranger)).not.toContain('still running from earlier');
+
+      // A different folder is a different command.
+      await fs.mkdir(path.join(approved, 'elsewhere'), { recursive: true });
+      const elsewhere = await asChat('wfr_duplicate_retry', 'exec_command', { cmd, workdir: '/workspace/elsewhere', yield_time_ms: 250 });
+      started.push(sessionOf(elsewhere));
+      expect(textOf(elsewhere)).not.toContain('still running from earlier');
+
+      // The retry in the same chat and folder is not refused: running twice can be deliberate.
+      const retry = await asChat('wfr_duplicate_retry', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(retry));
+      expect(failed(retry), textOf(retry)).toBe(false);
+      expect(Number.isInteger(started[3]), textOf(retry)).toBe(true);
+      expect(started[3]).not.toBe(started[0]);
+      expect(textOf(retry)).toContain(`still running from earlier in this chat as session ${started[0]} `);
+      expect(textOf(retry)).toContain(`write_stdin(session_id=${started[0]}, chars="")`);
+      // The structured result is what ChatGPT gives the model; the note must be in it (7c719fee).
+      expect(retry.body.result?.structuredContent?.supplemental_context)
+        .toContain(`still running from earlier in this chat as session ${started[0]} `);
+      expect(first.body.result?.structuredContent).not.toHaveProperty('supplemental_context');
+
+      // Delivery's own appendix (here the reminder about an unpolled session) joins the handler's
+      // note in that field instead of replacing it.
+      backdateExecAttendanceForTests(started[0]!, UNATTENDED_EXEC_NOTICE_MS + 60_000);
+      expect(prove('wfr_duplicate_again', 'conv-duplicate')).toBe('stored');
+      const again = await asChat('wfr_duplicate_again', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(again));
+      const context = String(again.body.result?.structuredContent?.supplemental_context ?? '');
+      expect(context).toContain('still running from earlier in this chat');
+      expect(context).toContain(`Background session ${started[0]} has been running unpolled`);
+      expect(context.indexOf('still running from earlier')).toBeLessThan(context.indexOf(`Background session ${started[0]}`));
+    } finally {
+      for (const id of started) if (Number.isInteger(id)) await unifiedExecManager.terminateProcess(id);
+    }
+  });
+
 });
 
 describe('the outcome a shell command is recorded with', () => {
