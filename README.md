@@ -4,20 +4,20 @@
 
 <h1 align="center">ParadigmEve</h1>
 
-<p align="center"><strong>ChatGPT, with a place to keep working.</strong><br />
-Eve can work with folders you choose, keep Plans and saved context, use helper chats for longer jobs, and pick up again after restarts or very long conversations.</p>
+<p align="center"><strong>Bring Eve the mess. Leave with less to do.</strong><br />
+Give ChatGPT a place to help with the practical work on your computer: the folders you choose, unfinished projects, Plans, saved context, and tasks that need more than one chat.</p>
 
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download ParadigmEve</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.3.7.md">First-user guide &amp; release notes</a>
+  <a href="docs/release-notes/v2.3.8.md">2.3.8 guide &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
   <a href="docs/setup.md">Setup reference</a>
 </p>
 
-> **Beta software.** See the releases page for available downloads. The builds are still unsigned, so Windows or macOS may show a warning when you install them.
+> **Beta software.** Get an actual published download from the releases page; a version mentioned in the source tree may still be a release candidate. The builds are not publisher-signed, so Windows or macOS may warn during installation.
 
 ## Meet Eve
 
@@ -26,6 +26,8 @@ ParadigmEve is a desktop home for an Eve conversation in ChatGPT.
 You still talk to ChatGPT normally. ParadigmEve adds the practical things that are hard to keep attached to one browser chat: your chosen project folder, local tools, Plans, helper chats, saved context, a local archive, and the ability to continue after a restart or a very long conversation.
 
 The idea is simple: **you keep one conversation in charge, and Eve gets better at actually finishing the work around it.**
+
+ParadigmEve is free and open source, but it is **not** an unlimited free ChatGPT subscription. You need a ChatGPT account with access to the required MCP app features for the ChatGPT workflow. Other providers may have separate charges; local models need suitable hardware. Setup includes a browser Companion, a connection to Eve, and permissions you explicitly choose. Eve does not unlock account features or bypass rate limits.
 
 Eve can:
 
@@ -49,7 +51,7 @@ You do **not** have to enable all of that to use Eve.
 5. Add Eve in ChatGPT, then open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
-For the friendly walkthrough — including exactly which settings start limited, which ones I recommend turning on, and where they live — read **[Meet Eve: the 2.3.7 first-user guide and release notes](docs/release-notes/v2.3.7.md)**.
+For a short 2.3.8 walkthrough, permissions and upgrade notes, read **[Meet Eve: the 2.3.8 first-user guide and release notes](docs/release-notes/v2.3.8.md)**. The [2.3.7 guide](docs/release-notes/v2.3.7.md) has more detailed screenshots and settings explanations for the same basic setup path.
 
 ## Safe first, then convenient
 
@@ -80,7 +82,7 @@ Once the basic connection works, the setup I like is:
 
 My own setup uses four worker slots. Two is the fresh-install default and is friendlier to accounts that hit ChatGPT rate limits quickly.
 
-The exact switches, paths, and the more permissive options are explained in the **[2.3.7 first-user guide](docs/release-notes/v2.3.7.md)** so this README can stay readable.
+The exact switches, paths, and the more permissive options are explained in the **[2.3.8 first-user guide](docs/release-notes/v2.3.8.md)** so this README can stay readable.
 
 ## Plans stay with the work
 
@@ -152,18 +154,20 @@ Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Ch
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
 
-## What changed in 2.3.7
+## What's changing in 2.3.8
 
-2.3.7 makes Eve more provider-neutral and makes the local archive/recovery path much easier to trust:
+2.3.8 is a reliability update, not a new subscription or an experimental autonomous-agent launch. Its source includes fixes adapted from Chat On Steroids 2.1.34:
 
-- **OpenRouter** can answer ordinary Eve chat turns and can also run workers with Eve's approved local tools. Worker failures stay attributed to OpenRouter and never silently fall back to another backend.
-- **GPT-6** appears as one model family with Instant, Medium, and High lanes, and its current ChatGPT renderer is captured as readable answer text instead of opaque content-reference pointers.
-- **Archive Browser** opens immediately, catches up automatically as durable chats change, and keeps retained attachments readable after restart without needing the original provider.
-- Local Ollama, Ollama Cloud, OpenRouter, and ChatGPT turns preserve their provider/model provenance in the same durable conversation.
-- A restarted Chrome session no longer leaves a redundant Prime tab showing Eve's own internal heartbeat or post-Voice checkpoint as an unsent draft; real human drafts remain protected.
-- The Agents & automation settings layout keeps worker-model fields readable instead of collapsing their descriptions.
+- **Long ChatGPT Project conversations:** Compact & Resume better handles changes to ChatGPT's Project entry pages, dropped navigation clicks and stale handoff requests.
+- **Goal and Loop on accounts without a model picker:** follow-ups can use ChatGPT's current model rather than getting stuck looking for a missing selector.
+- **Less browser clutter:** the Companion remembers its Background chats window across extension reloads.
+- **Clearer failures:** tool composition explains when a requested tool belongs to another connector or isn't enabled, and command output can tell you when an identical command is already running.
+- **More complete output context:** command notes and appended local execution context are passed through the structured result the model receives.
+- **Better recorded answers:** a targeted Companion fix avoids duplicating identical GPT-6 fallback references within one message.
 
-Read the full **[2.3.7 first-user guide and release notes](docs/release-notes/v2.3.7.md)** or browse the **[CHANGELOG](CHANGELOG.md)** for the running history.
+These are source-level changes awaiting release-candidate and installed-app verification. The internal candidate-evaluation experiments are **not** an automatic skill-learning feature in Eve.
+
+2.3.8 also includes the cumulative 2.3.7 improvements: OpenRouter, GPT-6 model-menu compatibility, provider-aware archive records, and Archive Browser catch-up. Read the **[2.3.8 release notes and setup guide](docs/release-notes/v2.3.8.md)** and the **[CHANGELOG](CHANGELOG.md)** for details.
 
 ## Requirements
 
@@ -206,6 +210,6 @@ Thanks to everyone testing the awkward edge cases, reporting what breaks, and he
 
 ---
 
-**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[First-user guide & release notes](docs/release-notes/v2.3.7.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
+**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.3.8 guide & release notes](docs/release-notes/v2.3.8.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
 
 <p align="center"><sub>ParadigmEve is not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>
