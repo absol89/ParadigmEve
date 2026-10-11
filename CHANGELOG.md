@@ -13,6 +13,88 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.8] — Fewer interruptions, clearer handoffs
+
+2.3.8 is a beta reliability update built on the public 2.3.7 line. These source changes
+have been implemented and tested at their relevant boundaries; packaging, installation
+and public release remain separate verification steps.
+
+### Fixed
+
+- **Compact & Resume inside ChatGPT Projects:** Adapted the Project entry and handoff
+  path to ChatGPT's changed page structure. Project links no longer depend on the old
+  folder icon or header; entering the Project accepts its retained editor, repeats a
+  navigation click when the route rewrite drops it (at most twice), and can retry a
+  handoff click once when the original never arrived. Old attempt residue no longer
+  blocks a new handoff, and a failed entry's owned helper tab is retired.
+- **Goal and Loop on ChatGPT accounts without a visible model picker:** the helper uses
+  the account's current ChatGPT model rather than assuming a model-selector control
+  exists. This does not grant unavailable models or expand usage limits.
+- **Background chats window on extension reload:** preserve its window identity across
+  service-worker updates and reuse the existing window rather than multiplying them;
+  discard that identity at a fresh browser startup.
+- **Tool routing failures in JavaScript exec:** explain when a named tool belongs to a
+  different connector or is currently unavailable in Core. Warn when connectors use
+  the same Secure Tunnel ID, without executing an unknown tool.
+- **Duplicate long-running shell commands:** exec_command reports an existing identical
+  command owned by the same conversation and working folder. Command notes and
+  app-appended execution context now also arrive through the structured
+  supplemental_context field the model reads.
+- **Repeated rich-reply references:** harden the Companion's GPT-6/DIL fallback capture
+  when identical references appear more than once in a single assistant message.
+
+### Developer-only experiments
+
+- Adds a Phase-0 candidate-evaluation harness for controlled comparisons. Its small
+  known-bug trials did not establish a cost/quality advantage over one worker. The
+  harness is not a shipped automatic skill-learning feature, and its candidate
+  isolation is observational, not an OS security boundary.
+
+### Compatibility and release evidence
+
+- Changes from Chat On Steroids v2.1.34 were adapted to ParadigmEve's own session,
+  permission and Companion contracts rather than copied wholesale. See the
+  [2.3.8 notes](docs/release-notes/v2.3.8.md) for the first-use route, platform
+  downloads, unsigned-package notice, and remaining validation requirements.
+- The local archive's richer GPT-6 chart/visual replay is still undergoing validation;
+  no promise of complete visual parity is made for this update.
+
+## [2.3.8] — Handoffs that land in Projects
+
+### Added
+
+- Archive Browser replays the GPT-6 bar-chart payload (`genui{"charts_widget_v2":…}`) as a static, inert chart beside
+  the reply's prose. Only that exact bounded shape is drawn; malformed or unknown markers stay escaped text.
+- Eve's visual-design guidance in the Core coding instructions (one takeaway, simple hierarchy, verified facts and
+  real UI paths only, accessible text, five-second check), with the full release-visual checklist packaged at
+  `/paradigmeve-manual/release-visual-design.md`.
+- Code-mode scripts that call a tool this connector lacks get an `UNKNOWN_TOOL_NAMES` note naming the owning
+  connector (or that Core declares it but it is not enabled) and a shared Secure Tunnel ID warning (Chat On Steroids
+  2.1.34, 27e5d1f0).
+- `exec_command` notes a still-running identical command from the same chat and folder; the launch is never refused
+  (Chat On Steroids 2.1.34, a9247655).
+- Internal Phase-0 candidate-evaluation harness under `scripts/candidate-eval`, plus a provisional release-visual
+  selection heuristic. Neither is app surface. The first A/B run found no benefit from three competing strategies on
+  small, well-localized bug fixes.
+
+### Changed
+
+- `exec_command` notes and the kernel's appended app context (input, inbox, background output) also travel in the
+  structured `supplemental_context`, which is what ChatGPT shows the model (Chat On Steroids 2.1.34, 7c719fee, with
+  the base projection from 5616a278).
+
+### Fixed
+
+- Compact & Resume from a ChatGPT Project chat: the Project link is found without its removed folder-icon test id or
+  `<header>`, a kept editor element no longer blocks entry, a click dropped by ChatGPT's own route rewrite is repeated
+  at most twice, a later idle document can prove a handoff click never reached ChatGPT so it is sent once more, an
+  earlier attempt's leftover request is replaced, and a failed entry's marked source tab is retired (Chat On Steroids
+  2.1.34, 16859e6e, with d46f5ab7, 1a38096b and 8e7af659).
+- Goal and Loop on ChatGPT plans without a readable model picker use the current model instead of failing
+  confirmation (Chat On Steroids 2.1.34, 70d45280).
+- The Background chats window survives Companion reloads and self-updates (Chat On Steroids 2.1.34, d5211066).
+- A rich GPT-6 reply whose several DIL blocks share one fallback is recorded and archived as the complete reply.
+
 ## [2.3.7] — Readable everywhere
 
 ### Added

@@ -19,7 +19,8 @@ const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** Hash of the harness code itself: a run is only comparable under the code that froze it. */
 export function harnessSha256() {
-  const files = fs.readdirSync(HARNESS_DIR).filter(name => name.endsWith('.mjs')).sort();
+  // Explicit list: unrelated tools in this folder (release-visual-selection.mjs) are not the harness.
+  const files = ['cli.mjs', 'contract.mjs', 'core.mjs', 'harness.mjs', 'journal.mjs', 'report.mjs', 'workspace.mjs'];
   return sha256(files.map(name => `${name}\0${sha256File(path.join(HARNESS_DIR, name))}`).join('\n'));
 }
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
