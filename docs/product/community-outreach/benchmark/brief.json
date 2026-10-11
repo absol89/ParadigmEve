@@ -1,0 +1,25 @@
+{
+  "version": "editorial-copy-v1",
+  "date": "2026-10-11",
+  "purpose": "Compare copy strategies for Eve's organic outreach. Rank matched drafts only; do not equate editorial preference with an A/B test or approval to publish.",
+  "sourceRecipe": "../../../vault/release-visual-design.md",
+  "ratingScale": "0=absent/misleading, 1=weak, 2=partial, 3=good, 4=excellent",
+  "criteria": {
+    "audienceFit": 20,
+    "outcomeClarity": 25,
+    "nextStepClarity": 25,
+    "scannability": 15,
+    "trustAndCaveats": 10,
+    "distinctiveness": 5
+  },
+  "tieBreak": ["nextStepClarity", "outcomeClarity", "scannability"],
+  "gates": ["objectiveMatches", "featureDemoVerified", "accessStepsVerified", "pricingPrereqsVerified", "placementRulesChecked", "outboundAuthorized"],
+  "groups": {
+    "adulting": "Owned/properly permitted public post for someone postponing ordinary admin",
+    "parents": "Parent-focused awareness on owned or explicit permissioned surface (noncommercial support reply is NOT competing promotion)",
+    "euDots": "EEA user concerned about regional Dots access, without suggesting bypass or equivalence",
+    "limits": "Existing AI user frustrated by provider rate limits and continuity failures",
+    "launch": "Transparent introduction in an explicitly designated self-promotion forum",
+    "creator": "Permission-based invitation to a highly relevant creator"
+  }
+}

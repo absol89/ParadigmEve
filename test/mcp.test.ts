@@ -1323,11 +1323,19 @@ describe('2025-era clients', () => {
     expect(instructions).toContain('# Changing code safely');
     expect(instructions).toContain('find every copy (schemas, validators, tests, docs)');
     expect(instructions).toContain('`/paradigmeve-manual/14-coding-skills.md`');
+    expect(instructions).toContain('/paradigmeve-manual/release-visual-design.md');
+    expect(instructions).toContain('one verified benefit');
+    expect(instructions).toContain('Five-second test');
+    const visualGuide = readFileSync(path.join(process.cwd(), 'docs', 'vault', 'release-visual-design.md'), 'utf8');
+    expect(visualGuide).toContain('actual installable build');
+    expect(visualGuide).toContain('Actionable steps');
     const vaultPage = readFileSync(path.join(process.cwd(), 'docs', 'vault', '14-coding-skills.md'), 'utf8');
     for (const heading of ['## Code review', '## Debug systematically', '## Refactor safely', '## Security review']) {
       expect(vaultPage).toContain(heading);
     }
-    expect(instructions.length).toBeLessThan(18_000);
+    // 2.3.8 carries Eve's general visual-design guidance (release-visual-design.md) in the
+    // coding instructions themselves, not only behind the manual link (~650 characters).
+    expect(instructions.length).toBeLessThan(18_700);
   });
 
   it('includes Computer-use guidance in ParadigmEve while keeping legacy Desktop self-contained', async () => {

@@ -40,6 +40,7 @@ status. These documents guide product choices across implementation work.
 - [Product design](design.md) — vision, pillars, behavior, and operating boundaries.
 - [Expenses inbox specification](expenses.md) — recurring receipt inbox, local ledger, monthly budget allocation, optional receipt retention, and bank reconciliation contract.
 - [Marketing positioning](marketing-positioning.md) — plain-language product promise, discovery copy, and the “less advice, more handled” distinction.
+- [Community outreach plan](community-outreach-plan.md) — research-led, mostly-free six-month discovery and marketing plan, with channel permissions and release-proof gates.
 - [Thread/Quilt onboarding rides](quilt-onboarding-rides.md) — six themes mapped to the first three discovery rides.
 - [Notification philosophy](notification-philosophy.md) — when Eve should speak up or stay quiet.
 - [Morning postcards](postcards.md) — an optional future ritual grounded in the user's preferences.

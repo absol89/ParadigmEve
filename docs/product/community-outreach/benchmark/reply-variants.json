@@ -1,0 +1,74 @@
+[
+  {
+    "questionId": "PRIVACY",
+    "question": "Can this AI see all of my files and share them with a cloud company?",
+    "variants": [
+      {
+        "id": "PRIVACY-A",
+        "text": "Eve has local permissions, so you can decide what to grant. Check where your model runs before sharing private files.",
+        "ratings": {"directness": 3, "accuracy": 3, "empathy": 2, "actionability": 2, "brevity": 4},
+        "notes": "Concise but omits the explicit distinction between a locally running desktop companion and a cloud model."
+      },
+      {
+        "id": "PRIVACY-B",
+        "text": "That concern is sensible. Eve is a desktop companion, but that doesn't mean every model runs locally: cloud providers may receive context needed for the task. I'd check the exact folders you approve, the model/service chosen and the data path shown in the installed version before trusting it with anything sensitive.",
+        "ratings": {"directness": 4, "accuracy": 4, "empathy": 4, "actionability": 3, "brevity": 2},
+        "notes": "A bit long but correctly clarifies local tools versus remote inference and gives a safer next step."
+      }
+    ]
+  },
+  {
+    "questionId": "PRICE",
+    "question": "Is Eve free, and will I get surprise AI bills?",
+    "variants": [
+      {
+        "id": "PRICE-A",
+        "text": "I'm aiming for a mostly free way to try Eve, but model/provider fees may be separate. I'll share a verified breakdown before claiming a no-cost setup.",
+        "ratings": {"directness": 3, "accuracy": 4, "empathy": 3, "actionability": 2, "brevity": 4},
+        "notes": "Honest and compact but lacks a breakdown of the exact account, quota and local-compute prerequisites."
+      },
+      {
+        "id": "PRICE-B",
+        "text": "There are two different bills to ask about: the Eve app and the AI service or local hardware doing the work. I wouldn't call it 'free' until the particular download, account, usage allowance and any API/computer costs are checked. The first-use guide should spell out that route, rather than surprise anyone after installation.",
+        "ratings": {"directness": 4, "accuracy": 4, "empathy": 4, "actionability": 3, "brevity": 3},
+        "notes": "Explicitly answers the hidden-cost anxiety and gives a concrete verification standard. Still requires actual pricing facts."
+      }
+    ]
+  },
+  {
+    "questionId": "DOTS",
+    "question": "Is Eve a workaround to get OpenAI Dots in the EEA?",
+    "variants": [
+      {
+        "id": "DOTS-A",
+        "text": "No, Eve is an independent desktop project and doesn't unlock ChatGPT Dots or change plan eligibility. They should be compared on documented workflows, not the name 'agent'.",
+        "ratings": {"directness": 4, "accuracy": 4, "empathy": 2, "actionability": 2, "brevity": 4},
+        "notes": "Good direct denial; leaves user without an actionable comparison path."
+      },
+      {
+        "id": "DOTS-B",
+        "text": "No — Eve doesn't enable Dots or bypass OpenAI's regional or plan rules. It's a separate desktop project with different dependencies and capabilities. If you're considering it, I'd start with a verified example in your OS and check how it actually keeps an interrupted task together. OpenAI's own Dots availability article is the source for your current account eligibility.",
+        "ratings": {"directness": 4, "accuracy": 4, "empathy": 3, "actionability": 4, "brevity": 3},
+        "notes": "Preserves the important refusal while moving the person toward an honest, verifiable alternative outcome."
+      }
+    ]
+  },
+  {
+    "questionId": "USEFUL",
+    "question": "Aren't assistants just extra administration? What do they actually finish?",
+    "variants": [
+      {
+        "id": "USEFUL-A",
+        "text": "Eve is meant to help with practical jobs instead of offering yet another to-do list. More examples coming soon.",
+        "ratings": {"directness": 2, "accuracy": 3, "empathy": 2, "actionability": 1, "brevity": 4},
+        "notes": "Reads as a vague marketing promise, with no specific outcome or test."
+      },
+      {
+        "id": "USEFUL-B",
+        "text": "I agree that another system to maintain is not a win. A sensible test is one low-stakes task: give the assistant messy options to organize, then see whether it returns a smaller decision and a result you can verify. If checking and correcting it takes longer than doing it yourself, it hasn't helped. I'm building Eve against that bar, not claiming it always clears it.",
+        "ratings": {"directness": 4, "accuracy": 4, "empathy": 4, "actionability": 4, "brevity": 2},
+        "notes": "Answers skepticism with a falsifiable small-task trial, instead of polished slogans or made-up success rates."
+      }
+    ]
+  }
+]

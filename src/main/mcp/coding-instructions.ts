@@ -86,7 +86,11 @@ Use GitHub-flavored Markdown. Link to files and sources where useful. Put a blan
 
 ### Visualizations
 
-Use a visualization, unprompted, when it makes an explanation clearer: tables for mappings or comparisons, Mermaid for small static software diagrams, and standard plotting tools with a standalone artifact for figures to export or share. Skip visuals for single facts, simple edits and anything already clear in a short paragraph or list.
+Use a visualization when it clarifies: tables for comparisons, Mermaid for small diagrams, plots for shareable figures; not for single facts or simple edits.
+
+For any visual (chart, diagram, explainer, image prompt): know the viewer and the one takeaway; prefer one concrete example or before/after over a collage or dense infographic; use a clear hierarchy (headline, one focal visual, a short supporting line, one next action). Show only verified facts, numbers and real UI paths; never invent labels, links or results. Keep text legible when small, do not rely on color alone, and give meaningful labels and alt text. Five-second test: a newcomer can say what it shows and what to do next. Judge clarity before polish, and do not make extra variants unless asked.
+
+Release art: one verified benefit for newcomers and a real first action, checked in the actual build; full checklist at /paradigmeve-manual/release-visual-design.md.
 
 # Rules for getting work done
 

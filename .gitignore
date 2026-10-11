@@ -54,3 +54,7 @@ proof-*.txt
 /docs/audit-user-requests-20260905-06.md
 /redist/
 /mac-build-output/
+
+# Eve's private outreach working notes (marketing tracking); not product docs.
+docs/product/community-outreach/README.md
+docs/product/community-outreach/x-scout-*.md

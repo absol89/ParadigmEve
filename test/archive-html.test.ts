@@ -78,6 +78,43 @@ function fixture(): ArchiveHtmlViewModel {
 }
 
 describe('static archive HTML', () => {
+  it('replays the archived GPT-6 bar-chart payload without executing or losing surrounding prose', () => {
+    const view = fixture();
+    const payload = { charts_widget_v2: { content: { chartType: 'bar', xKey: 'task',
+      meta: { title: 'Tokens consumed by strategy', description: 'Two completed tasks' },
+      series: [{ dataKey: 'baseline', label: 'Single worker' }, { dataKey: 'competitive', label: 'Three candidates' }],
+      data: [{ task: 'Projects', baseline: 60655, competitive: 197332 },
+        { task: 'Archive', baseline: 59214, competitive: 228644 }] } } };
+    const marker = `genui${JSON.stringify(payload)}`;
+    const original = view.chats[1]!;
+    const modified = { ...view, chats: [...view.chats.slice(0, 1), { ...original, transcript: [
+      { kind: 'message' as const, id: 'chart', role: 'assistant' as const, text: `Before\n${marker}\nAfter` }, ...original.transcript
+    ] }] };
+    const dom = new JSDOM(renderArchiveHtml(modified));
+    const message = dom.window.document.querySelector('[data-message-id="chart"]')!;
+    expect(message.querySelectorAll('.genui-chart')).toHaveLength(1);
+    expect(message.textContent).toContain('Before');
+    expect(message.textContent).toContain('After');
+    expect(message.textContent).toContain('197,332');
+    expect(message.textContent).toContain('228,644');
+    expect(message.querySelectorAll('.genui-chart-group')).toHaveLength(2);
+    expect(message.querySelector('script, img, iframe')).toBeNull();
+    dom.window.close();
+  });
+
+  it('leaves malformed or unrecognized rich markers escaped and inert', () => {
+    const view = fixture();
+    const unknown = 'genui{"unknown_widget":{"evil":"<img src=x onerror=alert(1)>"}}';
+    const original = view.chats[1]!;
+    const modified = { ...view, chats: [...view.chats.slice(0, 1), { ...original, transcript: [
+      { kind: 'message' as const, id: 'unknown', role: 'assistant' as const, text: unknown }, ...original.transcript
+    ] }] };
+    const dom = new JSDOM(renderArchiveHtml(modified));
+    const message = dom.window.document.querySelector('[data-message-id="unknown"]')!;
+    expect(message.querySelector('.message-text')?.textContent).toBe(unknown);
+    expect(message.querySelector('img, .genui-chart')).toBeNull();
+    dom.window.close();
+  });
   it('renders inert authored content and never turns hostile chat HTML into executable markup', () => {
     const html = renderArchiveHtml(fixture());
     const dom = new JSDOM(html);

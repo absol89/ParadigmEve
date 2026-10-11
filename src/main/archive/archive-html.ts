@@ -120,11 +120,70 @@ function roleLabel(role: ArchiveViewMessage['role']): string {
   return 'You';
 }
 
+/** Replays the one verified GPT-6 chart contract without executing archived markup. */
+function renderKnownChart(raw: string): string | null {
+  if (raw.length > 40_000) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const widget = (parsed as Record<string, unknown>).charts_widget_v2;
+  if (!widget || typeof widget !== 'object') return null;
+  const content = (widget as Record<string, unknown>).content;
+  if (!content || typeof content !== 'object') return null;
+  const chart = content as Record<string, unknown>;
+  if (chart.chartType !== 'bar' || typeof chart.xKey !== 'string' || !Array.isArray(chart.data) ||
+      !Array.isArray(chart.series) || chart.data.length < 1 || chart.data.length > 30 ||
+      chart.series.length < 1 || chart.series.length > 6) return null;
+  const xKey = chart.xKey;
+  if (xKey.length > 80) return null;
+  const series = chart.series.map((entry: unknown) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const s = entry as Record<string, unknown>;
+    return typeof s.dataKey === 'string' && s.dataKey.length <= 80 &&
+      typeof s.label === 'string' && s.label.length <= 120 ? { key: s.dataKey, label: s.label } : null;
+  });
+  if (series.some(s => !s)) return null;
+  const rows = chart.data.map((entry: unknown) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const data = entry as Record<string, unknown>;
+    const label = data[xKey];
+    if (typeof label !== 'string' || label.length > 120) return null;
+    const values = series.map(s => data[s!.key]);
+    if (values.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1e12)) return null;
+    return { label, values: values as number[] };
+  });
+  if (rows.some(row => !row)) return null;
+  const safeRows = rows as { label: string; values: number[] }[];
+  const max = Math.max(1, ...safeRows.flatMap(row => row.values));
+  const palette = ['#356dc0', '#33935b', '#a26ac8', '#c08036', '#c75170', '#4e909e'];
+  const meta = chart.meta && typeof chart.meta === 'object' ? chart.meta as Record<string, unknown> : {};
+  const title = typeof meta.title === 'string' ? meta.title.slice(0, 180) : 'Bar chart';
+  const description = typeof meta.description === 'string' ? meta.description.slice(0, 400) : '';
+  const legend = series.map((s, i) => `<span><i style="background:${palette[i]}"></i>${escapeHtml(s!.label)}</span>`).join('');
+  const entries = safeRows.map(row => `<div class="genui-chart-group"><strong>${escapeHtml(row.label)}</strong>${row.values.map((v, i) =>
+    `<div class="genui-chart-bar"><span>${escapeHtml(series[i]!.label)}</span><div class="genui-chart-track"><div style="width:${(v / max * 100).toFixed(3)}%;background:${palette[i]}"></div></div><output>${v.toLocaleString('en-US')}</output></div>`
+  ).join('')}</div>`).join('');
+  return `<figure class="genui-chart" aria-label="${escapeHtml(title)}"><figcaption><strong>${escapeHtml(title)}</strong>${description ? `<p>${escapeHtml(description)}</p>` : ''}</figcaption><div class="genui-chart-legend">${legend}</div>${entries}</figure>`;
+}
+
+function renderMessageText(text: string): string {
+  const marker = /genui(\{[^\n]*\})/gu;
+  let result = '';
+  let previous = 0;
+  for (const match of text.matchAll(marker)) {
+    const chart = match[1] === undefined ? null : renderKnownChart(match[1]);
+    if (!chart || match.index === undefined) continue;
+    result += escapeHtml(text.slice(previous, match.index)) + chart;
+    previous = match.index + match[0].length;
+  }
+  return result + escapeHtml(text.slice(previous));
+}
+
 function renderMessage(message: ArchiveViewMessage): string {
   const detail = [message.timestampLabel, message.modelLabel].filter((value): value is string => Boolean(value));
   return `<article class="message message-${message.role}" data-message-id="${escapeHtml(message.id)}">
     <header><strong>${roleLabel(message.role)}</strong>${detail.length ? `<span>${escapeHtml(detail.join(' · '))}</span>` : ''}</header>
-    <div class="message-text">${escapeHtml(message.text)}</div>
+    <div class="message-text">${renderMessageText(message.text)}</div>
     ${renderAssets(message.assets)}
   </article>`;
 }
@@ -328,6 +387,11 @@ const STYLE = `
 .transcript{padding-top:10px}.message{margin:18px 0;padding:16px 18px;border-radius:16px;background:#202020;border:1px solid #2d2d2d}.message-user{margin-left:12%;background:#2a2a2a}.message-system{border-style:dashed;color:#c9c9c9}
 .message header,.tool-call header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.message header span,.tool-call header span{color:#888;font-size:12px}
 .message-text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55}
+.genui-chart{white-space:normal;max-width:760px;margin:16px 0;padding:16px;border:1px solid #7775;border-radius:12px;background:#8881}
+.genui-chart figcaption strong{display:block;font-size:16px}.genui-chart figcaption p{font-size:12px;opacity:.8;margin:5px 0 12px}
+.genui-chart-legend{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0;font-size:12px}.genui-chart-legend span{display:flex;align-items:center;gap:6px}.genui-chart-legend i{width:10px;height:10px;border-radius:3px}
+.genui-chart-group{margin-top:14px}.genui-chart-group>strong{font-size:13px}.genui-chart-bar{display:grid;grid-template-columns:minmax(85px,130px) 1fr auto;align-items:center;gap:10px;margin-top:7px;font-size:12px}
+.genui-chart-track{height:16px;border-radius:5px;background:#8882;overflow:hidden}.genui-chart-track>div{height:100%;border-radius:5px}.genui-chart-bar output{font-variant-numeric:tabular-nums;min-width:70px;text-align:right}
 .tool-group{margin:18px 0;border:1px solid #333;border-radius:12px;background:#1c1c1c}.tool-group>summary{cursor:pointer;padding:12px 14px;display:flex;gap:10px;justify-content:space-between;color:#cfcfcf}.tool-summary{color:#888;font-size:12px}.tool-body{padding:0 12px 12px}.tool-call{margin-top:8px;padding:12px;border-radius:9px;background:#141414}
 .tool-call h4{margin:10px 0 5px;color:#999;font-size:11px;text-transform:uppercase;letter-spacing:.06em}.tool-call pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:9px;border-radius:7px;background:#0d0d0d;color:#d8d8d8;font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
 .asset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-top:12px}.asset-card{min-width:0;padding:10px;border:1px solid #363636;border-radius:10px;background:#181818}.asset-missing{border-color:#543c3c}

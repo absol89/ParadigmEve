@@ -7,6 +7,12 @@ reviewable promotion proposal without changing any checkout. Design background:
 
 Nothing here is imported by `src/`. Delete the folder to abandon the approach.
 
+The separate `release-visual-selection.mjs` is a **simulation-only** heuristic for comparing
+public-facing images. It is deliberately not part of the coding patch selector or a production
+skill-learning engine. All connected models receive the short visual guidance in Core's shipped
+instructions; the full design brief lives in the packaged
+[`release-visual-design.md`](../../docs/vault/release-visual-design.md).
+
 ## Isolation: what is enforced and what is only detected
 
 | Property | Status |

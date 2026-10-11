@@ -1,0 +1,456 @@
+{
+  "brief": "editorial-copy-v1",
+  "date": "2026-10-11",
+  "candidates": [
+    {
+      "id": "ADULT-A",
+      "group": "adulting",
+      "file": "posts/01-adulting-A.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 1,
+        "scannability": 4,
+        "trustAndCaveats": 4,
+        "distinctiveness": 4
+      },
+      "score": 75,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Emotionally recognizable and friendly. Vague ask and no concrete demo/action; can't yet turn interest into a first useful result."
+    },
+    {
+      "id": "ADULT-B",
+      "group": "adulting",
+      "file": "posts/02-adulting-B.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 4,
+        "nextStepClarity": 3,
+        "scannability": 3,
+        "trustAndCaveats": 3,
+        "distinctiveness": 3
+      },
+      "score": 86.25,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Shows a relatable single task and prospective first request. Stronger next action despite placeholders; cannot claim appointment demo occurred."
+    },
+    {
+      "id": "PARENT-A",
+      "group": "parents",
+      "file": "posts/03-parent-A.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 1,
+        "scannability": 3,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 70,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Good empathy and boundaries, but needs a verified narrowly specified task and creator/moderator permission."
+    },
+    {
+      "id": "PARENT-B",
+      "group": "parents",
+      "file": "posts/04-parent-B.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 2,
+        "scannability": 4,
+        "trustAndCaveats": 4,
+        "distinctiveness": 2
+      },
+      "score": 78.75,
+      "comparable": false,
+      "publishReady": false,
+      "blockers": [
+        "objectiveMatches",
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Helpful noncommercial advice, explicitly NOT a marketing pitch. High clarity cannot make it a comparable conversion candidate or license to promote."
+    },
+    {
+      "id": "EU-DOTS-A",
+      "group": "euDots",
+      "file": "posts/05-eu-dots-A.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 1,
+        "scannability": 3,
+        "trustAndCaveats": 4,
+        "distinctiveness": 2
+      },
+      "score": 68.75,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Accurate plan/region nuance and strong boundary. More announcement than demonstrated improvement; dependent on current official availability."
+    },
+    {
+      "id": "EU-DOTS-B",
+      "group": "euDots",
+      "file": "posts/06-eu-dots-B.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 2,
+        "scannability": 4,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 80,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Readable X-native hook, disclaims bypass and requests a real demo; still more curiosity than verified usefulness."
+    },
+    {
+      "id": "LIMITS-A",
+      "group": "limits",
+      "file": "posts/07-limits-A.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 4,
+        "nextStepClarity": 2,
+        "scannability": 3,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 82.5,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Distinguishes rate limits from costly task reconstruction; specific interrupt/resume test proposed. Not yet reproduced in release installer."
+    },
+    {
+      "id": "LIMITS-B",
+      "group": "limits",
+      "file": "posts/08-limits-B.md",
+      "ratings": {
+        "audienceFit": 3,
+        "outcomeClarity": 3,
+        "nextStepClarity": 1,
+        "scannability": 4,
+        "trustAndCaveats": 4,
+        "distinctiveness": 2
+      },
+      "score": 67.5,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Accurate but abstract founder thought-piece; weak beginner action and everyday result."
+    },
+    {
+      "id": "LAUNCH-A",
+      "group": "launch",
+      "file": "posts/09-reddit-launch-A.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 3,
+        "scannability": 3,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 82.5,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Transparent identity and relevant request for feedback; strongest newcomer-friendly permitted launch base if current self-promo thread allows it."
+    },
+    {
+      "id": "LAUNCH-B",
+      "group": "launch",
+      "file": "posts/10-reddit-launch-B.md",
+      "ratings": {
+        "audienceFit": 2,
+        "outcomeClarity": 2,
+        "nextStepClarity": 1,
+        "scannability": 3,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 53.75,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Technically honest but heavy on jargon. Better for an engineer asking architecture questions than first public release post."
+    },
+    {
+      "id": "CREATOR-A",
+      "group": "creator",
+      "file": "posts/11-creator-A.md",
+      "ratings": {
+        "audienceFit": 4,
+        "outcomeClarity": 3,
+        "nextStepClarity": 3,
+        "scannability": 3,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 82.5,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Strong relevance and disclosure; usable only after inserting real creator-specific evidence and confirming pitch permission."
+    },
+    {
+      "id": "CREATOR-B",
+      "group": "creator",
+      "file": "posts/12-creator-B.md",
+      "ratings": {
+        "audienceFit": 3,
+        "outcomeClarity": 3,
+        "nextStepClarity": 3,
+        "scannability": 4,
+        "trustAndCaveats": 4,
+        "distinctiveness": 3
+      },
+      "score": 81.25,
+      "comparable": true,
+      "publishReady": false,
+      "blockers": [
+        "featureDemoVerified",
+        "accessStepsVerified",
+        "pricingPrereqsVerified",
+        "placementRulesChecked",
+        "outboundAuthorized"
+      ],
+      "notes": "Shorter and more skimmable but generic; no reason this creator would be interested. Not suitable for bulk sending."
+    }
+  ],
+  "replyCount": 17,
+  "replyResults": [
+    {
+      "questionId": "PRIVACY",
+      "question": "Can this AI see all of my files and share them with a cloud company?",
+      "variants": [
+        {
+          "id": "PRIVACY-B",
+          "text": "That concern is sensible. Eve is a desktop companion, but that doesn't mean every model runs locally: cloud providers may receive context needed for the task. I'd check the exact folders you approve, the model/service chosen and the data path shown in the installed version before trusting it with anything sensitive.",
+          "ratings": {
+            "directness": 4,
+            "accuracy": 4,
+            "empathy": 4,
+            "actionability": 3,
+            "brevity": 2
+          },
+          "notes": "A bit long but correctly clarifies local tools versus remote inference and gives a safer next step.",
+          "score": 90
+        },
+        {
+          "id": "PRIVACY-A",
+          "text": "Eve has local permissions, so you can decide what to grant. Check where your model runs before sharing private files.",
+          "ratings": {
+            "directness": 3,
+            "accuracy": 3,
+            "empathy": 2,
+            "actionability": 2,
+            "brevity": 4
+          },
+          "notes": "Concise but omits the explicit distinction between a locally running desktop companion and a cloud model.",
+          "score": 68.75
+        }
+      ],
+      "editorialLeader": "PRIVACY-B"
+    },
+    {
+      "questionId": "PRICE",
+      "question": "Is Eve free, and will I get surprise AI bills?",
+      "variants": [
+        {
+          "id": "PRICE-B",
+          "text": "There are two different bills to ask about: the Eve app and the AI service or local hardware doing the work. I wouldn't call it 'free' until the particular download, account, usage allowance and any API/computer costs are checked. The first-use guide should spell out that route, rather than surprise anyone after installation.",
+          "ratings": {
+            "directness": 4,
+            "accuracy": 4,
+            "empathy": 4,
+            "actionability": 3,
+            "brevity": 3
+          },
+          "notes": "Explicitly answers the hidden-cost anxiety and gives a concrete verification standard. Still requires actual pricing facts.",
+          "score": 92.5
+        },
+        {
+          "id": "PRICE-A",
+          "text": "I'm aiming for a mostly free way to try Eve, but model/provider fees may be separate. I'll share a verified breakdown before claiming a no-cost setup.",
+          "ratings": {
+            "directness": 3,
+            "accuracy": 4,
+            "empathy": 3,
+            "actionability": 2,
+            "brevity": 4
+          },
+          "notes": "Honest and compact but lacks a breakdown of the exact account, quota and local-compute prerequisites.",
+          "score": 80
+        }
+      ],
+      "editorialLeader": "PRICE-B"
+    },
+    {
+      "questionId": "DOTS",
+      "question": "Is Eve a workaround to get OpenAI Dots in the EEA?",
+      "variants": [
+        {
+          "id": "DOTS-B",
+          "text": "No — Eve doesn't enable Dots or bypass OpenAI's regional or plan rules. It's a separate desktop project with different dependencies and capabilities. If you're considering it, I'd start with a verified example in your OS and check how it actually keeps an interrupted task together. OpenAI's own Dots availability article is the source for your current account eligibility.",
+          "ratings": {
+            "directness": 4,
+            "accuracy": 4,
+            "empathy": 3,
+            "actionability": 4,
+            "brevity": 3
+          },
+          "notes": "Preserves the important refusal while moving the person toward an honest, verifiable alternative outcome.",
+          "score": 93.75
+        },
+        {
+          "id": "DOTS-A",
+          "text": "No, Eve is an independent desktop project and doesn't unlock ChatGPT Dots or change plan eligibility. They should be compared on documented workflows, not the name 'agent'.",
+          "ratings": {
+            "directness": 4,
+            "accuracy": 4,
+            "empathy": 2,
+            "actionability": 2,
+            "brevity": 4
+          },
+          "notes": "Good direct denial; leaves user without an actionable comparison path.",
+          "score": 82.5
+        }
+      ],
+      "editorialLeader": "DOTS-B"
+    },
+    {
+      "questionId": "USEFUL",
+      "question": "Aren't assistants just extra administration? What do they actually finish?",
+      "variants": [
+        {
+          "id": "USEFUL-B",
+          "text": "I agree that another system to maintain is not a win. A sensible test is one low-stakes task: give the assistant messy options to organize, then see whether it returns a smaller decision and a result you can verify. If checking and correcting it takes longer than doing it yourself, it hasn't helped. I'm building Eve against that bar, not claiming it always clears it.",
+          "ratings": {
+            "directness": 4,
+            "accuracy": 4,
+            "empathy": 4,
+            "actionability": 4,
+            "brevity": 2
+          },
+          "notes": "Answers skepticism with a falsifiable small-task trial, instead of polished slogans or made-up success rates.",
+          "score": 95
+        },
+        {
+          "id": "USEFUL-A",
+          "text": "Eve is meant to help with practical jobs instead of offering yet another to-do list. More examples coming soon.",
+          "ratings": {
+            "directness": 2,
+            "accuracy": 3,
+            "empathy": 2,
+            "actionability": 1,
+            "brevity": 4
+          },
+          "notes": "Reads as a vague marketing promise, with no specific outcome or test.",
+          "score": 57.5
+        }
+      ],
+      "editorialLeader": "USEFUL-B"
+    }
+  ],
+  "groups": {
+    "adulting": {
+      "editorialLeader": "ADULT-B",
+      "publicWinner": null
+    },
+    "parents": {
+      "editorialLeader": "PARENT-A",
+      "publicWinner": null
+    },
+    "euDots": {
+      "editorialLeader": "EU-DOTS-B",
+      "publicWinner": null
+    },
+    "limits": {
+      "editorialLeader": "LIMITS-A",
+      "publicWinner": null
+    },
+    "launch": {
+      "editorialLeader": "LAUNCH-A",
+      "publicWinner": null
+    },
+    "creator": {
+      "editorialLeader": "CREATOR-A",
+      "publicWinner": null
+    }
+  }
+}

@@ -1,0 +1,63 @@
+[
+  {
+    "id": "ADULT-A", "group": "adulting", "file": "posts/01-adulting-A.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 1, "scannability": 4, "trustAndCaveats": 4, "distinctiveness": 4},
+    "notes": "Emotionally recognizable and friendly. Vague ask and no concrete demo/action; can't yet turn interest into a first useful result."
+  },
+  {
+    "id": "ADULT-B", "group": "adulting", "file": "posts/02-adulting-B.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 4, "nextStepClarity": 3, "scannability": 3, "trustAndCaveats": 3, "distinctiveness": 3},
+    "notes": "Shows a relatable single task and prospective first request. Stronger next action despite placeholders; cannot claim appointment demo occurred."
+  },
+  {
+    "id": "PARENT-A", "group": "parents", "file": "posts/03-parent-A.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 1, "scannability": 3, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Good empathy and boundaries, but needs a verified narrowly specified task and creator/moderator permission."
+  },
+  {
+    "id": "PARENT-B", "group": "parents", "file": "posts/04-parent-B.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 2, "scannability": 4, "trustAndCaveats": 4, "distinctiveness": 2},
+    "objectiveMatches": false,
+    "notes": "Helpful noncommercial advice, explicitly NOT a marketing pitch. High clarity cannot make it a comparable conversion candidate or license to promote."
+  },
+  {
+    "id": "EU-DOTS-A", "group": "euDots", "file": "posts/05-eu-dots-A.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 1, "scannability": 3, "trustAndCaveats": 4, "distinctiveness": 2},
+    "notes": "Accurate plan/region nuance and strong boundary. More announcement than demonstrated improvement; dependent on current official availability."
+  },
+  {
+    "id": "EU-DOTS-B", "group": "euDots", "file": "posts/06-eu-dots-B.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 2, "scannability": 4, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Readable X-native hook, disclaims bypass and requests a real demo; still more curiosity than verified usefulness."
+  },
+  {
+    "id": "LIMITS-A", "group": "limits", "file": "posts/07-limits-A.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 4, "nextStepClarity": 2, "scannability": 3, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Distinguishes rate limits from costly task reconstruction; specific interrupt/resume test proposed. Not yet reproduced in release installer."
+  },
+  {
+    "id": "LIMITS-B", "group": "limits", "file": "posts/08-limits-B.md",
+    "ratings": {"audienceFit": 3, "outcomeClarity": 3, "nextStepClarity": 1, "scannability": 4, "trustAndCaveats": 4, "distinctiveness": 2},
+    "notes": "Accurate but abstract founder thought-piece; weak beginner action and everyday result."
+  },
+  {
+    "id": "LAUNCH-A", "group": "launch", "file": "posts/09-reddit-launch-A.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 3, "scannability": 3, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Transparent identity and relevant request for feedback; strongest newcomer-friendly permitted launch base if current self-promo thread allows it."
+  },
+  {
+    "id": "LAUNCH-B", "group": "launch", "file": "posts/10-reddit-launch-B.md",
+    "ratings": {"audienceFit": 2, "outcomeClarity": 2, "nextStepClarity": 1, "scannability": 3, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Technically honest but heavy on jargon. Better for an engineer asking architecture questions than first public release post."
+  },
+  {
+    "id": "CREATOR-A", "group": "creator", "file": "posts/11-creator-A.md",
+    "ratings": {"audienceFit": 4, "outcomeClarity": 3, "nextStepClarity": 3, "scannability": 3, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Strong relevance and disclosure; usable only after inserting real creator-specific evidence and confirming pitch permission."
+  },
+  {
+    "id": "CREATOR-B", "group": "creator", "file": "posts/12-creator-B.md",
+    "ratings": {"audienceFit": 3, "outcomeClarity": 3, "nextStepClarity": 3, "scannability": 4, "trustAndCaveats": 4, "distinctiveness": 3},
+    "notes": "Shorter and more skimmable but generic; no reason this creator would be interested. Not suitable for bulk sending."
+  }
+]
