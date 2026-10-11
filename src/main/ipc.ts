@@ -146,7 +146,7 @@ import {
   reconcileAutomaticCompactionPolicy,
   sessionActivityExpiresAt,
   sessionInputActivity,
-  sessionControlsFor, stopSessionTurn, setSessionAutomation, setSessionObjective, compactSession, cancelSessionCompaction,
+  sessionControlsFor, stopSessionTurn, setSessionAutomation, setSessionObjective, compactSession, resumeFromSavedSummary, cancelSessionCompaction,
   cancelWorkerCommands,
   chatUrl,
   onBridgeChange,
@@ -1471,6 +1471,10 @@ export function registerIpc(
     return setSessionObjective(id, text, mode);
   });
   handle('sessions:compact', async (payload) => compactSession(sessionIdArg.parse(payload).id));
+  handle('sessions:resumeFromHandoff', async (payload) => {
+    const input = sessionIdArg.extend({ handoffId: z.string().min(8).max(64).regex(/^[0-9a-z-]+$/i) }).strict().parse(payload);
+    return resumeFromSavedSummary(input.id, input.handoffId);
+  });
   handle('sessions:cancelCompaction', async (payload) => cancelSessionCompaction(sessionIdArg.parse(payload).id));
   handle('sessions:plan', async (payload) => {
     const { text, backend, requestId } = z.object({ text: z.string().trim().min(1).max(16000), backend: z.enum(['api', 'chatgpt']), requestId: z.string().uuid().optional() }).parse(payload);

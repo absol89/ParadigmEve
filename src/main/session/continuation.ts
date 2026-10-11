@@ -66,7 +66,7 @@ import { clearChatWorkspace, moveChatWorkspace, workspaceForChat } from '../work
 import { clearGoalObjective, clearGoalSwitch, goalObjectiveFor, goalSwitchFor, moveGoalObjective, moveGoalSwitch } from '../goal.js';
 import { writeDurableNow, writeDurableSoon } from '../durable.js';
 import { currentAgentConversationId, transferAgentConversation } from '../agent-identity.js';
-import { handoffMatchesContinuation, prepareHandoff, resumeBootstrapMatches } from './handoff.js';
+import { handoffContinuationId, handoffMatchesContinuation, handoffPlanNotice, prepareHandoff, resumeBootstrapMatches } from './handoff.js';
 import { ensureHandoffRecorded, recordHandoff, recordNote, rebindConversation } from './recorder.js';
 import { endResumeClaim, noteResumeClaim, resetResumeGate, setDurableResumeProbe } from './resume-gate.js';
 import {
@@ -1125,6 +1125,50 @@ export async function attachSummary(token: string, text: string): Promise<Handof
       sourceTurnId: entry.sourceTurnId ?? null
     })
   );
+}
+
+/**
+ * Opens a new Compact & Resume from the summary an abandoned one already captured. Ported from
+ * Chat On Steroids #1215 (d6fa758e).
+ *
+ * The summary was written by ChatGPT for this session's current chat, so no new compaction
+ * prompt goes there: the source send is recorded as sent, which is what produced that summary.
+ * The brief then goes through {@link attachSummary} as a fresh handoff bound to this
+ * continuation, so its provenance, recording and restart recovery are the ordinary ones, and
+ * the replacement chat is claimed and committed exactly as after any capture. Refused (null)
+ * unless it is the session's latest handoff, written in its current chat, with nothing open.
+ */
+export async function reopenWithHandoffNow(sessionId: string, handoffId: string): Promise<ContinuationView | null> {
+  sweep();
+  const session = await getSession(sessionId);
+  if (!session?.conversationId || session.lastHandoffId !== handoffId) return null;
+  if ([...byToken.values()].some((entry) => entry.sessionId === sessionId && isOpen(entry))) return null;
+  const saved = await readHandoff(sessionId, handoffId).catch(() => null);
+  if (!saved || (saved.provenance && saved.provenance.sourceConversationId !== session.conversationId)) return null;
+  // prepareHandoff appends the current plan notice; strip the stored one so it is not doubled.
+  const notice = handoffPlanNotice(sessionId);
+  const brief = (saved.text.endsWith(notice) ? saved.text.slice(0, -notice.length) : saved.text).trim();
+  if (!brief) return null;
+  // Chat B belongs beside chat A: reuse the Project the abandoned run carried, when it is still known.
+  const prior = saved.provenance?.continuationId
+    ? [...byToken.values()].find((entry) => handoffContinuationId(entry.token) === saved.provenance?.continuationId)
+    : undefined;
+  const opened = await openContinuationNow(sessionId, session.conversationId, false, prior?.project ?? null);
+  const entry = byToken.get(opened.token);
+  if (!entry || opened.state !== 'awaiting-summary') return null;
+  const marked = await withCheckpointLock(entry.token, async () => {
+    if (!isOpen(entry) || entry.state !== 'awaiting-summary' || entry.sourceSend.state !== 'not-attempted') return false;
+    await transitionNow(entry, (current) => ({ ...current, sourceSend: { state: 'sent', messageId: null } }));
+    return true;
+  });
+  if (!marked) return null;
+  const handoff = await attachSummary(entry.token, brief);
+  if (!handoff) {
+    await abortContinuationNow(entry.token, 'the saved summary could not be stored again');
+    return null;
+  }
+  logInfo(`continuation ${entry.token.slice(0, 8)} reopened from handoff ${handoffId} as ${handoff.id}`);
+  return view(entry);
 }
 
 /**

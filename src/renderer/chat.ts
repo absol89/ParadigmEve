@@ -2387,7 +2387,7 @@ function compactionState(block: CompactionBlock): { text: string; tone: Compacti
   return { text: t("Summary requested — waiting for ChatGPT…"), tone: 'wait' };
 }
 
-function compactionRow(block: CompactionBlock, previous?: HTMLElement): HTMLElement {
+function compactionRow(block: CompactionBlock, previous?: HTMLElement, latest = true): HTMLElement {
   const key = `compaction:${block.token}`;
   const state = compactionState(block);
 
@@ -2440,6 +2440,21 @@ function compactionRow(block: CompactionBlock, previous?: HTMLElement): HTMLElem
     );
   }
   for (const note of block.notes) raw.append(el('p', 'raw-facts', `${clockTime(note.time)} — ${note.message.text}`));
+  // An abandoned run that already saved ChatGPT's summary can open the new chat with it,
+  // without asking ChatGPT to write it again (Chat On Steroids #1215). The app refuses a summary
+  // that is no longer the chat's latest, so only the newest Compact & Resume row offers it.
+  const abandoned = block.notes.some((note) => ABANDONED_NOTE.test(note.message.text));
+  if (latest && abandoned && block.handoff && !block.resume && selectedId) {
+    const sessionId = selectedId, handoffId = block.handoff.handoffId;
+    const reuse = el('button', 'btn compaction-reuse', () => t("Open a new chat with this summary")) as HTMLButtonElement;
+    reuse.type = 'button';
+    reuse.addEventListener('click', () => void (async () => {
+      reuse.disabled = true;
+      try { if (await run(api.resumeFromHandoff(sessionId, handoffId))) toast(t("Opening a new chat with the saved summary")); }
+      finally { if (reuse.isConnected) reuse.disabled = false; }
+    })());
+    raw.append(reuse);
+  }
   const oldRaw = box.querySelector<HTMLElement>('.raw');
   if (oldRaw) {
     // Streaming changes only the affected section. Keep the disclosure, focus and
@@ -2631,12 +2646,14 @@ function paintDetail(followBottom = true): void {
       if (recoverySession) dismissedRecoveryNotices.set(recoverySession, recoveryRevision);
       recoveryStatus.hidden = true; recoveryStatus.replaceChildren();
     }));
-  for (const item of timelineItems(shown)) {
+  const items = timelineItems(shown);
+  const latestCompaction = items.filter(item => item.kind === 'compaction').at(-1);
+  for (const item of items) {
     if (item.kind === 'compaction' || !['tool_call', 'page_tool', 'agent_message'].includes(item.event.kind)) activityBoundary = itemKey(item);
     if (!deps.state()?.config.ui.developerMode && item.kind === 'event' && item.event.source === 'app' && item.event.kind === 'progress' && item.event.progressId?.startsWith('browser-repair:')) continue;
     if (!deps.state()?.config.ui.developerMode && item.kind === 'event' && ['session_start', 'session_end', 'turn_start', 'turn_end', 'note'].includes(item.event.kind)) continue;
     const key = itemKey(item);
-    const sig = itemSignature(item);
+    const sig = itemSignature(item) + (item.kind === 'compaction' && item !== latestCompaction ? '\u0000superseded' : '');
     keep.add(key);
     const cached = rowCache.get(key);
     if (cached && cached.sig === sig) {
@@ -2645,7 +2662,7 @@ function paintDetail(followBottom = true): void {
       timelineRows.push(cached.row);
       continue;
     }
-    const row = item.kind === 'compaction' ? compactionRow(item.block, cached?.row) : eventRow(item.event);
+    const row = item.kind === 'compaction' ? compactionRow(item.block, cached?.row, item === latestCompaction) : eventRow(item.event);
     row.dataset.timelineKey = key;
     row.dataset.activityBoundary = activityBoundary;
     paintInputReceipt(row, item);

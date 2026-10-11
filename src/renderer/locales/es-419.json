@@ -1853,5 +1853,8 @@
   "OpenRouter · {0} (partial)": "OpenRouter · {0} (parcial)",
   "OpenRouter worker model": "Modelo de OpenRouter para agentes de trabajo",
   "Exact OpenRouter model id for OpenRouter workers, for example stepfun/step-5-preview. Uses the API provider key below.": "Id exacto del modelo de OpenRouter para agentes de trabajo de OpenRouter, por ejemplo stepfun/step-5-preview. Usa la clave del proveedor de API de abajo.",
-  "stepfun/step-5-preview": "stepfun/step-5-preview"
+  "stepfun/step-5-preview": "stepfun/step-5-preview",
+  "Open a new chat with this summary": "Abrir un chat nuevo con este resumen",
+  "Opening a new chat with the saved summary": "Abriendo un chat nuevo con el resumen guardado",
+  "This summary can no longer be used. Start Compact & Resume again.": "Este resumen ya no se puede usar. Vuelve a iniciar Compactar y reanudar."
 }

@@ -1859,5 +1859,8 @@
   "OpenRouter · {0} (partial)": "OpenRouter · {0} (delvis)",
   "OpenRouter worker model": "OpenRouter-modell för arbetare",
   "Exact OpenRouter model id for OpenRouter workers, for example stepfun/step-5-preview. Uses the API provider key below.": "Exakt OpenRouter-modell-id för OpenRouter-arbetare, till exempel stepfun/step-5-preview. Använder API-leverantörens nyckel nedan.",
-  "stepfun/step-5-preview": "stepfun/step-5-preview"
+  "stepfun/step-5-preview": "stepfun/step-5-preview",
+  "Open a new chat with this summary": "Öppna en ny chatt med den här sammanfattningen",
+  "Opening a new chat with the saved summary": "Öppnar en ny chatt med den sparade sammanfattningen",
+  "This summary can no longer be used. Start Compact & Resume again.": "Den här sammanfattningen kan inte längre användas. Starta Komprimera och fortsätt igen."
 }
