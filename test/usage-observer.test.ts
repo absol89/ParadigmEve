@@ -267,6 +267,29 @@ describe('MAIN-world usage projection', () => {
     ], { method: 'POST' }, f);
     expect(h.posts).toHaveLength(1);
   });
+  it('projects only the server input-message resume marker when React has not mounted the user row', async () => {
+    const h = harness();
+    const chat = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const token = '0123456789abcdef0123456789abcdef';
+    await h.feedSse([
+      'data: ' + JSON.stringify({ type: 'stream_handoff', conversation_id: chat }) + '\n\n',
+      'data: ' + JSON.stringify({ type: 'input_message', input_message: { content: { parts: [`[[CLF-RESUME:${token}]]\n\nprivate handoff data`] } } }) + '\n\n',
+      'data: ' + JSON.stringify({ type: 'input_message', input_message: { content: { parts: [`[[CLF-RESUME:${token}]]\n\nprivate handoff data`] } } }) + '\n\n'
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([{ type: 'cos-resume-origin', conversationId: chat, token, observedAt: expect.any(Number) }]);
+    expect(JSON.stringify(h.posts)).not.toContain('private handoff');
+  });
+  it('does not mistake assistant text, tool arguments, or an unbound input event for an accepted resume', async () => {
+    const h = harness();
+    const token = '0123456789abcdef0123456789abcdef';
+    const chat = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    for (const event of [
+      { type: 'input_message', input_message: { content: { parts: [`[[CLF-RESUME:${token}]] secret`] } } },
+      { conversation_id: chat, type: 'assistant_message', message: { content: { parts: [`[[CLF-RESUME:${token}]] secret`] } } },
+      { conversation_id: chat, type: 'input_message', tool_arguments: { content: { parts: [`[[CLF-RESUME:${token}]] secret`] } } }
+    ]) await h.feedSse(['data: ' + JSON.stringify(event) + '\n\n']);
+    expect(h.posts).toEqual([]);
+  });
 
   it('does not turn quoted text, tool arguments or cross-event identifiers into ownership', async () => {
     const h = harness();

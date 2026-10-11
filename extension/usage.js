@@ -21,6 +21,7 @@
   // alnum/underscore/hyphen only. Browser evidence alone still grants nothing; /correlations
   // requires the same id to have reached a real local MCP dispatch.
   const REQUEST = /^[a-zA-Z0-9_-]{1,100}$/;
+  const RESUME = /^\s*\[\[CLF-RESUME:([A-Za-z0-9_-]{16,64})\]\](?:\\?\s|$)/;
   const CONVERSATION_FIELD = /(?:^|[,{\s])\"conversation_id\"\s*:\s*\"([0-9a-f-]{36})\"/gi;
   const project = (data, observedAt, order) => {
     if (!data || typeof data !== 'object') return;
@@ -89,6 +90,7 @@
     const timer = setTimeout(() => void reader.cancel().catch(() => {}), 90_000);
     const decoder = new TextDecoder();
     const emitted = new Set();
+    const emittedResumes = new Set();
     let bytes = 0, buffer = '';
     // The one conversation this response has named so far; see scan().
     let responseConversation = null;
@@ -127,6 +129,19 @@
         event?.input_message?.metadata?.request_id]
         .filter(id => typeof id === 'string' && REQUEST.test(id)));
       const fresh = [...requestIds].filter((id) => !emitted.has(id)).slice(0, 16 - emitted.size);
+      // A fresh Compact & Resume can have a server-created conversation long before React
+      // renders its first user row. Project ONLY the marker from the server's own input_message
+      // event, never the handoff body, request payload, tool arguments or assistant/model text.
+      // The isolated page checks this against its one armed destination command before ACK.
+      if (event?.type === 'input_message' && event.input_message && typeof event.input_message === 'object') {
+        const content = event.input_message.content;
+        const part = Array.isArray(content?.parts) ? content.parts[0] : null;
+        const marker = typeof part === 'string' ? part.match(RESUME) : null;
+        if (marker && !emittedResumes.has(marker[1]) && emittedResumes.size < 2) {
+          emittedResumes.add(marker[1]);
+          post({ type: 'cos-resume-origin', conversationId, token: marker[1], observedAt }, location.origin);
+        }
+      }
       if (fresh.length === 0) return;
       for (const id of fresh) emitted.add(id);
       post({ type: 'cos-request-origin', conversationId, requestIds: fresh, observedAt }, location.origin);

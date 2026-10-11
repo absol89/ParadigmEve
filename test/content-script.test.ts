@@ -12751,6 +12751,32 @@ describe('the fresh chat the app opened', () => {
       })
     ]);
   });
+  it('acknowledges a server-stream-proven resume even when ChatGPT does not render the user row or /c route yet', async () => {
+    const token = '0123456789abcdef0123456789abcdef';
+    const destination = '21111111-2222-4333-8444-555555555555';
+    const text = `[[CLF-RESUME:${token}]]\n\nCarry this session into the replacement chat.`;
+    let clicks = 0;
+    live = await harness('https://chatgpt.com/?clf=cmd-stream-only#clf=cmd-stream-only', {
+      redeem: () => ({ ok: true, command: { id: 'cmd-stream-only', type: 'resume', text, agent: null } }),
+      ack: () => ({ ok: true })
+    }, (document) => {
+      document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+        clicks++;
+        const page = document.defaultView!;
+        page.dispatchEvent(new page.MessageEvent('message', {
+          source: page as unknown as Window, origin: 'https://chatgpt.com',
+          data: { type: 'cos-resume-origin', token, conversationId: destination, observedAt: (page as unknown as typeof globalThis).Date.now() }
+        }));
+        // The stream is already accepted, but React never publishes its user row or route.
+      });
+    });
+    await settle(550);
+    expect(clicks).toBe(1);
+    expect(live.sent.filter(message => message.type === 'ack')).toContainEqual(expect.objectContaining({
+      id: 'cmd-stream-only', status: 'sent', conversationId: destination
+    }));
+    expect(live.sent.filter(message => message.type === 'compact' && message.destinationDispatch)).toHaveLength(1);
+  });
 
   it('replays the reported 2.1.7 successor URL pair once while the final ACK is slow', async () => {
     const commandId = '90daf7181b53733f';

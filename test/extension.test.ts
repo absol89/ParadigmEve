@@ -1874,17 +1874,19 @@ describe('worker settings authority', () => {
     // The page sends this and the app acts on it — it retires the lease and re-offers the brief
     // to a fresh chat at once instead of waiting the lease out. The relay used to drop it.
     await worker.send({ type: 'compact', conversationId: CHAT, token, commandId: 'resume-command', client: 'resume-document', destinationLost: true }, 44);
+    await worker.send({ type: 'compact', token, commandId: 'resume-command', client: 'resume-document', destinationUnresolved: true }, 44);
     // A field nobody named must not ride along on a valid token.
     await worker.send({ type: 'compact', conversationId: CHAT, token, sourceLost: true, invented: true }, 44);
     // And a checkpoint without its token says nothing about any transaction.
     await worker.send({ type: 'compact', conversationId: CHAT, destinationLost: true }, 44);
 
-    expect(posted).toHaveLength(3);
+    expect(posted).toHaveLength(4);
     expect(posted[0]).toMatchObject({ conversationId: CHAT, token, commandId: 'resume-command', client: 'resume-document', destinationLost: true });
-    expect(posted[1]).toMatchObject({ conversationId: CHAT, token, sourceLost: true });
-    expect(posted[1]).not.toHaveProperty('invented');
-    expect(posted[2]).not.toHaveProperty('destinationLost');
-    expect(posted[2]).not.toHaveProperty('token');
+    expect(posted[1]).toMatchObject({ token, commandId: 'resume-command', client: 'resume-document', destinationUnresolved: true });
+    expect(posted[2]).toMatchObject({ conversationId: CHAT, token, sourceLost: true });
+    expect(posted[2]).not.toHaveProperty('invented');
+    expect(posted[3]).not.toHaveProperty('destinationLost');
+    expect(posted[3]).not.toHaveProperty('token');
   });
 
   /**

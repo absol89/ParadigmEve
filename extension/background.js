@@ -3391,7 +3391,8 @@ const COMPACT_CHECKPOINT_FLAGS = [
   'sourceLost',
   'destinationAttempt',
   'destinationDispatch',
-  'destinationLost'
+  'destinationLost',
+  'destinationUnresolved'
 ];
 const COMPACT_CHECKPOINT_TEXT = ['summary', 'sourceMessageId', 'destinationMessageId', 'before', 'newestUserMessage'];
 // Not a checkpoint of its own: it qualifies `sourceMessageId` by saying how far that exact
@@ -3880,8 +3881,8 @@ const HANDLERS = {
     // destination is accepted only while both current and pending routes are still fresh-chat.
     if (named
       ? (tab.pendingUrl || tab.status === 'loading' || conversationFromUrl(tab.url) !== named)
-      : (conversationFromUrl(tab.url) !== null ||
-          (tab.pendingUrl && (tab.pendingUrl !== tab.url || conversationFromUrl(tab.pendingUrl) !== null))))
+      : (message.destinationUnresolved !== true && (conversationFromUrl(tab.url) !== null ||
+          (tab.pendingUrl && (tab.pendingUrl !== tab.url || conversationFromUrl(tab.pendingUrl) !== null)))))
       return { ok: false, error: 'stale_document' };
     const sourceUrl = tab.url;
     const result = await call('/compact', {
@@ -3893,7 +3894,7 @@ const HANDLERS = {
         cancel: message.cancel === true,
         ticket: message.ticket === true,
         automatic: message.automatic === true,
-        ...((message.destinationAttempt === true || message.destinationDispatch === true || message.destinationLost === true)
+        ...((message.destinationAttempt === true || message.destinationDispatch === true || message.destinationLost === true || message.destinationUnresolved === true)
           ? { commandId: String(message.commandId || ''), client: String(message.client || '') } : {}),
         // The capture. `token` names the transaction the page was given when it marked the
         // compaction turn, and `summary` is that turn's own answer. Both are forwarded

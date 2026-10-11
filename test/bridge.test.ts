@@ -3555,6 +3555,27 @@ describe('delivering a bootstrap', () => {
       body: { token: 'ffffffffffffffffffffffffffffffff', commandId: command.id, client: 'tab-1', destinationLost: true }
     })).status).toBe(409);
   });
+  it('records an unresolved replacement Send without retiring its claim or opening a duplicate chat', async () => {
+    await pair();
+    const { sessionId, token } = await compactedSession('99999999-8888-4777-8666-555555555559', 'a brief awaiting server evidence');
+    const command = queueResume(sessionId, token)!;
+    expect((await redeem(command.id, 'tab-unresolved')).text).toContain('server evidence');
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-unresolved', destinationAttempt: true }
+    })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-unresolved', destinationDispatch: true }
+    })).body.armed).toBe(true);
+    const count = opened.length;
+    expect(await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'tab-unresolved', destinationUnresolved: true }
+    })).toMatchObject({ status: 200, body: { noted: true } });
+    expect(continuationByToken(token)?.destinationSend.state).toBe('dispatched-unresolved');
+    expect(opened).toHaveLength(count);
+    expect((await request('POST', '/compact', {
+      body: { token, commandId: command.id, client: 'different-tab', destinationUnresolved: true }
+    })).status).toBe(409);
+  });
 
   it('aborts a resume whose commit the session layer refused, so chat A is not left waiting on it', async () => {
     // 2026-09-01: the marked replacement message committed, the session layer refused the

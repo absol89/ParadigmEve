@@ -10434,6 +10434,22 @@
    * too: their slot binding lands before their first recorded event.
    */
   let commandJournalGate = false;
+  // Only opaque resume marker/conversation pairs from a live ChatGPT response. The page
+  // compares these to the ONE leased, already-clicked bootstrap; they do not grant tools.
+  const resumeStreamOrigins = new Map();
+  const resumeStreamWatchers = new Map();
+  window.addEventListener('message', (event) => {
+    if (!alive || event.source !== window || event.origin !== location.origin || event.data?.type !== 'cos-resume-origin') return;
+    const { conversationId: id, token, observedAt } = event.data;
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
+        typeof token !== 'string' || !/^[A-Za-z0-9_-]{16,64}$/.test(token) || !Number.isFinite(observedAt) ||
+        Math.abs(Date.now() - observedAt) > 120_000) return;
+    const route = CLF_DOM.conversationId();
+    if (route && route !== id) return;
+    resumeStreamOrigins.set(token, { conversationId: id, observedAt });
+    while (resumeStreamOrigins.size > 4) resumeStreamOrigins.delete(resumeStreamOrigins.keys().next().value);
+    resumeStreamWatchers.get(token)?.();
+  });
 
   /**
    * The exact leased worker slot a fresh worker page may prove while the gate is still up: set
@@ -10839,14 +10855,24 @@
       return true;
     };
     let acceptedBootstrap = null;
+    let bootstrapClickReached = false;
+    let bootstrapClickedAt = 0;
     const bootstrapConversation = () => {
-      const found = CLF_DOM.conversationId();
+      const route = CLF_DOM.conversationId();
+      const stream = resumeMarker ? resumeStreamOrigins.get(resumeMarker[2]) : null;
+      const streamed = boot.type === 'resume' && bootstrapClickReached && stream &&
+        stream.observedAt >= bootstrapClickedAt - 5_000 &&
+        (!route || route === stream.conversationId) && sendingBootstrap() ? stream.conversationId : null;
+      const found = route || streamed;
       if (!found || (conversationId && conversationId !== found) ||
           (acceptedBootstrap && (acceptedBootstrap.conversationId !== found || acceptedBootstrap.epoch !== epoch))) return null;
       const message = CLF_DOM.messages().find(message => message.role === 'user' &&
         matchesSubmittedBootstrap(message, boot.text));
-      if (!message || (acceptedBootstrap && acceptedBootstrap.messageId !== message.id)) return null;
-      acceptedBootstrap ||= { conversationId: found, epoch, messageId: message.id };
+      // The exact user row is strongest. If it is absent, the server stream can prove the
+      // marker and conversation pair without trusting the URL or a quoted assistant answer.
+      if (!message && streamed !== found) return null;
+      if (message && acceptedBootstrap?.messageId && acceptedBootstrap.messageId !== message.id) return null;
+      acceptedBootstrap ||= { conversationId: found, epoch, messageId: message?.id || null };
       return found;
     };
     if (boot.type === 'resume') {
@@ -10899,15 +10925,28 @@
     rememberUserSend();
     // The instant before the native click: from here a fresh worker's model may call tools.
     // Set only at the native click's own authorization, the last step before button.click().
-    let bootstrapClickReached = false;
     const authorizeBootstrapSend = () => {
       bootstrapClickReached = true;
+      bootstrapClickedAt = Date.now();
       if (attempt && boot.type === 'worker') attempt.phase = 'dispatching';
       return true;
     };
     const sendBootstrap = () => sendSubmittedText(() => !attempt?.cancelled && sendingBootstrap(), false, authorizeBootstrapSend,
                                                   matchesSubmittedBootstrap);
-    let bootstrapSent = await sendBootstrap();
+    // DOM.send can wait a long time for a React-rendered user row. The server's actual
+    // input_message event can arrive first, so let its exact marker wake the ACK path.
+    let wakeStream = null;
+    const streamReady = new Promise(resolve => { wakeStream = resolve; });
+    if (resumeMarker) resumeStreamWatchers.set(resumeMarker[2], () => {
+      const found = bootstrapConversation();
+      if (found) wakeStream(found);
+    });
+    const firstSend = await Promise.race([
+      sendBootstrap().then(sent => ({ sent })),
+      streamReady.then(found => ({ sent: Boolean(found) }))
+    ]);
+    if (resumeMarker) resumeStreamWatchers.delete(resumeMarker[2]);
+    let bootstrapSent = firstSend.sent;
     // send() waits for ChatGPT to enable Send, which on a fresh chat is the end of hydration; a
     // composer remounted during that wait ends it with no click at all. That is the 2026-10-01
     // Compact & Resume successor that went silent until the bridge gave up on it. With the click
@@ -10918,6 +10957,11 @@
       if (!stillOnTarget() || !exactBootstrapDraft()) return;
       bootstrapSent = await sendBootstrap();
     }
+    // sendSubmittedText normally waits for a rendered user row. The POST stream can prove
+    // the exact resumed input even when that row never mounts, so don't discard its receipt.
+    if (!bootstrapSent && boot.type === 'resume' && bootstrapClickReached && bootstrapConversation()) {
+      bootstrapSent = true;
+    }
     if (!bootstrapSent) {
       // Once send() was invoked, a missing/cleared draft cannot prove that no click
       // happened. Only the exact pre-click check above may release the dispatch.
@@ -10925,6 +10969,10 @@
         // A route appearing after the click is not enough to prove which authored message made
         // it there. Retain the armed ticket and journal gate for the exact marked-message
         // reconciliation instead of turning a navigation-only observation into a sent receipt.
+        if (bootstrapClickReached) {
+          console.warn('[ParadigmEve] Compact & Resume Send remains unverified; the handoff is retained, not resent.');
+          void ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationUnresolved: true });
+        }
         return;
       }
       // The command fails either way, which is what keeps a possible click from being replayed.
@@ -10984,6 +11032,10 @@
     }
     // Sent, but this tab never saw an id, so nothing can be bound to it. Reported honestly:
     // the app ends the slot or the continuation rather than waiting on a chat it cannot name.
+    if (boot.type === 'resume') {
+      console.warn('[ParadigmEve] Compact & Resume has no exact destination message or server stream evidence. The handoff stays protected; no second Send was attempted.');
+      await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationUnresolved: true });
+    }
     await ask({ type: 'ack', id: boot.id, status: 'sent', agent, client: RUN_ID });
     } finally { bootstrapDraft.dispose(); }
   }

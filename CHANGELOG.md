@@ -21,6 +21,12 @@ and public release remain separate verification steps.
 
 ### Fixed
 
+- **Compact & Resume when ChatGPT delays its first message:** The Companion now checks
+  the exact resume marker in ChatGPT's own live input-message stream as well as the
+  rendered user row. A proven marker/conversation pair can finish the handoff even
+  before the page shows its first message. An unverified Send is reported in the
+  session rather than disappearing silently; its irreversible send fence remains in
+  place to avoid submitting the same handoff twice.
 - **Compact & Resume inside ChatGPT Projects:** Adapted the Project entry and handoff
   path to ChatGPT's changed page structure. Project links no longer depend on the old
   folder icon or header; entering the Project accepts its retained editor, repeats a

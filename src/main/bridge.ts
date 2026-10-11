@@ -3198,6 +3198,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         origin
       );
     }
+    if (body['destinationUnresolved'] === true) {
+      // The page crossed the irreversible Send fence but neither the native user row nor
+      // ChatGPT's own input_message stream identified its successor. Never re-send on doubt;
+      // make the blocked handoff visible in the session so a restart is not a silent wait.
+      const noted = await destinationTransition(async () => {
+        const entry = continuationByToken(checkpointToken);
+        if (!entry || entry.destinationSend.state !== 'dispatched-unresolved') return false;
+        await recordNote(entry.sessionId,
+          'Compact & Resume could not verify the replacement chat after Send. The handoff is preserved and will not be sent twice. Open the replacement chat to recover its message, or cancel and retry only after checking whether ChatGPT accepted it.');
+        logWarn(`bridge: resume destination for ${entry.sessionId} remains unverified after Send; preserving ticket ${checkpointToken.slice(0, 8)}`);
+        return true;
+      });
+      return json(res, noted ? 200 : 409, noted ? { noted: true } : { error: 'destination_not_unresolved' }, origin);
+    }
     const id = conversationId(body['conversationId']);
     if (!id) return json(res, 400, { error: 'bad_conversation_id' }, origin);
     if (body['sourceLost'] === true) {
