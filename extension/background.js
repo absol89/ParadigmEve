@@ -2534,16 +2534,25 @@ let pluginRefreshFlight = null;
 const PLUGIN_REFRESH_MARKER = 'eve-plugin-refresh';
 const LEGACY_PLUGIN_REFRESH_MARKER = 'cos-plugin-refresh';
 /**
- * ChatGPT's Plugins settings, under either route. The older shell kept them in a hash
+ * ChatGPT's Plugins settings, under every route. The older shell kept them in a hash
  * (`/#settings/Plugins/plugin_<app>`); the newer one redirects that to a real path
- * (`/settings/plugins-settings/plugin_<app>`), keeping our query. Reading only the old form made
- * every helper tab unrecognisable once it landed, so each extension restart opened another one
- * and none was ever reused or closed (ported from upstream chat-on-steroids 534d3ae).
+ * (`/settings/plugins-settings/plugin_<app>`), keeping our query, and shows the installed plugin
+ * itself at `/plugins/plugin_<app>`. Reading only the old form made every helper tab
+ * unrecognisable once it landed, so each extension restart opened another one and none was ever
+ * reused or closed (ported from upstream chat-on-steroids 534d3ae).
  */
 function pluginSettingsRoute(url) {
   return url.origin === 'https://chatgpt.com' && (
     (url.pathname === '/' && /^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash)) ||
-    /^\/settings\/plugins-settings(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.pathname));
+    /^\/(?:settings\/plugins-settings(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?|plugins\/plugin_asdk_app_[a-zA-Z0-9_-]+)$/.test(url.pathname));
+}
+/**
+ * Whether a path shows this exact installed plugin. 2026-10-12: forcing the helper onto
+ * `/settings/plugins-settings/plugin_<app>` left it on the settings view instead of the plugin, and
+ * the refresh never ran; the plugin's own page is `/plugins/plugin_<app>` (upstream 2.1.35).
+ */
+function exactPluginPath(pathname, appId) {
+  return pathname === `/plugins/plugin_${appId}` || pathname === `/settings/plugins-settings/plugin_${appId}`;
 }
 function pluginRefreshMarker(tab) {
   try {
@@ -2553,11 +2562,12 @@ function pluginRefreshMarker(tab) {
       : null;
   } catch { return null; }
 }
-/** Canonical current-shell page for an exact installed plugin; the settings index is discovery only. */
+/** The installed plugin's own page when its App Id is known; the settings index is discovery only. */
 function pluginRefreshPageUrl(request) {
-  const plugin = typeof request.appId === 'string' && /^asdk_app_[a-zA-Z0-9_-]+$/.test(request.appId)
-    ? `/plugin_${request.appId}` : '';
-  return `https://chatgpt.com/settings/plugins-settings${plugin}?${PLUGIN_REFRESH_MARKER}=${encodeURIComponent(request.id)}`;
+  const marker = `${PLUGIN_REFRESH_MARKER}=${encodeURIComponent(request.id)}`;
+  return typeof request.appId === 'string' && /^asdk_app_[a-zA-Z0-9_-]+$/.test(request.appId)
+    ? `https://chatgpt.com/plugins/plugin_${request.appId}?${marker}`
+    : `https://chatgpt.com/settings/plugins-settings?${marker}`;
 }
 function inspectRequestedPluginRefresh(publications, background, browserOnly = false) {
   if (pluginRefreshFlight || !Array.isArray(publications) || !publications.length) return pluginRefreshFlight;
@@ -2576,9 +2586,9 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
       const request = requests.find(candidate => candidate.id === owner.id);
       const url = new URL(current.pendingUrl || current.url || '');
       if (!pluginSettingsRoute(url)) return;
-      const exactPath = request?.appId ? `/settings/plugins-settings/plugin_${request.appId}` : null;
-      if (pluginRefreshMarker(current) !== owner.id || (exactPath && url.pathname !== exactPath)) {
-        if (exactPath) { url.pathname = exactPath; url.hash = ''; }
+      const appId = request?.appId || null;
+      if (pluginRefreshMarker(current) !== owner.id || (appId && !exactPluginPath(url.pathname, appId))) {
+        if (appId && !exactPluginPath(url.pathname, appId)) { url.pathname = `/plugins/plugin_${appId}`; url.hash = ''; }
         url.searchParams.delete(LEGACY_PLUGIN_REFRESH_MARKER);
         url.searchParams.set(PLUGIN_REFRESH_MARKER, owner.id);
         if (request?.verifyOnly === true && owner.verifyOnly !== true) {
@@ -2638,7 +2648,7 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
       const current = await chrome.tabs.get(held.id).catch(() => null);
       if (!current || current.pinned || current.pendingUrl || pluginRefreshMarker(current) !== request.id) return;
       const currentUrl = new URL(current.url);
-      if (currentUrl.pathname !== `/settings/plugins-settings/plugin_${request.appId}` || currentUrl.hash) {
+      if (!exactPluginPath(currentUrl.pathname, request.appId) || currentUrl.hash) {
         await chrome.storage.session.set({ pluginRefreshOwner: { id: request.id, tab: held.id, ...(request.verifyOnly === true ? { verifyOnly: true } : {}) } });
         await chrome.tabs.update(held.id, { url: pluginRefreshPageUrl(request) });
         return;

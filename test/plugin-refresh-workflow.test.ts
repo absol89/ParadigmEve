@@ -111,7 +111,7 @@ it('stops automatic retry when a changed schema has no Refresh control', async (
     tools: [{ name: 'read', description: 'Old description.' }]
   });
 });
-it('opens an enrolled exact App Id directly in marked settings without name discovery', async () => {
+it('opens an enrolled exact App Id directly on its own marked plugin page without name discovery', async () => {
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
   const create = vi.fn(async () => ({ id: 9 }));
   const context = vm.createContext({ URL, setTimeout, clearTimeout, CHATGPT_TAB_URLS: ['https://chatgpt.com/*'],
@@ -120,7 +120,7 @@ it('opens an enrolled exact App Id directly in marked settings without name disc
   });
   vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   await (context.run as Function)([{ surface: 'core' }], true);
-  expect(create).toHaveBeenCalledExactlyOnceWith(`https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}`, true);
+  expect(create).toHaveBeenCalledExactlyOnceWith(`https://chatgpt.com/plugins/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}`, true);
 });
 it.each([
   { label: 'retained verify-only owner', retainedOwner: true, verifyOnly: true },
@@ -140,10 +140,33 @@ it.each([
   });
   vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   await (context.run as Function)([{ surface: 'core' }], false);
-  expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}` });
+  expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/plugins/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}` });
   expect(create).not.toHaveBeenCalled();
   expect(sendMessage).not.toHaveBeenCalled();
   expect(saved.pluginRefreshOwner).toEqual({ id, tab: 7, ...(verifyOnly ? { verifyOnly: true } : {}) });
+});
+// 2026-10-12: the helper was forced onto the settings view instead of the plugin and never refreshed.
+it.each([
+  'https://chatgpt.com/plugins/plugin_asdk_app_synthetic',
+  'https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic'
+])('hands the refresh to a marked helper already on the exact plugin page (%s)', async page => {
+  const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
+  const tab = { id: 7, url: `${page}?eve-plugin-refresh=${id}`, pinned: false };
+  const update = vi.fn();
+  const sendMessage = vi.fn(async () => true);
+  const saved: Record<string, any> = { pluginRefreshOwner: { id, tab: 7 } };
+  const context = vm.createContext({ URL, setTimeout, clearTimeout, CHATGPT_TAB_URLS: ['https://chatgpt.com/*'],
+    call: async () => ({ ok: true, data: { requests: [{ id, appId: 'asdk_app_synthetic' }] } }),
+    createChatTab: vi.fn(),
+    chrome: { storage: { session: { get: async (key: string) => ({ [key]: saved[key] }), set: async (next: object) => Object.assign(saved, next) } },
+      tabs: { query: async () => [tab], get: async () => tab, update, sendMessage } }
+  });
+  vm.runInContext(`${tabLog}
+${code}
+globalThis.run = inspectRequestedPluginRefresh;`, context);
+  await (context.run as Function)([{ surface: 'core' }], false);
+  expect(update).not.toHaveBeenCalled();
+  expect(sendMessage).toHaveBeenCalledWith(7, { type: 'clf-plugin-refresh', request: { id, appId: 'asdk_app_synthetic' } });
 });
 it('restores the known plugin route and verify-only fence together after the refresh marker was stripped', async () => {
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
@@ -159,7 +182,7 @@ it('restores the known plugin route and verify-only fence together after the ref
   });
   vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   await (context.run as Function)([{ surface: 'core' }], false);
-  expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}` });
+  expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/plugins/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}` });
   expect(sendMessage).not.toHaveBeenCalled();
   expect(saved.pluginRefreshOwner).toEqual({ id, tab: 7, verifyOnly: true });
 });

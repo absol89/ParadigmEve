@@ -11616,7 +11616,7 @@
     // Either settings route (see background.js pluginSettingsRoute). The newer path-routed page
     // is owned so that its result is reported, not left as a silent, reopened request.
     const route = (url.pathname === '/' && /^#settings\/Plugins(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.hash)) ||
-      /^\/settings\/plugins-settings(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?$/.test(url.pathname);
+      /^\/(?:settings\/plugins-settings(?:\/plugin_asdk_app_[a-zA-Z0-9_-]+)?|plugins\/plugin_asdk_app_[a-zA-Z0-9_-]+)$/.test(url.pathname);
     return alive && !generating && !CLF_DOM.generating() && route &&
       (url.searchParams.get(PLUGIN_REFRESH_MARKER) === id || url.searchParams.get(LEGACY_PLUGIN_REFRESH_MARKER) === id);
   }
@@ -11661,7 +11661,8 @@
       if (pathList || (listUrl.pathname === '/' && listUrl.hash === '#settings/Plugins')) {
         if (request.appId) {
           const url = new URL(location.href);
-          if (pathList) url.pathname = `/settings/plugins-settings/plugin_${request.appId}`;
+          // The installed plugin's own page, not its settings view (see background exactPluginPath).
+          if (pathList) url.pathname = `/plugins/plugin_${request.appId}`;
           else url.hash = `settings/Plugins/plugin_${request.appId}`;
           if (!current()) return false;
           location.assign(url.href); return true;
