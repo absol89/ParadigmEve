@@ -364,6 +364,7 @@ const configSchema = z.object({
     binaryPath: z.string().max(4096)
   }),
   ui: z.object({
+    desktopTimingLogs: z.boolean().optional().default(false),
     chatBrowser: z.enum(CHAT_BROWSERS).optional().default('chrome'),
     chatModel: z.string().trim().min(1).max(80).nullable().optional(),
     chatReasoning: z.enum(REASONING_EFFORTS).nullable().optional(),
@@ -647,6 +648,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     readOnly: false,
     tunnel: { kind: 'openai', tunnelId: '', desktopTunnelId: '', binaryPath: '' },
     ui: {
+      desktopTimingLogs: false,
       minimizeToTray: false,
       autoConnect: false,
       startAtLogin: false,

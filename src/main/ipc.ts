@@ -255,6 +255,7 @@ const settingsPatch = z.object({
     binaryPath: z.string().max(4096)
   }),
   ui: z.object({
+    desktopTimingLogs: z.boolean().optional(),
     chatBrowser: z.enum(CHAT_BROWSERS).optional(),
     chatModel: z.string().trim().min(1).max(80).nullable().optional(),
     chatReasoning: z.enum(REASONING_EFFORTS).nullable().optional(),
@@ -455,6 +456,7 @@ function mergeSettings(
       binaryPath: pick(current.tunnel.binaryPath, base.tunnel.binaryPath, wanted.tunnel.binaryPath)
     },
     ui: {
+      desktopTimingLogs: pick(current.ui.desktopTimingLogs, base.ui.desktopTimingLogs, wanted.ui.desktopTimingLogs),
       chatBrowser: pick(current.ui.chatBrowser, base.ui.chatBrowser, wanted.ui.chatBrowser),
       chatModel: pick(current.ui.chatModel, base.ui.chatModel, wanted.ui.chatModel),
       chatReasoning: pick(current.ui.chatReasoning, base.ui.chatReasoning, wanted.ui.chatReasoning),
@@ -1281,6 +1283,11 @@ export function registerIpc(
   });
 
   handle('log:get', async () => getLog());
+  handle('log:desktopTiming', async payload => {
+    const { enabled } = z.object({ enabled: z.boolean() }).strict().parse(payload);
+    await updateConfig(config => ({ ...config, ui: { ...config.ui, desktopTimingLogs: enabled } }));
+    return buildState();
+  });
   handle('log:text', async () => formatLogForClipboard());
   handle('log:json', async () => formatLogAsJson());
   handle('clipboard:write', async (payload) => {

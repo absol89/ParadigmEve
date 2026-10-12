@@ -914,6 +914,19 @@ describe('bounded IPC identities and OS launch results', () => {
 });
 
 describe('ChatGPT browser settings', () => {
+  it('keeps Activity timing preference through an unrelated stale Settings save', async () => {
+    const base = defaultConfig();
+    await saveConfig(base);
+    const toggle = handlers.get('log:desktopTiming')!;
+    expect((await toggle(trustedEvent(), { enabled: true }) as { ok: boolean }).ok).toBe(true);
+    expect(getConfig().ui.desktopTimingLogs).toBe(true);
+    const stale = await save({ ...base, ui: { ...base.ui, theme: 'light' } }, base);
+    expect(stale.ok, stale.error).toBe(true);
+    expect(getConfig().ui).toMatchObject({ desktopTimingLogs: true, theme: 'light' });
+    expect((await toggle(trustedEvent(), { enabled: false }) as { ok: boolean }).ok).toBe(true);
+    expect(getConfig().ui.desktopTimingLogs).toBe(false);
+    expect((await toggle(trustedEvent(), { enabled: 'yes' }) as { ok: boolean }).ok).toBe(false);
+  });
   it('persists Edge and keeps it through an unrelated stale renderer save', async () => {
     const base = defaultConfig();
     await saveConfig(base);

@@ -22,6 +22,7 @@ import { Worker } from 'node:worker_threads';
 import { ensureUsablePath, normalizeEnvironment } from '../env.js';
 import { findWindowsPowerShell, terminateProcessTree } from '../exec.js';
 import { logInfo, logWarn } from '../logger.js';
+import { getConfig } from '../config.js';
 import type { MacOSDesktopAccessStatus, MacOSPermissionState } from '../../shared/types.js';
 import { HELPER_SCRIPT } from './helper.js';
 
@@ -831,9 +832,9 @@ function runHelper(request: Record<string, unknown>, expected?: ExpectedHelper):
     try {
       return await sendHelperRequest(request, expected);
     } finally {
-      logInfo(
-        `desktop timing op=${operation} helper_queue_ms=${startedAt - queuedAt} helper_ms=${Date.now() - startedAt}`
-      );
+      if (getConfig().ui.desktopTimingLogs === true) {
+        logInfo(`desktop timing op=${operation} helper_queue_ms=${startedAt - queuedAt} helper_ms=${Date.now() - startedAt}`);
+      }
     }
   });
   helperQueue = result.then(
@@ -884,7 +885,9 @@ function exclusive<T>(task: () => Promise<T>): Promise<T> {
     try {
       return await task();
     } finally {
-      logInfo(`desktop timing exclusive_queue_ms=${startedAt - queuedAt} exclusive_ms=${Date.now() - startedAt}`);
+      if (getConfig().ui.desktopTimingLogs === true) {
+        logInfo(`desktop timing exclusive_queue_ms=${startedAt - queuedAt} exclusive_ms=${Date.now() - startedAt}`);
+      }
     }
   };
   const result = exclusiveQueue.then(measured, measured);
@@ -1338,9 +1341,9 @@ async function screenshotFromReply(
   rememberFrame(frame);
   const encodeStartedAt = Date.now();
   const data = png.toString('base64');
-  logInfo(
-    `desktop timing screenshot_read_ms=${readMs} screenshot_base64_ms=${Date.now() - encodeStartedAt} screenshot_bytes=${png.length}`
-  );
+  if (getConfig().ui.desktopTimingLogs === true) {
+    logInfo(`desktop timing screenshot_read_ms=${readMs} screenshot_base64_ms=${Date.now() - encodeStartedAt} screenshot_bytes=${png.length}`);
+  }
   return {
     data,
     frameId: frame.id,

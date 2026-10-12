@@ -1705,8 +1705,9 @@ addon on an Electron worker. The packaged Electron app is the macOS permission s
 standalone CLI probe does not prove Screen Recording/Accessibility permission for the app.
 
 `computer/index.ts` owns native actions, capture frames/accessibility refs, batching and
-postconditions. Routine helper/queue/screenshot timing logs require the explicit `CLF_DEBUG=1`
-environment flag; the debug build flavor alone does not enable them. Failure diagnostics stay active.
+postconditions. Routine helper/queue/screenshot timing logs are opt-in using Activity's persistent
+**Timing: On/Off** control (Off by default, even in debug builds). Unlike CLF_DEBUG console echo,
+this controls emission into both the 500-entry ring and the file. Failure diagnostics stay active.
 Registrars own live capability checks. Windows `windows-api.ts` implements the
 13 Window2 methods: `list_windows`, `get_window`, `list_apps`, `launch_app`, `get_window_state`,
 `click`, `press_key`, `type_text`, `scroll`, `set_value`, `drag`, `perform_secondary_action`,

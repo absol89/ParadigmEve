@@ -198,6 +198,7 @@ const api = {
   runDiagnostics: () => call<Diagnosis>('diagnostics:run'),
   requestDesktopAccessibility: () => call<AppState>('desktop:requestAccessibility'),
   getLog: () => call<LogEntry[]>('log:get'),
+  setDesktopTimingLogs: (enabled: boolean) => call<AppState>('log:desktopTiming', { enabled }),
   getLogText: () => call<string>('log:text'),
   getLogJson: () => call<string>('log:json'),
   writeClipboard: (text: string) => call<boolean>('clipboard:write', { text }),

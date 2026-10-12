@@ -77,7 +77,8 @@ vi.mock('../src/main/logger.js', () => ({ logInfo: vi.fn(), logWarn: vi.fn() }))
 vi.stubEnv('COS_MACOS_DESKTOP_HELPER', process.execPath);
 
 import { helperTimeoutMs, listWindows } from '../src/main/computer/index.js';
-import { logWarn } from '../src/main/logger.js';
+import { logInfo, logWarn } from '../src/main/logger.js';
+import { getConfig } from '../src/main/config.js';
 
 describe('desktop helper protocol validation', () => {
   it('budgets a macOS act request for cumulative focus polling', () => {
@@ -87,9 +88,23 @@ describe('desktop helper protocol validation', () => {
   });
 
   it('rejects syntactically valid JSON that is not a protocol response', async () => {
+    getConfig().ui.desktopTimingLogs = false;
     await expect(listWindows()).rejects.toThrow(/malformed protocol response/i);
     expect(fake.terminateProcessTree).toHaveBeenCalledTimes(1);
     expect(logWarn).toHaveBeenCalledWith('desktop helper sent a reply with no pending request');
     expect(vi.mocked(logWarn).mock.calls.flat().join(' ')).not.toContain('sensitive-window-title');
+    expect(vi.mocked(logInfo).mock.calls.flat().join(' ')).not.toContain('desktop timing');
+  });
+
+  it('enables routine timings explicitly without muting helper protocol warnings', async () => {
+    const ui = getConfig().ui;
+    ui.desktopTimingLogs = true;
+    vi.mocked(logInfo).mockClear();
+    try {
+      await expect(listWindows()).rejects.toThrow(/malformed protocol response/i);
+      expect(vi.mocked(logInfo).mock.calls.flat().join(' ')).toContain('desktop timing op=windows');
+    } finally {
+      ui.desktopTimingLogs = false;
+    }
   });
 });

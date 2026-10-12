@@ -27,6 +27,18 @@ afterAll(async () => {
 });
 
 describe('settings migration', () => {
+  it('keeps verbose desktop timings opt-in, including on older saved configs', async () => {
+    expect(defaultConfig().ui.desktopTimingLogs).toBe(false);
+    const old = defaultConfig();
+    delete old.ui.desktopTimingLogs;
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(old), 'utf8');
+    expect((await loadConfig()).ui.desktopTimingLogs).toBe(false);
+    for (const enabled of [true, false]) {
+      const config = await loadConfig();
+      await saveConfig({ ...config, ui: { ...config.ui, desktopTimingLogs: enabled } });
+      expect((await loadConfig()).ui.desktopTimingLogs).toBe(enabled);
+    }
+  });
   it('restores the composer pair independently of worker defaults and preserves explicit native default', async () => {
     const config = defaultConfig();
     await saveConfig({ ...config, ui: { ...config.ui, chatModel: '5.6', chatReasoning: 'high' },

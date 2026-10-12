@@ -132,6 +132,8 @@ export const CHAT_BROWSERS = ['chrome', 'edge', 'brave'] as const;
 export type ChatBrowser = (typeof CHAT_BROWSERS)[number];
 
 export interface UiPrefs {
+  /** Opt-in high-volume desktop helper timings in Activity; warnings/errors are never muted. */
+  desktopTimingLogs?: boolean;
   /** Maintenance may reuse existing tabs but cannot open helpers or missing chats. */
   browserOnly?: boolean;
   backgroundChats?: boolean;

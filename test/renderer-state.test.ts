@@ -802,6 +802,29 @@ it('keeps Workspace and Activity log DOM bounded while every retained entry stay
   expect((doc.getElementById('logNewer') as HTMLButtonElement).disabled).toBe(true);
 });
 
+it('toggles desktop timing capture from Activity without changing the Problems filter', async () => {
+  let activeState: any;
+  const setDesktopTimingLogs = vi.fn(async (enabled: boolean) => {
+    activeState.config.ui.desktopTimingLogs = enabled;
+    return { ok: true as const, data: structuredClone(activeState) };
+  });
+  const mounted = await mountChat({}, [], { setDesktopTimingLogs });
+  activeState = mounted.state;
+  const doc = mounted.window.document;
+  const toggle = doc.getElementById('toggleDesktopTiming') as HTMLButtonElement;
+  expect(toggle.textContent).toBe('Timing: Off');
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  doc.querySelector<HTMLButtonElement>('#logFilter [data-filter="bad"]')!.click();
+  toggle.click();
+  await vi.waitFor(() => expect(toggle.textContent).toBe('Timing: On'));
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  expect(setDesktopTimingLogs).toHaveBeenCalledExactlyOnceWith(true);
+  expect(doc.querySelector<HTMLButtonElement>('#logFilter [data-filter="bad"]')!.classList.contains('is-sel')).toBe(true);
+  toggle.click();
+  await vi.waitFor(() => expect(toggle.textContent).toBe('Timing: Off'));
+  expect(setDesktopTimingLogs).toHaveBeenLastCalledWith(false);
+});
+
 it('moves the configured agent sticker to New Chat when no owner exists and marks only that fresh send for exact claiming', async () => {
   const sendInput = vi.fn(async (input: any) => ({ ok: false as const, error: `stop:${input.id}` }));
   const mounted = await mountChat({}, [], {

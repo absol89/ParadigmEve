@@ -1362,6 +1362,9 @@ function apply(next: AppState): void {
   applyPluginsState(next);
   const previousState = state;
   state = next;
+  const timingToggle = $<HTMLButtonElement>('toggleDesktopTiming');
+  timingToggle.textContent = next.config.ui.desktopTimingLogs === true ? 'Timing: On' : 'Timing: Off';
+  timingToggle.setAttribute('aria-pressed', String(next.config.ui.desktopTimingLogs === true));
   setAgentName(next.config.mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME);
   applying = true;
   const { config, status } = next;
@@ -2088,6 +2091,16 @@ $('logFilter').addEventListener('click', (event) => {
   // Hiding most of the rows changes what "the bottom" is, so re-pin rather than leaving
   // the view parked at an offset that now belongs to a line the filter removed.
   stickToNewest('fullFeed');
+});
+
+$<HTMLButtonElement>('toggleDesktopTiming').addEventListener('click', async () => {
+  const button = $<HTMLButtonElement>('toggleDesktopTiming');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const next = await run(api.setDesktopTimingLogs(state?.config.ui.desktopTimingLogs !== true));
+    if (next) apply(next);
+  } finally { button.disabled = false; }
 });
 
 $('logOlder').addEventListener('click', () => {
