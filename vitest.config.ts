@@ -4,6 +4,11 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
     environment: 'node',
+    // This suite mixes real filesystem work, child processes, HTTP servers, Electron/native
+    // helpers and worker threads. On an 8-way Windows host Vitest's full file parallelism can
+    // starve otherwise-bounded tests long enough to create unrelated timeout/timing failures.
+    // Four workers kept the existing 30 s contracts stable without serializing the suite.
+    maxWorkers: 4,
     // Real filesystem, real child processes and a real HTTP server, so the
     // defaults are too tight.
     testTimeout: 30_000,

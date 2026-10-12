@@ -263,7 +263,12 @@ describe('Codex unified exec runtime parity', () => {
       shellType: process.platform === 'win32' ? 'powershell' : 'bash',
       hookCommand: 'pipe exit-code parity child',
       processId,
-      yieldTimeMs: 250,
+      // The assertion is about a process that has completed, not about how quickly Windows can
+      // launch Node while the full filesystem/process-heavy suite is running. A 250 ms yield can
+      // legitimately return the still-live session under load, which makes this a timing test by
+      // accident. Give the short child the same bounded completion window used by the encoding
+      // parity case below.
+      yieldTimeMs: 10_000,
       maxOutputTokens: undefined,
       truncationPolicy,
       cwd: process.cwd(),

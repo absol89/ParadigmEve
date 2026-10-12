@@ -70,7 +70,11 @@ it('reports already dispatched inputs when an unsupported timer stops a Desktop 
     await sky.press_key({window:{id:1,app:'fixture'},key:'Return'});
     await new Promise(resolve => setTimeout(resolve, 1));
     await sky.press_key({window:{id:1,app:'fixture'},key:'Return'});
-  `, ['press_key', 'type_text'].map(name => ({ name, description: 'fixture' })), invoke, limits, { windowsDesktop: true });
+  `, ['press_key', 'type_text'].map(name => ({ name, description: 'fixture' })), invoke,
+  // This case is about side-effect reporting after an unsupported timer, not the CPU ceiling.
+  // Under a saturated full suite the worker can be descheduled inside a measured QuickJS slice,
+  // so the fixture's deliberately tiny 100 ms CPU budget can stop it before the third input.
+  { ...limits, cpuMs: 1_000 }, { windowsDesktop: true });
   expect(output.isError).toBe(true);
   expect(invoke).toHaveBeenCalledTimes(3);
   expect(rendered(output)).toContain('3 tool calls already dispatched');
