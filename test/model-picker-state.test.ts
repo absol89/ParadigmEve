@@ -112,7 +112,7 @@ it('fails Free Think closed when the native menu exposes no Think control', asyn
   });
   expect(await (page.window as any).CLF_DOM.selectNativeMode('think')).toBe(false);
 });
-function fixture(splitPickerOwners = false) {
+function fixture(splitPickerOwners = false, brokenVersion: string | null = null) {
   page = new JSDOM('<form><div id="prompt-textarea" contenteditable="true"></div><div data-testid="composer-trailing-actions"><button type="button" aria-haspopup="menu">Denkaufwand</button><button data-testid="send-button">Senden</button></div></form>', { url: 'https://chatgpt.com/', runScripts: 'outside-only' });
   const win = page.window, doc = win.document;
   Object.defineProperty(win.HTMLElement.prototype, 'getClientRects', { value() { return this.hidden ? [] : [{}]; } });
@@ -141,7 +141,7 @@ function fixture(splitPickerOwners = false) {
       panel.innerHTML = '';
       for (const version of versions) {
         const row = doc.createElement('div'); row.setAttribute('role', 'menuitemradio'); row.textContent = version.displayTextForIntelligence;
-        row.addEventListener('keydown', event => { if (event.key !== 'Enter') return; actions('version'); if (frozen) return;
+        row.addEventListener('keydown', event => { if (event.key !== 'Enter') return; actions('version'); if (frozen || version.id === brokenVersion) return;
           state.selectedVersionEntry = version; state.bucketSelections = selections[versions.indexOf(version)]!;
           state.currentBucket = state.bucketSelections[0]!.bucket; state.currentSelection = state.bucketSelections[0]!; render(); }); panel.append(row);
       }
@@ -169,6 +169,16 @@ it('reads localized nested models and future efforts from account state, exclude
   expect(f.state.selectedVersionEntry.id).toBe('latest'); expect(f.state.currentBucket).toBe(2);
   // Only restore the original High once; discovery never sweeps every power level.
   expect(f.actions.mock.calls.filter(([action]) => action === 'effort')).toHaveLength(1);
+});
+// 2026-10-13 (c8): one picker version that never confirmed its state discarded every family read.
+it('keeps the families it could read when another picker version cannot be confirmed', async () => {
+  const f = fixture(false, 'future');
+  const failure = vi.fn();
+  expect(await f.api.inspectModelSettings(() => true, failure)).toEqual([
+    { id: 'gpt-5-6-thinking', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5-6-thinking'] }
+  ]);
+  expect(failure).not.toHaveBeenCalled();
+  expect(f.state.selectedVersionEntry.id).toBe('latest'); expect(f.state.currentBucket).toBe(2);
 });
 it('discovers account models when picker state and model data belong to adjacent React owners', async () => {
   const f = fixture(true);

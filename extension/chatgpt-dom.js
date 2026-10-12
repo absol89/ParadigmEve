@@ -2492,12 +2492,19 @@ var CLF_DOM = (() => {
     try {
       // One observation per version, not one mutation per effort. Computed choices
       // include account/workspace denials which the raw global preset list does not prove.
+      // A version whose state cannot be confirmed is skipped, not fatal: one unreadable entry used
+      // to discard every family already read, and an account never learned its models (2026-10-13,
+      // c8: discovery ran, then reported model_unconfirmed with nothing).
+      let unreadable = false;
       for (const version of original.versions) {
+        if (!stillCurrent()) break;
         if (passive?.version === version.id) continue;
-        const state = await ui.version(version.id);
-        if (!state) throw new Error('model_unconfirmed');
+        let state = null;
+        try { state = await ui.version(version.id); } catch { state = null; }
+        if (!state) { unreadable = true; continue; }
         collect(state);
       }
+      if (unreadable && !result.size) failure('model_unconfirmed');
     } catch { failure('model_unconfirmed'); result.clear(); }
     finally {
       if (stillCurrent() && await ui.version(original.version)) {
