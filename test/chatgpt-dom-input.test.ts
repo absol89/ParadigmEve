@@ -958,6 +958,19 @@ describe('native image readiness', () => {
 
 
 describe('provider limit notice', () => {
+  // 2026-10-13: GPT-6's lost-stream notice was not recognised, so no interrupted-response reload ran.
+  it.each(['This response couldn’t load', "This response couldn't load", 'Stream cache expired', 'Resume stream unavailable'])(
+    'recognizes %s as a recoverable transport failure', notice => {
+      const card = document.createElement('div'); card.setAttribute('role', 'alert'); card.textContent = notice;
+      document.body.append(card);
+      expect(api.errors()).toEqual([expect.objectContaining({ recoverable: true, text: notice })]);
+    });
+  it('does not take an alert that merely mentions a response that could not load for a failure', () => {
+    const card = document.createElement('div'); card.setAttribute('role', 'alert');
+    card.textContent = 'Why this response couldn’t load on Tuesday';
+    document.body.append(card);
+    expect(api.errors()).toEqual([]);
+  });
   it('recognizes the free-plan chat-paused usage card as a blocking provider limit', () => {
     const card = document.createElement('section');
     card.innerHTML = '<h2>Chat paused until usage resets at 10:57 PM</h2><p>You\'ve reached the limit for chats that include files or images. Start a new text-only chat or upgrade to continue now.</p><button>New chat</button><button>Upgrade</button>';
