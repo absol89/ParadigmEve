@@ -2573,11 +2573,17 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
     if (owner && requests.some(request => request.id === owner.id)) {
       const current = await chrome.tabs.get(owner.tab).catch(() => null);
       if (!current) return; // A user-closed helper is not permission to reopen it every poll.
-      if (pluginRefreshMarker(current) !== owner.id) {
-        const url = new URL(current.pendingUrl || current.url || '');
-        if (!pluginSettingsRoute(url)) return;
+      const request = requests.find(candidate => candidate.id === owner.id);
+      const url = new URL(current.pendingUrl || current.url || '');
+      if (!pluginSettingsRoute(url)) return;
+      const exactPath = request?.appId ? `/settings/plugins-settings/plugin_${request.appId}` : null;
+      if (pluginRefreshMarker(current) !== owner.id || (exactPath && url.pathname !== exactPath)) {
+        if (exactPath) { url.pathname = exactPath; url.hash = ''; }
         url.searchParams.delete(LEGACY_PLUGIN_REFRESH_MARKER);
         url.searchParams.set(PLUGIN_REFRESH_MARKER, owner.id);
+        if (request?.verifyOnly === true && owner.verifyOnly !== true) {
+          await chrome.storage.session.set({ pluginRefreshOwner: { id: owner.id, tab: owner.tab, verifyOnly: true } });
+        }
         await chrome.tabs.update(current.id, { url: url.href });
         return;
       }

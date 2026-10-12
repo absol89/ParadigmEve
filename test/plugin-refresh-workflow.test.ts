@@ -145,6 +145,24 @@ it.each([
   expect(sendMessage).not.toHaveBeenCalled();
   expect(saved.pluginRefreshOwner).toEqual({ id, tab: 7, ...(verifyOnly ? { verifyOnly: true } : {}) });
 });
+it('restores the known plugin route and verify-only fence together after the refresh marker was stripped', async () => {
+  const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
+  const tab = { id: 7, url: 'https://chatgpt.com/settings/plugins-settings', pinned: false };
+  const update = vi.fn();
+  const sendMessage = vi.fn();
+  const saved: Record<string, any> = { pluginRefreshOwner: { id, tab: 7 } };
+  const context = vm.createContext({ URL, setTimeout, clearTimeout, CHATGPT_TAB_URLS: ['https://chatgpt.com/*'],
+    call: async () => ({ ok: true, data: { requests: [{ id, appId: 'asdk_app_synthetic', verifyOnly: true }] } }),
+    createChatTab: vi.fn(),
+    chrome: { storage: { session: { get: async (key: string) => ({ [key]: saved[key] }), set: async (next: object) => Object.assign(saved, next) } },
+      tabs: { query: async () => [tab], get: async () => tab, update, sendMessage } }
+  });
+  vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  await (context.run as Function)([{ surface: 'core' }], false);
+  expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}` });
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(saved.pluginRefreshOwner).toEqual({ id, tab: 7, verifyOnly: true });
+});
 it('migrates an active legacy refresh owner to the Eve marker before reusing its tab', async () => {
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
   const tab = { id: 7, url: `https://chatgpt.com/?cos-plugin-refresh=${id}#settings/Plugins`, pinned: false };
