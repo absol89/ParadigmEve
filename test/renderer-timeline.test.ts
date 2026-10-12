@@ -135,7 +135,7 @@ async function settle(ms = 0): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers: Array<{ id: string; sourceSessionId: string }> = [], projects: LocalProject[] = [], options: { origin?: SessionSummary["origin"]; developerMode?: boolean; sessions?: SessionSummary[]; connectorName?: string; swarm?: any; models?: ChatModelOption[] } = {}) {
+async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers: Array<{ id: string; sourceSessionId: string }> = [], projects: LocalProject[] = [], options: { origin?: SessionSummary["origin"]; developerMode?: boolean; sessions?: SessionSummary[]; connectorName?: string; swarm?: any; models?: ChatModelOption[]; nativeChatModelPreference?: boolean } = {}) {
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
@@ -164,7 +164,10 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     },
     tunnel: { kind: 'openai', tunnelId: 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', desktopTunnelId: '', binaryPath: '' },
     mcp: { connectorName: options.connectorName ?? 'Eve', instructions: '' },
-    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light', developerMode: options.developerMode ?? false },
+    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light', developerMode: options.developerMode ?? false,
+      // An absent choice is now the paid Sol Medium default; tests of the user-selected
+      // native setting must provide its persisted null explicitly.
+      ...(options.nativeChatModelPreference ? { chatModel: null, chatReasoning: null } : {}) },
     sessions: { record: true, retainDays: 30, advisoryTokens: 300000, limitTokens: 400000 },
     compaction: { auto: true, autoTokens: 300000 },
     multiAgent: { enabled: false, maxWorkers: 2, allowUnattributedCalls: false, recoverAgentTabs: true },
@@ -856,7 +859,7 @@ it('Share a folder creates a sidebar project and keeps it when an older list ref
 });
 
 it('keeps a fresh unselected send provider-native when model discovery is unavailable', async () => {
-  const { w, live } = await boot([], false);
+  const { w, live } = await boot([], false, [], [], { nativeChatModelPreference: true });
   const discover = vi.fn(async () => ({ ok: true, data: { state: 'unavailable', requestedAt: 1, observedAt: null, models: [] } }));
   (w as any).api.requestChatModels = discover;
   (w.document.getElementById('refreshComposerModels') as HTMLButtonElement).click();
@@ -876,7 +879,7 @@ it('keeps provider-native default after a fresh send becomes a durable session',
   const established = summary([]);
   established.conversationId = 'chat-native-default';
   delete established.selectedModel;
-  const { w, live, notifySession } = await boot([], false, [], [], { sessions: [established] });
+  const { w, live, notifySession } = await boot([], false, [], [], { sessions: [established], nativeChatModelPreference: true });
   const deliveredAt = T0 + 10_000;
   const authoritative = { ...established,
     browserModelIntent: { conversationId: established.conversationId, mode: 'native' as const, confirmedAt: deliveredAt } };
@@ -996,8 +999,10 @@ it('does not bind a first-send session until the point read contains that exact 
   (w as any).api.getSession = pointRead;
 
   const slider = w.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
-  slider.value = '1';
+  // The observed Instant lane occupies position 0; Medium and High follow it.
+  slider.value = '2';
   slider.dispatchEvent(new w.Event('input'));
+  expect(w.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · High');
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'First message awaiting model proof';
   (w.document.getElementById('chatSend') as HTMLButtonElement).click();
@@ -1116,7 +1121,7 @@ it('starts in New Chat despite active history and selects only the exact acknowl
     selectedModel: undefined,
     browserModelIntent: { conversationId: established.conversationId!, mode: 'native' as const, confirmedAt: deliveredAt }
   };
-  const app = await boot([], false, [], [], { sessions: [established] });
+  const app = await boot([], false, [], [], { sessions: [established], nativeChatModelPreference: true });
   const { w, live } = app;
   (w as any).api.getSession = vi.fn(async () => ({ ok: true, data: { summary: authoritative, events: [], total: 0, nextFrom: 0 } }));
   expect(w.document.querySelector('#sessionList .is-sel')).toBeNull();
@@ -1141,7 +1146,7 @@ it('selects an acknowledged New Chat while recording notifications keep arriving
     selectedModel: undefined,
     browserModelIntent: { conversationId: established.conversationId!, mode: 'native' as const, confirmedAt: deliveredAt }
   };
-  const app = await boot([], false, [], [], { sessions: [established] });
+  const app = await boot([], false, [], [], { sessions: [established], nativeChatModelPreference: true });
   const { w, live } = app;
   (w as any).api.getSession = vi.fn(async () => ({ ok: true, data: { summary: authoritative, events: [], total: 0, nextFrom: 0 } }));
   (w.document.getElementById('chatInput') as HTMLTextAreaElement).value = 'Streaming request';
@@ -2217,7 +2222,7 @@ it('follows the accepted New Chat receipt while preserving a typed follow-up', a
     selectedModel: undefined,
     browserModelIntent: { conversationId: established.conversationId!, mode: 'native' as const, confirmedAt: deliveredAt }
   };
-  const { w, live, append } = await boot([], false, [], [], { sessions: [established] });
+  const { w, live, append } = await boot([], false, [], [], { sessions: [established], nativeChatModelPreference: true });
   (w as any).api.getSession = vi.fn(async () => ({ ok: true, data: { summary: authoritative, events: [], total: 0, nextFrom: 0 } }));
   const composer = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   composer.value = 'Opening message';
