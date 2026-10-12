@@ -823,6 +823,16 @@ it('toggles desktop timing capture from Activity without changing the Problems f
   toggle.click();
   await vi.waitFor(() => expect(toggle.textContent).toBe('Timing: Off'));
   expect(setDesktopTimingLogs).toHaveBeenLastCalledWith(false);
+  const { setLanguage } = await import('../src/renderer/i18n.js');
+  setLanguage('sv-SE');
+  expect(toggle.textContent).toBe('Tidslogg: Av');
+  toggle.click();
+  await vi.waitFor(() => expect(toggle.textContent).toBe('Tidslogg: På'));
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  setLanguage('es-419');
+  expect(toggle.textContent).toBe('Tiempos: activados');
+  setLanguage('en');
+  expect(toggle.textContent).toBe('Timing: On');
 });
 
 it('moves the configured agent sticker to New Chat when no owner exists and marks only that fresh send for exact claiming', async () => {

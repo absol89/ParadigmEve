@@ -154,7 +154,7 @@ describe('stable ChatGPT settings identities', () => {
   it('ships exactly the two core settings choices independently of discovery', () => {
     expect(CHATGPT_SETTINGS_MODELS).toEqual([
       { id: CHATGPT_DEFAULT_MODEL_ID, label: 'ChatGPT default', efforts: [] },
-      { id: CHATGPT_SOL_MODEL_ID, label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5.6-sol', 'gpt-5-6-thinking'] }
+      { id: CHATGPT_SOL_MODEL_ID, label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5.6-sol', 'gpt-5-6', 'gpt-5-6-instant', 'gpt-5-6-thinking'] }
     ]);
   });
 

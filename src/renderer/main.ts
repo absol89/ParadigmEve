@@ -1363,7 +1363,7 @@ function apply(next: AppState): void {
   const previousState = state;
   state = next;
   const timingToggle = $<HTMLButtonElement>('toggleDesktopTiming');
-  timingToggle.textContent = next.config.ui.desktopTimingLogs === true ? 'Timing: On' : 'Timing: Off';
+  ui(timingToggle, 'textContent', () => t(next.config.ui.desktopTimingLogs === true ? 'Timing: On' : 'Timing: Off'));
   timingToggle.setAttribute('aria-pressed', String(next.config.ui.desktopTimingLogs === true));
   setAgentName(next.config.mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME);
   applying = true;
