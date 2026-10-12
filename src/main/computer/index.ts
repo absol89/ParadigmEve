@@ -424,7 +424,10 @@ async function startHelper(): Promise<HelperRuntime> {
             if (!line) continue;
             const pending = runtime.pending;
             if (!pending) {
-              logWarn(`desktop helper sent unsolicited output: ${line.slice(0, 200)}`);
+              // An out-of-band reply is a protocol anomaly, not user-visible diagnostic data.
+              // Desktop snapshots can contain titles or other private information; never
+              // copy the helper's raw JSON into logs or renderer activity.
+              logWarn('desktop helper sent a reply with no pending request');
               continue;
             }
             let parsed: unknown;

@@ -103,9 +103,14 @@ The launch decision lives in `scripts/windows-installer-acl.nsh` (`customInit` /
    tabs, preserving human tabs and reusing exact restored Eve conversations where identity is proven;
 10. polls `/recovery` for a current-generation protocol-15 Companion document.
 
-The install-path marker is what keeps self-reinstall and later self-maintenance correct when the user
-chooses a non-default installation directory. It records the executable path only; AppData remains a
-separate state/config location.
+ParadigmEve installs in one place only: `%LOCALAPPDATA%\Programs\ParadigmEve`. The wizard offers no
+folder choice, and the installer overrides `/D=` and any remembered custom path, so updates and
+candidate builds always replace the same install instead of leaving copies behind. Because the
+uninstaller deletes its whole install folder, both sides refuse a folder that is, contains or sits
+inside the data folder `%APPDATA%\paradigmeve`, or that holds `state`, `sessions` or `archive`: the
+installer forgets such an old registration (its stray files stay, nothing is deleted) and the
+uninstaller quits without removing anything. The install-path marker records the executable path
+only; AppData remains a separate state/config location.
 
 The controller's recovery readiness fence is regression-tested against the current bridge protocol
 so a successful modern reconnect is not misreported as a failed reinstall.

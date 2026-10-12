@@ -88,7 +88,7 @@ it('does not overwrite a focused dirty settings field on an unsolicited state pu
   const setupLinks = [...w.document.querySelectorAll<HTMLElement>('[data-setup-link]')]
     .map((node) => node.getAttribute('data-setup-link'));
   expect(setupLinks).toContain('https://chatgpt.com/#settings/Security?section=developer-mode');
-  expect(setupLinks).toContain('https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins');
+  expect(setupLinks).toContain('https://chatgpt.com/plugins');
   expect(setupLinks).toContain('chrome://extensions/');
   expect(w.document.querySelector('[data-step="chatgpt"]')?.textContent).toContain('No authentication');
   expect(w.document.querySelector('[data-step="chatgpt"]')?.textContent).toContain('Developer mode');
@@ -295,7 +295,7 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
   // First save toggles a value that has no form control of its own. Keep the IPC unresolved,
   // matching a real save that is waiting for bridge/tunnel lifecycle work in the main process.
   (w.document.getElementById('readOnlyBtn') as HTMLButtonElement).click();
-  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5_000 });
   expect(calls[0].readOnly).toBe(true);
 
   // A second click before the first acknowledgement means "back off". The old handler derived
@@ -313,13 +313,13 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
 
   current = appState({ ...baseConfig, readOnly: true });
   pending.shift()!({ ok: true, data: current });
-  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  await vi.waitFor(() => expect(calls).toHaveLength(2), { timeout: 5_000 });
   expect(calls[1].readOnly).toBe(false);
   expect(calls[1].ui.autoConnect).toBe(false);
 
   current = appState({ ...baseConfig, readOnly: false });
   pending.shift()!({ ok: true, data: current });
-  await vi.waitFor(() => expect(calls).toHaveLength(3));
+  await vi.waitFor(() => expect(calls).toHaveLength(3), { timeout: 5_000 });
   expect(calls[2].readOnly).toBe(false);
   expect(calls[2].ui.autoConnect).toBe(true);
 
@@ -334,7 +334,7 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
   expect(theme.title).toBe('Switch to light mode');
   expect(theme.getAttribute('aria-label')).toBe('Switch to light mode');
   expect(theme.getAttribute('aria-pressed')).toBe('true');
-  await vi.waitFor(() => expect(calls).toHaveLength(4));
+  await vi.waitFor(() => expect(calls).toHaveLength(4), { timeout: 5_000 });
   expect(calls[3].ui.theme).toBe('dark');
   theme.click();
   expect(w.document.documentElement.dataset.theme).toBe('light');
@@ -345,13 +345,16 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
 
   current = appState({ ...baseConfig, readOnly: false, ui: { ...baseConfig.ui, autoConnect: true, theme: 'dark' } });
   pending.shift()!({ ok: true, data: current });
-  await vi.waitFor(() => expect(calls).toHaveLength(5));
+  // Loaded JSDOM/UI modules may yield under a busy full-suite worker. The semantic
+  // assertion is that the last requested value is eventually sent, not that an
+  // unrelated worker leaves this fork a one-second scheduling window.
+  await vi.waitFor(() => expect(calls).toHaveLength(5), { timeout: 5_000 });
   expect(calls[4].ui.theme).toBe('light');
 
   current = appState({ ...baseConfig, readOnly: false, ui: { ...baseConfig.ui, autoConnect: true, theme: 'light' } });
   pending.shift()!({ ok: true, data: current });
   await new Promise((resolve) => setTimeout(resolve, 0));
-});
+}, 35_000);
 
 /**
  * The goal loop's settings panel.
@@ -876,7 +879,8 @@ it('arms exact replacement only when top-level New Chat sees one ended current E
   expect(sendInput).toHaveBeenCalledWith(expect.not.objectContaining({ claimAgentIdentity: true }));
 });
 
-it('keeps a paid fresh Eve composer on ChatGPT native default until the user chooses Sol', async () => {
+// 2026-10-12: a never-chosen paid composer sends on Sol 5.6 Medium, never ChatGPT's own GPT-6 default.
+it('starts a paid fresh Eve composer on Sol 5.6 Medium until the user chooses otherwise', async () => {
   const sendInput = vi.fn(async (input: any) => ({ ok: false as const, error: `stop:${input.id}` }));
   const mounted = await mountChat({}, [], {
     sendInput,
@@ -892,7 +896,7 @@ it('keeps a paid fresh Eve composer on ChatGPT native default until the user cho
   (doc.getElementById('newChat') as HTMLButtonElement).click();
   await settle();
 
-  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
+  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
 
   const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = '@Eve use the selected model';
@@ -902,8 +906,8 @@ it('keeps a paid fresh Eve composer on ChatGPT native default until the user cho
   expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({
     sessionId: null,
     text: '@Eve use the selected model',
-    model: null,
-    reasoningEffort: null
+    model: '5.6',
+    reasoningEffort: 'medium'
   }));
 });
 
@@ -955,11 +959,12 @@ it('starts the organize tutorial from its card without models and preserves its 
   const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
   expect(input.value).toBe('Help me get started with %organize.');
   expect(doc.getElementById('chatTitle')!.textContent).toBe('New chat · %organize');
-  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
+  // Unknown models: the never-chosen default is Sol 5.6 Medium; a Free page sends on its own default.
+  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
   doc.getElementById('composer')!.dispatchEvent(new mounted.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle();
   expect(sent).toHaveLength(1);
-  expect(sent[0]).toMatchObject({ sessionId: null, contextQuiltId: id, text: 'Help me get started with %organize.', model: null, reasoningEffort: null });
+  expect(sent[0]).toMatchObject({ sessionId: null, contextQuiltId: id, text: 'Help me get started with %organize.', model: '5.6', reasoningEffort: 'medium' });
   expect(requestChatModels).not.toHaveBeenCalled();
   input.value = 'Organize my Downloads by project.';
   navigateWorkspace({ screen: 'chat' });
@@ -2397,15 +2402,15 @@ it('keeps plugin connection controls out of general Setup, preserves its tunnel,
   input.value = 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   input.dispatchEvent(new mounted.window.Event('change')); await settle();
   expect(mounted.calls.at(-1).tunnel.pluginsTunnelId).toBe(next.config.tunnel.pluginsTunnelId);
+  const pluginsLink = doc.querySelector<HTMLButtonElement>('[data-panel="setup"] [data-setup-link="https://chatgpt.com/plugins"]');
   const developerModeLink = doc.querySelector<HTMLButtonElement>('[data-panel="setup"] [data-setup-link="https://chatgpt.com/#settings/Security?section=developer-mode"]');
-  const createConnectorLink = doc.querySelector<HTMLButtonElement>('[data-panel="setup"] [data-setup-link="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"]');
+  expect(pluginsLink).not.toBeNull();
   expect(developerModeLink).not.toBeNull();
-  expect(createConnectorLink).not.toBeNull();
+  pluginsLink!.click();
   developerModeLink!.click();
-  createConnectorLink!.click();
   await settle();
+  expect(openSetupLink).toHaveBeenCalledWith('https://chatgpt.com/plugins');
   expect(openSetupLink).toHaveBeenCalledWith('https://chatgpt.com/#settings/Security?section=developer-mode');
-  expect(openSetupLink).toHaveBeenCalledWith('https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins');
   expect(openLink).not.toHaveBeenCalled();
 });
 

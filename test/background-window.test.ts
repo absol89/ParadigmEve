@@ -63,7 +63,7 @@ it('adopts an existing app main window after cache loss and puts planner and wor
   const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/c/main' }]);
   await Promise.all([
     app.reconcileBackgroundWindow(policy),
-    app.createChatTab('https://chatgpt.com/?cos-input=planner', true),
+    app.createChatTab('https://chatgpt.com/?eve-input=planner', true),
     app.createChatTab('https://chatgpt.com/?clf=worker', true)
   ]);
   expect(app.windowCreate).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ it('does not adopt or move personal tabs in a mixed window', async () => {
 });
 
 it('adopts an exact pending planner startup tab before it has a conversation', async () => {
-  const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/?temporary-chat=true&cos-input=planner' }]);
+  const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/?temporary-chat=true&eve-input=planner' }]);
   await app.reconcileBackgroundWindow({ background: true, inputs: [{ id: 'planner' }] });
   await app.createChatTab('https://chatgpt.com/?main', true);
   expect(app.windowCreate).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ it('does not move a tab that navigated away after the policy snapshot', async ()
 it('reuses a surviving warm catalog helper after browser restart and a new discovery nonce', async () => {
   const app = harness([{ id: 1, windowId: 9, url: 'https://chatgpt.com/?cos-model-catalog=11111111-1111-1111-1111-111111111111' }]);
   await app.reconcileBackgroundWindow({ background: true, modelCatalogRequest: { nonce: '22222222-2222-2222-2222-222222222222' } });
-  await app.createChatTab('https://chatgpt.com/?cos-input=main', true);
+  await app.createChatTab('https://chatgpt.com/?eve-input=main', true);
   expect(app.windowCreate).not.toHaveBeenCalled();
   expect(app.stored.chatBackgroundWindow).toBe(9);
 });

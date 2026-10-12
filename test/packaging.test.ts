@@ -239,6 +239,23 @@ describe('cross-platform packaging targets', () => {
     // not silently rotate that fingerprint by deleting the secret store.
     expect(config.nsis.deleteAppDataOnUninstall).toBe(false);
     expect(installer).toContain('SetFont "Segoe UI" 10');
+    // 2026-10-12: an install that had landed in %APPDATA%\paradigmeve let the next update's old
+    // uninstaller delete the user's archive. One install folder, and never one that holds data.
+    expect(config.nsis.allowToChangeInstallationDirectory).toBe(false);
+    const unsafe = installer.slice(installer.indexOf('!macro ParadigmEveUnsafeDir'), installer.indexOf('!macroend', installer.indexOf('!macro ParadigmEveUnsafeDir')));
+    for (const marker of ['state', 'sessions', 'archive']) expect(unsafe).toContain(`\${FileExists} "\${DIR}\\${marker}\\*.*"`);
+    expect(unsafe).toContain('StrLen $R8 "$APPDATA\\paradigmeve"');
+    const unInit = installer.slice(installer.indexOf('!macro customUnInit'), installer.indexOf('!macro customInit'));
+    expect(unInit).toMatch(/!insertmacro ParadigmEveUnsafeDir "\$INSTDIR" \$0\s+\$\{If\} \$0 == "1"[\s\S]*?SetErrorLevel 2\s+Quit/);
+    const guardedInit = installer.slice(installer.indexOf('!macro customInit'), installer.indexOf('!macro customInstall'));
+    expect(guardedInit).toContain('ReadRegStr $1 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString');
+    expect(guardedInit).toContain('ReadRegStr $1 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation');
+    expect(guardedInit).toContain('DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"');
+    // The forced folder comes after the unsafe-registration check and before anything uses $INSTDIR.
+    const forced = guardedInit.indexOf('StrCpy $INSTDIR "$LOCALAPPDATA\\Programs\\${APP_FILENAME}"');
+    expect(forced).toBeGreaterThan(guardedInit.indexOf('DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"'));
+    expect(forced).toBeLessThan(guardedInit.indexOf('${FileExists} "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"'));
+    expect(installer).not.toMatch(/RMDir|Delete "/);
     expect(installer).toContain('!macro customInit');
     expect(installer).toContain('!macro customInstall');
     expect(installer).toContain('${FileExists} "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"');

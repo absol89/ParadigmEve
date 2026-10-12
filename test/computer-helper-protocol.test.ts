@@ -40,7 +40,7 @@ const fake = vi.hoisted(() => {
           child.stdout.emit(
             'data',
             Buffer.from(
-              `${JSON.stringify({ ok: 'not-a-boolean', windows: [], screen: { x: 0, y: 0, width: 100, height: 100 } })}\n`
+              `${JSON.stringify({ ok: 'not-a-boolean', windows: [], screen: { x: 0, y: 0, width: 100, height: 100 } })}\n${JSON.stringify({ ok: true, screen: { privateWindowTitle: 'sensitive-window-title' } })}\n`
             )
           )
         );
@@ -77,6 +77,7 @@ vi.mock('../src/main/logger.js', () => ({ logInfo: vi.fn(), logWarn: vi.fn() }))
 vi.stubEnv('COS_MACOS_DESKTOP_HELPER', process.execPath);
 
 import { helperTimeoutMs, listWindows } from '../src/main/computer/index.js';
+import { logWarn } from '../src/main/logger.js';
 
 describe('desktop helper protocol validation', () => {
   it('budgets a macOS act request for cumulative focus polling', () => {
@@ -88,5 +89,7 @@ describe('desktop helper protocol validation', () => {
   it('rejects syntactically valid JSON that is not a protocol response', async () => {
     await expect(listWindows()).rejects.toThrow(/malformed protocol response/i);
     expect(fake.terminateProcessTree).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith('desktop helper sent a reply with no pending request');
+    expect(vi.mocked(logWarn).mock.calls.flat().join(' ')).not.toContain('sensitive-window-title');
   });
 });

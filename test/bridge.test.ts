@@ -2196,6 +2196,42 @@ describe('restart recovery escalation', () => {
 describe('automatic compaction', () => {
   const settled = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+  // Ported from Chat On Steroids 2.1.35 (7cbc1aa5).
+  // 2026-10-12: an automatic ticket filed while the crossing turn still worked spent all its pickups
+  // reloading a generating page and gave up (handoff_never_sent) just after the turn ended.
+  it('does not spend pickups on an automatic ticket while its source turn is still working', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac0b';
+      await request('POST', '/events', {
+        body: { conversationId, events: [
+          { kind: 'user_message', time: Date.now(), text: 'a long multi-agent turn', messageId: 'm-auto-working' },
+          { kind: 'turn_start', time: Date.now(), turnId: 'long-turn' }
+        ] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+      const token = filed.body.token as string;
+      const takeRepair = async (): Promise<{ token: string; reason: string } | null> => {
+        await sweepStaleSwarm(Date.now());
+        return (await request('GET', '/status')).body.repairs?.[0] ?? null;
+      };
+      // Half an hour of work: no pickup, no reload, and the ticket is still the same one.
+      for (let minute = 0; minute < 30; minute += 2) {
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        await request('POST', '/events', { body: { conversationId, events: [{ kind: 'turn_start', time: Date.now(), turnId: 'long-turn' }] } });
+        expect(await takeRepair(), `minute ${minute + 2}`).toBeNull();
+      }
+      expect(continuationForSession(filed.body.sessionId as string)?.token).toBe(token);
+      // The turn ends: now the page is asked for the handoff.
+      await request('POST', '/events', { body: { conversationId, events: [{ kind: 'turn_end', time: Date.now(), turnId: 'long-turn', outcome: 'completed' }] } });
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(await takeRepair()).toMatchObject({ reason: 'compaction' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('hands an explicit desktop compaction to startup and fences a cancelled ticket', async () => {
     await pair();
     const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac98';

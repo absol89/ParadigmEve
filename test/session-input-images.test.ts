@@ -8,7 +8,7 @@ import { stageInputAttachment, readInputAttachmentChunk } from '../src/main/sess
 import { initSessionStore } from '../src/main/session/store.js';
 
 let directory: string;
-beforeEach(async () => { directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cos-input-images-')); initSessionStore(directory); });
+beforeEach(async () => { directory = await fs.mkdtemp(path.join(os.tmpdir(), 'eve-input-images-')); initSessionStore(directory); });
 afterEach(async () => { await fs.rm(directory, { recursive: true, force: true }); });
 const dataUrl = (buffer: Buffer) => `data:image/webp;base64,${buffer.toString('base64')}`;
 describe('input image byte and pixel validation', () => {

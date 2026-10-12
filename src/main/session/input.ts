@@ -306,6 +306,8 @@ export interface ToolInputBatch {
 export interface InputActivity { possible: boolean; exact: boolean; model?: 'pro' | 'other' | 'unknown' }
 type InputDeliveryHooks = {
   activity?: (session: SessionSummary) => InputActivity;
+  /** True while this exact ChatGPT conversation still has an unresolved transport repair. */
+  browserRouteRecovering?: (conversationId: string) => boolean;
   wakeDecision?: (entry: Readonly<InputEntry>, signal: AbortSignal) => Promise<void>;
   bindHelper?: (conversationId: string, sourceSessionId: string | null) => Promise<void>;
   recordDelivered?: (entry: Readonly<InputEntry>) => Promise<boolean>;
@@ -331,6 +333,21 @@ let browserReadyAt: number | null = null;
 export const BROWSER_COLD_START_MS = 5 * 60_000;
 export function noteBrowserReady(at = Date.now()): void {
   if (browserReadyAt === null) browserReadyAt = at;
+}
+/**
+ * When each queued message started being continuously offered to the browser, and when the
+ * browser last asked for work. The pickup deadline counts only offered time: a message the app
+ * itself holds back (its chat is running a tool call or its turn is busy) is waiting for the app,
+ * not ignored by the browser. 2026-10-12: a Prime message sent while Eve's turn ran exec_command
+ * was never offered and still failed as "the browser did not pick up this message within 60 seconds".
+ */
+const browserOfferedSince = new Map<string, number>();
+let browserLastAskedAt: number | null = null;
+export function noteBrowserInputsOffered(ids: readonly string[], at = Date.now()): void {
+  browserLastAskedAt = at;
+  const current = new Set(ids);
+  for (const id of [...browserOfferedSince.keys()]) if (!current.has(id)) browserOfferedSince.delete(id);
+  for (const id of current) if (!browserOfferedSince.has(id)) browserOfferedSince.set(id, at);
 }
 /** Installed once by IPC before bridge/MCP startup; avoids a Goal/input import cycle. */
 export function configureInputDelivery(hooks: InputDeliveryHooks): void { deliveryHooks = hooks; }
@@ -481,6 +498,22 @@ export function hasEligibleToolInput(sessionId: string, finishBoundary = false):
 }
 let entries: InputEntry[] | null = null;
 let chain: Promise<unknown> = Promise.resolve();
+let browserClaimExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+/** A lost content-script task must not require another browser poll to retire its claim. */
+function scheduleBrowserClaimExpiry(rows: InputEntry[]): void {
+  if (browserClaimExpiryTimer) clearTimeout(browserClaimExpiryTimer);
+  browserClaimExpiryTimer = null;
+  const deadlines = rows.filter(row => row.state === 'browser' && row.purpose !== 'decision').map(row =>
+    (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) + (row.sendAuthorizedAt !== undefined ? 45_000 :
+      (row.attachments?.length || row.images?.length) ? 120_000 : 60_000));
+  if (!deadlines.length) return;
+  const delay = Math.max(1, Math.min(...deadlines) - Date.now());
+  browserClaimExpiryTimer = setTimeout(() => {
+    browserClaimExpiryTimer = null;
+    void serial(async () => { await load(); }).catch(error => logInfo(`input: browser claim expiry check failed: ${String(error)}`));
+  }, delay);
+  browserClaimExpiryTimer.unref?.();
+}
 // A timestamp written before the claim commit cannot prove that its response was
 // available. Restart discards this evidence and repeats the stable message id.
 const offered = new Map<string, number>();
@@ -552,6 +585,15 @@ async function load(): Promise<InputEntry[]> {
   }
   return expireQueued(entries);
 }
+/** Whether a live browser has ignored this queued message for a full minute (see browserOfferedSince). */
+function pickupOverdue(row: InputEntry, now = Date.now()): boolean {
+  const waitingSince = Math.max(row.createdAt, row.dueAt, browserReadyAt ?? 0);
+  if (browserReadyAt === null) return now - waitingSince >= BROWSER_COLD_START_MS;
+  const offeredAt = browserOfferedSince.get(row.id);
+  if (offeredAt !== undefined) return now - Math.max(offeredAt, row.dueAt) >= 60_000;
+  // Never offered: the app is holding it. Only a browser that stopped asking for work at all fails it.
+  return now - waitingSince >= 60_000 && (browserLastAskedAt === null || now - browserLastAskedAt >= 60_000);
+}
 async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
   const next = await Promise.all(current.map(async (row): Promise<InputEntry> => {
     if (row.finishOwner && !terminal(row) && !(await finishInputCurrent(row)))
@@ -576,19 +618,22 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // rows are ambiguous and cannot safely be reclassified from today's activity.
     if (row.state === 'queued' && !isLocalProviderInput(row) && row.mode === 'auto' && !row.finishOwner && row.purpose !== 'attention' && row.purpose !== 'peer' &&
         (row.transportIntent === 'browser' || (!row.transportIntent && !row.sessionId)) &&
-        Date.now() - Math.max(row.createdAt, row.dueAt, browserReadyAt ?? 0) >= (browserReadyAt === null ? BROWSER_COLD_START_MS : 60_000))
+        pickupOverdue(row))
       return { ...row, state: 'failed', error: browserReadyAt === null
         ? 'Not sent: the browser did not connect within 5 minutes.'
         : 'Not sent: the browser did not pick up this message within 60 seconds.' };
-    // Native preparation bounds include the 60s upload and 15s picker hydration.
+    // Native preparation is bounded by the page's 60s upload confirmation plus picker/composer
+    // hydration. App-staged attachments are already local bytes by the time the browser owns the
+    // claim; keeping that claim for twelve minutes only hides a failed native upload from the user.
     // Once Send is authorized, its 30s receipt + 15s fresh-route wait are the entire tail.
-    if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? (row.attachments?.length ? 720_000 : row.images?.length ? 120_000 : 60_000) : 45_000))
+    if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? ((row.attachments?.length || row.images?.length) ? 120_000 : 60_000) : 45_000))
       return { ...row, state: 'cancelled', error: row.requiresAuthorization && row.sendAuthorizedAt === undefined
         ? 'Not sent: browser preparation timed out. This attempt was cancelled.'
         : 'Stopped waiting for delivery confirmation. The message may already have been sent; it will not be resent.' };
     return row;
   }));
   if (next.some((row, index) => row !== current[index])) await commit(next);
+  else scheduleBrowserClaimExpiry(current);
   return entries!;
 }
 async function commit(next: InputEntry[]): Promise<void> {
@@ -603,6 +648,7 @@ async function commit(next: InputEntry[]): Promise<void> {
     throw error;
   }
   entries = next;
+  scheduleBrowserClaimExpiry(next);
   wakeBrowserWork();
   for (const listener of inputListeners) { try { listener(); } catch { /* observer only */ } }
   try { deliveryHooks?.changed(); } catch { /* a detached renderer does not undo a durable commit */ }
@@ -688,6 +734,23 @@ function append(current: InputEntry[], entry: InputEntry, stackDirect = false): 
   while (history.length && retainedBytes > 2048000) retainedBytes -= bytes(history.shift()!);
   return [...history, ...active, entry];
 }
+/**
+ * Whether a message of yours must reach this chat through ChatGPT's composer, never a tool result.
+ *
+ * On a model that is not Pro, text inside a tool result never reached the model (#1231). Measured
+ * 2026-10-12 on GPT-6 Thinking: while the page kept closing a turn whose request kept calling tools,
+ * messages were folded into tool results, never appeared in the conversation and were not acted on
+ * as the user's words. Pro turns and images keep the tool path (adapted from Chat On Steroids
+ * f68ab0c4).
+ */
+function composerOnlyText(entry: Pick<InputEntry, 'mode' | 'requestedMode' | 'finishOwner' | 'purpose' | 'images' | 'attachments'>,
+  session: Pick<SessionSummary, 'conversationId' | 'selectedModel'> | null | undefined): boolean {
+  const selection = session?.selectedModel;
+  return (entry.requestedMode ?? entry.mode) === 'auto' && !entry.finishOwner && (!entry.purpose || entry.purpose === 'user') &&
+    !entry.images?.length && !entry.attachments?.length &&
+    !!session?.conversationId && selection?.conversationId === session.conversationId && !!selection.model &&
+    !isProModel(selection.model, selection.reasoningEffort);
+}
 async function target(entry: InputEntry): Promise<string | null> {
   if (entry.purpose === 'decision') {
     if (entry.conversationId && isChatBlocked(entry.conversationId)) throw new Error('Unblock this helper conversation before sending');
@@ -744,8 +807,11 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     }
     const local = input.provider === 'ollama' || input.provider === 'openrouter';
     if (local && input.mode !== 'auto') input.mode = 'auto';
-    const policy = input.sessionId && !local ? await sessionInputPolicy(input.sessionId) : null;
+    let policy = input.sessionId && !local ? await sessionInputPolicy(input.sessionId) : null;
     const requestedMode = input.mode;
+    // Not a Pro turn: the text waits for the composer instead of a tool result.
+    if (policy?.canInject && !finishOwner && !input.stages?.length &&
+        composerOnlyText({ ...input, finishOwner }, await getSession(input.sessionId!))) policy = { ...policy, canInject: false };
     if (input.attachments?.length) {
       await validateInputAttachments(input.attachments);
       // Native files belong to the next browser message, never a tool-result injection.
@@ -780,6 +846,13 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
       }
     }
     entry.conversationId = await target(entry);
+    if (
+      entry.sessionId && entry.conversationId && entry.mode === 'auto' && !entry.finishOwner &&
+      entry.transportIntent === 'browser' && (entry.purpose === undefined || entry.purpose === 'user') &&
+      deliveryHooks?.browserRouteRecovering?.(entry.conversationId) === true
+    ) {
+      throw new Error('This ChatGPT conversation is still recovering in Eve Browser. Your message was not queued; retry after the conversation loads again.');
+    }
     if (finishOwner && !(await finishInputCurrent(entry))) throw new Error('The automatic follow-up no longer belongs to an active turn');
     // User input supersedes only automatic work that has never been handed out.
     // Offered tool receipts retain their identity until a later request proves receipt.
@@ -982,7 +1055,7 @@ function chatReviewAttentionText(review: ChatReviewAttention): string {
     `Review recent ChatGPT work from ${new Date(review.sinceAt).toISOString()} through ${new Date(review.untilAt).toISOString()}. ` +
     'This heartbeat has two review obligations before chat_review_complete: the recent-request review for the time window above and the durable-Plan review below. Neither obligation is evidence that every recent chat or Plan needs action.\n' +
     'Start with ParadigmEve session search/read so exact locally recorded conversation and message identity remains authoritative. ' +
-    'Also use Computer Use to inspect the recent ChatGPT web history in the AI browser for relevant phone/app/web conversations that are missing or incomplete locally; do not use sidebar unread/blue-dot state as a completion signal.\n' +
+    'Scope the recent-request review to locally recorded sessions and their exact provenance. Do not inspect ChatGPT browser history or use Computer Use for discovery during this heartbeat. Missing cross-device conversations are outside this review, not a blocker or a reason to guess their contents; do not use sidebar unread/blue-dot state as a completion signal.\n' +
     'Find user requests for real work (for example create, save, document, implement, fix, dispatch, check, or otherwise act) where the requested persistent/computer-side result was not actually completed. A prose answer, plan, or promise is not completion when the user asked for execution. ' +
     'Before acting, inspect the source conversation and current files/repository/tool history so newer instructions, completed work, or an already-running turn are not duplicated or overridden. Preserve exact conversation/session provenance and fail closed on ambiguous ownership.\n' +
     'Carry out bounded unworked requests now with the available tools/workers and verify concrete results. If the recent-request review finds no still-valid unworked request, make no substantive changes for that obligation.\n' +
@@ -1636,6 +1709,7 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
       if (entry.purpose === 'attention' || entry.purpose === 'peer' || isLocalProviderInput(entry)) return entry;
       if (entry.attachments?.length) return entry;
       if (entry.directTurn && entry.state === 'queued' && session.activeTurnId !== entry.directTurn.id) return entry;
+      if (entry.state === 'queued' && entry.transportIntent !== 'tool' && composerOnlyText(entry, session)) return entry;
       // ChatGPT may reuse one request id for the whole server turn. Receipt follows
       // the actual invocation start, never a change in that grouping id.
       const received = toolInputReceipt(entry, sessionId, conversationId, startedAt);
@@ -1676,7 +1750,7 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
   });
 }
 
-export function resetInputForTests(): void { entries = null; chain = Promise.resolve(); offered.clear(); decisionWaiters.clear(); browserReadyAt = null; }
+export function resetInputForTests(): void { if (browserClaimExpiryTimer) clearTimeout(browserClaimExpiryTimer); browserClaimExpiryTimer = null; entries = null; chain = Promise.resolve(); offered.clear(); decisionWaiters.clear(); browserReadyAt = null; browserOfferedSince.clear(); browserLastAskedAt = null; }
 
 export async function pausedBrowserHelpers(): Promise<Array<{ id: string; sourceSessionId: string }>> {
   return (await listInputs()).filter(row => row.purpose === 'decision' && row.state === 'cancelled' && !row.conversationId && row.decisionSourceSessionId)

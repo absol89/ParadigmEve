@@ -99,7 +99,9 @@ nsis:
   installerHeader: build/installer-art/goddess-header.bmp
   installerSidebar: build/installer-art/goddess-sidebar.bmp
   uninstallerSidebar: build/installer-art/goddess-uninstaller-sidebar.bmp
-  allowToChangeInstallationDirectory: true
+  # One install folder (%LOCALAPPDATA%\Programs\ParadigmEve) for every update and candidate;
+  # customInit in scripts/windows-installer-acl.nsh also overrides /D= and remembered custom paths.
+  allowToChangeInstallationDirectory: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: ParadigmEve

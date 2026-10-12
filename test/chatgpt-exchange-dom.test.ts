@@ -334,11 +334,14 @@ describe('fiber evidence on the render-item renderer', () => {
   }
 
   async function scan(item: Record<string, unknown>, value: Record<string, unknown> | null, user = userItem(),
-    options: { images?: string[]; model?: Record<string, unknown>; beforeReply?: Record<string, unknown> } = {}): Promise<Record<string, any>> {
+    options: { images?: string[]; model?: Record<string, unknown>; beforeReply?: Record<string, unknown>; entry?: Record<string, unknown>; shellState?: Record<string, unknown> } = {}): Promise<Record<string, any>> {
     const body = exchange(6, USER_ID, '1+1', REPLY_ID, '<strong>2</strong>');
     const window = page(body).window as unknown as Window & typeof globalThis & Record<string, any>;
     const fiber = renderItemExchange(item, value, user);
     if (options.model) fiber.child!.sibling!.memoizedProps.message = options.model;
+    if (options.entry) fiber.memoizedProps.entry = options.entry;
+    // The GPT-6 shell publishes its live mapping as hook state on the conversation owner.
+    if (options.shellState) (fiber.return as any).memoizedState = { memoizedState: options.shellState, next: null };
     if (options.beforeReply) fiber.child!.sibling = {
       memoizedProps: { item: options.beforeReply }, return: fiber, sibling: fiber.child!.sibling
     };
@@ -368,6 +371,75 @@ describe('fiber evidence on the render-item renderer', () => {
   const dilReply = (fallbackMarkdown: string, source = REPLY_ID) => assistantItem({
     content: `::chatgpt-content-reference{index="0" source_message_id="${REPLY_ID}"}`,
     contentReferences: [{ type: 'dil', source_message_id: source, model_dil_v2: { fallbackMarkdown } }]
+  });
+
+// ChatGPT's typed turn record (Chat On Steroids 2.1.35): what the page holds even when it does
+  // not render it. GPT-6 nests a running turn's interim sentences in its collapsed working group.
+  const INTERIM_ID = 'b0000004-0000-4000-8000-000000000004';
+  const typedEntry = (status: string, items: unknown[], id = USER_ID) => ({ id, turn: { status, items } });
+  const interimItem = (overrides: Record<string, unknown> = {}) => assistantItem({
+    messageId: INTERIM_ID, latestMessageId: INTERIM_ID, sourceMessageIds: [INTERIM_ID],
+    phase: 'commentary', completed: true, content: "I'll check the logs first.", ...overrides
+  });
+
+  it('records an interim GPT-6 sentence nested in the working group while the turn runs, never as its end', async () => {
+    const entry = typedEntry('in_progress', [userItem(),
+      { type: 'chatgpt-reasoning-group', items: [interimItem({ phase: 'final_answer' })] }]);
+    const data = await scan(assistantItem({ completed: false, content: 'Still working' }), context({ isStreaming: true }), userItem(), { entry });
+    const interim = data.turns[0].messages.find((message: any) => message.rawMessageId === INTERIM_ID);
+    expect(interim).toMatchObject({ role: 'assistant', rawText: "I'll check the logs first." });
+    expect(data.turns[0].endMessageId).not.toBe(INTERIM_ID);
+  });
+
+  it('finishes a reply ChatGPT could not draw from its completed typed turn', async () => {
+    // No rendered streaming context: before, this answer never became final and never reached Eve.
+    const reply = assistantItem({ content: 'The finished answer.' });
+    const data = await scan(reply, null, userItem(), { entry: typedEntry('complete', [userItem(), reply]) });
+    expect(data.turns[0].endMessageId).toBe(REPLY_ID);
+    expect(data.turns[0].messages.find((message: any) => message.rawMessageId === REPLY_ID))
+      .toMatchObject({ rawText: 'The finished answer.', stable: true });
+  });
+
+  it('does not finish a reply from a typed turn that is still running', async () => {
+    const reply = assistantItem({ content: 'Almost there.' });
+    const data = await scan(reply, null, userItem(), { entry: typedEntry('in_progress', [userItem(), reply]) });
+    expect(data.turns[0].endMessageId).not.toBe(REPLY_ID);
+  });
+
+  // 2026-10-12: GPT-6 typed items carry no request id, so every connector call of the chat was filed
+  // under Unattributed activity. The shell's own mapping holds the same messages with their metadata.
+  const CALL_ID = 'b0000005-0000-4000-8000-000000000005';
+  function shellCall(renderedTurnOf: (entry: any) => unknown = entry => ({ id: entry.id, turn: entry.turn })) {
+    const call = { type: 'mcp-tool-call', callId: CALL_ID, invocation: { server: 'Eve', tool: 'exec_command' } };
+    const entry: any = typedEntry('in_progress', [userItem(), { type: 'chatgpt-reasoning-group', items: [call] }]);
+    entry.conversationId = THREAD;
+    entry.turn.messageIds = [USER_ID];
+    const node = (id: string, role: string, parent: string | null, request?: string) =>
+      ({ id, parent, message: { id, author: { role }, create_time: 1, metadata: request ? { request_id: request } : {} } });
+    const shellState = {
+      renderedConversation: { current_node: CALL_ID, mapping: {
+        [USER_ID]: node(USER_ID, 'user', null), [CALL_ID]: node(CALL_ID, 'assistant', USER_ID, 'wfr_gpt6_call') } },
+      renderedTurns: [renderedTurnOf(entry)]
+    };
+    return { entry, shellState };
+  }
+
+  it('reports the request id of a GPT-6 connector call from the shell mapping', async () => {
+    const data = await scan(assistantItem({ completed: false, phase: 'commentary', content: 'Working.' }), null, userItem(), shellCall());
+    expect(data.turns[0].requests.map((entry: any) => entry.requestId)).toEqual(['wfr_gpt6_call']);
+  });
+
+  it('reads no request id from a shell mapping rendered for another turn', async () => {
+    const data = await scan(assistantItem({ completed: false, phase: 'commentary', content: 'Working.' }), null, userItem(),
+      shellCall(entry => ({ id: 'another-turn', turn: entry.turn })));
+    expect(data.turns[0].requests).toEqual([]);
+  });
+
+  it('ignores a typed record that belongs to another turn', async () => {
+    const entry = typedEntry('complete', [userItem(), { type: 'chatgpt-reasoning-group', items: [interimItem()] }],
+      'b0000009-0000-4000-8000-000000000009');
+    const data = await scan(assistantItem(), context(), userItem(), { entry });
+    expect(data.turns[0].messages.some((message: any) => message.rawMessageId === INTERIM_ID)).toBe(false);
   });
 
   it('archives a GPT-6 DIL reply as its own fallback words, final and stable', async () => {

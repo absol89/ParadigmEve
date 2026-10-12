@@ -229,7 +229,7 @@ equal to the installed one:
 
 Every 22 minutes, one exact non-worker/non-helper connector-proven conversation can receive one durable epoch with two obligations:
 
-- review the recent request window, using local session history first and signed-in ChatGPT web history when relevant cross-device chats are missing locally; and
+- review the recent request window using locally recorded sessions only; missing cross-device conversations are outside this heartbeat's scope and do not block its completion; and
 - review a rotating batch of at most four durable Live Plans, following each exact Plan → Source before classifying or acting.
 
 Each selected Plan requires direct `chat_review_plan` acknowledgement. Evidence-backed checklist reconciliation may mark only exact open items done; the Plans owner atomically fences revision plus full source provenance. Human Plans are never auto-archived. Partial acknowledgements survive restart/owner transfer, and retries omit already-acknowledged Plan snapshots so bounded unattended work is not duplicated.

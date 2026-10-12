@@ -4,7 +4,7 @@
  *
  * This does not scrape or classify the user's transcript itself. Every 22 minutes it wakes one
  * exact, previously tool-proven Eve conversation and asks that model turn to review local session
- * recordings plus the live ChatGPT web history. That keeps intent/relevance decisions with the
+ * recordings only. That keeps intent/relevance decisions with the
  * model while exact browser/session ownership and delivery remain in the existing durable outbox.
  */
 import { randomUUID } from 'node:crypto';

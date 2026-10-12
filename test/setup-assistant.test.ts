@@ -1224,15 +1224,15 @@ describe('ParadigmEve setup browser', () => {
     expect(html).toContain('class="yes launch" id="openTunnels"');
     expect(html).toContain('class="yes launch" id="openApiKeys"');
     expect(html).toContain('YES — Open ChatGPT Plugins');
-    expect(html).toContain('Create MCP App');
-    expect(html).toContain('older ChatGPT versions only');
-    expect(html).toContain('OPEN DEVELOPER MODE');
-    expect(html).toContain('OPEN CREATE CONNECTOR');
+    expect(html).toContain('Add custom MCP server');
+    expect(html).toContain('Older ChatGPT only: Developer mode');
+    expect(html).toContain('OLDER VERSION — DEVELOPER MODE');
+    expect(html).toContain('OPEN CHATGPT PLUGINS');
     expect(html).toContain('OPEN EXTENSIONS PAGE');
     expect(html).toContain('OPEN FRESH CHATGPT TAB');
     expect(html.indexOf('id="openBrowserExtensions"')).toBeLessThan(html.indexOf('id="openTunnels"'));
     expect(html).toContain('https://chatgpt.com/#settings/Security?section=developer-mode');
-    expect(html).toContain('https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins');
+    expect(html).toContain('https://chatgpt.com/plugins');
     expect(html).toContain('data-paradigmeve-art="coffee-cup"');
     expect(html.match(/data-guide-step="[1-6]"/g)).toHaveLength(6);
     expect(html).toContain('click steps 1–6 at any time to preview what comes next or revisit an earlier step');
@@ -1303,7 +1303,8 @@ describe('ParadigmEve setup browser', () => {
     expect(html).toContain('Copy icon folder');
     expect(html).toContain(path.dirname(baseOptions.connectorIconPath));
     expect(html).not.toContain(`<div class="copyvalue" id="connectorIconPath">${baseOptions.connectorIconPath}</div>`);
-    expect(html).toContain('It enables the custom ParadigmEve app');
+    expect(html).toContain('Current ChatGPT does not require a trip through Plugins settings');
+    expect(html).toContain('Add custom MCP server');
     expect(html).toContain('keep the suggested name');
     expect(html).toContain('Allow low risk actions');
     expect(html).toContain('Allow all actions');
@@ -1377,7 +1378,7 @@ describe('ParadigmEve setup browser', () => {
       const after = textOf(swedish);
       expect(after).toHaveLength(before.length);
       // Only app-owned copy may differ; OpenAI/ChatGPT labels and values stay verbatim.
-      const verbatim = new Set(['Developer mode', 'Load unpacked', 'Create Tunnel', '+ Create New Secret Key', 'Create MCP App', 'Allow low risk actions', 'Allow all actions', baseOptions.coreConnectorDescription, path.dirname(baseOptions.connectorIconPath)]);
+      const verbatim = new Set(['Developer mode', 'Load unpacked', 'Create Tunnel', '+ Create New Secret Key', 'Add', 'Add custom MCP server', 'Allow low risk actions', 'Allow all actions', 'chatgpt.com/plugins', baseOptions.coreConnectorDescription, path.dirname(baseOptions.connectorIconPath)]);
       const untranslated = before.filter((value, index) => after[index] === value && !verbatim.has(value) && /[A-Za-z]{4,} [A-Za-z]{3,}/.test(value));
       expect(untranslated).toEqual([]);
       expect(swedish.window.document.documentElement.lang).toBe('sv');
@@ -1440,7 +1441,7 @@ describe('ParadigmEve setup browser', () => {
       picker.dispatchEvent(new dom.window.Event('change'));
       const spanish = textOf();
       expect(spanish).toHaveLength(english.length);
-      const verbatim = new Set(['Developer mode', 'Load unpacked', 'Create Tunnel', '+ Create New Secret Key', 'Create MCP App', 'Allow low risk actions', 'Allow all actions', 'Restricted', 'Tunnels: Read', 'Tunnels: Use', 'None', 'No authentication', baseOptions.coreConnectorDescription, path.dirname(baseOptions.connectorIconPath)]);
+      const verbatim = new Set(['Developer mode', 'Load unpacked', 'Create Tunnel', '+ Create New Secret Key', 'Add', 'Add custom MCP server', 'Allow low risk actions', 'Allow all actions', 'Restricted', 'Tunnels: Read', 'Tunnels: Use', 'None', 'No authentication', 'chatgpt.com/plugins', baseOptions.coreConnectorDescription, path.dirname(baseOptions.connectorIconPath)]);
       expect(english.filter((value, index) => spanish[index] === value && !verbatim.has(value) && /[A-Za-z]{4,} [A-Za-z]{3,}/.test(value))).toEqual([]);
       picker.value = 'en';
       picker.dispatchEvent(new dom.window.Event('change'));
@@ -1521,7 +1522,7 @@ describe('ParadigmEve setup browser', () => {
 
     expect(html).toContain('Name it <strong>Eva Å</strong>');
     expect(html).toContain('Add Eva Å to ChatGPT');
-    expect(html).toContain('custom Eva Å app');
+    expect(html).toContain('and add the Eva Å app there.');
     expect(html).toContain('select the <strong>Eva Å</strong> tunnel');
     expect(html).toContain('Settings → Plugins → Eva Å → Permissions');
     expect(html).toContain('ParadigmEve Companion');
@@ -1729,7 +1730,7 @@ describe('ParadigmEve setup browser', () => {
     expect(args).not.toContain('--enable-automation');
 
     await setup.openSetupAssistantLink('https://chatgpt.com/#settings/Security?section=developer-mode');
-    await setup.openSetupAssistantLink('https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins');
+    await setup.openSetupAssistantLink('https://chatgpt.com/plugins');
     await expect(setup.openSetupAssistantLink('chrome://extensions/')).rejects.toThrow(/Start Guided setup first/i);
     expect(mocked.spawn).toHaveBeenCalledTimes(4);
     await expect(setup.openSetupAssistantLink('https://example.com/')).rejects.toThrow(/not allowed/i);

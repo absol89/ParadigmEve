@@ -6,6 +6,8 @@ export const CHATGPT_DEFAULT_MODEL_ID = 'chatgpt-default';
 export const CHATGPT_SOL_MODEL_ID = '5.6';
 const CHATGPT_SOL_COMPAT_IDS = new Set([
   'gpt-5.6-sol',
+  'gpt-5-6',
+  'gpt-5-6-instant',
   'gpt-5-6-thinking',
   CHATGPT_SOL_MODEL_ID,
   'gpt-5.6 sol',
@@ -22,7 +24,7 @@ export type ChatModelOption = { id: string; label: string; efforts: ReasoningEff
 /** Stable app settings choices. Discovery may add browser knowledge, but these do not depend on it. */
 export const CHATGPT_SETTINGS_MODELS: readonly ChatModelOption[] = [
   { id: CHATGPT_DEFAULT_MODEL_ID, label: 'ChatGPT default', efforts: [] },
-  { id: CHATGPT_SOL_MODEL_ID, label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5.6-sol', 'gpt-5-6-thinking'] }
+  { id: CHATGPT_SOL_MODEL_ID, label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5.6-sol', 'gpt-5-6', 'gpt-5-6-instant', 'gpt-5-6-thinking'] }
 ];
 
 /** Convert stored/app-facing compatibility ids into the provider request identity. */

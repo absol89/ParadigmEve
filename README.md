@@ -48,7 +48,7 @@ You do **not** have to enable all of that to use Eve.
 2. Open **Settings → Workspace → Folders → Add** and give Eve one folder you are comfortable using.
 3. Open **Settings → Setup** and follow the guided connection steps.
 4. Add the included Companion extension when Setup asks you to.
-5. Add Eve in ChatGPT, then open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
+5. Go to **[chatgpt.com/plugins](https://chatgpt.com/plugins)**, press the **Add** button at the top right, choose **Add custom MCP server**, and add Eve. After saving it, open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
 For a short 2.3.8 walkthrough, permissions and upgrade notes, read **[Meet Eve: the 2.3.8 first-user guide and release notes](docs/release-notes/v2.3.8.md)**. The [2.3.7 guide](docs/release-notes/v2.3.7.md) has more detailed screenshots and settings explanations for the same basic setup path.
@@ -173,7 +173,7 @@ These are source-level changes awaiting release-candidate and installed-app veri
 
 - Windows 10/11, macOS 13 Ventura or newer, or a current desktop Linux.
 - Chrome / Chromium, Edge, or Brave for the Companion workflow.
-- A ChatGPT account/workspace that can create custom MCP apps (Plugins → Add → Create MCP App).
+- A ChatGPT account/workspace that can add custom MCP servers from **chatgpt.com/plugins → Add → Add custom MCP server**.
 
 Windows is the primary self-tested desktop at the moment, but the release workflow also builds the macOS and Linux packages listed on the release page.
 

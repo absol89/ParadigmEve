@@ -2225,13 +2225,13 @@ var CLF_DOM = (() => {
         const host = composerBox() || composerActions()?.host;
         const busy = !!host?.querySelector('[aria-busy="true"], [role="progressbar"], [data-inline-file-uploading]');
         finish(false, `timeout requested=${images.length} tiles=${lastTiles} matched=${ownedTiles ? 'yes' : 'no'} busy=${busy} send_enabled=${sendButtonEnabled(sendButton())}`);
-      }, files.length ? 600000 : 60000);
+      }, 60000);
       check();
     });
   }
 
   const normalizeModelLabel = value => String(value || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
-  const SOL_MODEL_IDENTITIES = new Set(['5.6', 'gpt-5.6-sol', 'gpt-5-6', 'gpt-5-6-thinking']);
+  const SOL_MODEL_IDENTITIES = new Set(['5.6', 'gpt-5.6-sol', 'gpt-5-6', 'gpt-5-6-instant', 'gpt-5-6-thinking']);
   let modelSelectionFailure = null;
   const noteModelSelectionFailure = reason => { modelSelectionFailure = reason; return false; };
   const modelSelectionFailureReason = () => modelSelectionFailure;
@@ -2511,6 +2511,10 @@ var CLF_DOM = (() => {
   async function selectModelSettings(model, effort, stillCurrent = () => true) {
     modelSelectionFailure = null;
     if (!model && !effort) return true;
+    // Free/native-default accounts have no model picker. A paid choice saved earlier must never
+    // block their messages or open any menu: they send on ChatGPT's own default.
+    if (await nativeDefaultModelSurface(stillCurrent)) return true;
+    if (!stillCurrent()) return noteModelSelectionFailure('target_changed');
     // MAIN-world provider state is already route-bound and is invalidated when the
     // composer/model proof becomes ambiguous. If it proves the exact requested pair,
     // leave ChatGPT alone: reopening the picker can fail during hydration even though

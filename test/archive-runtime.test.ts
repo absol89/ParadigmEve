@@ -287,6 +287,7 @@ describe('ArchiveRuntime', () => {
       archiveRoot,
       writerVersion: 'runtime-test',
       staticRefreshDebounceMs: 0,
+      staticRefreshMinIntervalMs: 0,
       source: {
         listSessionIds: async () => [id],
         readSession: async () => current,
@@ -314,6 +315,45 @@ describe('ArchiveRuntime', () => {
 
     const after = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
     expect((await Promise.all(after.chunks.map(chunk => fs.readFile(chunk, 'utf8')))).join('\n')).toContain('NEW VOICE TURN');
+    await runtime.dispose();
+  });
+
+  // 2026-10-12: every recorded tool call is a commit, and a full site republish per commit ran
+  // every one to ten seconds through a working session. Background republishes are now rare.
+  it('does not republish the static archive for every commit inside the minimum interval', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-busy-tools';
+    let listener: ((sessionId: string) => void) | null = null;
+    let current: CurrentSessionArchiveSnapshot = { summary: summary(id, 'Busy'), events: [user(1, 'start') as SessionEvent] };
+    const runtime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'runtime-test',
+      staticRefreshDebounceMs: 0,
+      staticRefreshMinIntervalMs: 60_000,
+      source: {
+        listSessionIds: async () => [id],
+        readSession: async () => current,
+        readAsset: async () => null,
+        subscribeCommitted: next => { listener = next; return () => { listener = null; }; }
+      }
+    });
+    await runtime.start();
+    await runtime.drain();
+    await runtime.rebuildDerived();
+    const published = runtime.status().lastDerivedAt;
+    for (let at = 2; at < 8; at++) {
+      current = { summary: { ...summary(id, 'Busy'), updatedAt: at * 100 },
+        events: [...current.events, { ...assistant(at, `tool step ${at}`, true), messageId: `step-${at}`, time: at * 100 } as SessionEvent] };
+      listener!(id);
+      await runtime.drain();
+    }
+    // Long enough for a per-commit republish (the old behaviour) to have run and finished.
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+    expect(runtime.staticSiteStale()).toBe(true);
+    expect(runtime.status().lastDerivedAt).toBe(published);
+    // Opening the archive still brings it up to date at once.
+    await runtime.refreshStaticSite();
+    expect(runtime.staticSiteStale()).toBe(false);
     await runtime.dispose();
   });
 

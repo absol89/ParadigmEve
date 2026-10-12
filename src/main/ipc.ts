@@ -143,6 +143,7 @@ import {
   bridgeStatus,
   browserChatTabOpen,
   browserPresent,
+  browserRouteRecovering,
   reconcileAutomaticCompactionPolicy,
   sessionActivityExpiresAt,
   sessionInputActivity,
@@ -1860,11 +1861,12 @@ export function registerIpc(
   });
   configureInputDelivery({
     activity: sessionInputActivity,
+    browserRouteRecovering,
     wakeDecision: async (entry, signal) => {
       signal.throwIfAborted();
       if (!await startBridge()) throw new Error('The browser bridge could not start');
       signal.throwIfAborted();
-      const marker = `cos-input=${encodeURIComponent(entry.id)}`;
+      const marker = `eve-input=${encodeURIComponent(entry.id)}`;
       await wakeBrowserUrl(entry.conversationId ? `https://chatgpt.com/c/${encodeURIComponent(entry.conversationId)}`
         : `https://chatgpt.com/?${entry.lifetime === 'temporary-planner' ? 'temporary-chat=true&' : ''}${marker}#${marker}`);
     },

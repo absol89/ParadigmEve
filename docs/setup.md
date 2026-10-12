@@ -6,7 +6,7 @@
 
 1. **Install and open CoS.** Choose the download for your operating system and CPU.
 2. **Choose what ChatGPT may access.** In **Settings → Workspace**, approve a project folder and review the tool permissions.
-3. **Connect the local tools.** Configure a tunnel in **Settings → Setup**, press **Connect**, then add the **Core** app in ChatGPT under **Plugins → Add → Create MCP App**.
+3. **Connect the local tools.** Configure a tunnel in **Settings → Setup**, press **Connect**, then open **[chatgpt.com/plugins](https://chatgpt.com/plugins)**, press the **Add** button at the top right and choose **Add custom MCP server** to add the **Core** app.
 4. **Load the companion extension.** Press **Open extension folder**. In `chrome://extensions`, enable Developer mode, choose **Load unpacked** and select that folder. Pairing is automatic.
 5. **Start a task.** Choose a project and model in CoS, write your request and send it.
 
@@ -40,7 +40,7 @@ For voice-assisted or accessibility-focused setup, and for the rules governing c
 1. Create a tunnel in [Platform → Tunnels](https://platform.openai.com/settings/organization/tunnels), in the same workspace you use in ChatGPT.
 2. Create a **Restricted** [API key](https://platform.openai.com/settings/organization/api-keys) with **Tunnels: Read** and **Tunnels: Use**.
 3. Enter the tunnel ID and key in CoS and press **Connect**.
-4. In ChatGPT, open **Plugins**, click **Add → Create MCP App** (older versions show **+**, and may first need Developer mode turned on under **Settings → Apps → Advanced settings**), then create a custom app of type **Tunnel** with **No authentication**. Keep the suggested app name: ParadigmEve recognizes its own tool calls by it. Review and enable its actions.
+4. In ChatGPT, go directly to **[chatgpt.com/plugins](https://chatgpt.com/plugins)**, press the **Add** button at the top right and choose **Add custom MCP server**. Create the server as type **Tunnel** with **No authentication** and keep the suggested app name: ParadigmEve recognizes its own tool calls by it. Older ChatGPT versions may still require Developer mode under **Settings → Apps → Advanced settings**, but do not start there on the current UI. Review and enable the server's actions after saving it.
 
 Core, Desktop and Plugins are separate connectors. Configure each surface you enable. Release packages include the pinned, checksum-verified `tunnel-client`.
 

@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import type { ChatModelCatalog } from '../shared/chat-models.js';
-import { CHATGPT_DEFAULT_MODEL_ID, CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, chatModelDisplayLabel, configuredChatModelRequest, configuredChatSettingsModel } from '../shared/chat-models.js';
+import { CHATGPT_DEFAULT_MODEL_ID, CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, chatModelDisplayLabel, configuredChatModelRequest, configuredChatSettingsModel, isAstraModel, isProModel } from '../shared/chat-models.js';
 import type { Config } from '../shared/types.js';
 import type { ReasoningEffort } from '../shared/session.js';
 import { $, el, run, toast } from './dom.js';
@@ -18,9 +18,11 @@ const composerChoices = new Map<string, ComposerChoice>();
 let defaultComposerChoice: ComposerChoice | null = null;
 let composerPreferenceLoaded = false;
 const MAX_COMPOSER_CHOICES = 128;
+const MODEL_CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const MODEL_REFRESH_RETRY_MS = 10 * 60 * 1000;
 const pairs = [['composerModel', 'composerReasoning'], ['workerModel', 'workerReasoning'], ['helperModel', 'helperReasoning']] as const;
 const effortNames: Record<string, string> = { none: "Instant", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "xhigh", max: "Max", ultra: "Ultra", pro: 'Pro' } satisfies Record<ReasoningEffort, string>;
-const composerEfforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'pro'] as const;
+const composerEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'pro'] as const;
 const effortLabel = (effort: string): string => effortNames[effort] ? t(effortNames[effort]) : effort;
 function observedModel(value: string) {
   const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9.]/g, '');
@@ -167,17 +169,33 @@ type ComposerSliderStep = {
   available: boolean;
 };
 
-/** Keep the everyday paid picker stable: Sol Medium, High and xhigh. Discovery
- * can prove xhigh unavailable for this account, but it must not reorder the
- * control or append unrelated/retiring model families to the right. */
+/** The GPT-6 family as the account's picker lists it (GPT-6, GPT-6.1; Instant and thinking lanes
+ * joined under one family id by the page). Pro/Astra is a separate lane and never a slider step. */
+function gpt6FamilyModel() {
+  const family = (value: string | undefined) => /^(?:gpt[ ._-]?)?6(?:\.\d+)?$/i.test((value ?? '').trim());
+  const matches = catalog.models.filter(model => !isProModel(model.id) && !isAstraModel(model.id) &&
+    (family(model.id) || family(model.label)));
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+/** Keep the everyday paid picker stable, in the order the account's ChatGPT picker shows it:
+ * Sol Instant (when offered), Medium, High and Extra High (locked unless offered), then the GPT-6
+ * family's own levels to the right. Discovery can lock a step but never reorders the control. */
 function composerSliderSteps(): ComposerSliderStep[] {
   const sol = stableSolModel();
   const has = (effort: ReasoningEffort) => sol.efforts.includes(effort);
-  return [
+  const steps: ComposerSliderStep[] = [
+    ...(has('none') ? [{ model: sol.id, modelLabel: sol.label, effort: 'none' as const, displayEffort: 'Instant', available: true }] : []),
     { model: sol.id, modelLabel: sol.label, effort: 'medium', displayEffort: 'Medium', available: has('medium') },
     { model: sol.id, modelLabel: sol.label, effort: 'high', displayEffort: 'High', available: has('high') },
     { model: sol.id, modelLabel: sol.label, effort: 'xhigh', displayEffort: 'xhigh', available: has('xhigh') }
   ];
+  const gpt6 = gpt6FamilyModel();
+  if (gpt6) for (const effort of composerEfforts) {
+    if (effort === 'pro' || !gpt6.efforts.includes(effort)) continue;
+    steps.push({ model: gpt6.id, modelLabel: gpt6.label, effort, displayEffort: effortNames[effort]!, available: true });
+  }
+  return steps;
 }
 
 function options(select: HTMLSelectElement, choices: Array<{ id: string; label: string | (() => string) }>, value: string): void {
@@ -406,13 +424,14 @@ function paintComposerLabel(): void {
 function paintStatus(): void {
   paintComposerChoices();
   const message = () => catalog.state === 'pending' ? t("Reading your account’s model choices…")
-    : catalog.state === 'ready' ? t("Available in your ChatGPT account · checked {0}", [new Date(catalog.observedAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })])
+    : catalog.error ? catalog.error
+    : catalog.state === 'ready' ? t("Available in your ChatGPT account · checked {0}", [new Date(catalog.observedAt!).toLocaleString()])
     : catalog.error ?? t("Connect to ChatGPT to load your models.");
   for (const id of ['chatModelStatus', 'composerModelStatus']) {
     const node = document.getElementById(id);
     if (node) {
       ui(node, 'textContent', () => id === 'composerModelStatus' ? (catalog.state === 'pending' ? t("Loading models…") : catalog.error ?? t("Models unavailable · retry discovery")) : message());
-      if (id === 'composerModelStatus') node.hidden = catalog.state === 'ready';
+      if (id === 'composerModelStatus') node.hidden = catalog.state === 'ready' && !catalog.error;
     }
   }
   for (const id of ['refreshChatModels', 'refreshComposerModels']) {
@@ -448,6 +467,18 @@ function discoverModels(): Promise<void> {
   return discovery;
 }
 
+/** A persisted successful catalog is useful while offline, but not evidence that
+ * today's account still has the same choices. Refresh only on an explicit model
+ * menu opening, with a backoff after a failed attempt; never open a page on startup. */
+function modelMenuNeedsDiscovery(): boolean {
+  const now = Date.now();
+  if (catalog.state === 'ready' && !catalog.error && catalog.observedAt !== null &&
+      now - catalog.observedAt < MODEL_CATALOG_MAX_AGE_MS) return false;
+  if (!catalog.models.length && catalog.nativeDefault !== true) return true;
+  return catalog.state !== 'pending' &&
+    (catalog.requestedAt === null || now - catalog.requestedAt >= MODEL_REFRESH_RETRY_MS);
+}
+
 export async function ensureComposerModel(refresh = false): Promise<ReturnType<typeof confirmedComposerModel>> {
   if (!refresh) {
     const selected = confirmedComposerModel();
@@ -479,9 +510,13 @@ export function applyChatModels(config: Config, previous?: Config): void {
   const preferenceChanged = previous && (config.ui?.chatModel !== previous.ui?.chatModel || config.ui?.chatReasoning !== previous.ui?.chatReasoning);
   if (!composerPreferenceLoaded || preferenceChanged) {
     composerPreferenceLoaded = true;
-    defaultComposerChoice = config.ui?.chatModel && config.ui?.chatReasoning
-      ? { model: configuredChatSettingsModel(config.ui.chatModel), reasoningEffort: config.ui.chatReasoning, editedAt: 0 }
-      : null;
+    // Never chosen (undefined) means Sol 5.6 Medium, so ChatGPT's own GPT-6 default does not take
+    // over Eve's chats. An explicit "ChatGPT default" is saved as null and stays native.
+    defaultComposerChoice = config.ui?.chatModel === undefined && config.ui?.chatReasoning === undefined
+      ? { model: CHATGPT_SOL_MODEL_ID, reasoningEffort: 'medium', editedAt: 0 }
+      : config.ui?.chatModel && config.ui?.chatReasoning
+        ? { model: configuredChatSettingsModel(config.ui.chatModel), reasoningEffort: config.ui.chatReasoning, editedAt: 0 }
+        : null;
   }
   if (!composerContext) applyComposerSessionModel(null, null);
   // Any chat without exact provider state (fresh or established) shows the saved current-chat pair
@@ -516,7 +551,7 @@ export function initChatModels(onPaint?: () => void): void {
     });
   }
   document.getElementById('modelMenu')?.addEventListener('toggle', () => {
-    if (($('modelMenu') as HTMLDetailsElement).open && !catalog.models.length) $('refreshComposerModels').click();
+    if (($('modelMenu') as HTMLDetailsElement).open && modelMenuNeedsDiscovery()) $('refreshComposerModels').click();
   });
   for (const [modelId, effortId] of pairs) {
     document.getElementById(modelId)?.addEventListener('change', () => {

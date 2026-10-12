@@ -658,25 +658,28 @@
                     <h3>Add it in ChatGPT</h3>
                   </div>
                   <p>
-                    First turn on <strong>Developer mode</strong> in ChatGPT. Then open the connector
-                    creation page and create the single <strong data-instance-name>Eve</strong> app shown below.
+                    Open <strong>chatgpt.com/plugins</strong>, press the <strong>Add</strong> button at the top right,
+                    choose <strong>Add custom MCP server</strong>, and create the single
+                    <strong data-instance-name>Eve</strong> app shown below. Older ChatGPT versions may
+                    still require <strong>Developer mode</strong>, but that is no longer the primary setup path.
                     Computer use appears inside that same app whenever you enable its permissions in
                     ParadigmEve.
                   </p>
                   <div class="step-actions">
-                    <button class="btn btn-solid" type="button" data-setup-link="https://chatgpt.com/#settings/Security?section=developer-mode">
-                      <svg class="ico" viewBox="0 0 24 24"><use href="#i-out" /></svg>1. Open Developer mode
+                    <button class="btn btn-solid" type="button" data-setup-link="https://chatgpt.com/plugins">
+                      <svg class="ico" viewBox="0 0 24 24"><use href="#i-out" /></svg>1. Open ChatGPT Plugins
                     </button>
-                    <button class="btn btn-solid" type="button" data-setup-link="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&amp;redirectAfter=%2Fplugins">
-                      <svg class="ico" viewBox="0 0 24 24"><use href="#i-out" /></svg>2. Create connector
+                    <button class="btn" type="button" data-setup-link="https://chatgpt.com/#settings/Security?section=developer-mode">
+                      <svg class="ico" viewBox="0 0 24 24"><use href="#i-out" /></svg>Older versions: Developer mode
                     </button>
                   </div>
                   <ul class="ticks">
                     <li>
-                      On the first page, turn <strong>Developer mode</strong> on before continuing.
-                      Developer mode enables the custom <strong data-instance-name>Eve</strong> connector; it does
-                      <strong>not</strong> grant unrestricted action access by itself.
+                      On <strong>chatgpt.com/plugins</strong>, press the <strong>Add</strong> button at the top right and
+                      choose <strong>Add custom MCP server</strong>. Do not start by hunting through
+                      Plugins settings.
                     </li>
+                    <li>Only use <strong>Developer mode</strong> as an older-version fallback if ChatGPT says custom MCP servers are unavailable.</li>
                     <li>Use the exact name and description from the card — copy them, do not invent your own.</li>
                     <li>
                       When ChatGPT asks for an app icon, upload the included <strong>icon.png</strong>.

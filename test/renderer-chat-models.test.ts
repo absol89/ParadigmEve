@@ -191,7 +191,8 @@ it('does not let an older paid session observation bypass a current Free or Go n
   expect(dom.window.document.querySelector('#composerPowerChoices input')).toBeNull();
 });
 
-it.each(['unknown', 'pending', 'unavailable'])('lets an unselected new chat keep the native model when discovery is %s', async state => {
+// Never chosen means Sol 5.6 Medium, never ChatGPT's own GPT-6 default (2026-10-12).
+it.each(['unknown', 'pending', 'unavailable'])('starts an unselected new chat on Sol Medium when discovery is %s', async state => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const requestChatModels = vi.fn();
@@ -200,16 +201,15 @@ it.each(['unknown', 'pending', 'unavailable'])('lets an unselected new chat keep
   const { initChatModels, applyChatModels, applyComposerSessionModel, ensureComposerModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
   applyComposerSessionModel(null, null);
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
-  expect(await ensureComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
+  expect(await ensureComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
   expect(requestChatModels).not.toHaveBeenCalled();
-  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
-  expect(dom.window.document.getElementById('composerPowerTitle')!.textContent).toBe('ChatGPT default');
+  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
   applyComposerSessionModel('existing:1', { model: 'requested-pro', reasoningEffort: 'pro', observedAt: 2 });
   expect(confirmedComposerModel()).toBeNull();
 });
 
-it('keeps a fresh unselected chat on native default while refresh retains an older catalog', async () => {
+it('keeps a fresh unselected chat on Sol Medium while refresh retains an older catalog', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [{ id: 'stale-sol', label: 'GPT-5.6 Sol', efforts: ['high'] }];
@@ -220,11 +220,11 @@ it('keeps a fresh unselected chat on native default while refresh retains an old
   const { initChatModels, applyChatModels, applyComposerSessionModel, ensureComposerModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
   applyComposerSessionModel(null, null);
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
 
   dom.window.document.getElementById('refreshComposerModels')!.click();
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
-  expect(await ensureComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
+  expect(await ensureComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
 
   const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
@@ -302,6 +302,53 @@ it('opening an empty or pending picker requests models immediately without a sep
   expect(requestChatModels).toHaveBeenCalledTimes(2);
 });
 
+it('refreshes a month-old model catalog on menu opening without losing the last observed GPT-6 selection', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const observedAt = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const models = [{ id: 'gpt-6', label: 'GPT-6', efforts: ['high'] }];
+  const ready = { state: 'ready', requestedAt: null, observedAt, models };
+  let receive!: (catalog: any) => void;
+  const requestChatModels = vi.fn(async () => ({ ok: true, data: {
+    ...ready, state: 'pending', requestedAt: Date.now()
+  } }));
+  Object.assign(dom.window, { api: { requestChatModels,
+    getChatModels: async () => ({ ok: true, data: ready }),
+    onChatModelsChanged: (listener: typeof receive) => { receive = listener; }
+  } });
+  const { initChatModels, applyChatModels, applyComposerSessionModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  applyComposerSessionModel('existing:gpt6', { model: 'gpt-6', reasoningEffort: 'high', observedAt });
+  expect(confirmedComposerModel()).toEqual({ model: 'gpt-6', reasoningEffort: 'high' });
+  const menu = dom.window.document.getElementById('modelMenu') as HTMLDetailsElement;
+  menu.open = true; await new Promise(resolve => setTimeout(resolve, 0));
+  expect(requestChatModels).toHaveBeenCalledTimes(1);
+  expect(confirmedComposerModel()).toEqual({ model: 'gpt-6', reasoningEffort: 'high' });
+  receive({ ...ready, requestedAt: Date.now(), error: 'The native picker could not be read.' });
+  expect(confirmedComposerModel()).toEqual({ model: 'gpt-6', reasoningEffort: 'high' });
+  const status = dom.window.document.getElementById('composerModelStatus')!;
+  expect(status.hidden).toBe(false);
+  expect(status.textContent).toContain('native picker could not be read');
+  menu.open = false; await new Promise(resolve => setTimeout(resolve, 0));
+  menu.open = true; await new Promise(resolve => setTimeout(resolve, 0));
+  expect(requestChatModels).toHaveBeenCalledTimes(1);
+});
+
+it('does not refresh a recently confirmed catalog just by opening the model menu', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const requestChatModels = vi.fn();
+  Object.assign(dom.window, { api: { requestChatModels,
+    getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: null,
+      observedAt: Date.now(), models: [{ id: 'gpt-6', label: 'GPT-6', efforts: ['high'] }] } })
+  } });
+  const { initChatModels, applyChatModels } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  (dom.window.document.getElementById('modelMenu') as HTMLDetailsElement).open = true;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(requestChatModels).not.toHaveBeenCalled();
+});
+
 it('excludes GPT-5.5 everywhere and keeps the composer slider fixed to Sol Medium, High and xhigh', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
@@ -319,8 +366,35 @@ it('excludes GPT-5.5 everywhere and keeps the composer slider fixed to Sol Mediu
   expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#workerModel option')].some(option => option.value === 'old')).toBe(false);
   expect(dom.window.document.querySelector('.power-dot.locked')?.getAttribute('aria-label')).toBe('xhigh · Pro');
   slider.value = '2'; slider.dispatchEvent(new dom.window.Event('input'));
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
   expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol · Medium');
+});
+
+it('shows Sol Instant when the native account catalog actually offers its Instant lane', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const models = [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['none', 'medium', 'high'], aliases: ['gpt-5-6-thinking'] }];
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models } }) } });
+  const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
+  expect(slider.max).toBe('3');
+  slider.value = '0'; slider.dispatchEvent(new dom.window.Event('input'));
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'none' });
+  expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol · Instant');
+});
+
+it('folds the native gpt-5-6 instant and thinking slugs into the Sol family', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const models = [{ id: 'gpt-5-6', label: 'GPT-5.6 Sol', efforts: ['none', 'medium', 'high'], aliases: ['gpt-5-6-instant', 'gpt-5-6-thinking'] }];
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models } }) } });
+  const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
+  expect(slider.max).toBe('3');
+  slider.value = '0'; slider.dispatchEvent(new dom.window.Event('input'));
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'none' });
 });
 
 it('binds composer selection to the selected session across delayed catalog, user edits and A-B-A navigation', async () => {
@@ -367,10 +441,10 @@ it('never folds observed Pro lanes or unrelated model families into the three-st
   slider.value = '2'; slider.dispatchEvent(new dom.window.Event('input'));
   // The meter formats with the machine's locale (400,000 in English, 400 000 with a no-break space in Swedish).
   expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain(`Auto-compaction at ${new Intl.NumberFormat().format(400_000)} tokens`);
-  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
+  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
   expect(dom.window.document.querySelector('.power-dot.locked')?.getAttribute('aria-label')).toBe('xhigh · Pro');
   expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol · Medium');
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
   // The meter formats with the machine's locale (400,000 in English, 400 000 with a no-break space in Swedish).
   expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain(`Auto-compaction at ${new Intl.NumberFormat().format(400_000)} tokens`);
@@ -423,7 +497,7 @@ it('uses observed account choices, preserves unverified defaults, and clears inc
   expect([...select('composerReasoning').options].map(row => row.value)).toEqual(['medium']);
 });
 
-it('keeps a stable three-step Sol composer while observed extras come and go', async () => {
+it('keeps the Sol steps stable and lists the GPT-6 family to their right while observed extras come and go', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let models = [
@@ -437,14 +511,19 @@ it('keeps a stable three-step Sol composer while observed extras come and go', a
   const config = { multiAgent: {}, goal: {} } as Config;
   applyChatModels(config); await Promise.resolve();
   const select = (id: string) => dom.window.document.getElementById(id) as HTMLSelectElement;
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
   expect(dom.window.document.getElementById('composerModelChoices')!.textContent).toContain('ChatGPT default');
   const reload = dom.window.document.getElementById('refreshComposerModels')!;
   expect(reload.querySelector('svg')).not.toBeNull();
   expect(reload.textContent).toBe('');
   expect(reload.getAttribute('aria-label')).toBe('Reload ChatGPT models');
   const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
-  expect(slider.max).toBe('2');
+  // Sol Medium, High, locked Extra High, then GPT-6 Medium and High (2026-10-12).
+  expect(slider.max).toBe('4');
+  slider.value = '4'; slider.dispatchEvent(new dom.window.Event('input'));
+  expect(slider.getAttribute('aria-valuetext')).toBe('GPT-6 \u00b7 High');
+  expect(select('composerModel').value).toBe('observed-six');
+  expect(select('composerReasoning').value).toBe('high');
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
   expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol \u00b7 High');
   expect(select('composerModel').value).toBe('5.6');
@@ -460,6 +539,8 @@ it('keeps a stable three-step Sol composer while observed extras come and go', a
   applyChatModels(config); await Promise.resolve();
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
   const proSlider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
+  // A Pro lane is never a slider step.
+  expect(proSlider.max).toBe('2');
   proSlider.value = '2'; proSlider.dispatchEvent(new dom.window.Event('input'));
   expect(select('composerModel').value).toBe('5.6');
   expect(select('composerReasoning').value).toBe('high');
@@ -468,12 +549,13 @@ it('keeps a stable three-step Sol composer while observed extras come and go', a
   applyChatModels(config); await Promise.resolve();
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
   const limitedSlider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
+  expect(limitedSlider.max).toBe('3');
   limitedSlider.value = '2'; limitedSlider.dispatchEvent(new dom.window.Event('input'));
   expect(select('composerModel').value).toBe('5.6');
   expect(select('composerReasoning').value).toBe('high');
 });
 
-it('keeps exactly Medium, High and xhigh in the composer and excludes GPT-5.5 choices', async () => {
+it('includes observed Sol Instant alongside Medium, High and xhigh while excluding GPT-5.5', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
@@ -486,18 +568,18 @@ it('keeps exactly Medium, High and xhigh in the composer and excludes GPT-5.5 ch
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
   const doc = dom.window.document;
   const slider = doc.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
-  expect(slider.max).toBe('2');
-  expect(doc.querySelectorAll('.power-dot')).toHaveLength(3);
+  expect(slider.max).toBe('3');
+  expect(doc.querySelectorAll('.power-dot')).toHaveLength(4);
   const header = doc.querySelector('.power-header')!;
   expect(header.querySelector('.power-icon') === null).toBe(true);
   expect(header.querySelector('#composerPowerTitle')).not.toBeNull();
   expect(header.querySelector('#composerPowerModel')).not.toBeNull();
   expect(header.querySelector('#refreshComposerModels')).not.toBeNull();
-  const expected = [['5.6', 'medium'], ['5.6', 'high']];
+  const expected = [['5.6', 'none'], ['5.6', 'medium'], ['5.6', 'high']];
   for (const [index, [model, reasoningEffort]] of expected.entries()) {
     slider.value = String(index); slider.dispatchEvent(new dom.window.Event('input'));
     expect(confirmedComposerModel()).toEqual({ model, reasoningEffort });
-    expect(slider.getAttribute('aria-valuetext')).not.toMatch(/Instant|Minimal/);
+    expect(slider.getAttribute('aria-valuetext')).not.toMatch(/Minimal/);
   }
   slider.value = '2'; slider.dispatchEvent(new dom.window.Event('input'));
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
@@ -505,7 +587,7 @@ it('keeps exactly Medium, High and xhigh in the composer and excludes GPT-5.5 ch
   expect(doc.querySelectorAll('.power-dot.locked')).toHaveLength(1);
   expect(doc.querySelector('.power-dot.locked')?.getAttribute('aria-label')).toBe('xhigh · Pro');
   const effort = doc.getElementById('composerReasoning') as HTMLSelectElement;
-  const injected = doc.createElement('option'); injected.value = 'none'; effort.append(injected); effort.value = 'none';
+  const injected = doc.createElement('option'); injected.value = 'ultra'; effort.append(injected); effort.value = 'ultra';
   expect(confirmedComposerModel()).toBeNull();
 });
 
@@ -548,9 +630,9 @@ it('paints catalog pushes immediately and refuses late startup reads without ref
   const config = { multiAgent: {}, goal: {} } as Config;
   initChatModels(); applyChatModels(config);
   receive({ state: 'ready', requestedAt: 1, observedAt: 2, models: [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['high', 'pro'] }] });
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
   resolve({ ok: true, data: { state: 'pending', requestedAt: 1, observedAt: null, models: [] } }); await Promise.resolve();
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
   applyChatModels(config); applyChatModels(config);
   expect(getChatModels).toHaveBeenCalledTimes(1);
 });

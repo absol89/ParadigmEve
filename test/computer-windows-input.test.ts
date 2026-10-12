@@ -101,7 +101,7 @@ $result = Handle-Request $request
 if ($result.ok -ne $true -or $result.width -ne 10 -or $result.uiUnavailable.code -ne 'UIA_FAILED') { throw 'accessibility failure discarded screenshot' }
 Write-Output 'WINDOWS_INPUT_PROBE_OK'
 `;
-    const dir = mkdtempSync(path.join(tmpdir(), 'cos-input-test-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'eve-input-test-'));
     try {
       const file = path.join(dir, 'probe.ps1');
       writeFileSync(file, script + assertions, 'utf8');

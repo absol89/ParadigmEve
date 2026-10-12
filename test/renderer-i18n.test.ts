@@ -422,7 +422,7 @@ describe('localized app interface', () => {
   it('keeps connector as kontakt and connection as anslutning in Swedish setup copy', async () => {
     const { setLanguage, t } = await import('../src/renderer/i18n.js');
     setLanguage('sv-SE');
-    expect(t('2. Create connector')).toBe('2. Skapa kontakt');
+    expect(t('1. Open ChatGPT Plugins')).toBe('1. Öppna ChatGPT Plugins');
     expect(t('Load the ParadigmEve Companion in this dedicated Eve Browser profile before creating the connector.'))
       .toContain('skapar kontakten');
     expect(t('Open {0} extensions', ['Microsoft Edge'])).toBe('Öppna tillägg i Microsoft Edge');

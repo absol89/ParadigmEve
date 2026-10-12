@@ -53,7 +53,7 @@ it('connects before publication and opens exactly one marked bootstrap while Eve
   await vi.waitFor(() => expect(ports.enqueue).toHaveBeenCalledTimes(2));
   expect(ports.open).toHaveBeenCalledTimes(1); release(); await Promise.all([first, second]);
   const url = new URL(ports.open.mock.calls[0]![0]);
-  expect(url.searchParams.get('cos-input')).toBe(request.id);
+  expect(url.searchParams.get('eve-input')).toBe(request.id);
   expect(ports.connect.mock.invocationCallOrder[0]).toBeLessThan(ports.enqueue.mock.invocationCallOrder[0]!);
 });
 it('preserves setup failures without queueing or opening a browser', async () => {
@@ -88,7 +88,7 @@ it('forwards authored delivery to the existing selected browser while its wake t
   ports.browser = { connected: false, present: true, lastSeenAt: Date.now() };
   await sendDesktopInput(request);
   expect(ports.open).toHaveBeenCalledTimes(1);
-  expect(ports.open).toHaveBeenCalledWith(expect.stringContaining(`cos-input=${request.id}`), 'chrome');
+  expect(ports.open).toHaveBeenCalledWith(expect.stringContaining(`eve-input=${request.id}`), 'chrome');
   expect(ports.rows[0]).toMatchObject({ state: 'queued', error: undefined });
 });
 it('keeps cold authored sends and retries inside the dedicated Eve Browser profile when background mode is enabled', async () => {
@@ -116,7 +116,7 @@ it('forwards authored input to a confirmed running browser', async () => {
   ports.running = true;
   await sendDesktopInput(request);
   expect(ports.open).toHaveBeenCalledTimes(1);
-  expect(ports.open).toHaveBeenCalledWith(expect.stringContaining(`cos-input=${request.id}`), 'chrome');
+  expect(ports.open).toHaveBeenCalledWith(expect.stringContaining(`eve-input=${request.id}`), 'chrome');
   expect(ports.rows[0]).toMatchObject({ state: 'queued', error: undefined });
 });
 it('queues authored input without activating a browser when process state is unknown', async () => {

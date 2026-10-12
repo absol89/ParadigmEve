@@ -1913,7 +1913,7 @@ async function reconcileBackgroundWindow(policy) {
     try {
       const url = new URL(tab.pendingUrl || tab.url || '');
       if (url.origin !== 'https://chatgpt.com') return false;
-      const inputId = url.searchParams.get('cos-input') || new URLSearchParams(url.hash.slice(1)).get('cos-input');
+      const inputId = url.searchParams.get('eve-input') || new URLSearchParams(url.hash.slice(1)).get('eve-input');
       // Catalog markers retain ownership across browser restart so the warm empty
       // document can be handed to the first authored input without another window.
       const catalogHelper = url.pathname === '/' && /^[a-f0-9-]{36}$/i.test(url.searchParams.get('cos-model-catalog') || '');
@@ -1977,7 +1977,7 @@ async function createChatTab(url, background = false, active = !background) {
 function tabMarkers(tab) {
   try {
     const url = new URL(tab?.url || tab?.pendingUrl || '');
-    return ['cos-input', 'cos-model-catalog', 'clf', 'cos-plugin-refresh', 'temporary-chat']
+    return ['eve-input', 'cos-model-catalog', 'clf', 'cos-plugin-refresh', 'temporary-chat']
       .filter(key => url.searchParams.has(key) || url.hash.includes(`${key}=`)).join(',');
   } catch { return ''; }
 }
@@ -2022,8 +2022,8 @@ function desktopInputMarker(tab) {
   try {
     const url = new URL(tab?.pendingUrl || tab?.url || '');
     if (url.origin !== 'https://chatgpt.com' || url.pathname !== '/') return null;
-    const query = url.searchParams.get('cos-input');
-    const hash = new URLSearchParams(url.hash.slice(1)).get('cos-input');
+    const query = url.searchParams.get('eve-input');
+    const hash = new URLSearchParams(url.hash.slice(1)).get('eve-input');
     if (!query || query !== hash || !/^[a-f0-9-]{36}$/i.test(query)) return null;
     return query;
   } catch { return null; }
@@ -2178,7 +2178,7 @@ async function prepareDesktopInputTarget(tab, conversationId = null) {
 }
 
 /**
- * A newly-created fresh ChatGPT tab used to stop at the cos-input marker and depend on the next
+ * A newly-created fresh ChatGPT tab used to stop at the eve-input marker and depend on the next
  * maintenance sweep to offer its already-durable input. If that sweep was delayed or the service
  * worker briefly slept, the user was left looking at an inert blank ChatGPT home forever.
  *
@@ -2256,13 +2256,13 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
     if (target) return conversationForTab(tab) === target;
     try {
       const url = new URL(tab.pendingUrl || tab.url || '');
-      return url.searchParams.get('cos-input') === input.id || new URLSearchParams(url.hash.slice(1)).get('cos-input') === input.id;
+      return url.searchParams.get('eve-input') === input.id || new URLSearchParams(url.hash.slice(1)).get('eve-input') === input.id;
     } catch { return false; }
   };
   for (const input of inputs.slice(0, 50)) {
     if (!input || !/^[a-f0-9-]{36}$/i.test(input.id)) continue;
     const target = cleanConversationId(input.conversationId);
-    const marker = `cos-input=${encodeURIComponent(input.id)}`;
+    const marker = `eve-input=${encodeURIComponent(input.id)}`;
     const candidates = tabs.filter(tab => matchesInput(input, tab));
     // Multiple tabs can show the same conversation after Resume/Open-in-Eva.
     // Route new durable input to the tab the user is actually using; the lowest tab id can hand old queued work to a stale duplicate while the active tab carries the live turn.
@@ -2305,7 +2305,7 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
     }
     if (input.close === true && input.lifetime === 'temporary-planner') {
       // After Send, ChatGPT moves a temporary chat to /c/<id>?temporary-chat=true without the
-      // cos-input marker, so fall back to the tab this helper was elected to. Only the page's
+      // eve-input marker, so fall back to the tab this helper was elected to. Only the page's
       // exact decision proof below can make it closable (Chat On Steroids 2.1.17).
       if (!tab && elected?.tab != null) tab = tabs.find(candidate => candidate.id === elected.tab);
       if (!tab || tab.pinned) continue;
@@ -2553,6 +2553,12 @@ function pluginRefreshMarker(tab) {
       : null;
   } catch { return null; }
 }
+/** Canonical current-shell page for an exact installed plugin; the settings index is discovery only. */
+function pluginRefreshPageUrl(request) {
+  const plugin = typeof request.appId === 'string' && /^asdk_app_[a-zA-Z0-9_-]+$/.test(request.appId)
+    ? `/plugin_${request.appId}` : '';
+  return `https://chatgpt.com/settings/plugins-settings${plugin}?${PLUGIN_REFRESH_MARKER}=${encodeURIComponent(request.id)}`;
+}
 function inspectRequestedPluginRefresh(publications, background, browserOnly = false) {
   if (pluginRefreshFlight || !Array.isArray(publications) || !publications.length) return pluginRefreshFlight;
   pluginRefreshFlight = (async () => {
@@ -2591,11 +2597,7 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
     if (!held) {
       if (browserOnly) return;
       try {
-        const tab = await createChatTab(request.appId
-          // The old hash still redirects to the app's page on the newer shell; without an App Id
-          // it now lands on the home page, so the installed list is opened by its own path.
-          ? `https://chatgpt.com/?${PLUGIN_REFRESH_MARKER}=${request.id}#settings/Plugins/plugin_${request.appId}`
-          : `https://chatgpt.com/settings/plugins-settings?${PLUGIN_REFRESH_MARKER}=${request.id}`, background);
+        const tab = await createChatTab(pluginRefreshPageUrl(request), background);
         // A newly-created helper is already a fresh provider document. Verification-only
         // recovery can inspect it directly without another navigation.
         await chrome.storage.session.set({ pluginRefreshOwner: { id: request.id, tab: tab.id, ...(request.verifyOnly === true ? { verifyOnly: true } : {}) } });
@@ -2623,6 +2625,19 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
         return;
       }
     } catch { /* A malformed held URL cannot authorize a navigation; leave it untouched. */ }
+    // Older helpers can retain the generic settings index (or legacy hash redirect) even when
+    // the exact installed app ID is durable. Retarget ONLY that previously elected helper, never
+    // an ordinary ChatGPT tab. This navigation preserves the one-click verifyOnly fence.
+    if (request.appId) {
+      const current = await chrome.tabs.get(held.id).catch(() => null);
+      if (!current || current.pinned || current.pendingUrl || pluginRefreshMarker(current) !== request.id) return;
+      const currentUrl = new URL(current.url);
+      if (currentUrl.pathname !== `/settings/plugins-settings/plugin_${request.appId}` || currentUrl.hash) {
+        await chrome.storage.session.set({ pluginRefreshOwner: { id: request.id, tab: held.id, ...(request.verifyOnly === true ? { verifyOnly: true } : {}) } });
+        await chrome.tabs.update(held.id, { url: pluginRefreshPageUrl(request) });
+        return;
+      }
+    }
     // The provider's React settings tree can remain stale after a successful Refresh click.
     // Once the durable row says that click was already claimed, reload only this helper once
     // per extension session before verifying it. `verifyOnly` then prevents the fresh document
@@ -2683,8 +2698,16 @@ function inspectRequestedModels(request) {
     if (wanted && Date.now() >= wanted.expiresAt) return;
     if (!wanted && !tab) return;
     if (!tab) {
-      // An existing helper may be temporarily busy. Retain it and wait.
-      if (wanted.allowOpen === false || owner?.nonce === wanted.nonce || tabs.length) return;
+      // An existing helper may be temporarily busy. Retain it and wait. Ordinary chats that all
+      // answered busy (generating, a draft, input in flight) are a different case: with Eve always
+      // working, discovery waited on them forever and expired on every request, so the app never
+      // learned the account's models (2026-10-12; Chat On Steroids `bypassBusy`). An explicit
+      // request then opens one background helper. A silent or hydrating page grants nothing.
+      const blocked = ['generating', 'input_busy', 'draft', 'attachments', 'composer_hidden'];
+      const bypassBusy = wanted.allowOpen === true && tabs.length > 0 &&
+        tabs.every((candidate, index) => !catalogTabNonce(candidate) && proofs[index]?.ready === false &&
+          blocked.includes(proofs[index]?.reason));
+      if (wanted.allowOpen === false || owner?.nonce === wanted.nonce || (tabs.length && !bypassBusy)) return;
       await chrome.storage.session.set({ modelCatalogOwner: { nonce: wanted.nonce, opening: true } });
       tab = await createChatTab(`https://chatgpt.com/?cos-model-catalog=${wanted.nonce}`, true);
       await chrome.storage.session.set({ modelCatalogOwner: { nonce: wanted.nonce, tab: tab.id } });
@@ -3058,13 +3081,21 @@ async function performAttributionReconnects(reconnects, observedTabs) {
     if (!target) continue;
 
     const reconnect = async () => {
+      let timer;
       try {
-        return await chrome.tabs.sendMessage(target.id, { type: 'clf-recorder-reconnect', conversationId });
-      } catch {
-        return null;
-      }
+        // A stalled recorder used to hold the entire maintenance flight forever, ahead of
+        // durable user input and restart wakes. A timeout is NOT missing-receiver evidence:
+        // do not inject, reload or change this tab while its callback may still finish.
+        return await Promise.race([
+          chrome.tabs.sendMessage(target.id, { type: 'clf-recorder-reconnect', conversationId })
+            .then(reply => ({ kind: 'reply', reply }), () => ({ kind: 'unavailable' })),
+          new Promise(resolve => { timer = setTimeout(() => resolve({ kind: 'timeout' }), 3000); })
+        ]);
+      } finally { clearTimeout(timer); }
     };
-    let reply = await reconnect();
+    let outcome = await reconnect();
+    if (outcome.kind === 'timeout') continue;
+    let reply = outcome.kind === 'reply' ? outcome.reply : null;
     const retryable = () => reply?.retryable === true && cleanConversationId(reply.conversationId) === conversationId;
     // A live recorder can be healthy while its fresh Resume/worker journal is intentionally
     // closed. That is a bounded "not yet", not evidence that the recorder is missing: leave the
@@ -3073,7 +3104,9 @@ async function performAttributionReconnects(reconnects, observedTabs) {
     if (reply?.ok !== true || reply?.replayed !== true || cleanConversationId(reply.conversationId) !== conversationId) {
       const restored = await restoreChatgptTab(target.id, { allowReload: false });
       if (!restored) continue;
-      reply = await reconnect();
+      outcome = await reconnect();
+      if (outcome.kind === 'timeout') continue;
+      reply = outcome.kind === 'reply' ? outcome.reply : null;
     }
     if (retryable()) continue;
     if (reply?.ok === true && reply?.replayed === true && cleanConversationId(reply.conversationId) === conversationId) {
@@ -3487,7 +3520,7 @@ const HANDLERS = {
     if (!/^[a-f0-9-]{36}$/i.test(id) || !conversationId) return { ok: false };
     const tab = await chrome.tabs.get(source.tab).catch(() => null);
     if (!tab || tab.pendingUrl || conversationFromUrl(tab.url) !== conversationId ||
-        !String(tab.url || '').includes(`cos-input=${id}`) || !ownsDocument(source)) return { ok: false };
+        !String(tab.url || '').includes(`eve-input=${id}`) || !ownsDocument(source)) return { ok: false };
     return call('/input/unreachable', { method: 'POST', body: JSON.stringify({ id, conversationId }) });
   },
   async desktop_input(message, sender, source) {
@@ -3504,7 +3537,7 @@ const HANDLERS = {
       if (message.lifetime === 'temporary-planner' && (owner !== `${prefix}${source.navigationEpoch}` ||
           new URL(tab.url).searchParams.get('temporary-chat') !== 'true')) return { ok: false };
     } else {
-      if (!conversationId && !String(tab.url || '').includes(`cos-input=${id}`)) return { ok: false };
+      if (!conversationId && !String(tab.url || '').includes(`eve-input=${id}`)) return { ok: false };
       if (message.conversationId !== conversationId || !ownsDocument(source)) return { ok: false };
     }
     if (message.ack === true && message.lifetime !== 'temporary-planner') {

@@ -30,9 +30,106 @@ Var ParadigmEveLaunchAfterInstall
   ${EndIf}
 !macroend
 
+; ParadigmEve keeps the user's sessions, state and archive in %APPDATA%\paradigmeve. The stock
+; uninstaller removes its whole install folder, so an install that ever landed in or above that
+; folder (a remembered custom path, or /D= from an agent) turned the next update into deletion of
+; the user's data (2026-10-12: a 2.3.9 candidate wiped archive, docs and attachments this way).
+; Sets RESULT to "1" when DIR is, contains or sits inside the data folder, or holds ParadigmEve
+; data of its own; such a folder is never installed into or uninstalled from.
+!macro ParadigmEveUnsafeDir DIR RESULT
+  Push $R7
+  Push $R8
+  Push $R9
+  StrCpy $R9 "0"
+  ${If} "${DIR}" == ""
+    StrCpy $R9 "1"
+  ${EndIf}
+  ${If} ${FileExists} "${DIR}\state\*.*"
+  ${OrIf} ${FileExists} "${DIR}\sessions\*.*"
+  ${OrIf} ${FileExists} "${DIR}\archive\*.*"
+    StrCpy $R9 "1"
+  ${EndIf}
+  ; Shell folders that hold far more than ParadigmEve, including the data folder's own parent.
+  ${If} "${DIR}" == "$APPDATA"
+  ${OrIf} "${DIR}" == "$LOCALAPPDATA"
+  ${OrIf} "${DIR}" == "$PROFILE"
+  ${OrIf} "${DIR}" == "$LOCALAPPDATA\Programs"
+    StrCpy $R9 "1"
+  ${EndIf}
+  ; Equal to or inside the data folder (NSIS string comparison ignores case).
+  StrLen $R8 "$APPDATA\paradigmeve"
+  StrCpy $R7 "${DIR}" $R8
+  ${If} $R7 == "$APPDATA\paradigmeve"
+    StrCpy $R7 "${DIR}" 1 $R8
+    ${If} $R7 == ""
+    ${OrIf} $R7 == "\"
+    ${OrIf} $R7 == "/"
+      StrCpy $R9 "1"
+    ${EndIf}
+  ${EndIf}
+  StrCpy ${RESULT} $R9
+  Pop $R9
+  Pop $R8
+  Pop $R7
+!macroend
+
+!ifdef BUILD_UNINSTALLER
+!macro customUnInit
+  ; The uninstaller deletes $INSTDIR. Never let that be the user's data.
+  !insertmacro ParadigmEveUnsafeDir "$INSTDIR" $0
+  ${If} $0 == "1"
+    MessageBox MB_OK|MB_ICONSTOP "ParadigmEve will not uninstall from $INSTDIR because that folder holds your ParadigmEve data. Nothing was removed." /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+!macroend
+!endif
+
 !macro customInit
   StrCpy $ParadigmEveHadExistingInstall "0"
   StrCpy $ParadigmEveWasRunning "0"
+  # One install location, always: updates and every candidate replace the same per-user folder
+  # instead of leaving a full copy wherever a previous run or a /D= switch pointed. Before that,
+  # forget an old registration whose folder is unsafe, so the update never runs its (unguarded)
+  # old uninstaller there; those stray files stay where they are and nothing is deleted.
+  !insertmacro ParadigmEveUnsafeDir "$INSTDIR" $0
+  ReadRegStr $1 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+  ${If} $1 != ""
+    StrCpy $2 $1 1
+    ${If} $2 == '"'
+      StrCpy $3 1
+      ${Do}
+        StrCpy $2 $1 1 $3
+        ${If} $2 == '"'
+        ${OrIf} $2 == ""
+          ${ExitDo}
+        ${EndIf}
+        IntOp $3 $3 + 1
+      ${Loop}
+      IntOp $3 $3 - 1
+      StrCpy $1 $1 $3 1
+    ${EndIf}
+    ${GetParent} $1 $1
+    !insertmacro ParadigmEveUnsafeDir "$1" $2
+    ${If} $2 == "1"
+      StrCpy $0 "1"
+    ${EndIf}
+  ${EndIf}
+  ReadRegStr $1 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $1 != ""
+    !insertmacro ParadigmEveUnsafeDir "$1" $2
+    ${If} $2 == "1"
+      StrCpy $0 "1"
+    ${EndIf}
+  ${EndIf}
+  ${If} $0 == "1"
+    DeleteRegValue HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"
+    !ifdef UNINSTALL_REGISTRY_KEY_2
+      DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY_2}"
+    !endif
+  ${EndIf}
+  StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_FILENAME}"
   # initMultiUser has resolved a previous custom install path by this point.
   # Repair an existing install before an update removes its runnable version.
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"

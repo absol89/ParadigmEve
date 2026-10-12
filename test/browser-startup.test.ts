@@ -73,7 +73,7 @@ it('shares concurrent absence probes and never opens after the wake socket recon
   const probe = new Promise<boolean>(resolve => { release = resolve; });
   running.mockReturnValue(probe);
   const first = wakeBrowserUrl('https://chatgpt.com/?cos-model-catalog=new', true);
-  const second = wakeBrowserUrl('https://chatgpt.com/?cos-input=other', true);
+  const second = wakeBrowserUrl('https://chatgpt.com/?eve-input=other', true);
   await Promise.resolve(); release(false);
   await Promise.all([first, second]);
   expect(dedicated).toHaveBeenCalledTimes(2);
@@ -83,12 +83,12 @@ it('shares concurrent absence probes and never opens after the wake socket recon
 });
 it('also opens for a first authored send when Chrome exited inside the HTTP presence window', async () => {
   browser.present = true; browser.lastSeenAt = Date.now(); running.mockResolvedValue(false);
-  await wakeBrowserUrl('https://chatgpt.com/?cos-input=first');
+  await wakeBrowserUrl('https://chatgpt.com/?eve-input=first');
   expect(dedicated).toHaveBeenCalledTimes(1);
 });
 
 it('shares one successful absence episode across input and discovery retries', async () => {
-  await Promise.all([wakeBrowserUrl('https://chatgpt.com/?cos-input=one'), wakeBrowserUrl('https://chatgpt.com/?cos-model-catalog=two', true)]);
+  await Promise.all([wakeBrowserUrl('https://chatgpt.com/?eve-input=one'), wakeBrowserUrl('https://chatgpt.com/?cos-model-catalog=two', true)]);
   running.mockResolvedValue(true);
   await wakeBrowserUrl('https://chatgpt.com/?cos-model-catalog=three', true);
   expect(dedicated).toHaveBeenCalledTimes(2);
@@ -117,12 +117,12 @@ it('waits for real absence after the wake channel closes with recent HTTP presen
   expect(open).not.toHaveBeenCalled();
   running.mockResolvedValue(true);
   browser.connected = false; // MV3 suspension or reconnect is not proof of browser absence
-  await Promise.all([wakeBrowserUrl('https://chatgpt.com/?cos-input=first'), wakeBrowserUrl('https://chatgpt.com/?cos-input=second')]);
+  await Promise.all([wakeBrowserUrl('https://chatgpt.com/?eve-input=first'), wakeBrowserUrl('https://chatgpt.com/?eve-input=second')]);
   expect(dedicated).toHaveBeenCalledTimes(1);
-  expect(dedicated).toHaveBeenCalledWith('https://chatgpt.com/?cos-input=first', 'chrome');
+  expect(dedicated).toHaveBeenCalledWith('https://chatgpt.com/?eve-input=first', 'chrome');
   expect(open).not.toHaveBeenCalled();
   browser.present = false; running.mockResolvedValue(false);
-  await wakeBrowserUrl('https://chatgpt.com/?cos-input=first');
+  await wakeBrowserUrl('https://chatgpt.com/?eve-input=first');
   expect(dedicated).toHaveBeenCalledTimes(2);
   expect(open).not.toHaveBeenCalled();
 });
@@ -143,7 +143,7 @@ it('opens an authorized recovery only after proving process absence, including s
   running.mockResolvedValue(false);
   await Promise.all([
     wakeBrowserUrl('https://chatgpt.com/c/recovery', true, true, authority),
-    wakeBrowserUrl('https://chatgpt.com/?cos-input=concurrent')
+    wakeBrowserUrl('https://chatgpt.com/?eve-input=concurrent')
   ]);
   expect(restore).toHaveBeenCalledTimes(1);
   expect(open).not.toHaveBeenCalled();
@@ -173,7 +173,7 @@ it('shares one restore-first cold start across concurrent bridge recovery and du
   restore.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ id: 77, restoredPages: true }); }));
   const authority = { current: () => true };
   const recovery = wakeBrowserUrl('https://chatgpt.com/c/owed-conversation', true, true, authority);
-  const input = wakeBrowserUrl('https://chatgpt.com/?cos-input=concurrent');
+  const input = wakeBrowserUrl('https://chatgpt.com/?eve-input=concurrent');
   await vi.waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
   expect(open).not.toHaveBeenCalled();
   release();
@@ -192,8 +192,8 @@ it('gives selected Edge the same dedicated-profile recovery path as Chrome', asy
 
 it('cold-starts selected Brave in its dedicated profile', async () => {
   config.ui.chatBrowser = 'brave';
-  await wakeBrowserUrl('https://chatgpt.com/?cos-input=brave');
-  expect(dedicated).toHaveBeenCalledWith('https://chatgpt.com/?cos-input=brave', 'brave');
+  await wakeBrowserUrl('https://chatgpt.com/?eve-input=brave');
+  expect(dedicated).toHaveBeenCalledWith('https://chatgpt.com/?eve-input=brave', 'brave');
   expect(open).not.toHaveBeenCalled();
 });
 
@@ -227,6 +227,6 @@ it('routes an initial explicit URL to the dedicated profile only with positive p
   expect(dedicated).toHaveBeenCalledWith('https://chatgpt.com/?cos-model-catalog=first', 'chrome');
   expect(open).not.toHaveBeenCalled();
   resetBrowserStartupForTests(); dedicated.mockClear(); running.mockResolvedValue(null);
-  await wakeBrowserUrl('https://chatgpt.com/?cos-input=first');
+  await wakeBrowserUrl('https://chatgpt.com/?eve-input=first');
   expect(dedicated).not.toHaveBeenCalled();
 });

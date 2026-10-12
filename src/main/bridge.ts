@@ -8,7 +8,7 @@ import { prepareSessionPrompt } from './session/prompt.js';
 import { pendingChatModelRequest, observeChatModels, requestChatModels } from './chat-models.js';
 import { isProModel } from '../shared/chat-models.js';
 import type { SessionSummary } from '../shared/session.js';
-import { publishBrowserDecision, authorizeBrowserInput, noteBrowserReady, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
+import { publishBrowserDecision, authorizeBrowserInput, noteBrowserReady, noteBrowserInputsOffered, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
 import { pendingPluginRefreshes, claimPluginRefresh, requireManualPluginRefresh, completePluginRefresh, failPluginRefresh } from './plugin-refresh.js';
 import { attachBrowserWake, wakeBrowserWork } from './browser-wake.js';
 import { wakeBrowserUrl } from './browser-startup.js';
@@ -2291,6 +2291,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     const revival = pendingBrowserRevival();
     const inputRows = await listInputs();
+    // A chat running a tool call keeps its message in the app; only what is offered here starts
+    // the browser's pickup deadline (noteBrowserInputsOffered).
+    const offeredInputs = (await pendingBrowserInputs()).filter(input => !input.conversationId || runningToolCalls(input.conversationId) === 0);
+    noteBrowserInputsOffered(offeredInputs.map(input => input.id));
     return json(
       res,
       200,
@@ -2304,13 +2308,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           .map(({ surface, schemaId, connectorName }) => ({ surface, schemaId, connectorName })),
         browserPreferenceRequest: pendingBrowserPreferenceRequest(),
         inputOpeningIds: inputRows.filter(row => !['sent', 'failed', 'cancelled'].includes(row.state)).map(row => row.id),
-        // Terminal ordinary browser inputs can leave an inert `cos-input` document behind when
+        // Terminal ordinary browser inputs can leave an inert `eve-input` document behind when
         // Chrome restores its previous session. Publish only the opaque ids here so the extension
         // can retire a page it can independently prove came from its own persisted opening
         // custody. Temporary planners already have their separate close handshake below.
         retiredInputOpeningIds: inputRows.filter(row => row.lifetime !== 'temporary-planner' &&
           ['sent', 'failed', 'cancelled'].includes(row.state) && row.transportIntent === 'browser').map(row => row.id),
-        inputs: [...(await pendingBrowserInputs()).filter(input => !input.conversationId || runningToolCalls(input.conversationId) === 0),
+        inputs: [...offeredInputs,
           ...inputRows.filter(row => row.lifetime === 'temporary-planner' && ['sent', 'cancelled', 'failed'].includes(row.state))
             .map(row => ({ id: row.id, owner: row.owner, lifetime: row.lifetime, close: true,
               retire: true,
@@ -6635,6 +6639,18 @@ const TURN_SCOPED_REPAIRS: ReadonlySet<Repair['reason']> = new Set(['unattribute
 
 const repairsInFlight = new Map<string, Repair>();
 
+/**
+ * Ordinary renderer input must not present a broken native route as a healthy queued send.
+ * Turn-scoped transport repairs stay present until positive later activity retires them, which
+ * makes this a stronger signal than a momentary tab scan or the durable session's old turn state.
+ * Keep Goal/compaction/no-tab scheduling out of this user-send fence: those paths already own
+ * their own browser-opening/recovery semantics.
+ */
+export function browserRouteRecovering(conversationId: string): boolean {
+  const repair = repairsInFlight.get(conversationId);
+  return repair?.reason === 'assistant-error' || repair?.reason === 'unattributed';
+}
+
 function releaseBrowserRepairAuthority(repair: Repair): void {
   const release = repair.bindingAuthorityRelease;
   repair.bindingAuthorityRelease = undefined;
@@ -7588,6 +7604,17 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
     }
     watch.voiceHeld = false;
     if (now < watch.since + schedule.every) continue;
+    // The handoff request is sent when the source turn has finished. While that turn still works,
+    // a pickup only reloads a busy page and spends the budget: upstream measured an automatic ticket
+    // filed mid-turn spending all its pickups on a generating page and giving up just after the turn
+    // ended. Wait for the turn instead, without counting (Chat On Steroids 2.1.35, 7cbc1aa5).
+    if (phase === 'asking') {
+      const source = await getSession(entry.sessionId);
+      if (source && sessionInputActivity(source).exact) {
+        watch.since = now;
+        continue;
+      }
+    }
     if (watch.attempts >= schedule.attempts) {
       if (phase === 'writing' && !watch.told) {
         // The sent request stays protected and gets no fourth reload, but whoever is reading the

@@ -71,9 +71,17 @@ public static class Clf {
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+  // GetWindowText sends WM_GETTEXT to the window's own thread, and a window whose app is not
+  // responding holds that call for about five seconds: one hung window made every desktop
+  // listing overrun its 5 s deadline and retire the helper (2026-10-12, "did not answer in
+  // time"). InternalGetWindowText reads the title Windows already stores and never waits on it.
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  static extern int GetWindowTextW(IntPtr h, StringBuilder s, int max);
-  [DllImport("user32.dll")] static extern int GetWindowTextLengthW(IntPtr h);
+  static extern int InternalGetWindowText(IntPtr h, StringBuilder s, int max);
+  static string Title(IntPtr h) {
+    StringBuilder sb = new StringBuilder(1024);
+    int n = InternalGetWindowText(h, sb, sb.Capacity);
+    return n > 0 ? sb.ToString() : "";
+  }
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -325,11 +333,9 @@ public static class Clf {
   static string WindowRow(IntPtr h, out string exclusion) {
     exclusion = "";
     if (!IsWindow(h) || !IsWindowVisible(h)) { exclusion = "gone"; return ""; }
-    int len = GetWindowTextLengthW(h);
     // An exact handle may name a menu/popup without a title. General listing still
     // filters these; related-window discovery supplies their ownership proof.
-    StringBuilder sb = new StringBuilder(len + 1);
-    GetWindowTextW(h, sb, sb.Capacity);
+    string title = Title(h);
     RECT r;
     if (!GetWindowRect(h, out r) || r.Right - r.Left <= 0 || r.Bottom - r.Top <= 0) { exclusion = "geometry"; return ""; }
     uint pid;
@@ -341,7 +347,7 @@ public static class Clf {
     uint dpi = GetDpiForWindow(h);
     if (dpi == 0) { exclusion = "dpi"; return ""; }
     return string.Join(((char)31).ToString(), new string[] {
-      h.ToInt64().ToString(), sb.ToString().Replace((char)31, ' '), proc,
+      h.ToInt64().ToString(), title.Replace((char)31, ' '), proc,
       r.Left.ToString(), r.Top.ToString(), (r.Right - r.Left).ToString(), (r.Bottom - r.Top).ToString(),
       IsIconic(h) ? "minimized" : (h == GetForegroundWindow() ? "foreground" : "open"),
       identity[0], pid.ToString(), identity[1], identity[2], dpi.ToString()
@@ -358,8 +364,7 @@ public static class Clf {
     List<string> found = new List<string>();
     EnumWindows(delegate(IntPtr h, IntPtr lp) {
       if (!IsWindowVisible(h)) return true;
-      int len = GetWindowTextLengthW(h);
-      if (len == 0) return true;
+      if (Title(h).Length == 0) return true;
       // WS_EX_TOOLWINDOW: palettes and other chrome the user never thinks of as
       // a window, which would otherwise bury the real ones.
       if ((GetWindowLong(h, -20) & 0x00000080) != 0) return true;

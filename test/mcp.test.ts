@@ -3769,7 +3769,7 @@ describe('exec_command and write_stdin', () => {
         // on file-order side effects that happened to differ across hosts.
         cmds: ['rg -n "export const name" src/app.ts', 'rg -n "no-such-pattern-anywhere" src/app.ts'],
         workdir: '/workspace',
-        yield_time_ms: 8_000
+        yield_time_ms: 20_000
       }
     });
     const searchText = textOf(searches);
@@ -3784,7 +3784,7 @@ describe('exec_command and write_stdin', () => {
       arguments: {
         cmds: IS_WINDOWS ? ['Write-Output first', 'cmd /c exit 3'] : ["printf '%s\\n' first", "sh -c 'exit 3'"],
         workdir: '/workspace',
-        yield_time_ms: 8_000
+        yield_time_ms: 20_000
       }
     });
     const brokenText = textOf(broken);

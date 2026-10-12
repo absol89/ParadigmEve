@@ -21,6 +21,7 @@ interface DomApi {
   send(options?: { acceptanceTimeoutMs?: number; stillCurrent?: () => boolean; beforeSend?: () => Promise<boolean> }): Promise<boolean>;
   selectModelSettings(model: string | null, effort: string | null, current?: () => boolean): Promise<boolean>;
   uploadImages(images: Array<{ name: string; dataUrl: string; history?: true }>, current?: () => boolean, draft?: ReturnType<DomApi['captureComposerDraft']>, files?: File[]): Promise<boolean>;
+  uploadFailureReason(): string | null;
 }
 let dom: JSDOM;
 let document: Document;
@@ -818,6 +819,17 @@ describe('native image readiness', () => {
     expect(api.hasComposerAttachments()).toBe(true);
     expect(await draft.clear()).toBe(true);
     expect(api.hasComposerAttachments()).toBe(false); draft.dispose();
+  });
+  it('does not hold a small app attachment claim for ten minutes when ChatGPT never confirms its tile', async () => {
+    upload().accept = '';
+    const file = new dom.window.File(['small screenshot'], 'screenshot.png', { type: 'image/png' });
+    const uploaded = api.uploadImages([], () => true, undefined, [file]);
+    let settled = false; void uploaded.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await uploaded).toBe(false);
+    expect(api.uploadFailureReason()).toContain('timeout requested=1');
   });
   it('withdraws only the exact prepared app text and ready attachment nodes before Send', async () => {
     const input = upload();

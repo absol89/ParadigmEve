@@ -11277,7 +11277,7 @@
   function temporaryPlannerPage() {
     if (!alive || !window.document) return false;
     return new URL(location.href).searchParams.get('temporary-chat') === 'true' &&
-      (location.href.includes('cos-input=') || desktopDecisionSession?.temporary === true || desktopDecision?.temporary === true);
+      (location.href.includes('eve-input=') || desktopDecisionSession?.temporary === true || desktopDecision?.temporary === true);
   }
   function desktopDecisionChat() {
     return Boolean((desktopDecisionSession && desktopDecisionSession.conversationId === CLF_DOM.conversationId()) || desktopDecision?.onTarget());
@@ -11365,8 +11365,8 @@
       /^g-p-[0-9a-f]{32}$/.test(message.projectEntry.id || '') && typeof message.projectEntry.sourceConversationId === 'string'
       ? { id: message.projectEntry.id, sourceConversationId: message.projectEntry.sourceConversationId } : null;
     // Query or fragment: ChatGPT's router can rewrite the query of a chat route; the fragment survives.
-    const markedFresh = () => new URL(location.href).searchParams.get('cos-input') === message.id ||
-      new URLSearchParams(location.hash.slice(1)).get('cos-input') === message.id;
+    const markedFresh = () => new URL(location.href).searchParams.get('eve-input') === message.id ||
+      new URLSearchParams(location.hash.slice(1)).get('eve-input') === message.id;
     if (projectEntry && CLF_DOM.conversationId() === projectEntry.sourceConversationId) {
       if (desktopInputBusy || modelCatalogBusy || !alive || generating || pendingTools > 0 || goalBusy || job?.busy || !markedFresh()) return false;
       desktopInputBusy = true;
@@ -11375,8 +11375,8 @@
         entered = await CLF_DOM.enterProject(projectEntry, () => alive);
         if (entered) {
           const marked = new URL(location.href);
-          marked.searchParams.set('cos-input', message.id);
-          marked.hash = `cos-input=${encodeURIComponent(message.id)}`;
+          marked.searchParams.set('eve-input', message.id);
+          marked.hash = `eve-input=${encodeURIComponent(message.id)}`;
           history.replaceState(history.state, '', marked.href);
           observe();
         }
@@ -11764,7 +11764,7 @@
       // reply). Reusing it for another input typed that input into the successor and moved the
       // tab to another chat, which stranded the resume before destinationAttempt for good.
       !markerId() &&
-      (home ? !rows.length && !marker.has('cos-input') && !marker.has('temporary-chat') :
+      (home ? !rows.length && !marker.has('eve-input') && !marker.has('temporary-chat') :
         !!CLF_DOM.conversationId() && rows.at(-1)?.role === 'assistant');
   }
   const BROWSER_REPAIR_TYPING_GRACE_MS = 3000;
@@ -11833,8 +11833,8 @@
           (sourceComposer && CLF_DOM.composer() === sourceComposer)) return failure();
       const url = new URL(location.href);
       url.searchParams.delete('cos-model-catalog');
-      url.searchParams.set('cos-input', message.id);
-      url.hash = `cos-input=${message.id}`;
+      url.searchParams.set('eve-input', message.id);
+      url.hash = `eve-input=${message.id}`;
       history.replaceState(history.state, '', url.href);
       return { ready: true, navigationEpoch: epoch, url: location.href };
     } finally {
@@ -11851,6 +11851,19 @@
     if (markerId() || commandAttempt || commandJournalGate) return false;
     return alive && !generating && !CLF_DOM.generating() && !desktopInputBusy && CLF_DOM.composerVisible() &&
       !CLF_DOM.hasComposerAttachments() && (catalogHelper() || !CLF_DOM.composer().textContent?.trim());
+  }
+  /** Why this page cannot host model discovery now: a bounded machine reason, never page text.
+   * Only a positively busy page (not a hydrating or command-owned one) lets the Companion open
+   * a separate discovery helper instead of waiting for it (Chat On Steroids `waiting`). */
+  function catalogBusyReason() {
+    if (modelCatalogBusy) return 'inspection_busy';
+    if (markerId() || commandAttempt || commandJournalGate || !alive) return 'page_changed';
+    if (generating || CLF_DOM.generating()) return 'generating';
+    if (desktopInputBusy) return 'input_busy';
+    if (!CLF_DOM.composer()) return 'composer_missing';
+    if (!CLF_DOM.composerVisible()) return 'composer_hidden';
+    if (CLF_DOM.hasComposerAttachments()) return 'attachments';
+    return 'draft';
   }
   function catalogHelper() {
     return !conversationId && location.pathname === '/' &&
@@ -11926,7 +11939,8 @@
         sendResponse({ safe: !pluginRefreshBusy && ownsPluginRefreshPage(message.id) && CLF_DOM.pluginManagementIdle() }); return false;
       }
       if (message.type === 'clf-model-catalog-state') {
-        sendResponse({ ready: !modelCatalogBusy && (catalogPageReady() || (catalogHelper() && !CLF_DOM.composer())) });
+        const ready = !modelCatalogBusy && (catalogPageReady() || (catalogHelper() && !CLF_DOM.composer()));
+        sendResponse(ready ? { ready } : { ready, reason: catalogBusyReason() });
         return false;
       }
       if (message.type === 'clf-input-reuse-state') {
@@ -12094,10 +12108,10 @@
         const users = CLF_DOM.messages().filter(row => row.role === 'user');
         const exact = desktopDecision?.id === message.id && desktopDecision?.owner === message.owner;
         // ChatGPT moves a sent temporary chat to /c/<id>?temporary-chat=true, dropping the
-        // cos-input marker; the exact decision this page still holds proves the same helper.
+        // eve-input marker; the exact decision this page still holds proves the same helper.
         const routedHelper = exact && desktopDecision.temporary === true && /^\/c\/[0-9a-f-]{36}$/i.test(location.pathname) &&
           new URL(location.href).searchParams.get('temporary-chat') === 'true';
-        sendResponse({ safe: temporaryPlannerPage() && (location.href.includes(`cos-input=${message.id}`) || routedHelper) &&
+        sendResponse({ safe: temporaryPlannerPage() && (location.href.includes(`eve-input=${message.id}`) || routedHelper) &&
           !generating && !CLF_DOM.generating() && pendingTools === 0 && !CLF_DOM.hasComposerAttachments() &&
           !(CLF_DOM.composer()?.textContent || '').trim() &&
           (users.length === 0 || (exact && users.length === 1 && matchesSubmittedUser(users[0], desktopDecision.text))) });

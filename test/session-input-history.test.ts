@@ -10,7 +10,7 @@ import type { InputEntry } from '../src/main/session/input.js';
 import { chronological } from '../src/shared/chronology.js';
 
 let directory: string;
-beforeEach(async () => { directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cos-input-history-')); initSessionStore(directory); });
+beforeEach(async () => { directory = await fs.mkdtemp(path.join(os.tmpdir(), 'eve-input-history-')); initSessionStore(directory); });
 afterEach(async () => { resetSessionStoreForTests(); await fs.rm(directory, { recursive: true, force: true }); });
 
 it('does not republish an inherited finish task model as a new picker observation', async () => {

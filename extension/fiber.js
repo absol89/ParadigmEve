@@ -459,6 +459,163 @@
    * read — climbing from the unit to the exchange and a bounded walk below it — so each unit's
    * message is reached directly.
    */
+  /**
+   * ChatGPT's typed record of one exchange (`entry.turn.items`), when this section's Fiber branch
+   * carries it, or null. Bound to the exchange by id: an entry for another turn is never read
+   * (Chat On Steroids `shellTurnSource`).
+   */
+  function typedTurnOf(fiber, turnId) {
+    if (!turnId) return null;
+    for (let at = fiber, up = 0; at && up < 16; up++, at = at.return) {
+      const entry = at.memoizedProps && typeof at.memoizedProps === 'object' ? at.memoizedProps.entry : null;
+      if (!entry || typeof entry !== 'object' || !entry.turn || !Array.isArray(entry.turn.items)) continue;
+      if (entry.id !== turnId || entry.turn.items.length > MAX_ROWS) return null;
+      return { entry, items: entry.turn.items, complete: entry.turn.status === 'complete' };
+    }
+    return null;
+  }
+
+  /** The mounted query owner's cache; never retained across navigation (Chat On Steroids). */
+  function shellQueries(fiber) {
+    try {
+      for (let at = fiber, up = 0; at && up < MAX_CLIMB; up++, at = at.return) {
+        const client = at.memoizedProps && at.memoizedProps.client;
+        if (!client || typeof client.getQueryCache !== 'function') continue;
+        const queries = client.getQueryCache()?.getAll();
+        return Array.isArray(queries) && queries.length <= 512 ? queries : [];
+      }
+    } catch { /* Optional metadata must not cost the mounted transcript. */ }
+    return [];
+  }
+
+  /** Exact local/server pair only; a route or the latest cached chat is not a join. */
+  function shellConversation(queries, localId, evidence) {
+    if (evidence.conflict || !localId || !localId.startsWith('local-chatgpt:')) return evidence;
+    let found = evidence.conversationId;
+    for (const query of queries) {
+      const key = query && query.queryKey;
+      if (!Array.isArray(key) || key.length !== 2 || key[0] !== 'chatgpt-conversation-details' || key[1]?.clientConversationId !== localId) continue;
+      const server = key[1].serverConversationId;
+      if (typeof server !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(server)) continue;
+      if (found && found !== server) return { conversationId: null, conflict: true };
+      found = server;
+    }
+    return { conversationId: found, conflict: false };
+  }
+
+  /**
+   * The live mapping the GPT-6 shell renders this exact entry from. Reads published React values
+   * only, fenced by the entry, its turn object and its user message id; false when two disagree.
+   */
+  function shellLiveMapping(fiber, entry) {
+    const user = entry.turn.items.find(item => item && item.type === 'user-message');
+    const userId = str(user && user.messageId) || str(user && user.serverMessageId);
+    if (!userId) return null;
+    const snapshots = new Map();
+    const inspected = new WeakSet();
+    const value = (object, key) => object && typeof object === 'object'
+      ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
+    let conflict = false;
+    const inspect = candidate => {
+      if (!candidate || typeof candidate !== 'object' || inspected.has(candidate)) return;
+      inspected.add(candidate);
+      const conversation = value(candidate, 'renderedConversation'), turns = value(candidate, 'renderedTurns');
+      const mapping = value(conversation, 'mapping');
+      if (!mapping || !Array.isArray(turns) || turns.length > 4096 ||
+          turns.filter(turn => turn && turn.id === entry.id && turn.turn === entry.turn).length !== 1) return;
+      const node = value(mapping, userId), message = value(node, 'message');
+      if (value(node, 'id') !== userId || value(message, 'id') !== userId || message.author?.role !== 'user') return;
+      const prior = snapshots.get(mapping);
+      if (prior && prior.renderedConversation.current_node !== conversation.current_node) conflict = true;
+      snapshots.set(mapping, candidate);
+    };
+    let remaining = 2048;
+    for (let at = fiber, up = 0; at && up < MAX_CLIMB && remaining > 0; up++, at = at.return) {
+      if (at.memoizedProps?.conversationId !== entry.conversationId) continue;
+      for (let hook = at.memoizedState; hook && remaining-- > 0; hook = hook.next) {
+        const state = value(hook, 'memoizedState');
+        inspect(state); if (Array.isArray(state)) inspect(state[0]);
+      }
+      const data = at.updateQueue?.memoCache?.data;
+      if (!Array.isArray(data) || data.length > 32) continue;
+      for (const row of data) {
+        if (!Array.isArray(row) || row.length > 1024) continue;
+        for (const item of row) { if (--remaining < 0) break; inspect(item); }
+      }
+    }
+    return conflict || snapshots.size > 1 || remaining <= 0 ? false : snapshots.values().next().value || null;
+  }
+
+  /** The rendered current path back to this entry's own user message, or nothing. */
+  function shellCurrentPath(snapshot, entry) {
+    if (!snapshot || snapshot.renderedTurns.at(-1)?.turn !== entry.turn) return [];
+    const mapping = snapshot.renderedConversation.mapping, ids = [], seen = new Set();
+    let id = snapshot.renderedConversation.current_node;
+    for (let at = 0; at < MAX_ROWS && typeof id === 'string' && id.length <= MAX_TEXT && !seen.has(id); at++) {
+      const node = Object.getOwnPropertyDescriptor(mapping, id)?.value, message = node && node.message;
+      if (!node || node.id !== id || !message || message.id !== id) return [];
+      seen.add(id); ids.push(id);
+      if (message.author?.role === 'user') {
+        const user = entry.turn.items.find(item => item && item.type === 'user-message');
+        return id === (user?.messageId || user?.serverMessageId) && entry.turn.messageIds.every(value => seen.has(value))
+          ? ids.reverse() : [];
+      }
+      id = node.parent;
+    }
+    return [];
+  }
+
+  /**
+   * The request ids of one GPT-6 typed exchange, read from ChatGPT's own message mapping.
+   *
+   * The typed items the shell renders carry no `metadata.request_id`, so `requestIdsOf` found none
+   * and every connector call of a GPT-6 chat was filed under Unattributed activity (2026-10-12: a
+   * whole session of exec_command calls, and `agents` refused with WORKER_IDENTITY_LOST). The
+   * mapping holds the same messages with their metadata. Ids only, fenced as in Chat On Steroids
+   * 2.1.35 (`shellRequestMetadata`): one exact conversation, one live snapshot of this entry.
+   */
+  function typedTurnRequestIds(fiber, turnId) {
+    const typed = typedTurnOf(fiber, turnId);
+    const entry = typed && typed.entry;
+    const ids = entry && entry.turn.messageIds;
+    if (!Array.isArray(ids) || ids.length > MAX_ROWS) return [];
+    const queries = shellQueries(fiber);
+    const conversation = shellConversation(queries, str(entry.conversationId), conversationEvidenceOf(fiber));
+    if (conversation.conflict) return [];
+    let live;
+    try { live = shellLiveMapping(fiber, entry); } catch { return []; }
+    if (live === false || (!conversation.conversationId && !live)) return [];
+    const matches = conversation.conversationId ? queries.filter(query => Array.isArray(query?.queryKey) && query.queryKey.length === 2 &&
+      query.queryKey[0] === 'chatgpt-conversation' && query.queryKey[1] === conversation.conversationId) : [];
+    if (matches.length > 1) return [];
+    const data = matches[0]?.state?.data;
+    if (data?.conversation_id && data.conversation_id !== conversation.conversationId) return [];
+    const mapping = live?.renderedConversation?.mapping || data?.mapping;
+    if (!mapping || typeof mapping !== 'object') return [];
+    const wanted = new Set([...ids, ...shellCurrentPath(live, entry)]);
+    // A connector call's invocation message can leave messageIds once its result replaces it.
+    const visit = items => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if (item && item.type === 'chatgpt-reasoning-group') visit(item.items);
+        else if (item && item.type === 'mcp-tool-call' && str(item.callId)) wanted.add(str(item.callId));
+      }
+    };
+    visit(entry.turn.items);
+    const messages = [];
+    for (const id of wanted) {
+      if (messages.length >= MAX_ROWS) break;
+      if (typeof id !== 'string' || !id || id.length > MAX_TEXT || !own.call(mapping, id)) continue;
+      const node = Object.getOwnPropertyDescriptor(mapping, id)?.value, message = node && node.message;
+      if (!node || node.id !== id || !message || message.id !== id) continue;
+      const request = str(message.metadata?.request_id), cached = data?.mapping?.[id]?.message;
+      // The live and cached copies of one message must not disagree about its request.
+      if (live && cached?.id === id && request && cached.metadata?.request_id && cached.metadata.request_id !== request) return [];
+      messages.push({ id, create_time: num(message.create_time), metadata: { request_id: request } });
+    }
+    return requestIdsOf(messages);
+  }
+
   function exchangeMessagesOf(fiber, section, imageTraces) {
     const byId = new Map();
     let whole = null;
@@ -550,6 +707,43 @@
     }
     for (const [item, itemOrder] of items) if (item.type === 'assistant-message') {
       add(renderItemMessage(item, contexts, conversationId), itemOrder);
+    }
+    // The turn's own typed data (Chat On Steroids 2.1.35, 80d2b5a2/3874e9e6). GPT-6 writes each
+    // interim sentence of a running turn as an assistant message nested in its collapsed working
+    // group, which React does not render, so the walk above never meets it; and a reply ChatGPT
+    // could not draw ("This response couldn't load") has no rendered streaming context to prove it
+    // finished. ChatGPT's turn entry still holds both. Only ids the walk did not find are added: a
+    // nested interim message is commentary and never ends the turn, and a top-level final answer
+    // is final only when the item and the whole turn are complete.
+    const typed = typedTurnOf(fiber, exchangeKey);
+    if (typed) {
+      const topLevel = new Set(typed.items.filter(item => item?.type === 'assistant-message')
+        .map(item => str(item.messageId)).filter(Boolean));
+      for (const item of typed.items) {
+        if (item?.type === 'user-message') {
+          const message = renderUserItemMessage(item, exchangeKey);
+          if (message && !byId.has(message.id)) add(message);
+        } else if (item?.type === 'assistant-message') {
+          const message = renderItemMessage(item, contexts, conversationId);
+          if (!message) continue;
+          if (!message.end_turn && item.phase === 'final_answer' && item.completed === true && typed.complete) {
+            message.end_turn = true;
+            message.renderItemFinal = true;
+          }
+          const known = byId.get(message.id);
+          if (!known) add(message);
+          else if (message.end_turn && !known.message.end_turn && 'renderItemFinal' in known.message) known.message = message;
+        } else if (item?.type === 'chatgpt-reasoning-group' && Array.isArray(item.items)) {
+          for (const step of item.items.slice(0, MAX_ROWS)) {
+            const id = step?.type === 'assistant-message' ? str(step.messageId) : null;
+            if (!id || topLevel.has(id) || byId.has(id)) continue;
+            const message = renderItemMessage(step, contexts, conversationId);
+            if (message && !ONLY_CONTENT_REFERENCES.test(message.content.parts[0])) {
+              add({ ...message, channel: 'commentary', end_turn: false, renderItemFinal: false });
+            }
+          }
+        }
+      }
     }
     if (whole &&[...byId.keys()].every(id => whole.some(message => message.id === id))) return whole.slice();
     if (byId.size === 0) return null;
@@ -1756,6 +1950,13 @@
         const messages = group.exchange ? exchangeMessagesOf(fiber, section, imageTraces) || turnMessagesOf(fiber) : turnMessagesOf(fiber);
         const calls = callsOf(messages);
         const requests = requestIdsOf(messages);
+        if (group.exchange) {
+          const known = new Set(requests.map(request => request.requestId));
+          for (const request of typedTurnRequestIds(fiber, group.turnId)) {
+            if (requests.length >= MAX_CALLS) break;
+            if (!known.has(request.requestId)) { known.add(request.requestId); requests.push(request); }
+          }
+        }
         const turnBudget = { remaining: Math.min(MAX_TURN_TEXT, responseBudget.remaining) };
         const before = turnBudget.remaining;
         const renderedMessages = renderedMessagesOf(group.sections, messages, turnBudget);

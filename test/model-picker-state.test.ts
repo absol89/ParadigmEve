@@ -47,6 +47,8 @@ it('recognizes a hydrated Think-only composer as provider-native default without
   expect(await (page.window as any).CLF_DOM.inspectModelSettings(() => true, failure, nativeDefault)).toBeNull();
   expect(nativeDefault).toHaveBeenCalledTimes(1);
   expect(failure).not.toHaveBeenCalled();
+  expect(await (page.window as any).CLF_DOM.selectModelSettings('5.6', 'medium')).toBe(true);
+  expect(page.window.document.querySelector('[role="menu"]')).toBeNull();
   expect(await (page.window as any).CLF_DOM.selectModelSettings(null, null)).toBe(true);
   const think = page.window.document.querySelector<HTMLButtonElement>('[data-testid="system-hint-reason"] button')!;
   think.addEventListener('click', () => think.setAttribute('aria-pressed', 'true'));

@@ -120,7 +120,30 @@ it('opens an enrolled exact App Id directly in marked settings without name disc
   });
   vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
   await (context.run as Function)([{ surface: 'core' }], true);
-  expect(create).toHaveBeenCalledExactlyOnceWith(`https://chatgpt.com/?eve-plugin-refresh=${id}#settings/Plugins/plugin_asdk_app_synthetic`, true);
+  expect(create).toHaveBeenCalledExactlyOnceWith(`https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}`, true);
+});
+it.each([
+  { label: 'retained verify-only owner', retainedOwner: true, verifyOnly: true },
+  { label: 'missing owner after Companion restart', retainedOwner: false, verifyOnly: false }
+])('retargets a generic settings helper to the exact installed Eve plugin ($label)', async ({ retainedOwner, verifyOnly }) => {
+  const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));
+  const tab = { id: 7, url: `https://chatgpt.com/settings/plugins-settings?eve-plugin-refresh=${id}`, pinned: false };
+  const update = vi.fn(async (_id: number, patch: { url: string }) => { tab.url = patch.url; return tab; });
+  const saved: Record<string, any> = retainedOwner ? { pluginRefreshOwner: { id, tab: 7 } } : {};
+  const sendMessage = vi.fn();
+  const create = vi.fn();
+  const context = vm.createContext({ URL, setTimeout, clearTimeout, CHATGPT_TAB_URLS: ['https://chatgpt.com/*'],
+    call: async () => ({ ok: true, data: { requests: [{ id, appId: 'asdk_app_synthetic', verifyOnly }] } }),
+    createChatTab: create,
+    chrome: { storage: { session: { get: async (key: string) => ({ [key]: saved[key] }), set: async (next: object) => Object.assign(saved, next) } },
+      tabs: { query: async () => [tab], get: async () => tab, update, sendMessage } }
+  });
+  vm.runInContext(`${tabLog}\n${code}\nglobalThis.run = inspectRequestedPluginRefresh;`, context);
+  await (context.run as Function)([{ surface: 'core' }], false);
+  expect(update).toHaveBeenCalledExactlyOnceWith(7, { url: `https://chatgpt.com/settings/plugins-settings/plugin_asdk_app_synthetic?eve-plugin-refresh=${id}` });
+  expect(create).not.toHaveBeenCalled();
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(saved.pluginRefreshOwner).toEqual({ id, tab: 7, ...(verifyOnly ? { verifyOnly: true } : {}) });
 });
 it('migrates an active legacy refresh owner to the Eve marker before reusing its tab', async () => {
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));

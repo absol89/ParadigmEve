@@ -9,7 +9,7 @@ import { deliverLocalInput } from './ollama-chat.js';
 import { logWarn } from '../logger.js';
 
 function wakeBrowser(entry: InputEntry, retry = false): Promise<void> {
-  const marker = `cos-input=${encodeURIComponent(entry.id)}`;
+  const marker = `eve-input=${encodeURIComponent(entry.id)}`;
   return wakeBrowserUrl(entry.conversationId ? `https://chatgpt.com/c/${encodeURIComponent(entry.conversationId)}` : `https://chatgpt.com/?${marker}#${marker}`, retry, getConfig().ui.backgroundChats === true);
 }
 async function ready(signal?: AbortSignal): Promise<void> {

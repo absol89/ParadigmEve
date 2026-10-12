@@ -496,14 +496,14 @@ describe('one synchronous page snapshot per observer turn', () => {
     expect(await live.runtimeMessage({ type: 'clf-input-reuse-state' })).toMatchObject({ safe: true });
     expect(await live.runtimeMessage({ type: 'clf-prepare-desktop-input', id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' })).toMatchObject({ ready: false });
     expect(staleComposerChanged).toBe(true);
-    expect(new URL(live.window.location.href).searchParams.has('cos-input')).toBe(false);
+    expect(new URL(live.window.location.href).searchParams.has('eve-input')).toBe(false);
   });
   it('prepares an unmarked empty home for the exact input without claiming or sending', async () => {
     live = await harness('https://chatgpt.com/');
     await settle();
     expect(await live.runtimeMessage({ type: 'clf-input-reuse-state' })).toMatchObject({ safe: true });
     expect(await live.runtimeMessage({ type: 'clf-prepare-desktop-input', id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' })).toMatchObject({ ready: true });
-    expect(new URL(live.window.location.href).searchParams.get('cos-input')).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    expect(new URL(live.window.location.href).searchParams.get('eve-input')).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     expect(live.sent.filter(message => message.type === 'desktop_input')).toEqual([]);
   });
   /**
@@ -566,7 +566,7 @@ describe('one synchronous page snapshot per observer turn', () => {
     expect(await live.runtimeMessage({ type: 'clf-input-reuse-state' })).toMatchObject({ safe: true });
     expect(await live.runtimeMessage({ type: 'clf-prepare-desktop-input', id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }))
       .toMatchObject({ ready: false, fallback: true, preSend: true });
-    expect(new URL(live.window.location.href).searchParams.has('cos-input')).toBe(false);
+    expect(new URL(live.window.location.href).searchParams.has('eve-input')).toBe(false);
     expect(live.sent.filter(message => message.type === 'desktop_input')).toEqual([]);
   });
   it('permits retiring a hydrated empty catalog home with the real close proof', async () => {
@@ -692,7 +692,7 @@ describe('desktop input delivery and helper ownership', () => {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed() } })
     });
-    live.dom.reconfigure({ url: `https://chatgpt.com/?cos-input=${inputId}` });
+    live.dom.reconfigure({ url: `https://chatgpt.com/?eve-input=${inputId}` });
     live.hook.observe();
     live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
       userTurn(live!.document, 'spa-desktop-first-user', text, { sent: false });
@@ -719,7 +719,7 @@ describe('desktop input delivery and helper ownership', () => {
     // final then existed before the turn opened, and treating every known final as history left
     // nothing that could close the turn.
     const submitted = 'Fast-answer test: reply with exactly the word ready.';
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed({ text: submitted }) } })
     });
@@ -750,7 +750,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it('acks a fresh desktop send when the provider user id exists in Fiber before the DOM message id mounts', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed() } })
     });
@@ -777,7 +777,7 @@ describe('desktop input delivery and helper ownership', () => {
   it('sends a fresh chat of a linked project only from its exact native Project home', async () => {
     const project = 'g-p-0123456789abcdef0123456789abcdef';
     const projectEntry = { id: project, sourceConversationId: chatA };
-    live = await harness(`https://chatgpt.com/g/${project}-eve/project?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/g/${project}-eve/project?eve-input=${inputId}`, {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed({ nativeProject: project }) } })
     });
@@ -794,7 +794,7 @@ describe('desktop input delivery and helper ownership', () => {
     expect(live.sent.find(message => message.type === 'desktop_input' && message.ack)).toMatchObject({ conversationId: chatB });
   });
   it('fails a claimed fresh input visibly when the app requires a Project the page is not in', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
       desktop_input: message => ({ ok: true, data: message.fail || message.authorize || message.ack ? { ok: true } :
         { input: claimed({ nativeProject: 'g-p-0123456789abcdef0123456789abcdef' }) } })
@@ -805,7 +805,7 @@ describe('desktop input delivery and helper ownership', () => {
     expect(live.sent.some(message => message.type === 'desktop_input' && message.ack)).toBe(false);
   });
   it('carries Schedule purpose only on the exact native send acknowledgement', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, activeTurnId: null, userAnchors: [] } }),
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed({ purpose: 'schedule' }) } })
     });
@@ -876,7 +876,7 @@ describe('desktop input delivery and helper ownership', () => {
 
   it('retains the temporary decision when composer acceptance precedes the mounted user receipt', async () => {
     const canonical = '{"action":"continue","reply":"late mounted plan"}';
-    live = await harness(`https://chatgpt.com/?temporary-chat=true&cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?temporary-chat=true&eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack || message.response ? { ok: true } : { input: claimed({ purpose: 'decision', lifetime: 'temporary-planner' }) } })
     });
     const toggle = live.document.createElement('button'); toggle.setAttribute('aria-label', 'Temporary chat'); toggle.innerHTML = '<svg><use href="/sprite.svg#chat-temp-checked"></use></svg>'; Object.defineProperty(toggle, 'getClientRects', { value: () => [{}] }); live.document.body.append(toggle);
@@ -906,7 +906,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
   it.each([null, 'WEB:f0f00010-1111-4111-8111-111111111111'])('completes a temporary planner with provider identity %s without journaling', async providerId => {
     const canonical = '{"action":"continue","reply":"temporary result"}';
-    live = await harness(`https://chatgpt.com/?temporary-chat=true&cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?temporary-chat=true&eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack || message.response ? { ok: true } : { input: claimed({ purpose: 'decision', lifetime: 'temporary-planner' }) } })
     });
     const toggle = live.document.createElement('button'); toggle.setAttribute('aria-label', 'Temporary chat'); toggle.innerHTML = '<svg><use href="/sprite.svg#chat-temp-checked"></use></svg>'; Object.defineProperty(toggle, 'getClientRects', { value: () => [{}] }); live.document.body.append(toggle);
@@ -942,7 +942,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it('does not click Send when cancellation revokes the claim after preparation', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: false } : { input: claimed() } })
     });
     const originalExec = live.document.execCommand.bind(live.document);
@@ -961,7 +961,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it('ACKs a fresh input only under its accepted exact user message and assigned conversation', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack ? { ok: true } : { input: claimed() } })
     }, (_document, dom) => {
       // Model the live hidden/background-tab race: ChatGPT can accept Send and assign /c/<id>
@@ -1131,7 +1131,7 @@ describe('desktop input delivery and helper ownership', () => {
   it('uses the original framed user text for the receipt, recording and visible prompt after native inline formatting', async () => {
     const ownText = 'Hello from the app';
     const prompt = prependUserPrompt(ownText, 'Internal guidance: preserve `code` and `literal` text.');
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed({ text: prompt }) } })
     }, undefined, false, true);
     let user!: HTMLElement;
@@ -1158,7 +1158,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it.each([false, true])('waits for composer hydration and replaces stale home text only in its owned fresh input tab (%s)', async (hasDraft) => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack ? { ok: true } : { input: claimed() } })
     });
     // This case exercises DOM readiness, so hold its 15-second deadline instead of
@@ -1184,7 +1184,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it.each(['ready', 'timeout', 'navigation'])('keeps input unclaimed behind a dialog until the same composer is visible (%s)', async outcome => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack || message.fail ? { ok: true } : { input: claimed() } })
     });
     const timer = live.window.setTimeout;
@@ -1248,7 +1248,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it.each([false, true])('handles autosaved text hydrated during model selection only for an owned fresh input (%s)', async (fresh) => {
-    live = await harness(fresh ? `https://chatgpt.com/?cos-input=${inputId}` : `https://chatgpt.com/c/${chatA}`, {
+    live = await harness(fresh ? `https://chatgpt.com/?eve-input=${inputId}` : `https://chatgpt.com/c/${chatA}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack || message.fail ? { ok: true } : { input: claimed() } })
     });
     (live.window as any).CLF_DOM.selectModelSettings = async () => {
@@ -1305,7 +1305,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it.each([false, true])('sends exact High settings only after picker confirmation (%s)', async (confirmed) => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack || message.fail ? { ok: true } : { input: claimed({ model: 'gpt-5.6-sol', reasoningEffort: 'high' }) } })
     });
     const selectSettings = vi.fn(async () => confirmed);
@@ -1324,7 +1324,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it.each([false, true])('sends Free Think only after the native mode is confirmed (%s)', async (confirmed) => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack || message.fail ? { ok: true } : { input: claimed({ model: null, reasoningEffort: null, nativeMode: 'think' }) } })
     });
     const selectModel = vi.fn(async () => true);
@@ -1387,7 +1387,7 @@ describe('desktop input delivery and helper ownership', () => {
     const trustedKeydowns: EventListener[] = [];
     const desktopInput = vi.fn((message: any) => ({ ok: true, data: message.authorize || message.ack || message.fail
       ? { ok: true } : { input: claimed() } }));
-    live = await harness('https://chatgpt.com/?cos-input=' + inputId, { desktop_input: desktopInput }, (document) => {
+    live = await harness('https://chatgpt.com/?eve-input=' + inputId, { desktop_input: desktopInput }, (document) => {
       const add = document.addEventListener.bind(document);
       document.addEventListener = ((type: string, listener: EventListener, options: any) => {
         if (type === 'keydown' && options === true) trustedKeydowns.push(listener);
@@ -1539,7 +1539,7 @@ describe('desktop input delivery and helper ownership', () => {
 
   it('reads canonical Markdown for a pending fresh send even when native generation already ended', async () => {
     const prompt = 'Inspect `src/main/bridge.ts` and reply briefly.';
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack
         ? { ok: true } : { input: claimed({ text: prompt }) } })
     }, undefined, false, true);
@@ -1571,7 +1571,7 @@ describe('desktop input delivery and helper ownership', () => {
     const prompt = ('Inspect `src/main/bridge.ts` and report the exact next step.\n').repeat(1800);
     const rendered = prompt.replaceAll('`', '');
     const canonical = JSON.stringify({ action: 'continue', reply: 'Read the third file.' });
-    live = await harness(fresh ? `https://chatgpt.com/?cos-input=${inputId}` : `https://chatgpt.com/c/${chatA}`, {
+    live = await harness(fresh ? `https://chatgpt.com/?eve-input=${inputId}` : `https://chatgpt.com/c/${chatA}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack || message.response || message.partial
         ? { ok: true } : { input: claimed({ purpose: 'decision', text: prompt }) } })
     }, undefined, false, true);
@@ -1604,7 +1604,7 @@ describe('desktop input delivery and helper ownership', () => {
 
   it.each([false, true])('revokes a pending fresh helper on a second route (return to first: %s)', async (returnToFirst) => {
     const prompt = 'Inspect `src/main/bridge.ts`';
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize || message.ack ? { ok: true } : { input: claimed({ purpose: 'decision', text: prompt }) } })
     }, undefined, false, true);
     let clicks = 0;
@@ -1717,7 +1717,7 @@ describe('desktop input delivery and helper ownership', () => {
 
   it('delivers exact canonical helper JSON while completed native markdown is still truncated', async () => {
     const canonical = JSON.stringify({ action: 'continue', reply: JSON.stringify({ stages: ['Write a three-line poem', 'Verify exactly three lines'] }) });
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => {
         if (message.response) {
           return { ok: true, data: { ok: true } };
@@ -1752,7 +1752,7 @@ describe('desktop input delivery and helper ownership', () => {
     ]);
   });
   it.each(['cancelled', 'completed'])('revokes only the %s helper claim while retaining fresh generation and draft close guards', async reason => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.response ? { ok: false } :
         message.authorize || message.ack ? { ok: true } : { input: claimed({ purpose: 'decision' }) } })
     });
@@ -1783,7 +1783,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it('publishes observed helper partials without acknowledging an unfinished answer', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack || message.partial ? { ok: true } : { input: claimed({ purpose: 'decision' }) } })
     });
     live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
@@ -1803,7 +1803,7 @@ describe('desktop input delivery and helper ownership', () => {
   });
 
   it('does not publish another chat answer as a helper result after the helper Send failed', async () => {
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.response || message.fail ? { ok: true } : { input: claimed({ purpose: 'decision' }) } })
     });
     (live.document.querySelector('[data-testid="send-button"]') as HTMLButtonElement).disabled = true;
@@ -1821,7 +1821,7 @@ describe('desktop input delivery and helper ownership', () => {
 
   it('reports a rejected ACK honestly without clicking Send again', async () => {
     let clicks = 0;
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => ({ ok: true, data: message.authorize ? { ok: true } : message.ack ? { ok: false } : { input: claimed() } })
     });
     live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
@@ -1837,7 +1837,7 @@ describe('desktop input delivery and helper ownership', () => {
     let release!: (value: unknown) => void;
     let responseStarted!: () => void;
     const responding = new Promise<void>(resolve => { responseStarted = resolve; });
-    live = await harness(`https://chatgpt.com/?cos-input=${inputId}`, {
+    live = await harness(`https://chatgpt.com/?eve-input=${inputId}`, {
       desktop_input: message => {
         if (message.response) return new Promise(resolve => { release = resolve; responseStarted(); });
         return { ok: true, data: message.authorize ? { ok: true } : message.ack ? { ok: true } : { input: claimed({ purpose: 'decision' }) } };
@@ -3109,6 +3109,24 @@ describe('recording authored message text', () => {
       '/backend-api/conversation/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       '/backend-api/conversations/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     ]);
+  });
+
+  it('treats a 401 native title refusal as presentation-only and continues activity recording', async () => {
+    live = await harness();
+    live.document.title = 'Worker audit | ChatGPT';
+    const fetcher = vi.fn(async () => ({ ok: false, status: 401 }));
+    (live.window as any).fetch = fetcher;
+    live.reply.set('activity', () => ({
+      ok: true,
+      data: { agentName: 'Eve', chatTitleAgent: 'worker-5', entries: [], job: null }
+    }));
+
+    await live.hook.pullActivity();
+    await settle();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await live.hook.pullActivity();
+    await live.hook.ensureAgentChatTitle('Worker audit');
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('reports ChatGPT’s generated document title as conversation metadata and ignores the generic shell title', async () => {
@@ -8966,7 +8984,7 @@ describe('a page leaving the screen', () => {
 describe('evidence from the page context', () => {
   it('does not correlate requests from a Goal helper temporary chat', async () => {
     // Ported from Chat On Steroids 2.1.17: each decision otherwise opened an empty "ChatGPT session".
-    live = await harness('https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee?temporary-chat=true&cos-input=helper-decision#cos-input=helper-decision');
+    live = await harness('https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee?temporary-chat=true&eve-input=helper-decision#eve-input=helper-decision');
     live.reply.set('correlate', () => ({ ok: true, data: { ok: true, confirmed: ['wfr_helper'] } }));
     live.window.dispatchEvent(new live.window.MessageEvent('message', {
       source: live.window as unknown as Window, origin: 'https://chatgpt.com',
@@ -9394,7 +9412,7 @@ describe('evidence from the page context', () => {
   });
 
   it('keeps a fresh-chat stream identity until the address bar publishes its exact route', async () => {
-    live = await harness('https://chatgpt.com/?cos-input=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    live = await harness('https://chatgpt.com/?eve-input=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     const conversationId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     const requestId = 'wfr_fresh_route_convergence';
     live.reply.set('correlate', () => ({
@@ -14582,7 +14600,7 @@ the carried handoff behind a lost reply`;
   it('keeps a trusted takeover of a fresh app-owned draft protected after the typing grace expires', async () => {
     const freshInputId = '78787878-9090-4bbb-a3a3-f5f5f5f5f5f5';
     const trustedKeydowns: EventListener[] = [];
-    live = await harness(`https://chatgpt.com/?cos-input=${freshInputId}`, {}, (document) => {
+    live = await harness(`https://chatgpt.com/?eve-input=${freshInputId}`, {}, (document) => {
       const add = document.addEventListener.bind(document);
       document.addEventListener = ((type: string, listener: EventListener, options: any) => {
         if (type === 'keydown' && options === true) trustedKeydowns.push(listener);

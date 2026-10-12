@@ -46,6 +46,13 @@ const DEFAULT_MAX_SESSION_ASSET_BYTES = 512 * 1024 * 1024;
 const DEFAULT_MAX_OVERFLOW_TEXT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_RECONCILES = 4;
 const DEFAULT_STATIC_REFRESH_DEBOUNCE_MS = 1_000;
+/**
+ * Background republishes of the static site are at most this frequent. Every recorded tool call is
+ * an archive commit, and a full site republish per commit ran every one to ten seconds through a
+ * working session (2026-10-12, rss swinging 200-320 MiB). Opening the archive still refreshes it at
+ * once (refreshStaticSite), so a background pass only keeps an already-open page roughly current.
+ */
+const DEFAULT_STATIC_REFRESH_MIN_INTERVAL_MS = 5 * 60_000;
 const STATIC_GENERATION_RE = /^g-[a-f0-9]{32}$/u;
 const STATIC_GENERATION_FILE_RE = /^(?:search|chat-\d+|chat-\d+-segment-\d+)\.js$/u;
 const STATIC_SEGMENT_TARGET_BYTES = 512 * 1024;
@@ -84,6 +91,8 @@ export interface ArchiveRuntimeOptions {
   maxConcurrentReconciles?: number;
   /** Coalesce live canonical commits before republishing the already-built static browser view. */
   staticRefreshDebounceMs?: number;
+  /** Shortest time between two background static-site republishes. */
+  staticRefreshMinIntervalMs?: number;
   onError?: (error: Error) => void;
   onDiagnostic?: (message: string) => void;
   /**
@@ -439,6 +448,7 @@ export class ArchiveRuntime {
   private readonly maxOverflowTextBytes: number;
   private readonly maxConcurrentReconciles: number;
   private readonly staticRefreshDebounceMs: number;
+  private readonly staticRefreshMinIntervalMs: number;
   private readonly onError?: (error: Error) => void;
   private readonly onDiagnostic?: (message: string) => void;
   private readonly reconciles = new Map<string, ReconcileState>();
@@ -475,6 +485,7 @@ export class ArchiveRuntime {
     this.maxOverflowTextBytes = options.maxOverflowTextBytes ?? DEFAULT_MAX_OVERFLOW_TEXT_BYTES;
     this.maxConcurrentReconciles = options.maxConcurrentReconciles ?? DEFAULT_MAX_CONCURRENT_RECONCILES;
     this.staticRefreshDebounceMs = options.staticRefreshDebounceMs ?? DEFAULT_STATIC_REFRESH_DEBOUNCE_MS;
+    this.staticRefreshMinIntervalMs = options.staticRefreshMinIntervalMs ?? DEFAULT_STATIC_REFRESH_MIN_INTERVAL_MS;
     this.onError = options.onError;
     this.onDiagnostic = options.onDiagnostic;
     for (const [label, value] of [
@@ -489,6 +500,9 @@ export class ArchiveRuntime {
     if (this.maxConcurrentReconciles > 32) throw new Error('ARCHIVE_RUNTIME_INVALID_LIMIT: concurrent reconciles');
     if (!Number.isSafeInteger(this.staticRefreshDebounceMs) || this.staticRefreshDebounceMs < 0 || this.staticRefreshDebounceMs > 60_000) {
       throw new Error('ARCHIVE_RUNTIME_INVALID_LIMIT: static refresh debounce');
+    }
+    if (!Number.isSafeInteger(this.staticRefreshMinIntervalMs) || this.staticRefreshMinIntervalMs < 0 || this.staticRefreshMinIntervalMs > 3_600_000) {
+      throw new Error('ARCHIVE_RUNTIME_INVALID_LIMIT: static refresh interval');
     }
     this.store = new ArchiveStore(options.archiveRoot, { writerVersion: options.writerVersion, now: this.now });
     this.index = createDiskArchiveIndex(options.archiveRoot);
@@ -665,11 +679,14 @@ export class ArchiveRuntime {
    */
   private scheduleStaticRefresh(): void {
     if (this.disposed || this.derivedSourceAt === null || this.staticRefreshTimer) return;
+    // Coalesce every commit until the minimum interval since the last published site has passed.
+    const sinceLast = this.lastDerivedAt === null ? Number.POSITIVE_INFINITY : this.now() - this.lastDerivedAt;
+    const delay = Math.max(this.staticRefreshDebounceMs, this.staticRefreshMinIntervalMs - sinceLast);
     this.staticRefreshTimer = setTimeout(() => {
       this.staticRefreshTimer = null;
       if (this.disposed || !this.staticSiteStale()) return;
       void this.refreshStaticSite()?.catch(error => this.recordError(error));
-    }, this.staticRefreshDebounceMs);
+    }, delay);
   }
 
   /**

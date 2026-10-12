@@ -10,7 +10,7 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueChatReviewAttention, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, BROWSER_COLD_START_MS
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, BROWSER_COLD_START_MS
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -118,6 +118,34 @@ afterEach(async () => {
 });
 
 describe('durable user input ownership', () => {
+  it('retires an un-authorized browser attachment claim after two minutes instead of holding Eve for twelve', async () => {
+    const row: InputEntry = {
+      ...input(),
+      attachments: [{
+        id: randomUUID(),
+        name: 'screenshot.png',
+        size: 195_660,
+        mimeType: 'image/png'
+      }],
+      state: 'browser',
+      owner: 'native-page',
+      conversationId: binding.conversationId,
+      offeredAt: now,
+      requiresAuthorization: true,
+      createdAt: now
+    };
+    await writeDurableNow('session-input', [row]);
+    resetInputForTests();
+
+    vi.spyOn(Date, 'now').mockReturnValue(now + 119_999);
+    expect((await listInputs())[0]).toMatchObject({ id: row.id, state: 'browser' });
+    vi.mocked(Date.now).mockReturnValue(now + 120_000);
+    expect((await listInputs())[0]).toMatchObject({
+      id: row.id,
+      state: 'cancelled',
+      error: 'Not sent: browser preparation timed out. This attempt was cancelled.'
+    });
+  });
   it.each(['queued', 'browser', 'tool'] as const)('isolates a legacy %s delivery from another session across restart', async state => {
     const legacy: InputEntry = { ...input({ sessionId: 'session-two', text: 'Older restart wake' }),
       state, owner: state === 'queued' ? null : 'old-document', createdAt: now,
@@ -186,6 +214,23 @@ describe('durable user input ownership', () => {
     expect(await authorizeBrowserInput(direct.id, 'native-page', binding.conversationId)).toBe(false);
     expect(await acknowledgeBrowserInput(direct.id, 'native-page', binding.conversationId, 'native-message')).toBe(true);
     expect((await listInputs())[0]).toMatchObject({ state: 'sent', messageId: 'native-message' });
+  });
+
+  // 2026-10-12, GPT-6 Thinking: the page kept closing a turn whose request kept calling tools, and
+  // messages were folded into tool results the user never saw and the model did not act on.
+  it('never folds your text into a tool result on a model that is not Pro, even without a direct turn', async () => {
+    binding.model = 'gpt-5.6-sol'; binding.activeTurnId = 'plain-turn';
+    // The newest boundary is an end the page reported early: there is no direct turn to join.
+    binding.end = { kind: 'turn_end', outcome: 'stopped', turnId: 'plain-turn', time: 900 };
+    const row = await enqueueInput(input({ text: 'Use the reference code' }));
+    expect(row).toMatchObject({ state: 'queued' });
+    expect(row.directTurn).toBeUndefined();
+    expect(row.transportIntent).not.toBe('tool');
+    expect(await offerToolInput(sessionId, binding.conversationId, 'busy-call', now)).toEqual([]);
+    expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+    // Once the turn is over, the browser sends it through ChatGPT's composer.
+    binding.activeTurnId = null;
+    expect((await pendingBrowserInputs()).map(entry => entry.id)).toContain(row.id);
   });
 
   it.each(['gpt-5-pro', 'gpt-5.6-pro', 'gpt-6-astra', 'gpt-6-pro'])('keeps %s on MCP injection before its first call', async model => {
@@ -275,7 +320,8 @@ describe('durable user input ownership', () => {
     if (condition === 'helper' || condition === 'worker') binding.origin = condition;
     await enqueueInput(input());
     const result = await offerToolInputBatch(sessionId, binding.conversationId, 'ordinary-tool', now, true);
-    expect(result.messages).toHaveLength(1);
+    // On a model that is not Pro your text waits for the composer instead of a tool result (#1231).
+    expect(result.messages).toHaveLength(condition === 'other-model' ? 0 : 1);
     expect(result.reminder).toBe('');
   });
 
@@ -1411,6 +1457,22 @@ describe('Astra delivery boundaries and stacked direct input', () => {
     await enqueueInput(input());
     await expect(enqueueInput(input())).rejects.toThrow('One message');
   });
+  it('does not queue an ordinary browser send while that exact native conversation is under transport recovery', async () => {
+    configureInputDelivery({
+      applyAutomation: automate,
+      changed,
+      browserRouteRecovering: conversationId => conversationId === binding.conversationId
+    });
+    try {
+      binding.model = 'gpt-5.6-sol';
+      binding.activeTurnId = null;
+      binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'previous-turn', time: 900 };
+      await expect(enqueueInput(input({ text: 'These broke' }))).rejects.toThrow('still recovering in Eve Browser');
+      expect(await listInputs()).toEqual([]);
+    } finally {
+      configureInputDelivery({ applyAutomation: automate, changed });
+    }
+  });
   it('bounds a multibyte batch with one reminder and delivers the remaining input on the next invocation', async () => {
     binding.activeTurnId = 'active';
     const rows: InputEntry[] = [];
@@ -1461,6 +1523,33 @@ it('starts the pickup clock when the Companion connects, not while Chrome is sti
   now += 90_000;
   expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
   noteBrowserReady(now);
+  now += 59_999;
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+  now += 1;
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed', error: expect.stringContaining('60 seconds') });
+});
+
+// 2026-10-12: a Prime message sent while Eve's turn ran exec_command was held by the app (never
+// offered) and still failed as "the browser did not pick up this message within 60 seconds".
+it('counts the pickup deadline only while the message is actually offered to a polling browser', async () => {
+  const row = await enqueueInput(input({ sessionId: null, dueAt: now }));
+  noteBrowserReady(now);
+  // The browser keeps asking for work, but the app holds this message back for three minutes.
+  for (let at = 0; at < 18; at++) { now += 10_000; noteBrowserInputsOffered([], now); }
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+  // Offered now: the browser has one minute from here.
+  noteBrowserInputsOffered([row.id], now);
+  now += 59_999;
+  noteBrowserInputsOffered([row.id], now);
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+  now += 1;
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed', error: expect.stringContaining('60 seconds') });
+});
+
+it('still fails a held message once the browser stops asking for work', async () => {
+  const row = await enqueueInput(input({ sessionId: null, dueAt: now }));
+  noteBrowserReady(now);
+  noteBrowserInputsOffered([], now);
   now += 59_999;
   expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
   now += 1;
@@ -1541,6 +1630,9 @@ it('keeps the 22-minute chat-review heartbeat browser-only and coalesces it with
   expect(review.text).toContain("This is Eva's 22-minute recovery heartbeat for the always-on assistant.");
   expect(review.text).toContain('two review obligations before chat_review_complete');
   expect(review.text).toContain('recent-request review');
+  expect(review.text).toContain('Do not inspect ChatGPT browser history or use Computer Use for discovery during this heartbeat');
+  expect(review.text).toContain('Missing cross-device conversations are outside this review, not a blocker');
+  expect(review.text).not.toContain('Also use Computer Use to inspect');
   expect(review.text).toContain('durable-Plan review');
   expect(review.text).toContain('Plan → Source');
   expect(review.text).toContain('chat_review_plan');
@@ -1553,7 +1645,7 @@ it('keeps the 22-minute chat-review heartbeat browser-only and coalesces it with
   expect(review.text).toContain(JSON.stringify(workerPlan));
   expect(review.text).toContain('"reportedToPrime":false');
   expect(review.text).toContain('Computer Use');
-  expect(review.text).toContain('AI browser');
+  expect(review.text).not.toContain('AI browser');
   expect(review.text).toContain('available tools/workers');
   expect(review.text).toContain('Continue coordination from this exact thread.');
   expect(review.text).not.toContain('Eve Browser');
@@ -2019,15 +2111,17 @@ it.each([
   ['the final answer is still fresh', { final: -30_000, tool: -40_000 }],
   ['a tool call came after the final answer', { final: -100_000, tool: -90_000 }],
   ['the final answer predates this turn', { final: -130_000, tool: -100_000 }]
-])('keeps a tool intent in the open turn when %s', async (_why, at) => {
+])('keeps a non-Pro message out of both the browser and tool results in the open turn when %s', async (_why, at) => {
   binding.model = 'gpt-5-6-thinking';
   binding.activeTurnId = 'live-turn';
   binding.end = { kind: 'turn_start', outcome: '', turnId: 'live-turn', time: now - 120_000 };
   binding.lastToolCallAt = now + at.tool;
   binding.lastAssistantFinalAt = now + at.final;
   const row = await enqueueInput(input({ dueAt: now }));
-  expect(row.transportIntent).toBe('tool');
+  // Text in a tool result never reaches a non-Pro model (#1231): it waits for the composer instead.
+  expect(row.transportIntent).toBeUndefined();
   expect(await claimBrowserInput(row.id, 'quiet-page', binding.conversationId, true)).toBeNull();
+  expect(await offerToolInput(sessionId, binding.conversationId, 'live-call', now)).toEqual([]);
 });
 
 it('offers one internally stamped restart recovery to the browser while its exact durable turn is still open', async () => {

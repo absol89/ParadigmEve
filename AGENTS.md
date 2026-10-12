@@ -1153,6 +1153,10 @@ bounded nonce-scoped operation (120 seconds, at most 20 accepted models); failed
 the last successful catalog visibly distinguishable from a fresh observation. Cached metadata
 is useful selection UI, not fresh send authorization. Model and reasoning selection must both
 be confirmed after relevant native changes; navigation invalidates that confirmation.
+Opening Eve's model menu refreshes a catalog last observed over 24 hours ago without opening
+a browser at startup. A stale catalog remains readable through refresh failures, which surface
+the error and the full last-observed date rather than silently replacing the user's choice;
+automatic retries back off for ten minutes. Explicit Refresh remains available immediately.
 An unselected fresh composer with no catalog sends `model=null` and `reasoningEffort=null`,
 leaving ChatGPT's native choice untouched even if catalog discovery is pending or failed. This
 does not claim model availability or a successful Send. Explicit model choices and existing-session
@@ -1890,11 +1894,17 @@ a bundler. `electron-builder.yml` puts executable tunnel/rg, extension and requi
 payloads outside asar. `extension-path.ts` transactionally mirrors the packaged extension to
 stable `userData/extension`, never an ephemeral AppImage mount.
 
-On Windows, NSIS writes the final installed executable path to
-`%APPDATA%\ParadigmEve\install-path.txt`. The external self-reinstall controller reads and validates
-that marker before relaunch, so a user-selected custom `$INSTDIR` remains authoritative. The
-historical LocalAppData Programs path is only a compatibility fallback for an older install that has
-not yet written the marker.
+On Windows, every install, update and candidate goes to the one per-user folder
+`%LOCALAPPDATA%\Programs\ParadigmEve`: the wizard has no folder page, and `customInit` overrides
+`/D=` and a remembered custom path. Never install a candidate anywhere else. The stock uninstaller
+deletes its whole install folder, so `ParadigmEveUnsafeDir` refuses any folder that is, contains or
+sits inside `%APPDATA%\paradigmeve`, or that holds `state`, `sessions` or `archive`: the installer
+forgets such an old registration instead of running its old uninstaller there, and the uninstaller
+quits without removing anything (2026-10-12: an install that had landed in the data folder let a
+2.3.9 candidate's update wipe archive, docs and attachments). NSIS still writes the executable path
+to `%APPDATA%\ParadigmEve\install-path.txt`; the external self-reinstall controller reads and
+validates that marker before relaunch, with the LocalAppData Programs path as the fallback for an
+older install that has not yet written it.
 
 Build flavor is compile-time product authority, not a runtime preference. Local `npm run dev`,
 `npm run build` and `scripts/package.mjs` default to **debug**. A **dev** build is admitted only

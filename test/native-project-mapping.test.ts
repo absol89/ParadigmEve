@@ -183,7 +183,7 @@ describe('the service worker side of the mapping', () => {
     const id = randomUUID();
     await api.deliverDesktopInputs([{ id, conversationId: null, projectEntry: { id: NATIVE, sourceConversationId: ENTRY_CHAT } }], false, [], [id]);
     expect(created).toHaveLength(1);
-    expect(created[0]!.url).toBe(`https://chatgpt.com/c/${ENTRY_CHAT}?cos-input=${id}#cos-input=${id}`);
+    expect(created[0]!.url).toBe(`https://chatgpt.com/c/${ENTRY_CHAT}?eve-input=${id}#eve-input=${id}`);
   });
 });
 

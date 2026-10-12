@@ -13,6 +13,27 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.3.9] — Reply recovery and easier connector setup
+
+2.3.9 is in release-candidate verification. These changes are not yet evidence of
+a working installed build or a published release.
+
+### Candidate changes under verification
+
+- Observe assistant interim and final content from the matching typed ChatGPT turn
+  when its rendered components are delayed or unavailable; preserve turn ownership
+  and avoid promoting interim content to a final answer.
+- Send ordinary text written during a running non-Pro ChatGPT turn through the
+  actual composer instead of hiding it in a tool response.
+- Do not consume Compact & Resume pickup retries while the original turn is
+  demonstrably still active.
+- Make first-run ChatGPT connector guidance open `chatgpt.com/plugins`, with
+  the **Add** button in the top-right corner, including Swedish and Spanish
+  translations. Existing user-controlled permission defaults remain unchanged.
+
+Before publication, verify reply capture, durable archive/renderer parity, long
+turns, compaction, first-run setup, version metadata, and installed c1 behavior.
+
 ## [2.3.8] — Fewer interruptions, clearer handoffs
 
 2.3.8 is a beta reliability update built on the public 2.3.7 line. These source changes
