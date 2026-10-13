@@ -51,3 +51,14 @@ export function aheadBehind(cwd, ref) {
 export function currentBranch(cwd) {
   return git(cwd, ['branch', '--show-current']).stdout;
 }
+
+// Per-machine settings never live in the repository. They come from an environment variable, then from the
+// clone's own Git config (shared by its worktrees, never committed), e.g.
+//   git config paradigmeve.remote public
+//   git config paradigmeve.installers "D:\Builds\ParadigmEve-installers"
+//   git config paradigmeve.checkoutRoots "D:\Builds;E:\Other"
+export function localSetting(cwd, key, envName, fallback = null) {
+  if (process.env[envName]) return process.env[envName];
+  const configured = git(cwd, ['config', '--get', `paradigmeve.${key}`], { allowFailure: true }).stdout;
+  return configured || fallback;
+}

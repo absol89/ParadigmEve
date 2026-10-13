@@ -58,3 +58,9 @@ proof-*.txt
 # Eve's private outreach working notes (marketing tracking); not product docs.
 docs/product/community-outreach/README.md
 docs/product/community-outreach/x-scout-*.md
+
+# Per-machine AI coding-agent setup (Claude Code and similar). Each clone brings its own; nothing here may
+# assume another contributor has the same tools, paths or intentions.
+/.claude/
+/CLAUDE.local.md
+/.mcp.json

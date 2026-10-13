@@ -3,10 +3,10 @@
 // current branch: no extra worktree, no build branch, no commit. Dogfood the candidate, then commit what
 // passed or revert what broke, so nothing broken gets committed.
 //
-//   node scripts/build-candidate.mjs c11 [--skip-verify] [--remote public] [--dry-run]
+//   node scripts/build-candidate.mjs c11 [--skip-verify] [--remote NAME] [--dry-run]
 //
-// Output goes to <installers>/<version>/<label> (installers defaults to C:\Projects\ParadigmEve-installers,
-// or set PARADIGMEVE_INSTALLERS): the installer, blockmap, .sha256, COMMIT.txt and, when files were
+// Output goes to <installers>/<version>/<label>, where installers is PARADIGMEVE_INSTALLERS or
+// `git config paradigmeve.installers` (default: ParadigmEve-installers next to this checkout): the installer, blockmap, .sha256, COMMIT.txt and, when files were
 // uncommitted, uncommitted.patch (every change against HEAD, untracked files included; `git apply` it on
 // the recorded commit to get exactly the built source). Uses the existing node_modules; run `npm ci`
 // yourself after a lockfile change. Nothing is installed, committed or published.
@@ -15,18 +15,18 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { aheadBehind, compareWithRemote, dirtyLines, fail, git, parseFlags } from './release-checkout.mjs';
+import { aheadBehind, compareWithRemote, dirtyLines, fail, git, localSetting, parseFlags } from './release-checkout.mjs';
 
 const { flags, positional } = parseFlags(process.argv.slice(2), { remote: 'string', 'skip-verify': 'boolean', 'dry-run': 'boolean' });
 const label = positional[0];
-if (!/^c\d+(?:-r\d+)?$/.test(label ?? '')) fail('usage: node scripts/build-candidate.mjs c<N> [--skip-verify] [--remote public] [--dry-run]');
-const remote = flags.remote ?? 'public';
+if (!/^c\d+(?:-r\d+)?$/.test(label ?? '')) fail('usage: node scripts/build-candidate.mjs c<N> [--skip-verify] [--remote NAME] [--dry-run]');
 
 const root = git(process.cwd(), ['rev-parse', '--show-toplevel']).stdout;
+const remote = flags.remote ?? localSetting(root, 'remote', 'PARADIGMEVE_REMOTE', 'origin');
 const branch = git(root, ['branch', '--show-current']).stdout || '(detached)';
 const base = git(root, ['rev-parse', 'HEAD']).stdout;
 const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-const installers = process.env.PARADIGMEVE_INSTALLERS ?? 'C:\\Projects\\ParadigmEve-installers';
+const installers = localSetting(root, 'installers', 'PARADIGMEVE_INSTALLERS', path.join(path.dirname(root), 'ParadigmEve-installers'));
 const dest = path.join(installers, version, label);
 if (existsSync(dest) && readdirSync(dest).length) fail(`${dest} already has files; pick the next candidate number.`);
 if (!existsSync(path.join(root, 'node_modules'))) fail('node_modules is missing; run `npm ci` first.');

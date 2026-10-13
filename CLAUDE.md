@@ -15,5 +15,13 @@ Never push this clone's local branch history. Publish work as fresh commits buil
 branch tip (`git write-tree` / `git commit-tree`, or a merge of `origin/main` done the same way),
 pointed at by a new local branch. The local history is private and stays here.
 
+This file holds only rules that apply to every clone. Do not assume another contributor has the same
+machine, folders, installed tools, remotes or workflow. Machine-specific notes (installer folders, worktree
+layout, local tool locations) belong in `CLAUDE.local.md`, and local Claude Code settings in `.claude/`;
+both are gitignored and may not exist. The maintainer scripts (`npm run candidate`, `sync:status`,
+`publish:commit`) read per-machine values from environment variables or the clone's own
+`git config paradigmeve.*` (`remote`, `installers`, `checkoutRoots`), with neutral defaults otherwise.
+Never commit those values.
+
 Never add a `Co-Authored-By` trailer, a "Generated with" line, or any other Claude attribution to
 commits, pull requests, tags or release notes. The maintainer is the only author on this repository.

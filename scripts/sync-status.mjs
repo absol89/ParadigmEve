@@ -2,21 +2,24 @@
 // One read-only table of every ParadigmEve clone and worktree on this machine: HEAD versus the published
 // branch, unpushed commits and uncommitted changes.
 //
-//   node scripts/sync-status.mjs [--remote public] [--base public/release/2.3.9] [--root DIR]... [--all] [--no-fetch]
+//   node scripts/sync-status.mjs [--remote NAME] [--base REF] [--root DIR]... [--all] [--no-fetch]
 //
 // Worktrees come from `git worktree list`; separate clones are found as ParadigmEve* folders next to this
-// checkout and under C:\Projects (add more with --root). Build worktrees are summarized unless --all.
+// checkout, under each --root DIR and under `git config paradigmeve.checkoutRoots` (;-separated). The
+// remote defaults to PARADIGMEVE_REMOTE, then `git config paradigmeve.remote`, then origin. Build worktrees
+// are summarized unless --all.
 // The only write is `git fetch` of the remote, skipped with --no-fetch.
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { aheadBehind, git, parseFlags } from './release-checkout.mjs';
+import { aheadBehind, git, localSetting, parseFlags } from './release-checkout.mjs';
 
 const argv = process.argv.slice(2);
 const roots = [];
 for (let i = argv.indexOf('--root'); i !== -1; i = argv.indexOf('--root')) roots.push(...argv.splice(i, 2).slice(1));
 const { flags } = parseFlags(argv, { remote: 'string', base: 'string', all: 'boolean', 'no-fetch': 'boolean' });
-const remote = flags.remote ?? 'public';
 const here = git(process.cwd(), ['rev-parse', '--show-toplevel']).stdout;
+const remote = flags.remote ?? localSetting(here, 'remote', 'PARADIGMEVE_REMOTE', 'origin');
+roots.push(...String(localSetting(here, 'checkoutRoots', 'PARADIGMEVE_CHECKOUT_ROOTS', '')).split(';').filter(Boolean));
 const norm = (p) => path.resolve(p).toLowerCase();
 
 function parseWorktrees(porcelain) {
@@ -32,7 +35,7 @@ function parseWorktrees(porcelain) {
 
 const checkouts = new Map();
 for (const wt of parseWorktrees(git(here, ['worktree', 'list', '--porcelain']).stdout)) checkouts.set(norm(wt.path), { ...wt, kind: 'worktree' });
-for (const root of [path.dirname(here), 'C:\\Projects', ...roots]) {
+for (const root of [path.dirname(here), ...roots]) {
   if (!existsSync(root)) continue;
   for (const name of readdirSync(root)) {
     const dir = path.join(root, name);

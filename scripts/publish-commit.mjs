@@ -2,23 +2,24 @@
 // Commits the staged changes on top of the published branch tip and pushes them, fast-forward only.
 //
 //   git add <your files>
-//   node scripts/publish-commit.mjs -m "Message" [--remote public] [--dry-run]
+//   node scripts/publish-commit.mjs -m "Message" [--remote NAME] [--dry-run]
 //
+// The remote defaults to PARADIGMEVE_REMOTE, then `git config paradigmeve.remote`, then origin.
 // Refuses unless HEAD equals <remote>/<branch> after a fresh fetch, so a commit can never be built on a
 // stale or private base and silently revert someone else's published work. Runs the privacy check on the
 // staged tree and the result, commits as the maintainer identity of the published tip (a GitHub noreply
 // address), and pushes without force. Unstaged and untracked files are left alone.
 import { spawnSync } from 'node:child_process';
-import { compareWithRemote, currentBranch, fail, git, parseFlags } from './release-checkout.mjs';
+import { compareWithRemote, currentBranch, fail, git, localSetting, parseFlags } from './release-checkout.mjs';
 
 const argv = process.argv.slice(2).map(arg => (arg === '-m' ? '--message' : arg));
 const { flags } = parseFlags(argv, { message: 'string', remote: 'string', 'dry-run': 'boolean' });
 const message = String(flags.message ?? '').trim();
-if (!message) fail('usage: node scripts/publish-commit.mjs -m "Message" [--remote public] [--dry-run]');
+if (!message) fail('usage: node scripts/publish-commit.mjs -m "Message" [--remote NAME] [--dry-run]');
 if (/co-authored-by|generated with|claude\.ai\/code|claude-session/i.test(message)) fail('the message carries attribution or a session link; the maintainer is the only author.');
-const remote = flags.remote ?? 'public';
 
 const root = git(process.cwd(), ['rev-parse', '--show-toplevel']).stdout;
+const remote = flags.remote ?? localSetting(root, 'remote', 'PARADIGMEVE_REMOTE', 'origin');
 const branch = currentBranch(root);
 if (!branch) fail('HEAD is detached; check out the branch you publish to.');
 const tip = compareWithRemote(root, { remote, branch });
