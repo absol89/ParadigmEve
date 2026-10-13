@@ -2668,7 +2668,8 @@ async function setupPageStep(step, params) {
     if (!restricted) throw new Error('The Restricted permission option is missing.');
     press(restricted);
     // Restricted must leave exactly Tunnels' two permissions (Read and Use), on the default project.
-    await waitFor(() => /\bTunnels\s+All selected\b/.test(text(dialog)) && /\b2 selected permissions\b/.test(text(dialog)), 6000,
+    // Rendered text separates a row's label and value; plain text content may not, so allow both.
+    await waitFor(() => /Tunnels\s*All selected/.test(text(dialog)) && /(?:^|\D)2 selected permissions/.test(text(dialog)), 6000,
       'The Tunnels permission');
     if (!/\bDefault project\b/.test(text(dialog))) throw new Error('Choose the API key project yourself, then continue in the guide.');
     const submit = [...dialog.querySelectorAll('button[type="submit"]')].find(node => text(node) === 'Create secret key');
