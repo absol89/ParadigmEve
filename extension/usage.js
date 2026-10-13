@@ -5,7 +5,9 @@
  * quota metadata, it observes the two opaque identifiers ChatGPT itself puts in the live
  * conversation event stream: `conversation_id` and `metadata.request_id`. The latter can
  * reach the stream tens of seconds before React publishes it, which is the difference between
- * an exact Core caller and CALLER_IDENTITY_REQUIRED. Only that pair crosses worlds.
+ * an exact Core caller and CALLER_IDENTITY_REQUIRED. A conversation id may also cross worlds
+ * alone at a bounded fresh-chat `stream_handoff` -> `input_message` boundary so one already-clicked
+ * Compact & Resume bootstrap can bind before React mounts; that projection grants no tool authority.
  */
 (() => {
   'use strict';
@@ -91,6 +93,8 @@
     const decoder = new TextDecoder();
     const emitted = new Set();
     const emittedResumes = new Set();
+    let emittedConversation = false;
+    let handoffConversation = null;
     let bytes = 0, buffer = '';
     // The one conversation this response has named so far; see scan().
     let responseConversation = null;
@@ -110,7 +114,11 @@
       if (conversations.size > 1) return;
       if (conversations.size === 1) {
         const named = conversations.values().next().value;
-        if (responseConversation && responseConversation !== named) { responseConversation = null; return; }
+        if (responseConversation && responseConversation !== named) {
+          responseConversation = null;
+          handoffConversation = null;
+          return;
+        }
         responseConversation = named;
       }
       const conversationId = responseConversation;
@@ -124,6 +132,19 @@
         event = JSON.parse(data);
       } catch { return; }
       if (conversations.size === 1 && event?.conversation_id !== conversationId) return;
+      if (event?.type === 'stream_handoff' && event.conversation_id === conversationId) {
+        handoffConversation = conversationId;
+      }
+      // Fresh-chat responses can expose their server-created conversation id before either
+      // React mounts the authored user row or `input_message` echoes its content. Wait for that
+      // response's input_message boundary before projecting the opaque id: a later contradictory
+      // stream_handoff must be able to retire the candidate before anything crosses worlds.
+      // The isolated content script may use it only while it owns one exact post-click bootstrap;
+      // by itself this grants no authority.
+      if (!emittedConversation && event?.type === 'input_message' && handoffConversation === conversationId) {
+        emittedConversation = true;
+        post({ type: 'cos-conversation-origin', conversationId, observedAt }, location.origin);
+      }
       // `input_message.metadata` is where the id moved: the same server metadata, one level in.
       const requestIds = new Set([event?.metadata?.request_id, event?.message?.metadata?.request_id,
         event?.input_message?.metadata?.request_id]

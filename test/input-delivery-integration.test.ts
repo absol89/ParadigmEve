@@ -558,6 +558,24 @@ describe('IPC input delivery and Goal control integration', () => {
     expect(pushed).toHaveBeenCalledWith('chatModels:changed', expect.objectContaining({ state: 'ready', models }));
     expect((await post('/models', { nonce, models })).status).toBe(409);
   });
+  it('refreshes a recent native-default-only observation through passive settings IPC without opening a browser', async () => {
+    const { requestChatModels, observeChatModels, pendingChatModelRequest, resetChatModelsForTests } =
+      await import('../src/main/chat-models.js');
+    resetChatModelsForTests();
+    requestChatModels();
+    const earlier = pendingChatModelRequest()!;
+    expect(observeChatModels({ nonce: earlier.nonce, models: null, nativeDefault: true })).toBe(true);
+    const refreshed = await handlers.get('chatModels:refreshPassive')!(rendererEvent, {});
+    expect(refreshed.data).toMatchObject({ state: 'pending', nativeDefault: true });
+    const pending = pendingChatModelRequest()!;
+    expect(pending.nonce).not.toBe(earlier.nonce);
+    expect(pending.allowOpen).toBe(false);
+    const models = [{ id: 'gpt-6', label: 'GPT-6', efforts: ['none', 'medium', 'high'] }];
+    expect((await post('/models', { nonce: pending.nonce, models })).body.ok).toBe(true);
+    expect((await handlers.get('chatModels:get')!(rendererEvent, {})).data).toMatchObject({
+      state: 'ready', nativeDefault: false, models
+    });
+  });
   it('releases only the expected actual turn through IPC', async () => {
     const conversationId = randomUUID();
     const session = await createSession({ title: 'End turn control', conversationId });

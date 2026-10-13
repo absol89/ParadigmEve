@@ -12796,6 +12796,32 @@ describe('the fresh chat the app opened', () => {
     expect(live.sent.filter(message => message.type === 'compact' && message.destinationDispatch)).toHaveLength(1);
   });
 
+  it('acknowledges the one post-click stream-handoff conversation when input_message content is still absent', async () => {
+    const token = '1123456789abcdef0123456789abcdef';
+    const destination = '31111111-2222-4333-8444-555555555555';
+    const text = `[[CLF-RESUME:${token}]]\n\nCarry this session before React mounts its first user row.`;
+    let clicks = 0;
+    live = await harness('https://chatgpt.com/?clf=cmd-stream-handoff#clf=cmd-stream-handoff', {
+      redeem: () => ({ ok: true, command: { id: 'cmd-stream-handoff', type: 'resume', text, agent: null } }),
+      ack: () => ({ ok: true })
+    }, (document) => {
+      document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+        clicks++;
+        const page = document.defaultView!;
+        page.dispatchEvent(new page.MessageEvent('message', {
+          source: page as unknown as Window, origin: 'https://chatgpt.com',
+          data: { type: 'cos-conversation-origin', conversationId: destination, observedAt: (page as unknown as typeof globalThis).Date.now() }
+        }));
+      });
+    });
+    await settle(550);
+    expect(clicks).toBe(1);
+    expect(live.sent.filter(message => message.type === 'ack')).toContainEqual(expect.objectContaining({
+      id: 'cmd-stream-handoff', status: 'sent', conversationId: destination
+    }));
+    expect(live.sent.filter(message => message.type === 'compact' && message.destinationDispatch)).toHaveLength(1);
+  });
+
   it('replays the reported 2.1.7 successor URL pair once while the final ACK is slow', async () => {
     const commandId = '90daf7181b53733f';
     const destination = '6a000002-0000-83ed-8000-000000000002';

@@ -252,6 +252,7 @@ describe('MAIN-world usage projection', () => {
       'data: ' + JSON.stringify({ type: 'input_message', input_message: { metadata: { request_id: 'wfr_split_event' } } }) + '\n\n'
     ], { method: 'POST' }, f);
     expect(h.posts).toEqual([
+      { type: 'cos-conversation-origin', conversationId: a, observedAt: expect.any(Number) },
       { type: 'cos-request-origin', conversationId: a, requestIds: ['wfr_split_event'], observedAt: expect.any(Number) }
     ]);
 
@@ -265,7 +266,7 @@ describe('MAIN-world usage projection', () => {
       'data: ' + JSON.stringify({ type: 'stream_handoff', conversation_id: b }) + '\n\n',
       'data: ' + JSON.stringify({ type: 'input_message', input_message: { metadata: { request_id: 'wfr_after_contradiction' } } }) + '\n\n'
     ], { method: 'POST' }, f);
-    expect(h.posts).toHaveLength(1);
+    expect(h.posts).toHaveLength(2);
   });
   it('projects only the server input-message resume marker when React has not mounted the user row', async () => {
     const h = harness();
@@ -276,8 +277,28 @@ describe('MAIN-world usage projection', () => {
       'data: ' + JSON.stringify({ type: 'input_message', input_message: { content: { parts: [`[[CLF-RESUME:${token}]]\n\nprivate handoff data`] } } }) + '\n\n',
       'data: ' + JSON.stringify({ type: 'input_message', input_message: { content: { parts: [`[[CLF-RESUME:${token}]]\n\nprivate handoff data`] } } }) + '\n\n'
     ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
-    expect(h.posts).toEqual([{ type: 'cos-resume-origin', conversationId: chat, token, observedAt: expect.any(Number) }]);
+    expect(h.posts).toEqual([
+      { type: 'cos-conversation-origin', conversationId: chat, observedAt: expect.any(Number) },
+      { type: 'cos-resume-origin', conversationId: chat, token, observedAt: expect.any(Number) }
+    ]);
     expect(JSON.stringify(h.posts)).not.toContain('private handoff');
+  });
+  it('projects a fresh conversation id from stream_handoff even when input_message omits authored content', async () => {
+    const h = harness();
+    const chat = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    await h.feedSse([
+      'data: ' + JSON.stringify({ type: 'stream_handoff', conversation_id: chat }) + '\n\n',
+      'data: ' + JSON.stringify({ type: 'input_message', input_message: { metadata: {} } }) + '\n\n'
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([{ type: 'cos-conversation-origin', conversationId: chat, observedAt: expect.any(Number) }]);
+  });
+  it('does not project a generic conversation origin from input_message without a stream_handoff in that response', async () => {
+    const h = harness();
+    const chat = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    await h.feedSse([
+      'data: ' + JSON.stringify({ type: 'input_message', conversation_id: chat, input_message: { metadata: {} } }) + '\n\n'
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([]);
   });
   it('does not mistake assistant text, tool arguments, or an unbound input event for an accepted resume', async () => {
     const h = harness();

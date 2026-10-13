@@ -10437,9 +10437,20 @@
   // Only opaque resume marker/conversation pairs from a live ChatGPT response. The page
   // compares these to the ONE leased, already-clicked bootstrap; they do not grant tools.
   const resumeStreamOrigins = new Map();
+  const resumeConversationOrigins = new Map();
   const resumeStreamWatchers = new Map();
   window.addEventListener('message', (event) => {
-    if (!alive || event.source !== window || event.origin !== location.origin || event.data?.type !== 'cos-resume-origin') return;
+    if (!alive || event.source !== window || event.origin !== location.origin) return;
+    if (event.data?.type === 'cos-conversation-origin') {
+      const { conversationId: id, observedAt } = event.data;
+      if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
+          !Number.isFinite(observedAt) || Math.abs(Date.now() - observedAt) > 120_000) return;
+      resumeConversationOrigins.set(id, { conversationId: id, observedAt });
+      while (resumeConversationOrigins.size > 4) resumeConversationOrigins.delete(resumeConversationOrigins.keys().next().value);
+      for (const wake of resumeStreamWatchers.values()) wake();
+      return;
+    }
+    if (event.data?.type !== 'cos-resume-origin') return;
     const { conversationId: id, token, observedAt } = event.data;
     if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
         typeof token !== 'string' || !/^[A-Za-z0-9_-]{16,64}$/.test(token) || !Number.isFinite(observedAt) ||
@@ -10863,14 +10874,24 @@
       const streamed = boot.type === 'resume' && bootstrapClickReached && stream &&
         stream.observedAt >= bootstrapClickedAt - 5_000 &&
         (!route || route === stream.conversationId) && sendingBootstrap() ? stream.conversationId : null;
-      const found = route || streamed;
+      // Current ChatGPT can start the resumed answer before its input_message event includes the
+      // authored body. A generic stream_handoff is still exact enough here because it is paired
+      // only after this fresh app-owned page crossed the one native Send click, within this click's
+      // response window, and while the same command still owns the page. Ambiguity abstains.
+      const genericCandidates = boot.type === 'resume' && bootstrapClickReached && sendingBootstrap()
+        ? [...resumeConversationOrigins.values()].filter(origin =>
+            origin.observedAt >= bootstrapClickedAt && Date.now() - origin.observedAt <= 120_000 &&
+            (!route || route === origin.conversationId))
+        : [];
+      const generic = genericCandidates.length === 1 ? genericCandidates[0].conversationId : null;
+      const found = route || streamed || generic;
       if (!found || (conversationId && conversationId !== found) ||
           (acceptedBootstrap && (acceptedBootstrap.conversationId !== found || acceptedBootstrap.epoch !== epoch))) return null;
       const message = CLF_DOM.messages().find(message => message.role === 'user' &&
         matchesSubmittedBootstrap(message, boot.text));
       // The exact user row is strongest. If it is absent, the server stream can prove the
       // marker and conversation pair without trusting the URL or a quoted assistant answer.
-      if (!message && streamed !== found) return null;
+      if (!message && streamed !== found && generic !== found) return null;
       if (message && acceptedBootstrap?.messageId && acceptedBootstrap.messageId !== message.id) return null;
       acceptedBootstrap ||= { conversationId: found, epoch, messageId: message?.id || null };
       return found;
