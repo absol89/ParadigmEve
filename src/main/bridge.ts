@@ -2284,7 +2284,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ||
       repairAction === 'preserved' ? repairAction : null;
     if (repaired) {
-      await confirmRepair(repaired.slice(0, 64), action);
+      const why = url.searchParams.get('why');
+      await confirmRepair(repaired.slice(0, 64), action, why && /^[a-z-]{1,24}$/.test(why) ? why : null);
     } else if (repairFailed) {
       await failRepairAttempt(repairFailed.slice(0, 64), action);
     }
@@ -8280,14 +8281,14 @@ function dropBrowserRepair(conversationId: string, repair: Repair): void {
  * this app is no longer waiting on - an older turn's, or one already re-queued - matches
  * nothing and closes nothing, which is the only safe reading of it.
  */
-async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | null): Promise<void> {
+async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | null, why: string | null = null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state === 'handed' || repair.state === 'claimed') && repair.token === token) {
       // The page recovered on its own: nothing was reloaded, so the turn keeps its one
       // assistant-error reload for a failure that does need it (upstream c8721d1).
       if (action === 'preserved' && repair.reason === 'assistant-error') {
         releaseBrowserRepairAuthority(repair);
-        logInfo(`bridge: the browser preserved the recovered page for ${conversationId} without spending its assistant-error reload`);
+        logInfo(`bridge: the browser preserved the recovered page for ${conversationId} without spending its assistant-error reload${why ? ` (page check: ${why})` : ''}`);
         await updateRepairProgress(conversationId, repair, `Kept the recovered chat open instead of reloading while recovering ${repairReason(repair)}.`);
         repairsInFlight.delete(conversationId);
         return;

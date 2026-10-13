@@ -7284,6 +7284,31 @@ describe('a stop button that goes missing while the turn is still running', () =
    * it, so nothing here can wait for a notice - the absence of change *is* the signal, and the
    * page has to be fetched again for the turn to have any chance of finishing.
    */
+  // 2026-10-13 (c9): the app filed "This response couldn't load", then the page said it had
+  // recovered, and the browser kept the broken page instead of reloading it.
+  it('counts a transport error in the latest turn as current, and says why an older one is not', async () => {
+    live = await harness();
+    userTurn(live.document, 'turn-old-user', 'first');
+    startGenerating(live.document);
+    const old = assistantTurn(live.document, 'turn-old', []);
+    live.hook.observe(); await settle();
+    stopGenerating(live.document);
+    live.hook.observe(); await settle();
+    const card = (text: string) => { const node = live!.document.createElement('div'); node.setAttribute('role', 'alert'); node.textContent = text; return node; };
+    old.append(card('This response couldn’t load'));
+    userTurn(live.document, 'turn-new-user', 'second');
+    startGenerating(live.document);
+    const latest = assistantTurn(live.document, 'turn-new', []);
+    live.hook.observe(); await settle();
+    stopGenerating(live.document);
+    live.hook.observe(); await settle();
+    // Only the earlier turn shows the error: it is history, and the page says which check set it aside.
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ assistantError: false, assistantErrorWhy: 'older-generation' });
+    latest.append(card('This response couldn’t load'));
+    live.hook.observe(); await settle();
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ assistantError: true });
+  });
+
   it('reports a stalled live turn but leaves recovery authority with the app', async () => {
     live = await harness();
     userTurn(live.document, 'turn-stalled-user', 'do the long thing');

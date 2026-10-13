@@ -8795,13 +8795,38 @@
    */
   /** The current generation's still-visible recoverable transport error. */
   function currentAssistantError() {
-    return CLF_DOM.errors().some(error => {
-      if (error.recoverable !== true || isStale(error.node)) return false;
+    return assistantErrorDiagnosis().current;
+  }
+
+  /**
+   * Whether the page still shows a recoverable transport error for the current response, and if
+   * not, which check set it aside: `none` (no such error on screen), `stale` (left by a chat this
+   * tab moved away from) or `older-generation` (owned by an earlier local generation).
+   *
+   * An error in the latest turn on the page is current whatever its generation stamp. On c9 the
+   * app filed "This response couldn't load" on GPT-6 chats and worker-3, then this check said the
+   * page had recovered, so the browser kept the broken page instead of reloading it (2026-10-13).
+   */
+  function assistantErrorDiagnosis() {
+    let why = 'none';
+    for (const error of CLF_DOM.errors()) {
+      if (error.recoverable !== true) continue;
+      if (isStale(error.node)) { why = 'stale'; continue; }
       const owner = localErrorGeneration(error);
       // Unknown ownership is conservative evidence that the current page is still broken.
-      // Only a concrete different generation proves this is an old historical failure.
-      return !turnId || owner === null || owner === turnId;
-    });
+      // Only a concrete different generation, outside the latest turn, proves an old failure.
+      if (!turnId || owner === null || owner === turnId || inLatestTurn(error.node)) return { current: true, why: null };
+      why = 'older-generation';
+    }
+    return { current: false, why };
+  }
+
+  /** Whether a node is in, or below, the last turn on the page: nothing newer was rendered after it. */
+  function inLatestTurn(node) {
+    const turns = document.querySelectorAll(TURN_SECTION);
+    const last = turns[turns.length - 1];
+    if (!last || !node) return false;
+    return last === node || last.contains(node) || !!(last.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
   }
 
   /**
@@ -12051,9 +12076,12 @@
         // Unknown ownership is conservative evidence that the page is still broken; only a
         // concrete different generation proves an old historical failure (upstream
         // chat-on-steroids 8b01399, a231d58, c8721d1).
-        const assistantError = currentAssistantError();
+        const diagnosis = assistantErrorDiagnosis();
+        const assistantError = diagnosis.current;
         sendResponse({
           ok: true,
+          // Which check set a reported error aside, so a kept broken page says why in the app log.
+          ...(diagnosis.why ? { assistantErrorWhy: diagnosis.why } : {}),
           // ChatGPT's own account that a response is streaming right now, as opposed to the
           // recorder's `generating`, which also holds while a turn waits on a local tool.
           streaming: CLF_DOM.generating(),

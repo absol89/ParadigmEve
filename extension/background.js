@@ -3457,7 +3457,8 @@ async function performBrowserRepairs(repairs, policy) {
           continue;
         }
         if (reason === 'assistant-error' && status?.ok === true && status.assistantError === false) {
-          await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=preserved`);
+          const why = typeof status.assistantErrorWhy === 'string' ? status.assistantErrorWhy.slice(0, 24) : '';
+          await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=preserved${why ? `&why=${encodeURIComponent(why)}` : ''}`);
           continue;
         }
       }
