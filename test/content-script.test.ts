@@ -12826,12 +12826,16 @@ describe('the fresh chat the app opened', () => {
     const destination = '31111111-2222-4333-8444-555555555555';
     const text = `[[CLF-RESUME:${token}]]\n\nCarry this session before React mounts its first user row.`;
     let clicks = 0;
+    let observerRearms = 0;
     live = await harness('https://chatgpt.com/?clf=cmd-stream-handoff#clf=cmd-stream-handoff', {
       redeem: () => ({ ok: true, command: { id: 'cmd-stream-handoff', type: 'resume', text, agent: null } }),
       ack: () => ({ ok: true })
     }, (document) => {
+      document.defaultView!.addEventListener('cos-resume-send-observer', () => { observerRearms++; });
       document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
         clicks++;
+        // The observer was restored before the native click began this new request.
+        expect(observerRearms).toBe(1);
         const page = document.defaultView!;
         page.dispatchEvent(new page.MessageEvent('message', {
           source: page as unknown as Window, origin: 'https://chatgpt.com',
@@ -12841,6 +12845,7 @@ describe('the fresh chat the app opened', () => {
     });
     await settle(550);
     expect(clicks).toBe(1);
+    expect(observerRearms).toBe(1);
     expect(live.sent.filter(message => message.type === 'ack')).toContainEqual(expect.objectContaining({
       id: 'cmd-stream-handoff', status: 'sent', conversationId: destination
     }));

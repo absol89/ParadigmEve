@@ -10974,6 +10974,10 @@
     const authorizeBootstrapSend = () => {
       bootstrapClickReached = true;
       bootstrapClickedAt = Date.now();
+      // ChatGPT can replace MAIN-world fetch after its page-ready boundary. Restore the
+      // passive stream observer synchronously before this one already-authorized Resume
+      // click; a later DOM user row must not be its only possible receipt.
+      if (boot.type === 'resume') window.dispatchEvent(new Event('cos-resume-send-observer'));
       if (attempt && boot.type === 'worker') attempt.phase = 'dispatching';
       return true;
     };

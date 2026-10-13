@@ -224,6 +224,11 @@
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', installFetchObserver, { once: true });
   }
+  // A provider can replace fetch again after DOMContentLoaded. The isolated Companion
+  // signals its one authorized Resume Send synchronously, before the native click can
+  // start the request. Reattach only at that boundary, without polling the page or
+  // observing request payloads; this event confers no browser or local-tool authority.
+  window.addEventListener('cos-resume-send-observer', installFetchObserver);
   window.addEventListener('message', (event) => {
     if (event.source === window && event.origin === location.origin && event.data?.type === 'cos-usage-request' && latest) post(latest, location.origin);
   });

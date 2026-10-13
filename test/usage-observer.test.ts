@@ -73,6 +73,7 @@ function harness() {
       return replacement;
     },
     ready: () => { document.readyState = 'interactive'; dispatch('DOMContentLoaded', {}); },
+    resumeSend: () => dispatch('cos-resume-send-observer', {}),
     currentFetch: () => window.fetch,
     holdNextBody: () => { let release = () => {}; nextBodyGate = new Promise<void>(resolve => { release = resolve; }); return () => release(); },
     advance: (ms: number) => { now += ms; },
@@ -228,6 +229,29 @@ describe('MAIN-world usage projection', () => {
     expect(h.posts).toEqual([
       { type: 'cos-request-origin', conversationId, requestIds: ['wfr_nested_wrapper'], observedAt: expect.any(Number) }
     ]);
+  });
+
+  it('restores early resume request evidence if the provider replaces fetch after DOM readiness', async () => {
+    const h = harness();
+    h.ready();
+    const replacement = h.replaceFetch();
+    expect(h.currentFetch()).toBe(replacement);
+    // The app has already armed the irreversible destination Send. Its isolated script
+    // re-arms the observer synchronously before the native click, not by a later timer.
+    h.resumeSend();
+    expect(h.currentFetch()).not.toBe(replacement);
+    const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const token = '0123456789abcdef0123456789abcdef';
+    await h.feedSse([
+      'data: ' + JSON.stringify({ type: 'stream_handoff', conversation_id: conversationId }) + '\n\n',
+      'data: ' + JSON.stringify({ type: 'input_message', input_message: { content: { parts: [`[[CLF-RESUME:${token}]]\n\ncarry the private handoff`] }, metadata: { request_id: 'wfr_resumed_early' } } }) + '\n\n'
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([
+      { type: 'cos-conversation-origin', conversationId, observedAt: expect.any(Number) },
+      { type: 'cos-resume-origin', conversationId, token, observedAt: expect.any(Number) },
+      { type: 'cos-request-origin', conversationId, requestIds: ['wfr_resumed_early'], observedAt: expect.any(Number) }
+    ]);
+    expect(JSON.stringify(h.posts)).not.toContain('private handoff');
   });
 
   it('supports the f/conversation endpoint and bounds request ids to sixteen per stream', async () => {
