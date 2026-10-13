@@ -327,7 +327,7 @@ const api = {
   openExtensionFolder: () => call<string>('bridge:openExtensionFolder'),
   setupStatus: () => call<SetupAssistantSnapshot>('setup:status'),
   completeSetup: () => call<AppState>('setup:complete'),
-  startGuidedSetup: (language: 'en' | 'sv-SE' | 'es-419') => call<SetupAssistantSnapshot>('setup:start', { language }),
+  startGuidedSetup: (language: 'en' | 'sv-SE' | 'es-419', automatic = false) => call<SetupAssistantSnapshot>('setup:start', { language, automatic }),
   stopGuidedSetup: () => call<SetupAssistantSnapshot>('setup:stop'),
   onSetupChanged: (listener: (snapshot: SetupAssistantSnapshot) => void): (() => void) => {
     const wrapped = (_event: unknown, snapshot: SetupAssistantSnapshot): void => listener(snapshot);

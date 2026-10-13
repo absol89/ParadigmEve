@@ -81,7 +81,9 @@ describe('extension release metadata', () => {
 
     expect(permissions).not.toEqual(expect.arrayContaining(['nativeMessaging', 'downloads', 'fileSystem']));
     expect(hosts.some(host => /^file:/i.test(host))).toBe(false);
-    expect(hosts.every(host => /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\//.test(host) ||
+    // platform.openai.com is only for opt-in automatic Guided setup (the tunnel and API key steps
+    // in background.js runSetupAutomation); nothing else runs there.
+    expect(hosts.every(host => /^https:\/\/(?:chatgpt\.com|chat\.openai\.com|platform\.openai\.com)\//.test(host) ||
       /^http:\/\/127\.0\.0\.1:876[5-9]\//.test(host))).toBe(true);
   });
 

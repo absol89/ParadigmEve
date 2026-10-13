@@ -2480,7 +2480,7 @@ $('guidedSetup').addEventListener('click', async () => {
     }
   }
 
-  const next = await run(api.startGuidedSetup(currentLanguage()));
+  const next = await run(api.startGuidedSetup(currentLanguage(), $<HTMLInputElement>('guidedSetupAutomatic').checked));
   if (next) {
     paintGuidedSetup(next);
   } else {

@@ -1817,4 +1817,61 @@ describe('ParadigmEve setup browser', () => {
     await guideAction(guideUrl, { action: 'stop' });
     await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);
   });
+
+  it('starts automatic Guided setup only after the human sign-in confirmation, then completes its ordered steps', async () => {
+    const setup = await modulePromise;
+    const automation = await import('../src/main/setup-automation.js');
+    const onCredentials = vi.fn().mockResolvedValue(undefined);
+    const pending = setup.startSetupAssistant({ ...baseOptions, automatic: true, onCredentials });
+    const guideUrl = await waitForGuideUrl();
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+    expect((await guideAction(guideUrl, { action: 'start' })).status).toBe(200);
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+    expect((await guideAction(guideUrl, { action: 'signed-in' })).status).toBe(200);
+
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('tunnel'));
+    const tunnel = automation.pendingCompanionSetupStep()!;
+    expect(automation.completeCompanionSetupStep({ id: tunnel.id, ok: true, result: { tunnelId: validTunnel } })).toBe(true);
+
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('api-key'));
+    const key = automation.pendingCompanionSetupStep()!;
+    expect(onCredentials).not.toHaveBeenCalled();
+    expect(automation.completeCompanionSetupStep({ id: key.id, ok: true, result: { apiKey: validKey } })).toBe(true);
+
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('chatgpt-app'));
+    expect(onCredentials).toHaveBeenCalledOnce();
+    expect(onCredentials).toHaveBeenCalledWith({ tunnelId: validTunnel, apiKey: validKey });
+    const plugin = automation.pendingCompanionSetupStep()!;
+    expect(plugin.params.tunnelId).toBe(validTunnel);
+    expect(automation.completeCompanionSetupStep({ id: plugin.id, ok: true, result: { appId: 'plugin_asdk_app_test' } })).toBe(true);
+
+    await expect(pending).resolves.toEqual({ tunnelId: validTunnel, apiKey: validKey });
+    expect(setup.setupAssistantSnapshot().stage).toBe('complete');
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+  });
+
+  it('keeps the manual guide available when an automatic step fails, and Stop retires its exact request', async () => {
+    const setup = await modulePromise;
+    const automation = await import('../src/main/setup-automation.js');
+    const pending = setup.startSetupAssistant({ ...baseOptions, automatic: true });
+    const guideUrl = await waitForGuideUrl();
+    await guideAction(guideUrl, { action: 'start' });
+    await guideAction(guideUrl, { action: 'signed-in' });
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('tunnel'));
+    const tunnel = automation.pendingCompanionSetupStep()!;
+    expect(automation.completeCompanionSetupStep({ id: tunnel.id, ok: false, error: 'Provider page changed' })).toBe(true);
+    const status = guideUrl.replace('/welcome/', '/status/');
+    await vi.waitFor(async () => {
+      const state = await (await fetch(status)).json();
+      expect(state.autoFailed).toBe(true);
+      expect(state.autoReason).toContain('Provider page changed');
+    });
+    expect(setup.setupAssistantSnapshot().running).toBe(true);
+    expect((await guideAction(guideUrl, { action: 'companion-done' })).status).toBe(200);
+    expect((await guideAction(guideUrl, { action: 'tunnel-id', tunnelId: validTunnel })).status).toBe(200);
+    await guideAction(guideUrl, { action: 'stop' });
+    await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+    expect(automation.completeCompanionSetupStep({ id: tunnel.id, ok: true, result: { tunnelId: validTunnel } })).toBe(false);
+  });
 });

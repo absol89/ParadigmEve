@@ -1892,5 +1892,15 @@
   "stepfun/step-5-preview": "stepfun/step-5-preview",
   "Open a new chat with this summary": "Öppna en ny chatt med den här sammanfattningen",
   "Opening a new chat with the saved summary": "Öppnar en ny chatt med den sparade sammanfattningen",
-  "This summary can no longer be used. Start Compact & Resume again.": "Den här sammanfattningen kan inte längre användas. Starta Komprimera och fortsätt igen."
+  "This summary can no longer be used. Start Compact & Resume again.": "Den här sammanfattningen kan inte längre användas. Starta Komprimera och fortsätt igen.",
+  "Eve is loading the Companion in this browser for you…": "Eve läser in Companion i den här webbläsaren åt dig…",
+  "Eve is creating your tunnel on platform.openai.com…": "Eve skapar din tunnel på platform.openai.com…",
+  "Eve is creating a restricted API key for your tunnel…": "Eve skapar en begränsad API-nyckel för din tunnel…",
+  "Eve is saving the connection and starting ParadigmEve…": "Eve sparar anslutningen och startar ParadigmEve…",
+  "Eve is adding the app to ChatGPT…": "Eve lägger till appen i ChatGPT…",
+  "Eve finished the setup steps. Verify one tool call to complete it.": "Eve är klar med installationsstegen. Verifiera ett verktygsanrop för att slutföra.",
+  "Eve could not finish this step automatically. Continue with the steps below.": "Eve kunde inte slutföra det här steget automatiskt. Fortsätt med stegen nedan.",
+  "Let Eve set things up for me": "Låt Eve ställa in allt åt mig",
+  "uses computer control": "använder datorstyrning",
+  "After you sign in to ChatGPT yourself, Eve loads the Companion, creates the tunnel and a restricted API key, and adds the app to ChatGPT, including ChatGPT’s “I understand” confirmation for your own ParadigmEve server. You can stop at any time; a step Eve cannot finish stays in the guide for you.": "När du själv har loggat in på ChatGPT läser Eve in Companion, skapar tunneln och en begränsad API-nyckel och lägger till appen i ChatGPT, inklusive ChatGPT:s bekräftelse ”Jag förstår” för din egen ParadigmEve-server. Du kan stoppa när som helst; ett steg som Eve inte kan slutföra finns kvar i guiden åt dig."
 }

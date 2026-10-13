@@ -3,10 +3,12 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { readFile } from 'node:fs/promises';
 import { app } from 'electron';
 import { findPreferredBrowser, selectedChatBrowser, WINDOWS_UNTHROTTLED_CHAT_FLAGS } from './browser.js';
 import { act, findUi, listWindows, type WindowInfo } from './computer/index.js';
 import { extensionDir } from './extension-path.js';
+import { cancelCompanionSetupStep, loadUnpackedCompanion, requestCompanionSetupStep } from './setup-automation.js';
 import { TUNNEL_ID_PATTERN } from './tunnel/index.js';
 import { GUIDE_COFFEE_ICON_DATA_URI } from './setup-guide-icon.js';
 import { guideTranslationTables, inlineScriptJson, normalizeGuideLanguage, type GuideLanguage } from './setup-guide-i18n.js';
@@ -32,6 +34,13 @@ export interface SetupAssistantStartOptions {
   connectorIconPath: string;
   /** Browser family selected in Settings for this guided run. Chrome remains the legacy default. */
   browser?: ChatBrowser;
+  /**
+   * The person opted in to automatic setup: after they confirm their own ChatGPT sign-in, ParadigmEve
+   * loads the Companion with the desktop helper and has the Companion create the tunnel, the
+   * restricted API key and the ChatGPT app (setup-automation.ts). Any step that does not complete
+   * leaves that step's manual instructions in place.
+   */
+  automatic?: boolean;
   /** Eve's UI language; the guide opens in it and offers a dropdown to switch. Defaults to English. */
   language?: GuideLanguage;
   /**
@@ -188,7 +197,7 @@ interface ManualProviderGuide {
   waitForCompletion: Promise<SetupAssistantCompletion>;
 }
 
-function manualProviderDocument(options: SetupAssistantStartOptions, extension: string, actionPath: string): string {
+function manualProviderDocument(options: SetupAssistantStartOptions, extension: string, actionPath: string, statusPath = ''): string {
   const browser = chatBrowserFamily(options.browser);
   const browserLabel = escapeHtml(browser.label);
   const extensionsUrl = escapeHtml(browser.extensionsUrl);
@@ -209,9 +218,10 @@ function manualProviderDocument(options: SetupAssistantStartOptions, extension: 
 <style>
 :root{color-scheme:dark;--navy:#07111f;--navy2:#0c2035;--gold:#e6c673;--gold2:#f4dda1;--text:#f8f4e8;--muted:#9fb0c4;--line:rgba(230,198,115,.22);--good:#91d7a8;--bad:#e5aab0}*{box-sizing:border-box}html,body{min-height:100%;margin:0}body{display:grid;place-items:center;padding:30px;font:16px/1.58 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at 50% 0,rgba(230,198,115,.14),transparent 34%),linear-gradient(145deg,#050c17,#07111f 48%,#0a1a2c)}main{width:min(1040px,100%);border:1px solid var(--line);border-radius:26px;padding:clamp(24px,4.5vw,48px);background:linear-gradient(155deg,rgba(18,42,69,.94),rgba(7,17,31,.97));box-shadow:0 28px 80px rgba(0,0,0,.4)}.brand{display:flex;align-items:center;gap:14px;color:var(--gold2);font-size:18px;font-weight:800;letter-spacing:.02em}.emblem{width:58px;height:58px;filter:drop-shadow(0 0 18px rgba(230,198,115,.18))}.journey{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:24px 0 12px}.journey button{min-height:64px;padding:10px 9px;border:1px solid rgba(159,176,196,.18);border-radius:12px;background:rgba(5,12,23,.42);color:#9fb0c4;text-align:left}.journey button:hover{border-color:rgba(230,198,115,.42);color:#e8edf3}.journey button.active{border-color:var(--gold);background:linear-gradient(180deg,rgba(230,198,115,.14),rgba(5,12,23,.58));color:#fff4d0;box-shadow:inset 0 0 0 1px rgba(230,198,115,.08)}.journey button.done .stepnum{background:#8bcf9f;border-color:#8bcf9f;color:#082013}.stepnum{display:grid;place-items:center;width:24px;height:24px;border:1px solid #536a81;border-radius:50%;margin-bottom:6px;font-size:12px}.stepname{display:block;font-size:11px;line-height:1.2;letter-spacing:.02em}.guidehint,.ownership{border:1px solid rgba(230,198,115,.14);border-radius:13px;background:rgba(5,12,23,.42);color:#aebdcd;font-size:12px;padding:11px 13px}.ownership{margin-top:9px}.ownership strong{color:#f3dfac}.previewnotice{margin:16px 0 0;border-left:3px solid var(--gold);border-radius:9px;background:rgba(230,198,115,.08);padding:10px 13px;color:#e9dfc3;font-size:13px}.phase{display:none}.phase.active{display:block}.phase.preview .actions,.phase.preview .fields,.phase.preview .launch,.phase.preview .copybtn{opacity:.48}.step{margin-top:24px;color:var(--gold);font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}h1{font:500 clamp(34px,6vw,54px)/1.05 Georgia,"Times New Roman",serif;margin:8px 0 22px;color:#fffaf0}.copy{max-width:78ch;color:#d8e0ea}.copy strong{color:#fff5db}.copy code{font:13px ui-monospace,SFMono-Regular,Consolas,monospace;color:#f7e7b5;background:#07111f;border:1px solid rgba(230,198,115,.18);border-radius:7px;padding:2px 6px}.substeps{display:grid;gap:14px;margin:24px 0}.substep{border:1px solid rgba(230,198,115,.14);background:rgba(5,12,23,.46);border-radius:16px;padding:17px 18px}.substep>b{display:block;color:var(--gold2);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}.launch{display:inline-flex;align-items:center;justify-content:center;margin-top:14px}.copyrow{display:grid;grid-template-columns:1fr auto;gap:9px;margin:10px 0}.copyvalue{white-space:pre-wrap;overflow-wrap:anywhere;background:#07111f;border:1px solid rgba(230,198,115,.18);border-radius:10px;padding:11px 13px;font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;color:#f7e7b5}.fields{margin-top:15px}.fields label{display:block;font-size:13px;font-weight:700}.secretrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin-top:7px}.fields input{display:block;width:100%;min-height:48px;border:1px solid #39526d;border-radius:12px;background:#07111f;color:#fff;padding:12px 14px;font:15px ui-monospace,SFMono-Regular,Consolas,monospace;outline:none}.fields input:focus{border-color:var(--gold)}.eyebtn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:86px;border:1px solid #4b6076;background:#10253d;color:#e7edf5}.eyeicon{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.safetyline{margin-top:9px;color:#a7b5c4;font-size:12px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}button{min-height:48px;padding:0 18px;border-radius:13px;font:750 14px/1.2 inherit;cursor:pointer}button:disabled{cursor:not-allowed;filter:saturate(.55);opacity:.52}.yes{border:1px solid var(--gold2);background:linear-gradient(180deg,#f2d98e,#d5ae50);color:#172132}.secondary{border:1px solid #48627d;background:#10253d;color:#e7edf5}.copybtn{border:1px solid #665a3b;background:#171c20;color:var(--gold2);min-height:44px}.no{border:1px solid #445a70;background:transparent;color:#bdc9d5}.status{min-height:20px;margin-top:14px;color:var(--muted);font-size:13px}.status.good{color:var(--good)}.status.bad{color:var(--bad)}.privacy{margin-top:24px;color:#8193a5;font-size:11px}@media(max-width:820px){.journey{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:700px){body{padding:14px}.copyrow,.secretrow{grid-template-columns:1fr}.journey{grid-template-columns:repeat(2,minmax(0,1fr))}.eyebtn{min-width:0}}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.lang{display:flex;align-items:center;gap:8px;padding:3px 6px 3px 10px;border:1px solid var(--line);border-radius:11px;background:rgba(5,12,23,.5)}.lang:focus-within{outline:2px solid var(--gold);outline-offset:2px}.lang .flag{width:26px;height:18px;border-radius:3px;box-shadow:0 0 0 1px rgba(255,255,255,.15)}.lang select{min-height:34px;border:0;background:transparent;color:var(--text);font:inherit;font-size:14px;cursor:pointer}.lang select option{background:#0a1626;color:var(--text)}
+.autobanner{margin:16px 0 0;padding:12px 16px;border:1px solid var(--gold);border-radius:14px;background:rgba(230,198,115,.08);color:var(--gold2);font-weight:600}.autobanner.bad{border-color:var(--bad);color:var(--bad)}.autobanner .reason{display:block;margin-top:4px;font-weight:400;color:var(--muted)}
 </style></head><body><main><div class="topbar"><div class="brand">${GUIDE_EMBLEM}<span>ParadigmEve · Guided setup</span></div><label class="lang"><svg class="flag" id="langFlag" viewBox="0 0 26 18" aria-hidden="true"></svg><select id="guideLanguage" aria-label="Language"><option value="en">English</option><option value="sv-SE">Svenska</option><option value="es-419">Español (Latinoamérica)</option></select></label></div>
 <nav class="journey" aria-label="Setup steps"><button type="button" data-guide-step="1"><span class="stepnum">1</span><span class="stepname">ChatGPT</span></button><button type="button" data-guide-step="2"><span class="stepnum">2</span><span class="stepname">Companion</span></button><button type="button" data-guide-step="3"><span class="stepnum">3</span><span class="stepname">Tunnel</span></button><button type="button" data-guide-step="4"><span class="stepnum">4</span><span class="stepname">API key</span></button><button type="button" data-guide-step="5"><span class="stepnum">5</span><span class="stepname">Connection</span></button><button type="button" data-guide-step="6"><span class="stepnum">6</span><span class="stepname">ChatGPT app</span></button></nav>
-<div class="guidehint">You can click steps 1–6 at any time to preview what comes next or revisit an earlier step. Future-step controls stay locked until the required earlier actions are complete.</div><div class="ownership"><strong>Recording or livestreaming?</strong> Tunnel ID and API key stay masked by default and re-mask when you change steps. Reveal them only when you need to check them. This ${browserLabel} guide collects setup values; the ParadigmEve app owns encrypted credential storage and local permission enforcement.</div><div class="previewnotice" id="previewNotice" hidden>Preview only — finish the earlier setup steps before using the controls on this page.</div>
+<div class="guidehint">You can click steps 1–6 at any time to preview what comes next or revisit an earlier step. Future-step controls stay locked until the required earlier actions are complete.</div><div class="ownership"><strong>Recording or livestreaming?</strong> Tunnel ID and API key stay masked by default and re-mask when you change steps. Reveal them only when you need to check them. This ${browserLabel} guide collects setup values; the ParadigmEve app owns encrypted credential storage and local permission enforcement.</div><div class="autobanner" id="autoBanner" role="status" hidden><span id="autoMessage"></span><span class="reason" id="autoReason"></span></div><div class="previewnotice" id="previewNotice" hidden>Preview only — finish the earlier setup steps before using the controls on this page.</div>
 <section class="phase active" id="phase1"><div class="step">Step 1 / 6 · ChatGPT</div><h1>Keep the conversation. Lose the busywork.</h1><div class="copy"><p>ParadigmEve lets you keep using <strong>ChatGPT the way you already prefer</strong> — typing, dictating or speaking naturally — while giving that conversation a little more ability to help on this PC.</p><p>Instead of constantly copying text between apps, switching windows, finding files or turning every request into computer instructions yourself, ChatGPT can take on more of those steps for you. Longer tasks can keep working while this PC is on, and the same approach can be especially helpful if typing or precise navigation is difficult.</p><p>This setup uses a <strong>dedicated ParadigmEve ${browserLabel} profile</strong>. Your normal ${browserLabel} profile is not modified. <strong>No provider page opens until you choose YES.</strong></p></div><div class="actions"><button class="yes" id="start">YES — Connect ChatGPT</button><button class="no stop">NO — Stop setup</button></div></section>
 <section class="phase" id="phase2"><div class="step">Step 1 / 6 · ChatGPT</div><h1>Sign in normally</h1><div class="copy"><p>Complete ChatGPT sign-in in the other tab. When your account is fully loaded, return here.</p></div><div class="actions"><button class="yes" id="signedIn">I’M SIGNED IN — Continue</button><button class="no stop">NO — Stop setup</button></div><div class="status">No browser automation is active.</div></section>
 <section class="phase" id="phase3"><div class="step">Step 2 / 6 · Companion</div><h1>Add the ParadigmEve Companion</h1><div class="copy"><p>The Companion is what gives stateful Computer use and agent/session features exact proof of <strong>which ChatGPT conversation made a request</strong>. Loading the extension card is not enough: ParadigmEve verifies a live authenticated check-in before setup can continue.</p><div class="substeps"><div class="substep"><b>1 / 4 · Open extensions</b>Open the Extensions page in the <strong>same dedicated ParadigmEve ${browserLabel} profile</strong> this setup is already using.<div><button class="yes launch" id="openBrowserExtensions">OPEN EXTENSIONS PAGE</button></div><div class="copyrow"><div class="copyvalue" id="extensionsUrl">${extensionsUrl}</div><button class="copybtn" data-copy="extensionsUrl">Copy address instead</button></div></div><div class="substep"><b>2 / 4 · Load unpacked</b>Turn on <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and select this exact folder:<div class="copyrow"><div class="copyvalue" id="extensionPath">${extensionPath}</div><button class="copybtn" data-copy="extensionPath">Copy folder</button></div></div><div class="substep"><b>3 / 4 · Open a fresh ChatGPT tab</b>After the extension appears, open a <strong>fresh ChatGPT tab</strong> in this same profile so the Companion is injected into a page created after installation.<div><button class="yes launch" id="openFreshChatgpt">OPEN FRESH CHATGPT TAB</button></div></div><div class="substep"><b>4 / 4 · Verify the live connection</b>Wait for ChatGPT to finish loading, then verify. ParadigmEve will only continue after it has actually heard from the authenticated Companion.</div></div></div><div class="actions"><button class="yes" id="companionDone">VERIFY COMPANION — Continue</button><button class="no stop">NO — Stop setup</button></div><div class="status" id="companionStatus"></div></section>
@@ -222,7 +232,7 @@ function manualProviderDocument(options: SetupAssistantStartOptions, extension: 
 <section class="phase" id="phase8"><div class="step">App saved</div><h1>Verify one tool call</h1><div class="copy"><p>The tunnel, API key, ChatGPT app and Companion are configured. Return to a fresh ChatGPT conversation and ask it to run one low-risk ${name} tool. ParadigmEve marks first-run setup complete only after that recognized tool call reaches the required app.</p><p>You do not need to enable Computer use or <strong>Allow all actions</strong> for this verification.</p></div><div class="status good">You can return to the ParadigmEve app while you verify.</div></section>
 <div class="privacy">Dedicated ParadigmEve ${browserLabel} profile · provider pages remain ordinary ${browserLabel} · local secrets are stored by the ParadigmEve app</div></main>
 <script>
-const actionPath=${JSON.stringify(actionPath)};let lang=${initialLanguage};const TABLES=${translationTables};const T=s=>lang!=='en'&&Object.hasOwn(TABLES[lang],s)?TABLES[lang][s]:s;const phaseStep={1:1,2:1,3:2,4:3,5:4,6:5,7:6,8:6};let started=false,unlockedStep=1;const phaseForStep=step=>step===1?(started?2:1):({2:3,3:4,4:5,5:6,6:7})[step];const maskSecrets=()=>{for(const input of document.querySelectorAll('[data-secret-label]'))input.type='password';for(const button of document.querySelectorAll('[data-secret-toggle]')){button.setAttribute('aria-pressed','false');button.setAttribute('aria-label',T('Show ')+T(document.getElementById(button.dataset.secretToggle).dataset.secretLabel));button.querySelector('.toggleLabel').textContent=T('Show')}};const show=n=>{maskSecrets();for(let i=1;i<=8;i++)document.getElementById('phase'+i).classList.toggle('active',i===n);const step=phaseStep[n]||1;const locked=step>unlockedStep;const phase=document.getElementById('phase'+n);phase.classList.toggle('preview',locked);for(const control of phase.querySelectorAll('button:not(.stop),input'))control.disabled=locked;const preview=document.getElementById('previewNotice');preview.hidden=!locked;for(const button of document.querySelectorAll('[data-guide-step]')){const buttonStep=Number(button.dataset.guideStep);button.classList.toggle('active',buttonStep===step);button.classList.toggle('done',buttonStep<unlockedStep);if(buttonStep===step)button.setAttribute('aria-current','step');else button.removeAttribute('aria-current')}};const unlock=step=>{unlockedStep=Math.max(unlockedStep,step)};const task=url=>window.open(url,'paradigmeve-task');
+const actionPath=${JSON.stringify(actionPath)};const statusPath=${JSON.stringify(statusPath)};const AUTO=${JSON.stringify(options.automatic === true)};let lang=${initialLanguage};const TABLES=${translationTables};const T=s=>lang!=='en'&&Object.hasOwn(TABLES[lang],s)?TABLES[lang][s]:s;const phaseStep={1:1,2:1,3:2,4:3,5:4,6:5,7:6,8:6};let started=false,unlockedStep=1;const phaseForStep=step=>step===1?(started?2:1):({2:3,3:4,4:5,5:6,6:7})[step];const maskSecrets=()=>{for(const input of document.querySelectorAll('[data-secret-label]'))input.type='password';for(const button of document.querySelectorAll('[data-secret-toggle]')){button.setAttribute('aria-pressed','false');button.setAttribute('aria-label',T('Show ')+T(document.getElementById(button.dataset.secretToggle).dataset.secretLabel));button.querySelector('.toggleLabel').textContent=T('Show')}};const show=n=>{maskSecrets();for(let i=1;i<=8;i++)document.getElementById('phase'+i).classList.toggle('active',i===n);const step=phaseStep[n]||1;const locked=step>unlockedStep;const phase=document.getElementById('phase'+n);phase.classList.toggle('preview',locked);for(const control of phase.querySelectorAll('button:not(.stop),input'))control.disabled=locked;const preview=document.getElementById('previewNotice');preview.hidden=!locked;for(const button of document.querySelectorAll('[data-guide-step]')){const buttonStep=Number(button.dataset.guideStep);button.classList.toggle('active',buttonStep===step);button.classList.toggle('done',buttonStep<unlockedStep);if(buttonStep===step)button.setAttribute('aria-current','step');else button.removeAttribute('aria-current')}};const unlock=step=>{unlockedStep=Math.max(unlockedStep,step)};const task=url=>window.open(url,'paradigmeve-task');
 const post=async payload=>{const response=await fetch(actionPath,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok||data.ok===false)throw new Error(data.error||T('ParadigmEve could not continue this step.'));return data};
 const setStatus=(id,text,kind='')=>{const node=document.getElementById(id);node.textContent=text;node.className='status '+kind};const copyText=async text=>{try{await navigator.clipboard.writeText(text);return true}catch{const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();const ok=document.execCommand('copy');area.remove();return ok}};
 for(const button of document.querySelectorAll('[data-copy]'))button.addEventListener('click',async()=>{const original=button.textContent;const source=document.getElementById(button.dataset.copy);button.textContent=await copyText(source.textContent||'')?T('Copied ✓'):T('Select and copy');setTimeout(()=>button.textContent=original,1400)});
@@ -240,6 +250,7 @@ for(const r of records){if(!r.n.isConnected){const c=r.parent.firstChild;if(c&&c
 for(const r of attrRecords){const v=Object.hasOwn(table,r.orig)?table[r.orig]:r.orig;if(r.el.getAttribute(r.a)===r.shown){r.el.setAttribute(r.a,v);r.shown=v}}
 document.title=T(titleEn);refreshSecrets();picker.value=next;flag.innerHTML=FLAGS[next]};
 picker.addEventListener('change',()=>applyLanguage(picker.value==='sv-SE'||picker.value==='es-419'?picker.value:'en'));applyLanguage(lang);
+if(AUTO&&statusPath){const stagePhase={'extension':3,'openai-tunnel':4,'openai-api-key':5,'credentials':6,'chatgpt-plugins':7,'complete':8};let shownAuto=0;const banner=document.getElementById('autoBanner');const poll=async()=>{try{const response=await fetch(statusPath,{cache:'no-store'});if(!response.ok)return;const state=await response.json();banner.hidden=!state.autoMessage;banner.classList.toggle('bad',state.autoFailed===true);document.getElementById('autoMessage').textContent=state.autoMessage?T(state.autoMessage):'';document.getElementById('autoReason').textContent=state.autoReason||'';const phase=stagePhase[state.stage];if(state.autoActive&&phase&&phase>shownAuto){shownAuto=phase;unlock(phaseStep[phase]);show(phase)}}catch{}};setInterval(poll,1500);void poll()}
 </script></body></html>`;
 }
 
@@ -281,8 +292,9 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
 
   const nonce = randomBytes(16).toString('hex');
   const actionPath = `/action/${nonce}`;
+  const statusPath = `/status/${nonce}`;
   const welcomePath = `/welcome/${nonce}`;
-  const html = manualProviderDocument(options, extension, actionPath);
+  const html = manualProviderDocument(options, extension, actionPath, statusPath);
   let tunnelId = '';
   let completion: SetupAssistantCompletion | null = null;
   let started = false;
@@ -290,6 +302,67 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
   let companionVerified = false;
   let coreAppStarted = false;
   let actionInFlight: string | null = null;
+  // Automatic setup progress for the guide's banner. The reason is the failing step's own message
+  // (never a secret); the message is one of the fixed, translated automatic-setup texts.
+  const auto = { active: false, message: '', reason: '', failed: false };
+  const progress = (message: string) => { auto.message = message; auto.reason = ''; auto.failed = false; };
+  const runAutomatic = async () => {
+    auto.active = true;
+    try {
+      if (!(await options.companionPresent())) {
+        progress("Eve is loading the Companion in this browser for you…");
+        await openSetupAssistantLink(chatBrowserFamily(run.browser).extensionsUrl);
+        requireActiveRun(run);
+        const loaded = await loadUnpackedCompanion({ extensionPath: extension, isEveBrowserWindow: window => dedicatedParadigmEveChromeWindow(window, run.browser) });
+        requireActiveRun(run);
+        if (!loaded) throw new Error('The extensions page did not accept the Companion folder.');
+        await openSetupAssistantLink(CHATGPT_URL);
+        const deadline = Date.now() + 60_000;
+        while (!(await options.companionPresent())) {
+          requireActiveRun(run);
+          if (Date.now() >= deadline) throw new Error('The Companion was loaded but has not checked in.');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      requireActiveRun(run);
+      companionVerified = true;
+      progress("Eve is creating your tunnel on platform.openai.com…");
+      update('openai-tunnel', `Companion connected. Eve is creating the ${options.coreConnectorName} tunnel.`);
+      const tunnel = await requestCompanionSetupStep('tunnel', { name: options.coreConnectorName, description: options.coreConnectorDescription });
+      requireActiveRun(run);
+      const createdTunnel = typeof tunnel.tunnelId === 'string' ? tunnel.tunnelId : '';
+      if (!TUNNEL_ID_PATTERN.test(createdTunnel)) throw new Error('The tunnel page returned no valid Tunnel ID.');
+      tunnelId = createdTunnel;
+      progress("Eve is creating a restricted API key for your tunnel…");
+      update('openai-api-key', 'Eve is creating the restricted tunnel API key.');
+      const key = await requestCompanionSetupStep('api-key', { name: 'ParadigmEve' });
+      requireActiveRun(run);
+      const apiKey = typeof key.apiKey === 'string' ? key.apiKey.trim() : '';
+      if (!API_KEY_PATTERN.test(apiKey) || apiKey.length > 500) throw new Error('The API keys page returned no valid key.');
+      const candidateCompletion = { tunnelId, apiKey };
+      progress("Eve is saving the connection and starting ParadigmEve…");
+      update('credentials', 'Saving the connection credentials and starting ParadigmEve.');
+      await options.onCredentials?.(candidateCompletion);
+      requireActiveRun(run);
+      completion = candidateCompletion;
+      coreAppStarted = true;
+      progress("Eve is adding the app to ChatGPT…");
+      update('chatgpt-plugins', `Eve is adding the ${options.coreConnectorName} app in ChatGPT.`);
+      // ChatGPT accepts a PNG icon up to 10 KB; a larger or missing icon is simply left out.
+      const icon = await readFile(options.connectorIconPath).catch(() => null);
+      const iconBase64 = icon && icon.length <= 10_000 ? icon.toString('base64') : null;
+      await requestCompanionSetupStep('chatgpt-app', { name: options.coreConnectorName, description: options.coreConnectorDescription, tunnelId, iconBase64 });
+      requireActiveRun(run);
+      progress("Eve finished the setup steps. Verify one tool call to complete it.");
+      run.cancelManualSignIn = null;
+      resolveCompletion(completion);
+    } catch (error) {
+      if (error instanceof SetupAssistantStoppedError || run.stopping || current !== run) return;
+      auto.message = "Eve could not finish this step automatically. Continue with the steps below.";
+      auto.reason = setupErrorMessage(error, [tunnelId]);
+      auto.failed = true;
+    }
+  };
 
   const server = createServer((request, response) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -312,6 +385,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
           const action = typeof payload.action === 'string' ? payload.action : '';
           if (action === 'stop') {
             run.stopping = true;
+            cancelCompanionSetupStep();
           } else {
             requireActiveRun(run);
             if (actionInFlight) {
@@ -331,6 +405,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
             }
             signedIn = true;
             update('extension', 'Load the ParadigmEve Companion in this dedicated Eve Browser profile before creating the connector.');
+            if (options.automatic && !auto.active) void runAutomatic();
           } else if (action === 'open-extensions') {
             if (!signedIn) {
               sendGuideJson(response, 409, { ok: false, error: 'Sign in to ChatGPT before opening the Companion setup.' });
@@ -433,6 +508,13 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
           if (claimedAction !== null && actionInFlight === claimedAction) actionInFlight = null;
         }
       })();
+      return;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === statusPath) {
+      const address = server.address() as AddressInfo;
+      if (request.headers.host !== `127.0.0.1:${address.port}`) { sendGuideJson(response, 403, { ok: false }); return; }
+      sendGuideJson(response, 200, { ok: true, stage: setupAssistantSnapshot().stage, autoActive: auto.active, autoMessage: auto.message,
+        autoReason: auto.reason, autoFailed: auto.failed });
       return;
     }
     if (request.method === 'GET' && requestUrl.pathname === welcomePath) {
@@ -1223,6 +1305,7 @@ function validateOptions(options: SetupAssistantStartOptions): SetupAssistantSta
     connectorIconPath,
     browser,
     language: normalizeGuideLanguage(options.language),
+    automatic: options.automatic === true,
     preflight: options.preflight,
     companionPresent: options.companionPresent,
     onCredentials: options.onCredentials,
@@ -1233,6 +1316,9 @@ async function closeRun(run: Run): Promise<void> {
   if (run.closePromise) return run.closePromise;
   const closing = (async () => {
     run.abort.abort();
+    // A closed guide must retire its exact Companion request. Otherwise a late browser
+    // result can satisfy an abandoned setup step after Stop or a browser launch failure.
+    cancelCompanionSetupStep();
     const loginGuideServer = run.loginGuideServer;
     run.cancelManualSignIn?.();
     run.cancelManualSignIn = null;

@@ -6,11 +6,13 @@ import { MAX_CHATGPT_MESSAGE_CHARS, userPromptText } from '../shared/user-prompt
 import { authoredPinsReferences } from '../shared/pins-intent.js';
 import { prepareSessionPrompt } from './session/prompt.js';
 import { pendingChatModelRequest, observeChatModels, requestChatModels } from './chat-models.js';
+import { completeCompanionSetupStep, configureSetupAutomation, pendingCompanionSetupStep } from './setup-automation.js';
 import { isProModel } from '../shared/chat-models.js';
 import type { SessionSummary } from '../shared/session.js';
 import { publishBrowserDecision, authorizeBrowserInput, noteBrowserReady, noteBrowserInputsOffered, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
 import { pendingPluginRefreshes, claimPluginRefresh, requireManualPluginRefresh, completePluginRefresh, failPluginRefresh } from './plugin-refresh.js';
 import { attachBrowserWake, wakeBrowserWork } from './browser-wake.js';
+configureSetupAutomation({ wake: () => wakeBrowserWork() });
 import { wakeBrowserUrl } from './browser-startup.js';
 let browserWake: ReturnType<typeof attachBrowserWake> | null = null;
 import { browserWindowBounds, currentBrowserWorkArea } from './browser-window-layout.js';
@@ -2181,6 +2183,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (accepted) changed();
     return json(res, accepted ? 200 : 409, { ok: accepted }, origin);
   }
+  // One automatic Guided setup step's result (setup-automation.ts). The API key arrives here only
+  // over this authenticated local bridge and goes straight to the waiting setup run.
+  if (route === '/setup-automation' && req.method === 'POST') {
+    const accepted = completeCompanionSetupStep(await readBody(req));
+    return json(res, accepted ? 200 : 409, { ok: accepted }, origin);
+  }
   if (route === '/plugin-refresh' && req.method === 'POST') {
     const raw = await readBody(req);
     const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -2303,6 +2311,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         conversations: live,
         stopTurns: await pendingStopCommands(),
         modelCatalogRequest: pendingChatModelRequest(),
+        setupAutomation: pendingCompanionSetupStep(),
         pluginRefreshRequests: (await pendingPluginRefreshes())
           .filter(request => getConfig().ui.autoRefreshPlugins === true || request.verifyOnly || request.appId === null || request.required)
           .map(({ surface, schemaId, connectorName }) => ({ surface, schemaId, connectorName })),

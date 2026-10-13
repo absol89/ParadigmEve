@@ -2530,6 +2530,235 @@ async function releaseModelCatalogTarget(nonce) {
   }
 }
 
+/**
+ * Automatic Guided setup (src/main/setup-automation.ts). The app publishes one step at a time on
+ * the status poll; this runs that step's fixed script in the right page and posts the result back
+ * over the authenticated local bridge. The browser stays an ordinary browser: no automation mode,
+ * nothing a sign-in page can tell apart from a person using an extension. Sign-in is never scripted.
+ */
+let setupAutomationFlight = null;
+const setupAutomationFinished = new Set();
+const SETUP_STEP_PAGES = {
+  tunnel: 'https://platform.openai.com/settings/organization/tunnels',
+  'api-key': 'https://platform.openai.com/settings/organization/api-keys',
+  'chatgpt-app': 'https://chatgpt.com/plugins'
+};
+
+/** The step's page in this browser, opened in the foreground so the person can watch it happen. */
+async function setupStepTab(step) {
+  const target = new URL(SETUP_STEP_PAGES[step]);
+  const tabs = await chrome.tabs.query({ url: `${target.origin}/*` });
+  let tab = tabs.find(candidate => {
+    try { return new URL(candidate.url || '').pathname === target.pathname; } catch { return false; }
+  });
+  if (tab) await chrome.tabs.update(tab.id, { active: true });
+  else tab = await chrome.tabs.create({ url: target.href, active: true });
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    const current = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!current) throw new Error('The setup tab was closed.');
+    let url = null;
+    try { url = new URL(current.url || current.pendingUrl || ''); } catch { /* still loading */ }
+    if (current.status === 'complete' && url) {
+      if (url.origin === target.origin && url.pathname === target.pathname) return current.id;
+      // Sign-in is the person's: a login page means this browser is not signed in there yet.
+      if (/(^|\.)auth\.openai\.com$/.test(url.hostname) || /\/(log-?in|auth)/.test(url.pathname)) {
+        throw new Error(`Sign in at ${target.hostname} in this browser first, then try again.`);
+      }
+    }
+    if (Date.now() >= deadline) throw new Error(`${target.hostname} did not finish loading.`);
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
+}
+
+/**
+ * One setup step, run inside the provider page. Self-contained: it is serialized into the page by
+ * chrome.scripting, so it may only use its arguments and the page's DOM. Element choices are the
+ * ones read from the live pages on 2026-10-13 (visible labels, ARIA names and native ids; their CSS
+ * class names are generated and change between deployments).
+ */
+async function setupPageStep(step, params) {
+  const run = async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const waitFor = async (read, ms, what) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const value = read();
+      if (value) return value;
+      if (Date.now() >= deadline) throw new Error(`${what} did not appear.`);
+      await sleep(200);
+    }
+  };
+  const text = node => (node?.innerText || node?.textContent || '').replace(/\s+/g, ' ').trim();
+  const visible = node => !!node && node.getClientRects().length > 0 && !node.closest('[hidden],[aria-hidden="true"],[inert]');
+  const button = (root, label) => [...root.querySelectorAll('button,[role="button"]')].find(node => visible(node) && text(node) === label) || null;
+  const dialogWith = title => [...document.querySelectorAll('[role="dialog"]')].reverse().find(node => visible(node) && text(node).startsWith(title)) || null;
+  const press = node => {
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+      node.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type, { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
+    }
+    node.click();
+  };
+  const setValue = (node, value) => {
+    const proto = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+      : node instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(node, value);
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const enter = node => {
+    node.focus();
+    node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+  };
+
+  if (step === 'tunnel') {
+    const create = await waitFor(() => button(document, 'Create tunnel'), 20000, 'The Create tunnel button');
+    const tunnelOfRow = row => (text(row).match(/tunnel_[0-9a-f]{32}/) || [])[0] || null;
+    const nameOfRow = row => {
+      const cell = row.cells?.[0];
+      const leaf = cell && [...cell.querySelectorAll('*')].find(node => !node.children.length && text(node));
+      return leaf ? text(leaf) : text(cell);
+    };
+    const rows = () => [...document.querySelectorAll('main table tbody tr')];
+    // A tunnel this setup already made (a retry, or a re-run) is reused instead of duplicated.
+    const existing = rows().find(row => nameOfRow(row) === params.name && tunnelOfRow(row));
+    if (existing) return { tunnelId: tunnelOfRow(existing), reused: true };
+    const before = new Set(rows().map(tunnelOfRow).filter(Boolean));
+    press(create);
+    const dialog = await waitFor(() => dialogWith('Create tunnel'), 8000, 'The Create tunnel form');
+    const name = [...dialog.querySelectorAll('input[type="text"]')].find(node => !/search/i.test(node.getAttribute('placeholder') || ''));
+    const description = dialog.querySelector('textarea');
+    if (!name || !description) throw new Error('The Create tunnel form changed.');
+    setValue(name, params.name);
+    setValue(description, params.description);
+    const workspace = dialog.querySelector('input[placeholder^="Search workspaces"]') ||
+      [...dialog.querySelectorAll('input[role="combobox"]')].pop();
+    if (!workspace) throw new Error('The ChatGPT workspace field is missing.');
+    press(workspace);
+    workspace.focus();
+    const options = await waitFor(() => {
+      const found = [...document.querySelectorAll('[role="option"][id^="select-option-"]')].filter(visible);
+      return found.length ? found : null;
+    }, 6000, 'The ChatGPT workspace list');
+    // More than one workspace is the person's choice; one is the only answer.
+    if (options.length !== 1) throw new Error('Choose the ChatGPT workspace for this tunnel yourself, then continue in the guide.');
+    press(options[0]);
+    await sleep(400);
+    const submit = button(dialog, 'Create');
+    if (!submit || submit.disabled) throw new Error('The tunnel could not be created with these details.');
+    press(submit);
+    const row = await waitFor(() => rows().find(candidate => {
+      const id = tunnelOfRow(candidate);
+      return id && !before.has(id) && nameOfRow(candidate) === params.name;
+    }), 20000, 'The new tunnel');
+    return { tunnelId: tunnelOfRow(row), reused: false };
+  }
+
+  if (step === 'api-key') {
+    const create = await waitFor(() => button(document, 'Create new secret key'), 20000, 'The Create new secret key button');
+    press(create);
+    const dialog = await waitFor(() => dialogWith('Create new secret key'), 8000, 'The Create new secret key form');
+    const radio = label => [...dialog.querySelectorAll('[role="radio"]')].find(node => text(node) === label);
+    const owner = radio('You');
+    if (owner && owner.getAttribute('aria-checked') !== 'true') press(owner);
+    const name = dialog.querySelector('input[placeholder="My Test Key"]') || dialog.querySelector('input[type="text"]');
+    if (!name) throw new Error('The API key name field is missing.');
+    setValue(name, params.name);
+    const restricted = radio('Restricted');
+    if (!restricted) throw new Error('The Restricted permission option is missing.');
+    press(restricted);
+    // Restricted must leave exactly Tunnels' two permissions (Read and Use), on the default project.
+    await waitFor(() => /\bTunnels\s+All selected\b/.test(text(dialog)) && /\b2 selected permissions\b/.test(text(dialog)), 6000,
+      'The Tunnels permission');
+    if (!/\bDefault project\b/.test(text(dialog))) throw new Error('Choose the API key project yourself, then continue in the guide.');
+    const submit = [...dialog.querySelectorAll('button[type="submit"]')].find(node => text(node) === 'Create secret key');
+    if (!submit || submit.disabled) throw new Error('The API key could not be created with these settings.');
+    press(submit);
+    // OpenAI shows the new key once. It goes straight back to the app, never into the page or a log.
+    const key = await waitFor(() => {
+      for (const node of document.querySelectorAll('[role="dialog"] input, [role="dialog"] textarea, [role="dialog"] code, [role="dialog"] pre, [role="dialog"] span, [role="dialog"] div')) {
+        const value = node.value || (node.children.length ? '' : node.textContent || '');
+        const match = String(value).trim().match(/^sk-[A-Za-z0-9_-]{20,}$/);
+        if (match) return match[0];
+      }
+      return null;
+    }, 20000, 'The new API key');
+    const done = [...document.querySelectorAll('[role="dialog"] button')].find(node => /^(done|close)$/i.test(text(node)));
+    if (done) press(done);
+    return { apiKey: key };
+  }
+
+  if (step === 'chatgpt-app') {
+    const add = await waitFor(() => [...document.querySelectorAll('button[aria-label="Add"][aria-haspopup="menu"]')].find(visible), 20000, 'The Plugins Add button');
+    enter(add);
+    const item = await waitFor(() => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].find(node => text(node) === 'Add custom MCP server'), 6000,
+      'Add custom MCP server');
+    enter(item);
+    item.click();
+    const dialog = await waitFor(() => dialogWith('Add custom MCP server'), 8000, 'The Add custom MCP server form');
+    if (params.iconBase64) {
+      const input = dialog.querySelector('input[type="file"][name="app-icon"]');
+      if (input) {
+        const bytes = Uint8Array.from(atob(params.iconBase64), char => char.charCodeAt(0));
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([bytes], 'icon.png', { type: 'image/png' }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    const name = dialog.querySelector('input[placeholder="Custom Tool"]');
+    const description = dialog.querySelector('textarea');
+    if (!name || !description) throw new Error('The Add custom MCP server form changed.');
+    setValue(name, params.name);
+    setValue(description, params.description);
+    const connection = dialog.querySelector('[role="group"][aria-label="Connection"]');
+    const tunnel = connection && [...connection.querySelectorAll('button')].find(node => text(node) === 'Tunnel');
+    if (!tunnel) throw new Error('The Tunnel connection option is missing.');
+    press(tunnel);
+    const tunnelId = await waitFor(() => dialog.querySelector('input[aria-label="Tunnel ID"]'), 5000, 'The Tunnel ID field');
+    setValue(tunnelId, params.tunnelId);
+    const auth = dialog.querySelector('select');
+    if (!auth || ![...auth.options].some(option => option.value === 'NONE')) throw new Error('The No authentication option is missing.');
+    setValue(auth, 'NONE');
+    // "I understand and want to continue": the person opted in to setting up their own ParadigmEve server.
+    const understand = dialog.querySelector('[role="checkbox"]');
+    if (!understand) throw new Error('The confirmation checkbox is missing.');
+    if (understand.getAttribute('aria-checked') !== 'true') press(understand);
+    await waitFor(() => understand.getAttribute('aria-checked') === 'true', 3000, 'The confirmation');
+    const submit = [...dialog.querySelectorAll('button[type="submit"]')].find(node => text(node) === 'Create as a plugin');
+    if (!submit) throw new Error('The Create as a plugin button is missing.');
+    await waitFor(() => !submit.disabled, 5000, 'An enabled Create as a plugin button');
+    press(submit);
+    await waitFor(() => !dialog.isConnected || !visible(dialog), 30000, 'The saved plugin');
+    const appId = (location.pathname.match(/plugin_(asdk_app_[a-zA-Z0-9_-]+)/) || [])[1] || null;
+    return { appId };
+  }
+  throw new Error('Unknown setup step.');
+  };
+  try { return { ok: true, result: await run() }; }
+  catch (error) { return { ok: false, error: String((error && error.message) || error).slice(0, 300) }; }
+}
+
+function runSetupAutomation(request) {
+  if (setupAutomationFlight || !request || typeof request.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(request.id) ||
+      !Object.hasOwn(SETUP_STEP_PAGES, request.step) || setupAutomationFinished.has(request.id)) return setupAutomationFlight;
+  setupAutomationFlight = (async () => {
+    let body;
+    try {
+      const tabId = await setupStepTab(request.step);
+      const [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: setupPageStep, args: [request.step, request.params || {}] });
+      const answer = injection && injection.result;
+      if (!answer || typeof answer !== 'object') throw new Error('The setup page did not answer.');
+      body = answer.ok === true ? { id: request.id, ok: true, result: answer.result } : { id: request.id, ok: false, error: String(answer.error || 'The setup step failed.') };
+    } catch (error) {
+      body = { id: request.id, ok: false, error: String(error?.message || error).slice(0, 300) };
+    }
+    setupAutomationFinished.add(request.id);
+    await call('/setup-automation', { method: 'POST', body: JSON.stringify(body) }).catch(() => undefined);
+  })().finally(() => { setupAutomationFlight = null; });
+  return setupAutomationFlight;
+}
+
 let pluginRefreshFlight = null;
 const PLUGIN_REFRESH_MARKER = 'eve-plugin-refresh';
 const LEGACY_PLUGIN_REFRESH_MARKER = 'cos-plugin-refresh';
@@ -2995,6 +3224,8 @@ async function maintainOnce() {
   const inputs = Array.isArray(reply.data.inputs)
     ? reply.data.inputs.filter(input => !repairConversations.has(cleanConversationId(input?.conversationId)))
     : reply.data.inputs;
+  // Automatic Guided setup runs only while the person's setup run asked for a step.
+  void runSetupAutomation(reply.data.setupAutomation);
   const inputBrowserPrioritySpent = await deliverDesktopInputs(inputs, reply.data.background === true, reply.data.reusableConversations, reply.data.inputOpeningIds);
   // Authored/recovery input owns browser-opening priority for this maintenance pass. Model catalog
   // discovery and Plugins schema refresh are auxiliary maintenance and may themselves create a

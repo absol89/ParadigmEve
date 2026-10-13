@@ -1886,5 +1886,15 @@
   "stepfun/step-5-preview": "stepfun/step-5-preview",
   "Open a new chat with this summary": "Abrir un chat nuevo con este resumen",
   "Opening a new chat with the saved summary": "Abriendo un chat nuevo con el resumen guardado",
-  "This summary can no longer be used. Start Compact & Resume again.": "Este resumen ya no se puede usar. Vuelve a iniciar Compactar y reanudar."
+  "This summary can no longer be used. Start Compact & Resume again.": "Este resumen ya no se puede usar. Vuelve a iniciar Compactar y reanudar.",
+  "Eve is loading the Companion in this browser for you…": "Eve está cargando Companion en este navegador por ti…",
+  "Eve is creating your tunnel on platform.openai.com…": "Eve está creando tu túnel en platform.openai.com…",
+  "Eve is creating a restricted API key for your tunnel…": "Eve está creando una clave de API restringida para tu túnel…",
+  "Eve is saving the connection and starting ParadigmEve…": "Eve está guardando la conexión e iniciando ParadigmEve…",
+  "Eve is adding the app to ChatGPT…": "Eve está agregando la app a ChatGPT…",
+  "Eve finished the setup steps. Verify one tool call to complete it.": "Eve terminó los pasos de configuración. Verifica una llamada de herramienta para completarla.",
+  "Eve could not finish this step automatically. Continue with the steps below.": "Eve no pudo terminar este paso automáticamente. Continúa con los pasos de abajo.",
+  "Let Eve set things up for me": "Deja que Eve lo configure por mí",
+  "uses computer control": "usa el control del equipo",
+  "After you sign in to ChatGPT yourself, Eve loads the Companion, creates the tunnel and a restricted API key, and adds the app to ChatGPT, including ChatGPT’s “I understand” confirmation for your own ParadigmEve server. You can stop at any time; a step Eve cannot finish stays in the guide for you.": "Después de que inicies sesión en ChatGPT tú mismo, Eve carga Companion, crea el túnel y una clave de API restringida, y agrega la app a ChatGPT, incluida la confirmación “Entiendo” de ChatGPT para tu propio servidor de ParadigmEve. Puedes detenerlo en cualquier momento; un paso que Eve no pueda terminar queda en la guía para ti."
 }

@@ -161,6 +161,13 @@ const GUIDE_KEYS: readonly string[] = [
   'Checking the Tunnel ID…',
   'Tunnel ID saved.',
   'Saving the key and starting ParadigmEve…',
+  'Eve is loading the Companion in this browser for you…',
+  'Eve is creating your tunnel on platform.openai.com…',
+  'Eve is creating a restricted API key for your tunnel…',
+  'Eve is saving the connection and starting ParadigmEve…',
+  'Eve is adding the app to ChatGPT…',
+  'Eve finished the setup steps. Verify one tool call to complete it.',
+  'Eve could not finish this step automatically. Continue with the steps below.',
 ];
 
 export function normalizeGuideLanguage(value: unknown): GuideLanguage {

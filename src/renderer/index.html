@@ -434,6 +434,13 @@
                 <button class="btn btn-solid" id="guidedSetup" type="button">Start guided browser setup</button>
                 <span class="chosen" id="guidedSetupStatus" role="status">ParadigmEve can guide the browser steps in one dedicated Eve Browser profile.</span>
               </div>
+              <label class="setup-option" id="guidedSetupAutomaticRow">
+                <input id="guidedSetupAutomatic" type="checkbox" aria-labelledby="guidedSetupAutomaticLabel" aria-describedby="guidedSetupAutomaticHelp" />
+                <span>
+                  <strong id="guidedSetupAutomaticLabel">Let Eve set things up for me <span class="tag">uses computer control</span></strong>
+                  <small id="guidedSetupAutomaticHelp">After you sign in to ChatGPT yourself, Eve loads the Companion, creates the tunnel and a restricted API key, and adds the app to ChatGPT, including ChatGPT’s “I understand” confirmation for your own ParadigmEve server. You can stop at any time; a step Eve cannot finish stays in the guide for you.</small>
+                </span>
+              </label>
               <div class="setup-privacy-note" role="note">
                 <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-lock" /></svg>
                 <span>Tunnel ID and API key values stay hidden by default. Keep them hidden while recording, screen sharing or streaming; reveal them only when you need to check what you pasted.</span>
