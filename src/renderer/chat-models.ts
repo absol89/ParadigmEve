@@ -510,8 +510,11 @@ export function refreshSettingsModelsOnOpen(): void {
   }).refreshChatModelsPassive;
   if (!passive) return;
   lastSettingsPassiveDiscoveryAt = now;
+  // A newer catalog push or explicit refresh outranks this async settings read.
+  // Also fence any earlier startup get that has not returned yet.
+  const requested = ++generation;
   void passive().then(result => {
-    if (!result?.ok || !result.data) return;
+    if (requested !== generation || !result?.ok || !result.data) return;
     catalog = result.data;
     for (const [modelId, effortId] of pairs) paintPair(modelId, effortId);
     paintComposerContext(); paintStatus();

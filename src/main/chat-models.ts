@@ -69,6 +69,9 @@ export async function startChatModelDiscovery(allowOpen = true, refreshExisting 
   // Only the explicit settings-model surface opts into refreshExisting.
   if (!allowOpen && !refreshExisting && catalog.state !== 'unknown') return getChatModels();
   requestChatModels(allowOpen);
+  // An earlier explicit refresh may still be waiting for browser observation.
+  // A later passive settings read must not re-dispatch its browser-open authority.
+  if (!allowOpen && request?.allowOpen) return getChatModels();
   const nonce = request!.nonce;
   if (!launch || launch.nonce !== nonce || (request!.allowOpen && !launch.allowOpen)) {
     const previous = launch?.work;

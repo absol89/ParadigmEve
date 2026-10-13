@@ -552,6 +552,42 @@ it('passively rechecks a fresh native-default snapshot when settings opens witho
   expect(requestChatModels).not.toHaveBeenCalled();
 });
 
+it('does not replace a newer pushed catalog with a late passive settings response or lose saved worker choices', async () => {
+  dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));
+  const unknown = { state: 'unknown', requestedAt: null, observedAt: null, models: [] };
+  const newest = { state: 'ready', requestedAt: Date.now(), observedAt: Date.now(), nativeDefault: false,
+    models: [{ id: 'gpt-6', label: 'GPT-6', efforts: ['none', 'medium', 'high'] }] };
+  const stale = { state: 'pending', requestedAt: Date.now(), observedAt: null, nativeDefault: true, models: [] };
+  let push!: (catalog: typeof newest) => void;
+  let resolvePassive!: (value: { ok: boolean; data: typeof stale }) => void;
+  const passiveResponse = new Promise<{ ok: boolean; data: typeof stale }>(resolve => { resolvePassive = resolve; });
+  Object.assign(dom.window, { api: {
+    getChatModels: async () => ({ ok: true, data: unknown }),
+    onChatModelsChanged: (listener: typeof push) => { push = listener; },
+    refreshChatModelsPassive: () => passiveResponse
+  } });
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const { initChatModels, applyChatModels, refreshSettingsModelsOnOpen } = await import('../src/renderer/chat-models.js');
+  initChatModels();
+  applyChatModels({ multiAgent: { defaultModel: 'gpt-6', defaultReasoning: 'high' },
+    goal: { helperModel: 'gpt-6', helperReasoning: 'medium' } } as Config);
+  await Promise.resolve();
+  refreshSettingsModelsOnOpen();
+  push(newest);
+  resolvePassive({ ok: true, data: stale });
+  await passiveResponse; await Promise.resolve();
+  for (const [modelId, effortId, effort] of [
+    ['workerModel', 'workerReasoning', 'high'], ['helperModel', 'helperReasoning', 'medium']
+  ] as const) {
+    const model = dom.window.document.getElementById(modelId) as HTMLSelectElement;
+    const reasoning = dom.window.document.getElementById(effortId) as HTMLSelectElement;
+    expect(model.value).toBe('gpt-6');
+    expect(model.selectedOptions[0]!.disabled).toBe(false);
+    expect(reasoning.value).toBe(effort);
+  }
+});
+
 it('keeps worker and helper settings native-default-only on a Free or Go account surface', async () => {
   dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
     ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));

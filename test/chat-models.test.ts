@@ -116,6 +116,38 @@ describe('durable observed ChatGPT model catalog', () => {
     expect(pendingChatModelRequest()).toEqual(pending);
     expect(wake.mock.calls.every(([, allowOpen]) => allowOpen === false)).toBe(true);
   });
+  it('never re-dispatches browser-open authority when passive settings observes a pending explicit refresh', async () => {
+    const wake = vi.fn(async (_nonce: string, _allowOpen: boolean) => {});
+    configureChatModelDiscovery({ wake, changed: () => {} });
+    await startChatModelDiscovery();
+    const active = pendingChatModelRequest()!;
+    expect(wake.mock.calls).toEqual([[active.nonce, true]]);
+    await startChatModelDiscovery(false, true);
+    expect(pendingChatModelRequest()).toEqual(active);
+    expect(wake.mock.calls).toEqual([[active.nonce, true]]);
+    // Explicit retry can still repeat its authorized browser-startup handoff.
+    await startChatModelDiscovery();
+    expect(wake.mock.calls).toEqual([[active.nonce, true], [active.nonce, true]]);
+  });
+  it('does not initiate an undispatched active request through passive settings refresh', async () => {
+    const wake = vi.fn(async (_nonce: string, _allowOpen: boolean) => {});
+    configureChatModelDiscovery({ wake, changed: () => {} });
+    requestChatModels(true);
+    await startChatModelDiscovery(false, true);
+    expect(wake).not.toHaveBeenCalled();
+    expect(pendingChatModelRequest()!.allowOpen).toBe(true);
+  });
+  it('does not schedule another active wake while an explicit wake remains in flight', async () => {
+    let finishWake!: () => void;
+    const wake = vi.fn((_nonce: string, _allowOpen: boolean) => new Promise<void>(resolve => { finishWake = resolve; }));
+    configureChatModelDiscovery({ wake, changed: () => {} });
+    const active = startChatModelDiscovery();
+    const pending = pendingChatModelRequest()!;
+    await startChatModelDiscovery(false, true);
+    expect(wake.mock.calls).toEqual([[pending.nonce, true]]);
+    finishWake(); await active;
+    expect(wake.mock.calls).toEqual([[pending.nonce, true]]);
+  });
   it('shares explicit browser startup and publishes a bounded expiry without polling', async () => {
     let release!: () => void;
     const wake = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
