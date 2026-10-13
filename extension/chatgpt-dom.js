@@ -2497,6 +2497,12 @@ var CLF_DOM = (() => {
     const original = await ui.open();
     if (!original) {
       await ui.close();
+      // The closed trigger already proved this paid account's current family and its lanes (GPT-6
+      // Instant/Medium/High, read live 2026-10-13). A picker that will not open must not throw that
+      // away: c9 discovery then reported no models, or even a Free account, and the app could
+      // offer nothing but ChatGPT's default. Publish the proven family; other versions wait for a
+      // later discovery that can open the picker.
+      if (result.size && stillCurrent()) return [...result.values()];
       if (stillCurrent() && await nativeDefaultModelSurface(stillCurrent, true)) nativeDefault();
       else failure(paidReasoningVisible() ? 'paid_picker_unreadable' : 'picker_unavailable');
       return null;

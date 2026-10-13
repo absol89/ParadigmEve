@@ -125,7 +125,7 @@ it('fails Free Think closed when the native menu exposes no Think control', asyn
   });
   expect(await (page.window as any).CLF_DOM.selectNativeMode('think')).toBe(false);
 });
-function fixture(splitPickerOwners = false, brokenVersion: string | null = null) {
+function fixture(splitPickerOwners = false, brokenVersion: string | null = null, openFails = false) {
   page = new JSDOM('<form><div id="prompt-textarea" contenteditable="true"></div><div data-testid="composer-trailing-actions"><button type="button" aria-haspopup="menu">Denkaufwand</button><button data-testid="send-button">Senden</button></div></form>', { url: 'https://chatgpt.com/', runScripts: 'outside-only' });
   const win = page.window, doc = win.document;
   Object.defineProperty(win.HTMLElement.prototype, 'getClientRects', { value() { return this.hidden ? [] : [{}]; } });
@@ -167,7 +167,7 @@ function fixture(splitPickerOwners = false, brokenVersion: string | null = null)
     });
   };
   trigger.addEventListener('keydown', event => {
-    if (event.key === 'Enter') render();
+    if (event.key === 'Enter' && !openFails) render();
     if (event.key === 'Escape') doc.querySelector('[data-testid="composer-intelligence-picker-content"]')?.remove();
   });
   win.eval(fiberSource); win.eval(domSource);
@@ -184,6 +184,17 @@ it('reads localized nested models and future efforts from account state, exclude
   expect(f.actions.mock.calls.filter(([action]) => action === 'effort')).toHaveLength(1);
 });
 // 2026-10-13 (c8): one picker version that never confirmed its state discarded every family read.
+// 2026-10-13 (c9): the closed GPT-6 trigger was readable but the picker did not open, and discovery
+// reported no models (even a Free account), so the app could offer only ChatGPT's default.
+it('publishes the family the closed picker proves when the picker itself will not open', async () => {
+  const f = fixture(false, null, true);
+  const failure = vi.fn(), nativeDefault = vi.fn();
+  expect(await f.api.inspectModelSettings(() => true, failure, nativeDefault)).toEqual([
+    { id: 'gpt-5-6-thinking', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5-6-thinking'] }
+  ]);
+  expect(failure).not.toHaveBeenCalled();
+  expect(nativeDefault).not.toHaveBeenCalled();
+});
 it('keeps the families it could read when another picker version cannot be confirmed', async () => {
   const f = fixture(false, 'future');
   const failure = vi.fn();
