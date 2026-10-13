@@ -1,5 +1,5 @@
 import { ui, t } from './i18n.js';
-import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel } from './chat-models.js';
+import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel, refreshSettingsModelsOnOpen } from './chat-models.js';
 import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
@@ -4136,6 +4136,7 @@ export function openChatView(name: string): void {
 }
 
 function showView(name: string): void {
+  const openingSettings = name === 'settings' && document.querySelector<HTMLElement>('#chatBody > .view[data-view="settings"]')?.hidden !== false;
   $('composer').hidden = name === 'settings';
   $('composerDock').hidden = name === 'settings';
   $('inputQueue').hidden = name !== 'timeline';
@@ -4146,6 +4147,7 @@ function showView(name: string): void {
     view.hidden = view.dataset.view !== name;
   }
   $('chatSettingsBtn').classList.toggle('is-on', name === 'settings');
+  if (openingSettings) refreshSettingsModelsOnOpen();
 }
 
 function scrollToSourceEvent(eventSeq: number): boolean {

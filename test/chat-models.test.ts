@@ -88,6 +88,34 @@ describe('durable observed ChatGPT model catalog', () => {
     expect(wake).toHaveBeenCalledTimes(1);
     expect(getChatModels()).toMatchObject({ state: 'ready', models });
   });
+  it('passively refreshes a recently mistaken native-default catalog without browser opening authority', async () => {
+    requestChatModels();
+    expect(observeChatModels({ nonce: pendingChatModelRequest()!.nonce, models: null, nativeDefault: true })).toBe(true);
+    const wake = vi.fn(async () => {}); configureChatModelDiscovery({ wake, changed: () => {} });
+    // Normal passive startup must not replace known account state.
+    await startChatModelDiscovery(false);
+    expect(wake).not.toHaveBeenCalled();
+    await startChatModelDiscovery(false, true);
+    const pending = pendingChatModelRequest()!;
+    expect(pending.allowOpen).toBe(false);
+    expect(wake).toHaveBeenCalledTimes(1);
+    expect(wake).toHaveBeenCalledWith(pending.nonce, false);
+    expect(getChatModels().state).toBe('pending');
+    expect(observeChatModels({ nonce: pending.nonce, models: [
+      { id: 'gpt-6', label: 'GPT-6', efforts: ['none', 'medium', 'high'] }
+    ] })).toBe(true);
+    expect(getChatModels()).toMatchObject({ state: 'ready', nativeDefault: false, models: [
+      { id: 'gpt-6', efforts: ['none', 'medium', 'high'] }
+    ] });
+  });
+  it('coalesces passive refresh with an existing request without promoting it to browser-open authority', async () => {
+    const wake = vi.fn(async (_nonce: string, _allowOpen: boolean) => {}); configureChatModelDiscovery({ wake, changed: () => {} });
+    await startChatModelDiscovery(false, true);
+    const pending = pendingChatModelRequest()!;
+    await startChatModelDiscovery(false, true);
+    expect(pendingChatModelRequest()).toEqual(pending);
+    expect(wake.mock.calls.every(([, allowOpen]) => allowOpen === false)).toBe(true);
+  });
   it('shares explicit browser startup and publishes a bounded expiry without polling', async () => {
     let release!: () => void;
     const wake = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));

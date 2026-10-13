@@ -288,6 +288,7 @@ const api = {
   openCompanionBrowserTab: () => call<AppState>('browser:openCompanionTab'),
   restoreCompanionBrowser: () => call<AppState>('browser:restoreCompanion'),
   requestChatModels: () => call<ChatModelCatalog>('chatModels:request'),
+  refreshChatModelsPassive: () => call<ChatModelCatalog>('chatModels:refreshPassive'),
   onChatModelsChanged: (listener: (catalog: ChatModelCatalog) => void): (() => void) => {
     const wrapped = (_event: unknown, catalog: ChatModelCatalog): void => listener(catalog);
     ipcRenderer.on('chatModels:changed', wrapped);

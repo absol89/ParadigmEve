@@ -11,6 +11,7 @@ let onComposerPaint: (() => void) | undefined;
 const catalogWaiters = new Set<() => void>();
 let discovery: Promise<void> | null = null;
 let catalogSubscribed = false;
+let lastSettingsPassiveDiscoveryAt = 0;
 type ObservedSelection = { model: string; reasoningEffort?: ReasoningEffort; observedAt: number };
 let composerContext: { scope: string | null; observation: ObservedSelection | null; nativeDefault: boolean; edited: boolean } | null = null;
 type ComposerChoice = { model: string; reasoningEffort: ReasoningEffort | null; editedAt: number };
@@ -68,6 +69,9 @@ function isRetiring55(model: { id: string; label: string; aliases?: string[] }):
 
 function settingsModels() {
   const defaultModel = CHATGPT_SETTINGS_MODELS.find(model => model.id === CHATGPT_DEFAULT_MODEL_ID)!;
+  if (catalog.state === 'ready' && catalog.nativeDefault === true) {
+    return [{ ...defaultModel, efforts: [...defaultModel.efforts] }];
+  }
   const extras = catalog.models.filter(model => !isRetiring55(model) &&
     configuredChatSettingsModel(model.id) !== CHATGPT_SOL_MODEL_ID &&
     configuredChatSettingsModel(model.label) !== CHATGPT_SOL_MODEL_ID &&
@@ -490,6 +494,28 @@ function modelMenuNeedsDiscovery(): boolean {
   if (!catalog.models.length && catalog.nativeDefault !== true) return true;
   return catalog.state !== 'pending' &&
     (catalog.requestedAt === null || now - catalog.requestedAt >= MODEL_REFRESH_RETRY_MS);
+}
+
+/** Settings is an explicit account-model surface. Opening it may refresh a stale native-default
+ * snapshot that came from a different/limited ChatGPT page, but repeated opens stay inside the
+ * same retry window and an in-flight request is coalesced by discoverModels(). */
+export function refreshSettingsModelsOnOpen(): void {
+  const now = Date.now();
+  const needsPassiveRefresh = catalog.state !== 'pending' &&
+    (modelMenuNeedsDiscovery() || catalog.nativeDefault === true) &&
+    now - lastSettingsPassiveDiscoveryAt >= MODEL_REFRESH_RETRY_MS;
+  if (!needsPassiveRefresh) return;
+  const passive = (window.api as typeof window.api & {
+    refreshChatModelsPassive?: () => Promise<{ ok: boolean; data?: ChatModelCatalog | null }>;
+  }).refreshChatModelsPassive;
+  if (!passive) return;
+  lastSettingsPassiveDiscoveryAt = now;
+  void passive().then(result => {
+    if (!result?.ok || !result.data) return;
+    catalog = result.data;
+    for (const [modelId, effortId] of pairs) paintPair(modelId, effortId);
+    paintComposerContext(); paintStatus();
+  }).catch(() => undefined);
 }
 
 export async function ensureComposerModel(refresh = false): Promise<ReturnType<typeof confirmedComposerModel>> {

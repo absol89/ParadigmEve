@@ -497,6 +497,81 @@ it('uses observed account choices, preserves unverified defaults, and clears inc
   expect([...select('composerReasoning').options].map(row => row.value)).toEqual(['medium']);
 });
 
+it('loads account-observed worker and helper choices when the settings surface opens', async () => {
+  dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));
+  const initial = { state: 'unknown', requestedAt: null, observedAt: null, models: [] };
+  const observed = { state: 'ready', requestedAt: 1, observedAt: Date.now(), models: [
+    { id: '5.6', label: 'GPT-5.6 Sol', efforts: ['none', 'medium', 'high'] },
+    { id: '6', label: 'GPT-6', efforts: ['none', 'medium', 'high'] }
+  ] };
+  const requestChatModels = vi.fn(async () => ({ ok: true, data: observed }));
+  const refreshChatModelsPassive = vi.fn(async () => ({ ok: true, data: observed }));
+  Object.assign(dom.window, { api: {
+    getChatModels: async () => ({ ok: true, data: initial }),
+    requestChatModels,
+    refreshChatModelsPassive
+  } });
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const { initChatModels, applyChatModels, refreshSettingsModelsOnOpen } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  const worker = dom.window.document.getElementById('workerModel') as HTMLSelectElement;
+  refreshSettingsModelsOnOpen();
+  expect(refreshChatModelsPassive).toHaveBeenCalledTimes(1);
+  expect(requestChatModels).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect([...worker.options].map(option => option.value)).toEqual(['chatgpt-default', '5.6', '6']));
+  expect([...worker.options].map(option => option.value)).toEqual(['chatgpt-default', '5.6', '6']);
+  const reasoning = dom.window.document.getElementById('workerReasoning') as HTMLSelectElement;
+  expect(reasoning.value).toBe('');
+  const helper = dom.window.document.getElementById('helperModel') as HTMLSelectElement;
+  expect([...helper.options].map(option => option.value)).toEqual(['chatgpt-default', '5.6', '6']);
+  refreshSettingsModelsOnOpen();
+  expect(refreshChatModelsPassive).toHaveBeenCalledTimes(1);
+  expect(requestChatModels).not.toHaveBeenCalled();
+});
+
+it('passively rechecks a fresh native-default snapshot when settings opens without using active browser refresh', async () => {
+  dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));
+  const native = { state: 'ready', requestedAt: Date.now(), observedAt: Date.now(), nativeDefault: true, models: [] };
+  const paid = { state: 'ready', requestedAt: Date.now(), observedAt: Date.now(), nativeDefault: false,
+    models: [{ id: '6', label: 'GPT-6', efforts: ['none', 'medium', 'high'] }] };
+  const requestChatModels = vi.fn(async () => ({ ok: true, data: paid }));
+  const refreshChatModelsPassive = vi.fn(async () => ({ ok: true, data: paid }));
+  Object.assign(dom.window, { api: {
+    getChatModels: async () => ({ ok: true, data: native }),
+    requestChatModels,
+    refreshChatModelsPassive
+  } });
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const { initChatModels, applyChatModels, refreshSettingsModelsOnOpen } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  refreshSettingsModelsOnOpen();
+  await vi.waitFor(() => expect((dom.window.document.getElementById('workerModel') as HTMLSelectElement).options.length).toBe(3));
+  expect(refreshChatModelsPassive).toHaveBeenCalledTimes(1);
+  expect(requestChatModels).not.toHaveBeenCalled();
+});
+
+it('keeps worker and helper settings native-default-only on a Free or Go account surface', async () => {
+  dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));
+  const native = { state: 'ready', requestedAt: 1, observedAt: Date.now(), nativeDefault: true,
+    models: [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'] }] };
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: native }) } });
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const { initChatModels, applyChatModels } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  for (const id of ['workerModel', 'helperModel']) {
+    const select = dom.window.document.getElementById(id) as HTMLSelectElement;
+    expect([...select.options].map(option => option.value)).toEqual(['chatgpt-default']);
+    expect(select.value).toBe('chatgpt-default');
+  }
+  for (const id of ['workerReasoning', 'helperReasoning']) {
+    const select = dom.window.document.getElementById(id) as HTMLSelectElement;
+    expect([...select.options].map(option => option.value)).toEqual(['']);
+  }
+});
+
 it('keeps the Sol steps stable and lists the GPT-6 family to their right while observed extras come and go', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);

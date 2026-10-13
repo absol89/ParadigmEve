@@ -1469,6 +1469,9 @@ export function registerIpc(
   handle('chatModels:get', async () => getChatModels());
   handle('browser:preferences', async (payload) => requestBrowserPreferences(payload));
   handle('chatModels:request', async () => startChatModelDiscovery());
+  // Reading the Agents & Automation model controls never authorizes opening or navigating
+  // ChatGPT. Wake only an eligible already-connected Companion document.
+  handle('chatModels:refreshPassive', async () => startChatModelDiscovery(false, true));
   handle('sessions:controls', async (payload) => sessionControlsFor(sessionIdArg.parse(payload).id));
   handle('sessions:automation', async (payload) => {
     const { id, automation } = sessionIdArg.extend({ automation: z.enum(['off', 'goal', 'loop']) }).parse(payload);

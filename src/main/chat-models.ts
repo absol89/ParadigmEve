@@ -61,10 +61,13 @@ export function requestChatModels(allowOpen = true): ChatModelCatalog {
   }
   return getChatModels();
 }
-/** An explicit UI request starts only the local browser bridge, never MCP/tunnel exposure. */
-export async function startChatModelDiscovery(allowOpen = true): Promise<ChatModelCatalog> {
+/** A passive settings refresh rechecks eligible existing browser pages, but never opens a
+ * Chrome document. It is distinct from the one passive startup probe and from an explicit
+ * user-selected Reload action that permits opening the dedicated browser profile. */
+export async function startChatModelDiscovery(allowOpen = true, refreshExisting = false): Promise<ChatModelCatalog> {
   // Showing an existing app window is neither a refresh nor permission to open Chrome.
-  if (!allowOpen && catalog.state !== 'unknown') return getChatModels();
+  // Only the explicit settings-model surface opts into refreshExisting.
+  if (!allowOpen && !refreshExisting && catalog.state !== 'unknown') return getChatModels();
   requestChatModels(allowOpen);
   const nonce = request!.nonce;
   if (!launch || launch.nonce !== nonce || (request!.allowOpen && !launch.allowOpen)) {
