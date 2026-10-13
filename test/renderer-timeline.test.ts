@@ -927,6 +927,26 @@ it('keeps provider-native default after a fresh send becomes a durable session',
   expect(w.document.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
   expect(w.document.body.textContent).not.toContain('Model discovery could not confirm your selection');
 });
+it('shows the exact conversation\'s last observed GPT-6 High when account discovery falsely reports native default', async () => {
+  const established = summary([]);
+  established.selectedModel = {
+    conversationId: established.conversationId!, model: 'gpt-6-thinking', reasoningEffort: 'high', observedAt: T0
+  };
+  const { w, live } = await boot([], true, [], [], { sessions: [established], nativeChatModelPreference: true });
+  (w as any).api.requestChatModels = vi.fn(async () => ({ ok: true, data: {
+    state: 'ready', requestedAt: Date.now(), observedAt: Date.now(), models: [], nativeDefault: true
+  } }));
+  (w.document.getElementById('refreshComposerModels') as HTMLButtonElement).click();
+  await settle();
+  expect(w.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-6 · High · Last observed');
+  expect(w.document.getElementById('composerPowerTitle')!.textContent).toBe('High');
+  const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
+  input.value = 'Continue without changing the provider model';
+  (w.document.getElementById('chatSend') as HTMLButtonElement).click();
+  await settle();
+  // Last-observed metadata is not permission to request an unavailable model or change High.
+  expect(live.sent[0]).toMatchObject({ model: null, reasoningEffort: null });
+});
 
 it('keeps an explicitly chosen Sol High after its first receipt binds the new session', async () => {
   const established = summary([]);

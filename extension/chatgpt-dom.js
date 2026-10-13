@@ -2301,6 +2301,19 @@ var CLF_DOM = (() => {
     const tools = [...form.querySelectorAll('button[data-testid="composer-tools"]')].filter(shown);
     return semantic.length === 1 || tools.length === 1;
   }
+  /** A closed paid composer can expose its current reasoning tier even when its picker
+   * trigger failed to hydrate. This is veto evidence, not permission to select a model:
+   * unreadable paid UI must never be classified as Free/native-default. */
+  function paidReasoningVisible() {
+    if (visibleModelSelection()) return true;
+    const exactTier = /^(?:Instant|Medium|High|Extra High)$/i;
+    return [...document.querySelectorAll('button,[role="button"]')].some(node => {
+      if (node.closest(`${OWN_SURFACES},${CONTENT},${PROSE},[hidden],[aria-hidden="true"],[inert]`) || !node.getClientRects().length) return false;
+      const text = (node.textContent || '').trim().replace(/\s+/g, ' ');
+      const label = (node.getAttribute('aria-label') || '').trim();
+      return exactTier.test(text) || exactTier.test(label);
+    });
+  }
   /** Free/Go can expose only ChatGPT's provider-native/default model, while paid picker
    * controls hydrate after the rest of New Chat. Absence during that gap is not evidence.
    * Before picker discovery runs, require a provider-native mode control. After the picker
@@ -2311,7 +2324,7 @@ var CLF_DOM = (() => {
       const editor = composer(), form = editor?.closest('form'), actions = composerActions();
       const picker = document.querySelector(PICKER);
       return !!editor && !!form && !!actions && stillCurrent() && composerVisible() &&
-        !picker && modelPickerTriggerCandidates().length === 0 &&
+        !picker && modelPickerTriggerCandidates().length === 0 && !paidReasoningVisible() &&
         (pickerWaitCompleted || nativeDefaultModeEvidence(form));
     }, false);
     if (!matches()) return false;
@@ -2485,7 +2498,7 @@ var CLF_DOM = (() => {
     if (!original) {
       await ui.close();
       if (stillCurrent() && await nativeDefaultModelSurface(stillCurrent, true)) nativeDefault();
-      else failure('picker_unavailable');
+      else failure(paidReasoningVisible() ? 'paid_picker_unreadable' : 'picker_unavailable');
       return null;
     }
     let restored = false;

@@ -118,6 +118,32 @@ afterEach(async () => {
 });
 
 describe('durable user input ownership', () => {
+  it('retires an unclaimed restart wake when the human continues the same conversation', async () => {
+    const wake = await enqueueInput(input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' }), undefined, { restartWake: true });
+    expect(wake).toMatchObject({ restartWake: true, state: 'queued' });
+    const authored = await enqueueInput(input({ text: 'Continue the release work.' }));
+    expect(authored).toMatchObject({ state: 'queued' });
+    expect((await listInputs()).find(row => row.id === wake.id)).toMatchObject({
+      state: 'cancelled', error: 'Restart wake retired because you continued the conversation.'
+    });
+    expect(await claimBrowserInput(wake.id, 'late-browser', binding.conversationId, true)).toBeNull();
+    expect(await claimBrowserInput(authored.id, 'human-browser', binding.conversationId, true)).not.toBeNull();
+  });
+
+  it('queues a human message behind a claimed restart wake without repeating either browser send', async () => {
+    const wake = await enqueueInput(input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' }), undefined, { restartWake: true });
+    const claim = await claimBrowserInput(wake.id, 'wake-browser', binding.conversationId, true);
+    expect(claim).toMatchObject({ state: 'browser', restartWake: true });
+    const authored = await enqueueInput(input({ text: 'New authored message' }));
+    expect(authored.state).toBe('queued');
+    expect((await listInputs()).find(row => row.id === wake.id)?.state).toBe('browser');
+    expect(await claimBrowserInput(authored.id, 'human-browser', binding.conversationId, true)).toBeNull();
+    // Local cancellation cannot assert that the claimed wake was never sent. Its existing
+    // receipt remains the only source of truth; the human message does not steal the claim.
+    expect(await cancelInput(wake.id)).toBe(true);
+    expect(await claimBrowserInput(authored.id, 'human-browser', binding.conversationId, true)).not.toBeNull();
+  });
+
   it('retires an un-authorized browser attachment claim after two minutes instead of holding Eve for twelve', async () => {
     const row: InputEntry = {
       ...input(),

@@ -241,7 +241,7 @@ export async function queueRestartRecovery(): Promise<RestartRecoveryPlan | null
       dueAt: candidate.turnStartedAt,
       model: null,
       reasoningEffort: null
-    });
+    }, undefined, { restartWake: true });
     // The marker is deliberately stamped by an internal API after ordinary input validation,
     // so renderer/MCP callers cannot opt themselves into restart-only browser admission. If an
     // older build already queued this deterministic id, the stamp upgrades that same row rather

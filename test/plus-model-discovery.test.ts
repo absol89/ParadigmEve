@@ -211,4 +211,12 @@ describe('fresh Plus account model discovery', () => {
     await restoreChatModels();
     expect(getChatModels()).toMatchObject({ state: 'ready', models: solCatalog });
   });
+  it('clears a false native-default classification when the provider exposes High but its picker cannot be read', () => {
+    requestChatModels();
+    expect(observeChatModels({ nonce: pendingChatModelRequest()!.nonce, models: null, nativeDefault: true })).toBe(true);
+    requestChatModels();
+    expect(observeChatModels({ nonce: pendingChatModelRequest()!.nonce, models: null, error: 'paid_picker_unreadable' })).toBe(true);
+    expect(getChatModels()).toMatchObject({ state: 'unavailable', models: [], nativeDefault: false });
+    expect(getChatModels().error).toContain('current model was not changed');
+  });
 });

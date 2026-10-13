@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import type { ChatModelCatalog } from '../shared/chat-models.js';
-import { CHATGPT_DEFAULT_MODEL_ID, CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, chatModelDisplayLabel, configuredChatModelRequest, configuredChatSettingsModel, isAstraModel, isProModel } from '../shared/chat-models.js';
+import { CHATGPT_DEFAULT_MODEL_ID, CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, chatModelDisplayLabel, configuredChatModelLabel, configuredChatModelRequest, configuredChatSettingsModel, isAstraModel, isProModel } from '../shared/chat-models.js';
 import type { Config } from '../shared/types.js';
 import type { ReasoningEffort } from '../shared/session.js';
 import { $, el, run, toast } from './dom.js';
@@ -31,6 +31,16 @@ function observedModel(value: string) {
     (requested === CHATGPT_SOL_MODEL_ID && (choice.id === '5.6' || choice.id === CHATGPT_SOL_MODEL_ID || choice.aliases?.includes(CHATGPT_SOL_MODEL_ID))) ||
     normalize(choice.label) === normalize(value));
   return matches.length === 1 ? matches[0] : undefined;
+}
+/** Provider observations belong to this exact conversation, not to account entitlements.
+ * When catalog discovery fails, show what ChatGPT last reported without manufacturing a
+ * selectable model or requesting a different provider setting on Send. */
+function lastObservedComposer(): { model: string; effort: ReasoningEffort; label: string } | null {
+  const context = composerContext;
+  if (!context?.scope || context.edited || !context.observation?.model || !context.observation.reasoningEffort) return null;
+  const { model, reasoningEffort } = context.observation;
+  const display = /^gpt-6(?:-thinking)?$/i.test(model) ? 'GPT-6' : observedModel(model)?.label ?? configuredChatModelLabel(model);
+  return { model: display, effort: reasoningEffort, label: chatModelDisplayLabel(display, reasoningEffort, effortLabel(reasoningEffort)) };
 }
 
 function stableSolModel() {
@@ -287,7 +297,7 @@ function paintComposerChoices(): void {
   {
     const useDefault = el('button', 'btn model-choice', () => t('ChatGPT default')) as HTMLButtonElement;
     useDefault.type = 'button';
-    useDefault.setAttribute('aria-pressed', confirmedComposerModel()?.model === null ? 'true' : 'false');
+    useDefault.setAttribute('aria-pressed', confirmedComposerModel()?.model === null && !(catalog.nativeDefault && lastObservedComposer()) ? 'true' : 'false');
     useDefault.onclick = () => {
       paintPair('composerModel', 'composerReasoning', CHATGPT_DEFAULT_MODEL_ID, '');
       rememberComposerChoice();
@@ -302,8 +312,9 @@ function paintComposerChoices(): void {
   const nativeDefaultOnly = catalog.state === 'ready' && catalog.nativeDefault === true;
   powers.hidden = nativeDefaultOnly;
   if (nativeDefaultOnly) {
-    if (title) ui(title, 'textContent', () => t("ChatGPT default"));
-    if (subtitle) ui(subtitle, 'textContent', () => t("Model choice stays in ChatGPT"));
+    const last = lastObservedComposer();
+    if (title) ui(title, 'textContent', () => last ? effortLabel(last.effort) : t("ChatGPT default"));
+    if (subtitle) ui(subtitle, 'textContent', () => last ? last.model : t("Model choice stays in ChatGPT"));
     return;
   }
   if (!steps.length) {
@@ -409,11 +420,13 @@ function paintComposerLabel(): void {
   }
   // Display the same admission decision as Send, including discovery and removed efforts.
   const confirmed = confirmedComposerModel();
+  const last = (catalog.nativeDefault || catalog.state === 'unavailable') ? lastObservedComposer() : null;
   const modelLabel = confirmed?.model ? composerModels().find(model => model.id === confirmed.model)?.label ?? confirmed.model : '';
   const label = () => confirmed
     ? confirmed.model && confirmed.reasoningEffort
       ? chatModelDisplayLabel(modelLabel, confirmed.reasoningEffort, effortLabel(confirmed.reasoningEffort))
-      : t("ChatGPT default")
+      : last ? `${last.label} · ${t('Last observed')}` : t("ChatGPT default")
+    : last ? `${last.label} · ${t('Last observed')}`
     : catalog.state === 'pending' ? t("Loading models…") : t("Select model");
   const node = $('composerModelLabel');
   ui(node, 'textContent', label);

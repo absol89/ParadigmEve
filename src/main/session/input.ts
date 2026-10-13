@@ -245,6 +245,8 @@ const entrySchema = inputArgsBase.extend({
    * therefore cannot opt itself into the restart-only browser admission rule below.
    */
   recoveryTurnId: z.string().min(1).max(256).optional(),
+  /** App-owned restart wake marker, stamped at enqueue. Never part of user InputArgs. */
+  restartWake: z.literal(true).optional(),
   /**
    * Snapshot of the source session's endedAt when restart authority was first stamped.
    * null means the session was live then. A different later endedAt is exact evidence that
@@ -716,6 +718,9 @@ function append(current: InputEntry[], entry: InputEntry, stackDirect = false): 
   // An old or ambiguous delivery in another chat must never make this chat unwritable.
   // Null-session openings share the one new-chat composer until its receipt binds it.
   if (!stackDirect && entry.purpose !== 'decision' && entry.purpose !== 'schedule' && !queuedFollowup(entry) && current.some(row => row.sessionId === entry.sessionId && row.purpose !== 'decision' && row.purpose !== 'schedule' &&
+      // An already-claimed automatic wake retains exclusive browser custody, but cannot
+      // reject the newer human message. Claim-time serialization still prevents two sends.
+      !(row.restartWake && row.state === 'browser' && !entry.restartWake && (entry.purpose === undefined || entry.purpose === 'user')) &&
       !(!entry.finishOwner && row.finishOwner && row.state === 'tool') &&
       (!queuedFollowup(row) || row.state === 'browser') && ['queued', 'browser', 'tool'].includes(row.state))) {
     throw new Error('One message is already awaiting delivery. Cancel it before sending another.');
@@ -776,7 +781,7 @@ async function finishInputCurrent(entry: InputEntry): Promise<boolean> {
     session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
     (entry.finishOwner.userRequested === true || automaticFinishEnabled(session.conversationId));
 }
-export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwner']): Promise<InputEntry> {
+export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwner'], internal?: { restartWake: true }): Promise<InputEntry> {
   return serial(async () => {
     const input = inputArgs.parse(raw);
     if (input.stages !== undefined && JSON.stringify([input.text, ...input.stages]).length > 12000)
@@ -836,7 +841,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     const transportIntent = local ? undefined : voiceHeld || input.attachments?.length ? 'browser' as const : input.mode === 'auto' && !finishOwner
       ? policy?.canInject ? 'tool' as const : !policy || policy.browserAllowed || policy.directTurn ? 'browser' as const : undefined : undefined;
     const directTurn = !local && !voiceHeld && input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
-    const entry: InputEntry = { ...input, ...(directTurn ? { directTurn } : {}), ...(transportIntent ? { transportIntent } : {}), ...(requestedMode !== input.mode ? { requestedMode } : {}), ...(finishOwner ? { finishOwner } : {}), state: 'queued', owner: null, createdAt: Date.now(), conversationId: null };
+    const entry: InputEntry = { ...input, ...(directTurn ? { directTurn } : {}), ...(transportIntent ? { transportIntent } : {}), ...(requestedMode !== input.mode ? { requestedMode } : {}), ...(finishOwner ? { finishOwner } : {}), ...(internal?.restartWake ? { restartWake: true as const } : {}), state: 'queued', owner: null, createdAt: Date.now(), conversationId: null };
     if (input.projectId) {
       await projectWorkspace(input.projectId);
       if (input.sessionId) {
@@ -858,6 +863,12 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     // Offered tool receipts retain their identity until a later request proves receipt.
     const prioritized = !finishOwner ? current.map(row => {
       if (row.state !== 'queued') return row;
+      // A human continuing the exact chat makes its unclaimed automatic restart wake stale.
+      // Never retire an offered/claimed wake on this path: browser Send could be in flight.
+      if (!internal?.restartWake && (entry.purpose === undefined || entry.purpose === 'user') &&
+          row.restartWake && row.sessionId === entry.sessionId && row.owner === null && row.offeredAt === undefined) {
+        return { ...row, state: 'cancelled' as const, error: 'Restart wake retired because you continued the conversation.' };
+      }
       // Peer knowledge is durable context, not a competing instruction. An explicit user message
       // in the same Eve/Eva conversation goes first, while the untouched peer text waits for the
       // exact completed user turn rather than being discarded after its sender already got an ACK.

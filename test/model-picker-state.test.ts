@@ -63,6 +63,19 @@ it('recognizes the current Free composer without the retired Think test id and i
   expect(nativeDefault).toHaveBeenCalledTimes(1);
   expect(failure).not.toHaveBeenCalled();
 });
+it('does not mistake a visible paid High tier for native-default when the picker is unreadable', async () => {
+  page = new JSDOM('<button type="button" aria-label="High">High</button><form><div id="prompt-textarea" contenteditable="true"></div><div data-testid="composer-footer-actions"><button type="button" data-testid="composer-tools">Tools</button></div><div data-testid="composer-trailing-actions"><button data-testid="send-button">Send</button></div></form>', { url: 'https://chatgpt.com/c/current', runScripts: 'outside-only' });
+  Object.defineProperty(page.window.HTMLElement.prototype, 'getClientRects', { value: () => [{}] });
+  const schedule = page.window.setTimeout.bind(page.window);
+  page.window.setTimeout = ((handler: TimerHandler, _delay?: number, ...args: unknown[]) =>
+    schedule(handler, 0, ...args)) as typeof page.window.setTimeout;
+  page.window.eval(domSource);
+  const nativeDefault = vi.fn(), failure = vi.fn();
+  expect(await (page.window as any).CLF_DOM.inspectModelSettings(() => true, failure, nativeDefault)).toBeNull();
+  expect(nativeDefault).not.toHaveBeenCalled();
+  expect(failure).toHaveBeenCalledWith('paid_picker_unreadable');
+  expect(page.window.document.querySelector('button')?.textContent).toBe('High');
+});
 it('falls back to provider-native only after bounded picker discovery finds no catalog', async () => {
   page = new JSDOM('<form><div id="prompt-textarea" contenteditable="true"></div><div data-testid="composer-trailing-actions"><button data-testid="send-button">Send</button></div></form>', { url: 'https://chatgpt.com/', runScripts: 'outside-only' });
   Object.defineProperty(page.window.HTMLElement.prototype, 'getClientRects', { value: () => [{}] });

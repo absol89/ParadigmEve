@@ -8,7 +8,7 @@ import type { ChatModelCatalog } from '../shared/chat-models.js';
 import { readDurable, writeDurableSoon } from './durable.js';
 const observation = z.object({
   nonce: z.string().uuid(),
-  error: z.enum(['picker_unavailable', 'model_unconfirmed', 'power_unknown', 'power_unconfirmed', 'power_changed', 'restore_failed', 'inspection_failed']).optional(),
+  error: z.enum(['picker_unavailable', 'paid_picker_unreadable', 'model_unconfirmed', 'power_unknown', 'power_unconfirmed', 'power_changed', 'restore_failed', 'inspection_failed']).optional(),
   nativeDefault: z.literal(true).optional(),
   models: z.array(z.object({
     id: z.string().min(1).max(80).regex(/^[a-zA-Z0-9._-]+$/),
@@ -108,7 +108,9 @@ export function observeChatModels(raw: unknown): boolean {
   if (models && (new Set(models.map(model => model.id)).size !== models.length ||
     models.some(model => new Set(model.efforts).size !== model.efforts.length))) return false;
   logInfo(`model discovery observed id=${request.nonce} models=${models?.length ?? 0} native_default=${parsed.data.nativeDefault === true} elapsed_ms=${Date.now() - (catalog.requestedAt ?? Date.now())} error=${parsed.data.error ?? 'none'}`);
-  const error = parsed.data.error === 'picker_unavailable'
+  const error = parsed.data.error === 'paid_picker_unreadable'
+    ? 'ChatGPT displays a paid reasoning level, but its model picker could not be read. The current model was not changed. Retry discovery after the picker loads.'
+    : parsed.data.error === 'picker_unavailable'
     ? 'ChatGPT\'s native model picker could not be read. If your account shows only Think and no model picker, model discovery is not supported for that interface yet.'
     : 'ChatGPT model choices could not be read. Open ChatGPT in the selected browser and check its model picker, then retry.';
   if (models) {
@@ -116,6 +118,10 @@ export function observeChatModels(raw: unknown): boolean {
     writeDurableSoon('chat-models', { observedAt: catalog.observedAt, models });
   } else if (parsed.data.nativeDefault) {
     catalog = { ...catalog, state: 'ready', models: [], nativeDefault: true, observedAt: Date.now(), error: undefined };
+  } else if (parsed.data.error === 'paid_picker_unreadable') {
+    // Fresh provider evidence contradicts an earlier ambiguous native-default
+    // classification. Preserve proven catalog rows, but never manufacture new ones.
+    catalog = { ...catalog, nativeDefault: false, state: catalog.models.length ? 'ready' : 'unavailable', error };
   } else failed(error);
   request = null;
   if (deadline) clearTimeout(deadline); deadline = null;
