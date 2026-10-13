@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -14,6 +14,14 @@ import { assertPackageGitProvenance } from './package-git-provenance.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
+
+// Electron Builder must enumerate actual runtime dependencies inside this checkout.
+// A Windows junction into another worktree's node_modules can pass every source test
+// yet package sharp without detect-libc and other dependencies. Fail before creating
+// an installable-looking but broken executable rather than following the junction.
+if (lstatSync(path.join(root, 'node_modules')).isSymbolicLink()) {
+  throw new Error('Packaging requires a local node_modules install; a shared symlink or Windows junction drops runtime dependencies. Preserve the link and run npm ci in this worktree before packaging.');
+}
 
 function value(name, fallback) {
   const direct = args.find((arg) => arg.startsWith(`--${name}=`));
