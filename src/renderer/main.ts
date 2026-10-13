@@ -3,6 +3,7 @@ import { paintPluginRefreshReminder } from './plugin-refresh-reminder.js';
 import { initUsage, refreshUsage } from './usage.js';
 import { initSidebarResize } from './sidebar-resize.js';
 import { initPlugins, applyPluginsState } from './plugins.js';
+import { applyTranscriptionSettings, initTranscriptionSettings } from './transcription-settings.js';
 import { initPet } from './pet.js';
 import { initPets } from './pets.js';
 import { initBrowserPreferences } from './browser-preferences.js';
@@ -1360,6 +1361,7 @@ function paintUpdate(next: AppState): void {
 
 function apply(next: AppState): void {
   applyPluginsState(next);
+  applyTranscriptionSettings(next);
   const previousState = state;
   state = next;
   const timingToggle = $<HTMLButtonElement>('toggleDesktopTiming');
@@ -2606,6 +2608,7 @@ buildGroups();
 initSidebarResize();
 initUsage();
 initPlugins(apply);
+initTranscriptionSettings(apply);
 // Desktop pets: the overlay is a separate native window; this window only lists and toggles them.
 const pets = initPet(() => showTab('pets'));
 initPets(pets);

@@ -13,6 +13,16 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.0] — Transcription settings
+
+In development on `release/2.4.0` (from `v2.3.9`); not packaged or published.
+
+- Settings → Transcription: GPU (priority 1), Local (2) and Cloud via Groq (3), each with a switch
+  and a whole-number priority. The lowest enabled number runs first; unavailable options are skipped.
+- Cloud is off by default and can only be enabled while its own Groq key is stored in the OS
+  credential store. Removing the key turns Cloud off.
+- See [docs/release-notes/v2.4.0.md](docs/release-notes/v2.4.0.md).
+
 ## [2.3.9] — Reliable sends and Prime continuity
 
 2.3.9 remains in release-candidate verification. A local Windows x64 c11 development

@@ -1,6 +1,13 @@
 import { REASONING_EFFORTS } from '../shared/session.js';
 import { AGENT_BACKEND_IDS, DEFAULT_AGENT_EXECUTION_SETTINGS, DEFAULT_AGENT_RUNTIME_SETTINGS } from '../shared/agent-backends.js';
 import { BUILD_FLAVOR, type BuildFlavor } from '../shared/build-flavor.js';
+import {
+  DEFAULT_TRANSCRIPTION_SETTINGS,
+  TRANSCRIPTION_CLOUD_PROVIDERS,
+  TRANSCRIPTION_PRIORITY_MAX,
+  TRANSCRIPTION_PRIORITY_MIN,
+  cloneTranscriptionSettings
+} from '../shared/transcription.js';
 import { configuredChatModelRequest } from '../shared/chat-models.js';
 import {
   CONCEPT_PREVIEW_TEXT_SIZES,
@@ -621,8 +628,38 @@ const configSchema = z.object({
     .strict()
     .optional()
     .default({ ...DEFAULT_LAN })
-    .catch({ ...DEFAULT_LAN })
+    .catch({ ...DEFAULT_LAN }),
+  // Each avenue repairs to its own default rather than failing the whole config. A damaged
+  // Cloud entry falls back to disabled, so recovery can never start uploading audio.
+  transcription: z
+    .object({
+      gpu: transcriptionAvenueSchema('gpu'),
+      local: transcriptionAvenueSchema('local'),
+      cloud: z
+        .object({
+          enabled: z.boolean(),
+          priority: z.number().int().min(TRANSCRIPTION_PRIORITY_MIN).max(TRANSCRIPTION_PRIORITY_MAX),
+          provider: z.enum(TRANSCRIPTION_CLOUD_PROVIDERS).optional().default(DEFAULT_TRANSCRIPTION_SETTINGS.cloud.provider)
+        })
+        .optional()
+        .default({ ...DEFAULT_TRANSCRIPTION_SETTINGS.cloud })
+        .catch({ ...DEFAULT_TRANSCRIPTION_SETTINGS.cloud })
+    })
+    .optional()
+    .default(cloneTranscriptionSettings())
+    .catch(cloneTranscriptionSettings())
 });
+
+function transcriptionAvenueSchema(avenue: 'gpu' | 'local') {
+  return z
+    .object({
+      enabled: z.boolean(),
+      priority: z.number().int().min(TRANSCRIPTION_PRIORITY_MIN).max(TRANSCRIPTION_PRIORITY_MAX)
+    })
+    .optional()
+    .default({ ...DEFAULT_TRANSCRIPTION_SETTINGS[avenue] })
+    .catch({ ...DEFAULT_TRANSCRIPTION_SETTINGS[avenue] });
+}
 
 /**
  * Ordinary Core work stays available from first launch: ChatGPT's app/action permissions decide
@@ -671,7 +708,8 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     artifacts: { ...DEFAULT_ARTIFACTS },
     goal: freshGoalDefaults(),
     mcp: { ...DEFAULT_MCP },
-    lan: { ...DEFAULT_LAN }
+    lan: { ...DEFAULT_LAN },
+    transcription: cloneTranscriptionSettings()
   };
 }
 

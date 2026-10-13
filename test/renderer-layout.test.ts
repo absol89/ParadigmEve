@@ -26,10 +26,12 @@ let chatSource = '';
 let activitySource = '';
 let mainSource = '';
 let browserPreferencesSource = '';
+let transcriptionSource = '';
 let sidebarResizeSource = '';
 
 beforeAll(async () => {
   browserPreferencesSource = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'browser-preferences.ts'), 'utf8');
+  transcriptionSource = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'transcription-settings.ts'), 'utf8');
   activitySource = await fs.readFile(path.join(process.cwd(), 'src', 'shared', 'session-activity.ts'), 'utf8');
   const [html, styles, chat, main, sidebarResize] = await Promise.all([
     fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8'),
@@ -539,7 +541,11 @@ describe('the settings sheet', () => {
   it('asks for a single compaction threshold', () => {
     const pane = document.querySelector('.view[data-view="settings"]')!;
     const numbers = [...pane.querySelectorAll('input[type="number"]')].map((input) => input.id);
-    expect(numbers).toEqual(['maGptWorkers', 'maOllamaLocalWorkers', 'maOllamaCloudWorkers', 'sessRetain', 'autoCompactTokens']);
+    expect(numbers).toEqual([
+      'maGptWorkers', 'maOllamaLocalWorkers', 'maOllamaCloudWorkers',
+      'transcriptionGpuPriority', 'transcriptionLocalPriority', 'transcriptionCloudPriority',
+      'sessRetain', 'autoCompactTokens'
+    ]);
     for (const id of ['sessAdvisory', 'sessLimit']) {
       expect(document.getElementById(id), `#${id} is back`).toBeNull();
     }
@@ -578,6 +584,12 @@ describe('the settings sheet', () => {
         const variable = input.id === 'browserOverwrite' ? 'overwrite' : 'durations';
         expect(browserPreferencesSource).toContain(`('${input.id}')`);
         expect(browserPreferencesSource).toContain(`${variable}.addEventListener('change'`);
+        continue;
+      }
+      // Transcription owns its section and saves it through its own validated IPC call.
+      if (input.id.startsWith('transcription')) {
+        expect(transcriptionSource, `#${input.id} is never wired`).toContain(`'${input.id}'`);
+        expect(transcriptionSource).toContain(input.type === 'password' ? "addEventListener('blur'" : "addEventListener('change'");
         continue;
       }
       // A credential is the one exception, and it is an exception on purpose: it is written

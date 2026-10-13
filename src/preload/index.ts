@@ -1,4 +1,5 @@
 import type { ChatModelCatalog } from '../shared/chat-models.js';
+import type { TranscriptionSettings } from '../shared/transcription.js';
 import type { TaskProgress } from '../shared/task-progress.js';
 import type { BrowserPreferences } from '../shared/browser-preferences.js';
 import type { SessionControlsView } from '../main/bridge.js';
@@ -185,6 +186,9 @@ const api = {
   // The same, for a custom provider endpoint. Optional: keyless local servers need nothing stored.
   setCustomProviderKey: (value: string) => call<AppState>('secret:set', { value, key: 'customProviderApiKey' }),
   setOllamaKey: (value: string) => call<AppState>('secret:set', { value, key: 'ollamaApiKey' }),
+  // Cloud transcription's own key. The tunnel key above is restricted to Tunnels and cannot transcribe.
+  setTranscriptionKey: (value: string) => call<AppState>('secret:set', { value, key: 'transcriptionGroqApiKey' }),
+  saveTranscription: (settings: TranscriptionSettings) => call<AppState>('transcription:save', { settings }),
   listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud'; cloud: boolean; installed: boolean; vision?: boolean }>>('ollama:models'),
   listOpenRouterModels: () => call<{ models: Array<{ id: string; name: string; route: 'openrouter'; vision: boolean; tools: boolean; contextLength: number | null; free: boolean }>; hasKey: boolean }>('openrouter:models'),
   providerPreview: (id: string, provider: { id: 'ollama' | 'openrouter'; model: string } | null, traceId?: string) =>

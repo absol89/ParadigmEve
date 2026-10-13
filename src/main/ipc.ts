@@ -133,6 +133,15 @@ import {
 } from './pins.js';
 import { injectPinsContext } from './pins-context.js';
 import { hasSecret, isEncryptionAvailable, secureStorageStatus, setSecret } from './secrets.js';
+import {
+  DEFAULT_TRANSCRIPTION_SETTINGS,
+  TRANSCRIPTION_AVENUES,
+  TRANSCRIPTION_CLOUD_PROVIDERS,
+  TRANSCRIPTION_PRIORITY_MAX,
+  TRANSCRIPTION_PRIORITY_MIN,
+  cloneTranscriptionSettings,
+  transcriptionSettingsIssue
+} from '../shared/transcription.js';
 import { getOrCreateLanPeerIdentity } from './lan-peer-identity.js';
 import { clearLanGroupKey, generateLanGroupKey, getLanGroupKey, parseLanGroupKey, setLanGroupKey } from './lan-peer-key.js';
 import { forgetLanPeerReservations, reserveLanPeerNickname } from './lan-peer-reservations.js';
@@ -604,12 +613,13 @@ async function buildState(): Promise<AppState> {
   const config = getConfig();
   const status = getStatus();
   const binary = resolvedBinary(config);
-  const [secureStorage, hasApiKey, hasGoalKey, hasCustomProviderKey, hasOllamaKey, bridge, windowOpen, lanGroupKey] = await Promise.all([
+  const [secureStorage, hasApiKey, hasGoalKey, hasCustomProviderKey, hasOllamaKey, hasTranscriptionKey, bridge, windowOpen, lanGroupKey] = await Promise.all([
     secureStorageStatus(),
     hasSecret('openaiApiKey'),
     hasSecret('openRouterApiKey'),
     hasSecret('customProviderApiKey'),
     hasSecret('ollamaApiKey'),
+    hasSecret('transcriptionGroqApiKey'),
     bridgeStatus(),
     paradigmeEveBrowserWindowOpen(),
     lanPeerRuntimeAvailable() ? getLanGroupKey() : Promise.resolve(null)
@@ -635,6 +645,7 @@ async function buildState(): Promise<AppState> {
     hasGoalKey,
     hasCustomProviderKey,
     hasOllamaKey,
+    hasTranscriptionKey,
     ...(lanPeerRuntimeAvailable() ? { lan: lanPeerRuntimeStatus(lanGroupKey !== null) } : {}),
     resolvedBinary: binary,
     bundledTunnelVersion: bundledVersion(),
@@ -1220,17 +1231,51 @@ export function registerIpc(
     const { value, key } = z
       .object({
         value: z.string().max(500),
-        key: z.enum(['openaiApiKey', 'openRouterApiKey', 'customProviderApiKey', 'ollamaApiKey']).default('openaiApiKey')
+        key: z.enum(['openaiApiKey', 'openRouterApiKey', 'customProviderApiKey', 'ollamaApiKey', 'transcriptionGroqApiKey']).default('openaiApiKey')
       })
       .parse(payload);
     if (!(await isEncryptionAvailable())) {
       throw new Error('Secure OS credential storage is unavailable, so the key cannot be stored safely.');
     }
     await setSecret(key, value);
+    // Cloud transcription is only ever on while its key exists. Removing the key turns it off in
+    // the same step, so no later job can find Cloud enabled and fail (or worse, retry elsewhere).
+    if (key === 'transcriptionGroqApiKey' && value.trim() === '' && getConfig().transcription?.cloud.enabled) {
+      await updateConfig((latest) => {
+        const transcription = cloneTranscriptionSettings(latest.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS);
+        transcription.cloud.enabled = false;
+        return { ...latest, transcription };
+      });
+    }
     const activeGoalKey = getConfig().goal.provider.kind === 'custom' ? 'customProviderApiKey' : 'openRouterApiKey';
     if (key === activeGoalKey) retireGoalDrafts();
-    const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : key === 'ollamaApiKey' ? 'ollama key' : 'api key';
+    const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : key === 'ollamaApiKey' ? 'ollama key' : key === 'transcriptionGroqApiKey' ? 'transcription key' : 'api key';
     logInfo(value.trim() === '' ? `${what} cleared` : `${what} stored`);
+    return buildState();
+  });
+
+  /**
+   * Transcription avenues have a single writer: this handler. No other surface edits them, so
+   * the settings form sends the whole section and this boundary validates it as one unit
+   * (integers, unique priorities among enabled avenues, Cloud only with a stored key).
+   */
+  handle('transcription:save', async (payload) => {
+    const avenue = z.object({
+      enabled: z.boolean(),
+      priority: z.number().int().min(TRANSCRIPTION_PRIORITY_MIN).max(TRANSCRIPTION_PRIORITY_MAX)
+    }).strict();
+    const { settings } = z.object({
+      settings: z.object({
+        gpu: avenue,
+        local: avenue,
+        cloud: avenue.extend({ provider: z.enum(TRANSCRIPTION_CLOUD_PROVIDERS) }).strict()
+      }).strict()
+    }).strict().parse(payload);
+    const issue = transcriptionSettingsIssue(settings, await hasSecret('transcriptionGroqApiKey'));
+    if (issue) throw new Error(issue);
+    await updateConfig((latest) => ({ ...latest, transcription: cloneTranscriptionSettings(settings) }));
+    logInfo(`transcription order saved: ${TRANSCRIPTION_AVENUES.filter((id) => settings[id].enabled)
+      .sort((a, b) => settings[a].priority - settings[b].priority).join(' > ')}`);
     return buildState();
   });
 
