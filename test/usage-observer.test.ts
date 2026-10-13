@@ -324,6 +324,51 @@ describe('MAIN-world usage projection', () => {
     ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
     expect(h.posts).toEqual([]);
   });
+  // Shapes read from a live fresh Temporary Chat on 2026-10-13: the first answer of a new chat has no
+  // input_message and no stream_handoff. It opens with resume_conversation_token, then delta frames
+  // whose conversation and request id sit one level in, on v. A Compact & Resume bootstrap is always
+  // such a first answer, so these frames are its only early identity proof.
+  const delta = (conversationId: string, requestId: string, role = 'assistant') => 'event: delta\n' +
+    'data: ' + JSON.stringify({ p: '', o: 'add', v: { message: { author: { role }, content: { content_type: 'text', parts: [''] },
+      metadata: { request_id: requestId } }, conversation_id: conversationId, error: null, error_code: null }, c: 0 }) + '\n\n';
+  it('projects a fresh chat first answer from its delta frames, before the stream ends', async () => {
+    const h = harness();
+    const chat = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    await h.feedSse([
+      'event: delta_encoding\ndata: "v1"\n\n',
+      'data: ' + JSON.stringify({ type: 'resume_conversation_token', kind: 'conversation', token: 'opaque', conversation_id: chat }) + '\n\n',
+      delta(chat, 'req_fresh_first'),
+      'event: delta\ndata: ' + JSON.stringify({ v: [{ p: '/message/content/parts/0', o: 'append', v: 'Hello' }], c: 1 }) + '\n\n'
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([
+      { type: 'cos-conversation-origin', conversationId: chat, observedAt: expect.any(Number) },
+      { type: 'cos-request-origin', conversationId: chat, requestIds: ['req_fresh_first'], observedAt: expect.any(Number) }
+    ]);
+  });
+  it('abstains when a delta frame names a different conversation than its response', async () => {
+    const h = harness();
+    const chat = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', other = 'cccccccc-dddd-4eee-8fff-aaaaaaaaaaaa';
+    await h.feedSse([
+      'data: ' + JSON.stringify({ type: 'resume_conversation_token', conversation_id: chat }) + '\n\n',
+      delta(other, 'req_foreign')
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([]);
+  });
+  it('does not take a conversation id quoted inside streamed text for the frame owner', async () => {
+    const h = harness();
+    const chat = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff', quoted = 'cccccccc-dddd-4eee-8fff-aaaaaaaaaaaa';
+    await h.feedSse([
+      'event: delta\ndata: ' + JSON.stringify({ v: [{ p: '/message/content/parts/0', o: 'append', v: `"conversation_id":"${quoted}"` }], c: 3 }) + '\n\n',
+      'data: ' + JSON.stringify({ type: 'resume_conversation_token', conversation_id: chat }) + '\n\n',
+      delta(chat, 'req_after_quote')
+    ], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation');
+    expect(h.posts).toEqual([
+      { type: 'cos-conversation-origin', conversationId: chat, observedAt: expect.any(Number) },
+      { type: 'cos-request-origin', conversationId: chat, requestIds: ['req_after_quote'], observedAt: expect.any(Number) }
+    ]);
+    expect(JSON.stringify(h.posts)).not.toContain(quoted);
+  });
+
   it('does not mistake assistant text, tool arguments, or an unbound input event for an accepted resume', async () => {
     const h = harness();
     const token = '0123456789abcdef0123456789abcdef';

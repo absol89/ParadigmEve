@@ -131,23 +131,35 @@
           .map(line => line.slice(5).trimStart()).join('\n');
         event = JSON.parse(data);
       } catch { return; }
-      if (conversations.size === 1 && event?.conversation_id !== conversationId) return;
-      if (event?.type === 'stream_handoff' && event.conversation_id === conversationId) {
+      // Current delta-encoded frames (`{p, o, v, c}`) carry the conversation one level in, on
+      // `v.conversation_id`, beside the server message. Read live 2026-10-13: a fresh chat's first
+      // answer streams only these frames (no input_message), with the request id on
+      // `v.message.metadata`. Dropping them withheld every early identity proof for a Compact &
+      // Resume bootstrap until the stream ended minutes later.
+      const deltaValue = event?.v && typeof event.v === 'object' && !Array.isArray(event.v) ? event.v : null;
+      const eventConversation = typeof event?.conversation_id === 'string' ? event.conversation_id
+        : typeof deltaValue?.conversation_id === 'string' ? deltaValue.conversation_id : undefined;
+      if (conversations.size === 1 && eventConversation !== conversationId) return;
+      // The response's opening event names its conversation: `resume_conversation_token` today,
+      // `stream_handoff` before it.
+      if ((event?.type === 'stream_handoff' || event?.type === 'resume_conversation_token') && eventConversation === conversationId) {
         handoffConversation = conversationId;
       }
+      const serverMessage = deltaValue?.message && typeof deltaValue.message === 'object' && deltaValue.conversation_id === conversationId
+        ? deltaValue.message : null;
       // Fresh-chat responses can expose their server-created conversation id before either
       // React mounts the authored user row or `input_message` echoes its content. Wait for that
       // response's input_message boundary before projecting the opaque id: a later contradictory
       // stream_handoff must be able to retire the candidate before anything crosses worlds.
       // The isolated content script may use it only while it owns one exact post-click bootstrap;
       // by itself this grants no authority.
-      if (!emittedConversation && event?.type === 'input_message' && handoffConversation === conversationId) {
+      if (!emittedConversation && (event?.type === 'input_message' || serverMessage) && handoffConversation === conversationId) {
         emittedConversation = true;
         post({ type: 'cos-conversation-origin', conversationId, observedAt }, location.origin);
       }
       // `input_message.metadata` is where the id moved: the same server metadata, one level in.
       const requestIds = new Set([event?.metadata?.request_id, event?.message?.metadata?.request_id,
-        event?.input_message?.metadata?.request_id]
+        event?.input_message?.metadata?.request_id, serverMessage?.metadata?.request_id]
         .filter(id => typeof id === 'string' && REQUEST.test(id)));
       const fresh = [...requestIds].filter((id) => !emitted.has(id)).slice(0, 16 - emitted.size);
       // A fresh Compact & Resume can have a server-created conversation long before React
