@@ -45,7 +45,11 @@
     "dist:dir:linux:x64": "node scripts/package.mjs --platform linux --arch x64 --dir",
     "dist:dir:linux:arm64": "node scripts/package.mjs --platform linux --arch arm64 --dir",
     "dist:dir:linux": "node scripts/package.mjs --platform linux --arch x64,arm64 --dir",
-    "test:kill": "node scripts/kill-stray-vitest.mjs"
+    "test:kill": "node scripts/kill-stray-vitest.mjs",
+    "candidate": "node scripts/build-candidate.mjs",
+    "sync:status": "node scripts/sync-status.mjs",
+    "eve:doctor": "node scripts/eve-doctor.mjs",
+    "publish:commit": "node scripts/publish-commit.mjs"
   },
   "dependencies": {
     "@anthropic-ai/mcpb": "^2.1.2",

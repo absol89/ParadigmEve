@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
   workflow_dispatch:
 
@@ -54,3 +54,31 @@ jobs:
         env:
           COS_PLUGIN_LIVE_TEST: '1'
         run: npx vitest run test/plugins-live-proxy.test.ts test/plugins-python-live.test.ts test/plugins-catalog-live.test.ts
+
+  locale:
+    name: Verify Linux x64 (sv_SE locale)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LANG: sv_SE.UTF-8
+      LC_ALL: sv_SE.UTF-8
+
+    steps:
+      - name: Generate the Swedish locale
+        run: sudo locale-gen sv_SE.UTF-8 && sudo update-locale
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Confirm the locale reaches Node
+        run: node -e "const l=Intl.DateTimeFormat().resolvedOptions().locale; console.log(l); if(!l.startsWith('sv')) process.exit(1)"
+
+      - name: Test
+        run: npm run rg && npx vitest run --exclude test/mcp-shutdown.test.ts --exclude test/computer.test.ts
