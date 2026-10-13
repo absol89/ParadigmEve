@@ -8,6 +8,7 @@
  */
 
 import { promises as fs } from 'node:fs';
+import { readdir as nativeReaddir, readFile as nativeReadFile, stat as nativeStat, rm as nativeRm } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -307,8 +308,10 @@ describe('session store', () => {
     const conversationId = `conv-deep-catalog-${Date.now()}`;
     const names = Array.from({ length: 5001 }, (_, index) => `catalog-${String(index).padStart(5, '0')}`);
     const targetId = names[names.length - 1] as string;
-    const realReaddir = fs.readdir.bind(fs);
-    const realReadFile = fs.readFile.bind(fs);
+    // A prior timed-out spy must never become this test's "real" delegate.
+    // Stable named native imports cannot inherit another spy's wrapper.
+    const realReaddir = nativeReaddir;
+    const realReadFile = nativeReadFile;
     const rootPath = sessionsRoot();
     const readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation(
       (async (target: Parameters<typeof fs.readdir>[0], ...args: unknown[]) => {
@@ -348,7 +351,7 @@ describe('session store', () => {
     resetSessionStoreForTests();
 
     const rootPath = sessionsRoot();
-    const realReaddir = fs.readdir.bind(fs);
+    const realReaddir = nativeReaddir;
     let failedOnce = false;
     const readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation(
       (async (target: Parameters<typeof fs.readdir>[0], ...args: unknown[]) => {
@@ -1668,8 +1671,8 @@ describe('handoff storage', () => {
     const names = Array.from({ length: 5001 }, (_, index) => `handoff-${String(index).padStart(5, '0')}`);
     const targetId = names.at(-1)!;
     const handoffId = '2026-08-24-deadbeef';
-    const realReaddir = fs.readdir.bind(fs);
-    const realReadFile = fs.readFile.bind(fs);
+    const realReaddir = nativeReaddir;
+    const realReadFile = nativeReadFile;
     const rootPath = sessionsRoot();
     const readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation(
       (async (target: Parameters<typeof fs.readdir>[0], ...args: unknown[]) => {
@@ -1752,10 +1755,10 @@ describe('handoff storage', () => {
     const recent = Date.now();
     const expired = recent - 90 * 24 * 3600_000;
     const rootPath = sessionsRoot();
-    const realReaddir = fs.readdir.bind(fs);
-    const realReadFile = fs.readFile.bind(fs);
-    const realStat = fs.stat.bind(fs);
-    const realRm = fs.rm.bind(fs);
+    const realReaddir = nativeReaddir;
+    const realReadFile = nativeReadFile;
+    const realStat = nativeStat;
+    const realRm = nativeRm;
     const removed: string[] = [];
 
     const readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation(

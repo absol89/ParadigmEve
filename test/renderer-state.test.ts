@@ -1154,10 +1154,12 @@ it('keeps the Goal helper model canonicalized across state pushes and user chang
 
   model.value = '6';
   model.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
+  // The save is asynchronous; under a full parallel suite it took longer than waitFor's 1 s default
+  // (one failure in ten runs on 2026-10-13, never reproduced alone). A save that never comes still fails.
   await vi.waitFor(() => expect(mounted.calls.at(-1)?.goal).toMatchObject({
     helperModel: '6',
     helperReasoning: 'high'
-  }));
+  }), { timeout: 5_000 });
   expect(model.value).toBe('6');
   expect(reasoning.value).toBe('high');
 });

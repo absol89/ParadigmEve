@@ -22,7 +22,8 @@ function page(body: string, url: string) {
   const win = dom.window as unknown as Window & typeof globalThis & Record<string, any>;
   // jsdom lays nothing out; everything not hidden counts as on screen, as in the live page.
   Object.defineProperty(win.Element.prototype, 'getClientRects', { value(this: Element) { return this.closest('[hidden]') ? [] : [{}]; } });
-  win.PointerEvent ??= win.MouseEvent;
+  // jsdom may lack PointerEvent; this test-only fallback supplies MouseEvent behavior.
+  win.PointerEvent ??= win.MouseEvent as unknown as typeof PointerEvent;
   win.eval(pageStepSource);
   const doc = win.document;
   const run = (step: Step, params: Record<string, unknown>) => win.eval(`setupPageStep(${JSON.stringify(step)}, ${JSON.stringify(params)})`) as Promise<{ ok: boolean; result?: any; error?: string }>;
