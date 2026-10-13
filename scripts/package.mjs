@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -21,6 +21,14 @@ const args = process.argv.slice(2);
 // an installable-looking but broken executable rather than following the junction.
 if (lstatSync(path.join(root, 'node_modules')).isSymbolicLink()) {
   throw new Error('Packaging requires a local node_modules install; a shared symlink or Windows junction drops runtime dependencies. Preserve the link and run npm ci in this worktree before packaging.');
+}
+// Electron 43's npm package supplies an explicit install-electron command, not a
+// postinstall lifecycle script. npm ci alone does not populate dist; without it,
+// builder silently omits both license files and the packaged-runtime smoke fails.
+if (process.platform === 'win32' && ![
+  'electron.exe', 'LICENSE', 'LICENSES.chromium.html'
+].every((name) => existsSync(path.join(root, 'node_modules', 'electron', 'dist', name)))) {
+  throw new Error('Electron runtime distribution is missing. Run node node_modules/electron/install.js in this worktree before packaging.');
 }
 
 function value(name, fallback) {
