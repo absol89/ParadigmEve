@@ -1105,6 +1105,42 @@ describe('restart lifetime recovery', () => {
     expect(await attachedChat(summary.id)).toBe(CHAT_C);
   });
 
+  it('does not let a late duplicate successor commit after restart drag a twice-moved session backward', async () => {
+    const now = Date.now();
+    const summary = await createSession({ title: 'late duplicate resume ack', conversationId: CHAT_A });
+    expect(await store.rebindSession(summary.id, CHAT_A, CHAT_B)).toBe(true);
+    expect(await store.rebindSession(summary.id, CHAT_B, CHAT_C)).toBe(true);
+
+    const token = 'late-duplicate-commit-token';
+    await restoreContinuations({
+      version: 1,
+      savedAt: now,
+      entries: [
+        {
+          token,
+          sessionId: summary.id,
+          from: CHAT_A,
+          to: CHAT_B,
+          openedAt: now - 1_000,
+          state: 'committed',
+          summary: SAMPLE_BRIEF,
+          handoffId: null,
+          claimedBy: CHAT_B,
+          armed: true,
+          error: null
+        }
+      ]
+    });
+
+    // Model the restored successor page finally delivering the same ACK after the durable
+    // session has already continued B→C. Replaying A→B is success for that old transaction,
+    // but it must never make B current again or rewrite the newer session attachment.
+    expect(await commitContinuation(token, CHAT_B)).toBe(true);
+    expect(continuationByToken(token)).toMatchObject({ state: 'committed', to: CHAT_B });
+    expect(await attachedChat(summary.id)).toBe(CHAT_C);
+    expect((await getSession(summary.id))?.chatIds).toEqual([CHAT_A, CHAT_B, CHAT_C]);
+  });
+
   it('spends a superseded source chat close once its tab is gone, across restart', async () => {
     const now = Date.now();
     const summary = await createSession({ title: 'one close', conversationId: CHAT_A });

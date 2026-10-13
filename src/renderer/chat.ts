@@ -3909,6 +3909,32 @@ async function refreshInputQueue(): Promise<void> {
       };
       row.append(retry);
     }
+    // Force Send is an *authored* recovery for an untouched outbox row, not a retry
+    // of a click with an unknown result. Main will recheck all of this under the
+    // durable outbox lock and the Companion still owns the actual native Send.
+    const pickupFailure = entry.state === 'failed' &&
+      (entry.error?.startsWith('Not sent: the browser did not pick up this message') ||
+        entry.error?.startsWith('Not sent: the browser did not connect'));
+    const canForce = (entry.state === 'queued' || pickupFailure) && entry.mode === 'auto' &&
+      (entry.purpose === undefined || entry.purpose === 'user') && !entry.provider &&
+      !entry.restartWake && !entry.recoveryTurnId && !entry.finishOwner &&
+      entry.owner === null && entry.offeredAt === undefined &&
+      entry.sendAuthorizedAt === undefined && entry.deliveredAt === undefined && !entry.messageId;
+    if (canForce) {
+      const force = dockAction(() => t("Force send"), 'i-send', () => {});
+      force.classList.add('delivery-retry');
+      ui(force, 'title', () => t("Ask the browser to send this original message now; it must still verify the exact chat and a safe composer."));
+      force.onclick = async () => {
+        force.disabled = true;
+        try {
+          const attempted = await run(api.forceSendInput(entry.id));
+          if (attempted?.error) toast(attempted.error);
+          else if (attempted) toast(t("Browser delivery requested. Waiting for confirmation."));
+          else toast(t("This message changed or its chat is not available. No message was sent."));
+        } finally { void refreshInputQueue(); }
+      };
+      row.append(force);
+    }
     if (['queued', 'browser'].includes(entry.state)) {
       const cancel = dockAction(() => t("Cancel delivery"), 'i-x', () => {});
       cancel.onclick = async () => {

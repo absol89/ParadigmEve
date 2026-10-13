@@ -247,6 +247,8 @@ const entrySchema = inputArgsBase.extend({
   recoveryTurnId: z.string().min(1).max(256).optional(),
   /** App-owned restart wake marker, stamped at enqueue. Never part of user InputArgs. */
   restartWake: z.literal(true).optional(),
+  /** An explicit user click re-offered this never-claimed input to its exact browser chat. */
+  forceBrowser: z.literal(true).optional(),
   /**
    * Snapshot of the source session's endedAt when restart authority was first stamped.
    * null means the session was live then. A different later endedAt is exact evidence that
@@ -353,6 +355,26 @@ export function noteBrowserInputsOffered(ids: readonly string[], at = Date.now()
 }
 /** Installed once by IPC before bridge/MCP startup; avoids a Goal/input import cycle. */
 export function configureInputDelivery(hooks: InputDeliveryHooks): void { deliveryHooks = hooks; }
+/** A Force Send click cannot outlive a later change to the chat's authority or picker. */
+function forceBrowserContextValid(entry: InputEntry, session: SessionSummary | null): boolean {
+  const conversationId = session?.conversationId;
+  // A compacted Prime session legitimately changes its provider conversation.
+  // Follow it only when the old conversation remains in this exact session's
+  // durable history; an unrelated rebind cannot redirect a forced user message.
+  const sameConversation = conversationId === entry.conversationId;
+  const provenSuccessor = !!entry.sessionId && session?.id === entry.sessionId &&
+    !!entry.conversationId && !!conversationId &&
+    session.chatIds?.includes(entry.conversationId) === true &&
+    session.chatIds?.includes(conversationId) === true;
+  if (!conversationId || (!sameConversation && !provenSuccessor) ||
+      session?.endedAt !== null || session?.localOnly === true || !!session?.provider ||
+      isChatBlocked(conversationId) || compactingConversation(conversationId)) return false;
+  if (entry.model !== null) {
+    const selected = session.selectedModel?.conversationId === conversationId ? session.selectedModel : null;
+    if (!selected || selected.model !== entry.model || selected.reasoningEffort !== entry.reasoningEffort) return false;
+  }
+  return true;
+}
 /** One delivery policy for composer presentation, admission and the final send fence. */
 /** How long a recorded user message may fence browser delivery while its provider turn has not started. */
 export const USER_TURN_START_WAIT_MS = 2 * 60_000;
@@ -430,6 +452,17 @@ async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
   // The row waits and follows the session to its successor once the move lands.
   const current = await getSession(entry.sessionId);
   if (current?.conversationId && compactingConversation(current.conversationId)) return false;
+  // A user may explicitly ask to send an untouched message even when a reboot left the
+  // recorder's old turn/activity state stuck. Don't let that stale *app* inference hold
+  // the message hostage. This does not authorize a native Send: the Companion must still
+  // prove the exact page, provider idle state, Voice/draft custody and composer before
+  // claiming and again before sending. Live tool calls and a moved chat remain fenced.
+  if (entry.forceBrowser) {
+    const conversationId = current?.conversationId;
+    return forceBrowserContextValid(entry, current) && !!conversationId &&
+      inFlightToolCalls(conversationId) === 0 &&
+      deliveryHooks?.voiceActive?.(conversationId) !== true;
+  }
   const policy = await sessionInputPolicy(entry.sessionId);
   if (entry.recoveryTurnId) {
     const session = await getSession(entry.sessionId);
@@ -1382,6 +1415,47 @@ export function cancelInput(id: string): Promise<boolean> {
   });
 }
 
+/** A user-directed re-offer, not a transport retry after a browser claim.
+ *
+ * After reboot the app may keep a stale open turn while the actual ChatGPT composer
+ * is idle. The human can override that *inference* for their original unclaimed
+ * message. We reuse its durable id; any browser offer/owner/Send receipt makes this
+ * operation ineligible, including a cancelled ambiguous delivery. No assistant,
+ * schedule, worker or ordinary enqueue payload can opt into this path.
+ */
+export function forceBrowserInput(id: string): Promise<InputEntry | null> {
+  return serial(async () => {
+    const current = await load();
+    const row = current.find(entry => entry.id === id);
+    if (!row) return null;
+    const repeated = row.forceBrowser && row.state === 'queued';
+    const unclaimed = row.owner === null && row.offeredAt === undefined &&
+      row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined;
+    const pickupFailed = row.state === 'failed' && !!row.error &&
+      (row.error.startsWith('Not sent: the browser did not pick up this message') ||
+        row.error.startsWith('Not sent: the browser did not connect'));
+    if (!unclaimed || !(row.state === 'queued' || pickupFailed) ||
+        row.mode !== 'auto' || (row.purpose !== undefined && row.purpose !== 'user') ||
+        row.provider || row.finishOwner || row.recoveryTurnId || row.restartWake) return null;
+    if (row.sessionId) {
+      const session = await getSession(row.sessionId);
+      if (!forceBrowserContextValid(row, session)) return null;
+    }
+    // An unrelated chat never blocks a user's send, but a newer pending input in this
+    // exact composer does. Leave that newer input and any existing browser owner alone.
+    if (current.some(entry => entry !== row && entry.sessionId === row.sessionId &&
+        entry.purpose !== 'decision' && entry.purpose !== 'schedule' &&
+        ['queued', 'browser', 'tool'].includes(entry.state))) return null;
+    if (repeated) return { ...row }; // same attempt, after re-proving its conversation
+    const now = Date.now();
+    const { directTurn: _oldDirectTurn, ...original } = row;
+    const next: InputEntry = { ...original, forceBrowser: true, transportIntent: 'browser',
+      state: 'queued', error: undefined, dueAt: now, createdAt: now };
+    await commit(current.map(entry => entry === row ? next : entry));
+    return { ...next };
+  });
+}
+
 /** Editing is possible only before handout; claimed text is immutable. */
 export function reorderQueuedInputs(sessionId: string, ids: string[]): Promise<boolean> {
   return serial(async () => {
@@ -1509,7 +1583,13 @@ export function pendingBrowserInputs(): Promise<Array<{ id: string; conversation
     const result: Array<{ id: string; conversationId: string | null; directTurn?: InputEntry['directTurn']; recoveryTurnId?: string; supersededConversationId?: string; lifetime?: 'temporary-planner'; projectEntry?: NativeProjectEntry }> = [];
     const current = await load();
     const unreachable = new Set<string>();
-    for (const entry of ordered(current)) {
+    // An explicit Force Send must not queue behind unrelated threads' stale
+    // session/turn investigations. Keep the existing FIFO within each lane,
+    // but resolve human-directed browser recovery before ordinary background work.
+    const candidates = ordered(current).sort((a, b) =>
+      Number(b.forceBrowser === true && b.state === 'queued') -
+      Number(a.forceBrowser === true && a.state === 'queued'));
+    for (const entry of candidates) {
       if (!preparable(entry) || entry.dueAt > Date.now()) continue;
       if (queuedFollowup(entry) && !(entry.state === 'browser' && entry.completedTurnId) && !(await completedStageBoundary(entry, current))) continue;
       if (!(await browserInputAllowed(entry))) continue;
@@ -1719,6 +1799,9 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
       if (entry.sessionId !== sessionId || entry.dueAt > Date.now()) return entry;
       if (entry.purpose === 'attention' || entry.purpose === 'peer' || isLocalProviderInput(entry)) return entry;
       if (entry.attachments?.length) return entry;
+      // A human explicitly reclaimed this untouched row for the native browser.
+      // A late tool call must not silently take it back (including on Pro models).
+      if (entry.forceBrowser && entry.state === 'queued') return entry;
       if (entry.directTurn && entry.state === 'queued' && session.activeTurnId !== entry.directTurn.id) return entry;
       if (entry.state === 'queued' && entry.transportIntent !== 'tool' && composerOnlyText(entry, session)) return entry;
       // ChatGPT may reuse one request id for the whole server turn. Receipt follows

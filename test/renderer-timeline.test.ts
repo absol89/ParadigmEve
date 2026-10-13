@@ -1236,6 +1236,38 @@ it.each([false, true])('dismisses retired delivery errors in selected-chat=%s wi
   expect(queue.textContent).not.toContain('Expired request');
 });
 
+it('offers Force send for an unclaimed reboot timeout without replacing a newer draft or retrying an ambiguous claim', async () => {
+  const { w, live, append } = await boot([]);
+  const row: InputEntry = {
+    id: 'dddddddd-eeee-4fff-8aaa-bbbbbbbbbbbb',
+    sessionId: summary([]).id,
+    text: 'Message stuck during reboot',
+    mode: 'auto', dueAt: T0, model: null, reasoningEffort: null,
+    state: 'failed', transportIntent: 'browser', owner: null, createdAt: T0,
+    conversationId: 'chat-b', error: 'Not sent: the browser did not pick up this message within 60 seconds.'
+  };
+  live.inputs = [row];
+  await append([]);
+  const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
+  input.value = 'Keep my newer draft';
+  const api = (w as any).api;
+  api.forceSendInput = vi.fn(async (id: string) => {
+    expect(id).toBe(row.id);
+    live.inputs[0] = { ...row, state: 'queued', forceBrowser: true, error: undefined };
+    return { ok: true, data: live.inputs[0] };
+  });
+  const force = w.document.querySelector<HTMLButtonElement>('#inputQueue [aria-label="Force send"]');
+  expect(force?.querySelector('use')?.getAttribute('href')).toBe('#i-send');
+  force!.click();
+  await settle();
+  expect(api.forceSendInput).toHaveBeenCalledExactlyOnceWith(row.id);
+  expect(live.sent).toHaveLength(0);
+  expect(input.value).toBe('Keep my newer draft');
+  live.inputs[0] = { ...row, state: 'browser', owner: 'claimed-document', offeredAt: T0, error: undefined };
+  await append([]);
+  expect(w.document.querySelector('#inputQueue [aria-label="Force send"]')).toBeNull();
+});
+
 it('does not steal a newer New Chat draft when an older queued send is acknowledged', async () => {
   const app = await boot([], false);
   const { w, live } = app;

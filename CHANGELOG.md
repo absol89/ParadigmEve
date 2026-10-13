@@ -13,12 +13,23 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
-## [2.3.9] — Reply recovery and easier connector setup
+## [2.3.9] — Reliable sends and Prime continuity
 
-2.3.9 is in release-candidate verification. These changes are not yet evidence of
-a working installed build or a published release.
+2.3.9 remains in release-candidate verification. A local Windows x64 c11 development
+installer was packaged and smoke-tested, but has not been installed or published.
 
-### Candidate changes under verification
+### Added
+
+- **Force send** in the outbox: re-offer the original, never-claimed browser message
+  when stale turn state or a reboot blocked pickup. Reuse its durable UUID and
+  distinguish a delivery request from confirmed Send; claimed, cancelled-ambiguous,
+  provider-switched or local-only messages cannot be force-replayed. Check the exact
+  session and selected model again at browser claim and native Send authorization.
+- A strict fresh-chat bootstrap waiter for linked ChatGPT Projects and elected
+  `about:blank` tabs. Markers and document registration must match the intended input;
+  ordinary `/c/` conversations remain ineligible for terminal-tab cleanup.
+
+### Fixed
 
 - Observe assistant interim and final content from the matching typed ChatGPT turn
   when its rendered components are delayed or unavailable; preserve turn ownership
@@ -27,12 +38,35 @@ a working installed build or a published release.
   actual composer instead of hiding it in a tool response.
 - Do not consume Compact & Resume pickup retries while the original turn is
   demonstrably still active.
+- Recognize the first assistant stream of a fresh ChatGPT conversation: its
+  `resume_conversation_token` and nested delta fields can provide the conversation
+  and request ID even without the older `stream_handoff`/`input_message` pair.
+  Only authorized first-send evidence counts, and contradictory IDs abstain.
+- Preserve the newest Compact & Resume attachment when a stale duplicate commit
+  acknowledgement arrives after restart; it cannot move a session backward.
+- Keep a user's new message from being overtaken by an unrelated chat's stale
+  browser-delivery work; retain browser-level Voice, draft and idle checks.
+- Preserve the selected model on the same chat across recovery. Only explicit
+  picker confirmation changes the requested ChatGPT model; Free accounts retain
+  supported native-default behavior.
 - Make first-run ChatGPT connector guidance open `chatgpt.com/plugins`, with
   the **Add** button in the top-right corner, including Swedish and Spanish
   translations. Existing user-controlled permission defaults remain unchanged.
 
-Before publication, verify reply capture, durable archive/renderer parity, long
-turns, compaction, first-run setup, version metadata, and installed c1 behavior.
+### Validation and outstanding gates
+
+- Focused offline verification of the current recovery work: **655 tests passed**
+  across eight suites; TypeScript typecheck passed; Windows x64 c11 packaged runtime
+  and 19-page Vault payload smoke checks passed.
+- An earlier broad run recorded **5,688 passed, 2 failed and 42 skipped**. Both failing
+  assertions subsequently passed focused reruns (after adding the missing Swedish
+  Force Send strings, and isolating the Activity timing-toggle test). A fresh broad
+  pass of the final tree is still required from CI.
+- Claude's temporary-chat stream investigation and dependent suites passed 1,355
+  tests, but normal and Project first-turn streams have not been observed live.
+- Installed Force Send acceptance, the independent safety review and public
+  cross-platform CI remain release gates. A source tag does not publish installers;
+  release publication is a separate manual workflow.
 
 ## [2.3.8] — Fewer interruptions, clearer handoffs
 

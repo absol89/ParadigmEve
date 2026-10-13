@@ -2028,6 +2028,21 @@ function desktopInputMarker(tab) {
     return query;
   } catch { return null; }
 }
+/** Recognize a fresh, marked Project entry only for the exact Project source elected
+ * for this input. Terminal-marker cleanup deliberately keeps using the stricter
+ * root-only desktopInputMarker above, and must never retire a normal /c/ tab. */
+function freshDesktopInputMarker(tab, projectEntry) {
+  if (!projectEntry) return desktopInputMarker(tab);
+  try {
+    const url = new URL(tab?.pendingUrl || tab?.url || '');
+    const source = cleanConversationId(projectEntry.sourceConversationId);
+    if (!source || url.origin !== 'https://chatgpt.com' ||
+        url.pathname !== `/c/${source}`) return null;
+    const query = url.searchParams.get('eve-input');
+    const hash = new URLSearchParams(url.hash.slice(1)).get('eve-input');
+    return query && query === hash && /^[a-f0-9-]{36}$/i.test(query) ? query : null;
+  } catch { return null; }
+}
 
 /**
  * Retire an inert browser-start marker only when both durable sides agree it was ours.
@@ -2187,11 +2202,23 @@ async function prepareDesktopInputTarget(tab, conversationId = null) {
  * content-side durable claim remains the one delivery fence. Failure simply leaves the row queued
  * for the normal later sweep.
  */
-async function waitFreshDesktopInputTarget(tabId, inputId, timeoutMs = 15000) {
+async function waitFreshDesktopInputTarget(tabId, inputId, timeoutMs = 15000, projectEntry = null) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab || tab.pinned || desktopInputMarker(tab) !== inputId) return null;
+    if (!tab || tab.pinned) return null;
+    if (freshDesktopInputMarker(tab, projectEntry) !== inputId) {
+      // Chrome can initially return about:blank for a tab we *just created*,
+      // before the elected marked navigation is observable. A premature return
+      // used to strand the first fresh-chat message until a later maintenance
+      // sweep. Wait briefly ONLY in that unowned bootstrap state; an actual
+      // document or any nonblank unrelated URL immediately ends this election.
+      const transient = !tab.pendingUrl && (!tab.url || tab.url === 'about:blank') &&
+        !tabDocuments[String(tabId)] && inputOpenings[inputId]?.tab === tabId;
+      if (!transient) return null;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      continue;
+    }
     const documentId = tabDocuments[String(tabId)];
     const source = { tab: tabId, documentId, navigationEpoch: tabEpochs[String(tabId)] };
     if (!tab.pendingUrl && documentId && ownsDocument(source)) return tab;
@@ -2405,7 +2432,7 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
         // pruning and the next wake). The content-side durable claim stays the one delivery fence.
         const createdId = tab.id;
         void (async () => {
-          const ready = await waitFreshDesktopInputTarget(createdId, input.id);
+          const ready = await waitFreshDesktopInputTarget(createdId, input.id, 15000, projectEntry);
           if (!ready || !await prepareDesktopInputTarget(ready, null)) return;
           offerDesktopInput(ready.id, { type: 'clf-desktop-input', id: input.id, conversationId: null,
             ...(projectEntryOf(input) ? { projectEntry: projectEntryOf(input) } : {}),

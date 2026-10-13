@@ -10,7 +10,7 @@ Give ChatGPT a place to help with the practical work on your computer: the folde
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download ParadigmEve</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.3.8.md">2.3.8 guide &amp; release notes</a>
+  <a href="docs/release-notes/v2.3.9.md">2.3.9 guide &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -51,7 +51,7 @@ You do **not** have to enable all of that to use Eve.
 5. Go to **[chatgpt.com/plugins](https://chatgpt.com/plugins)**, press the **Add** button at the top right, choose **Add custom MCP server**, and add Eve. After saving it, open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
-For a short 2.3.8 walkthrough, permissions and upgrade notes, read **[Meet Eve: the 2.3.8 first-user guide and release notes](docs/release-notes/v2.3.8.md)**. The [2.3.7 guide](docs/release-notes/v2.3.7.md) has more detailed screenshots and settings explanations for the same basic setup path.
+For current changes, permissions and upgrade notes, read the **[2.3.9 release notes and setup guidance](docs/release-notes/v2.3.9.md)**. The [2.3.8 guide](docs/release-notes/v2.3.8.md) has a fuller first-use walkthrough and screenshots for the same basic setup path.
 
 ## Safe first, then convenient
 
@@ -82,7 +82,7 @@ Once the basic connection works, the setup I like is:
 
 My own setup uses four worker slots. Two is the fresh-install default and is friendlier to accounts that hit ChatGPT rate limits quickly.
 
-The exact switches, paths, and the more permissive options are explained in the **[2.3.8 first-user guide](docs/release-notes/v2.3.8.md)** so this README can stay readable.
+The exact switches, paths, and the more permissive options are explained in the **[2.3.8 first-user guide](docs/release-notes/v2.3.8.md)**; see [2.3.9 release notes](docs/release-notes/v2.3.9.md) for the latest reliability changes.
 
 ## Plans stay with the work
 
@@ -154,20 +154,17 @@ Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Ch
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
 
-## What's changing in 2.3.8
+## What's changing in 2.3.9
 
-2.3.8 is a reliability update, not a new subscription or an experimental autonomous-agent launch. Its source includes fixes adapted from Chat On Steroids 2.1.34:
+2.3.9 concentrates on **reliable conversation delivery and keeping Prime Eve's work together**:
 
-- **Long ChatGPT Project conversations:** Compact & Resume better handles changes to ChatGPT's Project entry pages, dropped navigation clicks and stale handoff requests.
-- **Goal and Loop on accounts without a model picker:** follow-ups can use ChatGPT's current model rather than getting stuck looking for a missing selector.
-- **Less browser clutter:** the Companion remembers its Background chats window across extension reloads.
-- **Clearer failures:** tool composition explains when a requested tool belongs to another connector or isn't enabled, and command output can tell you when an identical command is already running.
-- **More complete output context:** command notes and appended local execution context are passed through the structured result the model receives.
-- **Better recorded answers:** a targeted Companion fix avoids duplicating identical GPT-6 fallback references within one message.
+- **Force send for stuck messages:** a new outbox action lets you explicitly re-offer an original message that was never claimed by the browser, even if a restart left stale turn activity behind. It uses the same message ID and cannot replay a claimed or ambiguous Send. The browser must still prove the correct chat, idle composer, draft and Voice safety.
+- **Fresh-chat pickup recovery:** the Companion recognizes marked new chats entering a linked ChatGPT Project and allows a newly elected tab to finish its brief `about:blank` startup before offering the message. It does not gain permission to close normal conversation tabs.
+- **Faster Compact & Resume binding:** first-answer stream observations now recognize the fresh-chat `resume_conversation_token` and nested delta identity fields, rather than assuming first turns contain `stream_handoff` and `input_message`. Conflicting identities still fail closed.
+- **More reliable replies and model choices:** GPT-6 answer recovery, current-chat model display, and restart recovery retain the actual conversation's selected provider/model; a model change still requires your confirmation in the picker.
+- **Clearer diagnostics and setup:** Activity's optional timing toggle and the custom ChatGPT app setup instructions are localized alongside delivery feedback.
 
-These are source-level changes awaiting release-candidate and installed-app verification. The internal candidate-evaluation experiments are **not** an automatic skill-learning feature in Eve.
-
-2.3.8 also includes the cumulative 2.3.7 improvements: OpenRouter, GPT-6 model-menu compatibility, provider-aware archive records, and Archive Browser catch-up. Read the **[2.3.8 release notes and setup guide](docs/release-notes/v2.3.8.md)** and the **[CHANGELOG](CHANGELOG.md)** for details.
+The Windows x64 c11 **development candidate** passed focused automated tests and package smoke checks; live installed Force Send and normal/Project fresh-chat acceptance remain open. Source tags and candidate binaries are **not** evidence that an installer is published or automatically installed. See the **[2.3.9 release notes](docs/release-notes/v2.3.9.md)** and **[CHANGELOG](CHANGELOG.md)** for details; the [2.3.8 first-use guide](docs/release-notes/v2.3.8.md) remains available.
 
 ## Requirements
 
@@ -210,6 +207,6 @@ Thanks to everyone testing the awkward edge cases, reporting what breaks, and he
 
 ---
 
-**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.3.8 guide & release notes](docs/release-notes/v2.3.8.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
+**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.3.9 guide & release notes](docs/release-notes/v2.3.9.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
 
 <p align="center"><sub>ParadigmEve is not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>

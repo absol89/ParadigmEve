@@ -4,7 +4,7 @@ import { connect, getStatus, onStatusChange } from '../connection.js';
 import { startBridge } from '../bridge.js';
 import { wakeBrowserUrl, resetBrowserStartupForTests } from '../browser-startup.js';
 import { getConfig } from '../config.js';
-import { enqueueInput, cancelInput, listInputs, noteInputStartupError, type InputArgs, type InputEntry } from './input.js';
+import { enqueueInput, cancelInput, forceBrowserInput, listInputs, noteInputStartupError, type InputArgs, type InputEntry } from './input.js';
 import { deliverLocalInput } from './ollama-chat.js';
 import { logWarn } from '../logger.js';
 
@@ -80,4 +80,26 @@ export async function retryQueuedInputBrowser(id: string): Promise<InputEntry | 
   const entry = (await listInputs()).find(row => row.id === id);
   return eligible(entry) ? deliver(entry, true) : null;
 }
-export function resetInputStartupForTests(): void { resetBrowserStartupForTests(); starting.clear(); }
+/** Explicit user override for an untouched, reboot-blocked browser message.
+ * The outbox itself re-proves ownership and preserves the original stable id.
+ * A browser claim or ambiguous Send receipt is never force-replayed.
+ */
+const forceStarting = new Map<string, Promise<InputEntry | null>>();
+export function forceSendDesktopInput(id: string): Promise<InputEntry | null> {
+  const existing = forceStarting.get(id);
+  if (existing) return existing;
+  const attempt = (async () => {
+    // Validate before waking the connection, then revalidate atomically at mutation.
+    const candidate = (await listInputs()).find(row => row.id === id);
+    if (!candidate || !(candidate.state === 'queued' || candidate.state === 'failed') ||
+        candidate.owner !== null || candidate.offeredAt !== undefined ||
+        candidate.sendAuthorizedAt !== undefined || candidate.deliveredAt !== undefined || candidate.messageId) return null;
+    await ready();
+    const entry = await forceBrowserInput(id);
+    return entry ? deliver(entry, true) : null;
+  })();
+  forceStarting.set(id, attempt);
+  void attempt.finally(() => { if (forceStarting.get(id) === attempt) forceStarting.delete(id); }).catch(() => undefined);
+  return attempt;
+}
+export function resetInputStartupForTests(): void { resetBrowserStartupForTests(); starting.clear(); forceStarting.clear(); }

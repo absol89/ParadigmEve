@@ -1,14 +1,14 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { InputArgs, InputEntry } from '../src/main/session/input.js';
 const ports = vi.hoisted(() => ({ backgroundChats: false, chatBrowser: 'chrome', running: false as boolean | null, connect: vi.fn(), status: { state: 'connected', detail: '' },
-  browser: { connected: false, present: false, lastSeenAt: null as number | null }, open: vi.fn(), bridge: vi.fn(), enqueue: vi.fn(), cancel: vi.fn(), note: vi.fn(), rows: [] as InputEntry[], listeners: new Set<() => void>() }));
+  browser: { connected: false, present: false, lastSeenAt: null as number | null }, open: vi.fn(), bridge: vi.fn(), enqueue: vi.fn(), cancel: vi.fn(), force: vi.fn(), note: vi.fn(), rows: [] as InputEntry[], listeners: new Set<() => void>() }));
 vi.mock('../src/main/connection.js', () => ({ connect: ports.connect, getStatus: () => ports.status, onStatusChange: (fn: () => void) => { ports.listeners.add(fn); return () => ports.listeners.delete(fn); } }));
 vi.mock('../src/main/bridge.js', () => ({ bridgeStatus: async () => ports.browser, browserWakeConnected: () => ports.browser.connected, startBridge: ports.bridge }));
 vi.mock('../src/main/browser.js', () => ({ isPreferredBrowserRunning: async () => ports.running }));
 vi.mock('../src/main/setup-assistant.js', () => ({ openParadigmEveChromeProfile: ports.open, restoreParadigmEveChromeSessionForRecovery: vi.fn() }));
 vi.mock('../src/main/config.js', () => ({ getConfig: () => ({ ui: { backgroundChats: ports.backgroundChats, chatBrowser: ports.chatBrowser } }) }));
-vi.mock('../src/main/session/input.js', () => ({ enqueueInput: ports.enqueue, cancelInput: ports.cancel, noteInputStartupError: ports.note, listInputs: async () => ports.rows }));
-import { sendDesktopInput, cancelDesktopInput, retryQueuedInputBrowser, resetInputStartupForTests } from '../src/main/session/start-input.js';
+vi.mock('../src/main/session/input.js', () => ({ enqueueInput: ports.enqueue, cancelInput: ports.cancel, forceBrowserInput: ports.force, noteInputStartupError: ports.note, listInputs: async () => ports.rows }));
+import { sendDesktopInput, cancelDesktopInput, retryQueuedInputBrowser, forceSendDesktopInput, resetInputStartupForTests } from '../src/main/session/start-input.js';
 const request: InputArgs = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', sessionId: null, text: 'Please start', mode: 'auto', dueAt: 0, model: null, reasoningEffort: null };
 beforeEach(() => {
   vi.resetAllMocks(); resetInputStartupForTests();
@@ -20,6 +20,12 @@ beforeEach(() => {
     ports.rows.push(row); return row;
   });
   ports.note.mockImplementation(async (id, error) => { const row = ports.rows.find(entry => entry.id === id); if (row) row.error = error ?? undefined; return row; });
+  ports.force.mockImplementation(async (id) => {
+    const row = ports.rows.find(entry => entry.id === id);
+    if (!row || (row.state !== 'queued' && row.state !== 'failed')) return null;
+    row.state = 'queued'; row.error = undefined;
+    return row;
+  });
 });
 it('waits for the existing connector readiness event before publishing input', async () => {
   ports.status = { state: 'connecting-tunnel', detail: 'Starting tunnel' };
@@ -43,6 +49,31 @@ it('retries only the failed browser wake for the same queued UUID', async () => 
   expect(await retryQueuedInputBrowser(request.id)).toBeNull();
   ports.rows[0]!.state = 'browser'; ports.rows[0]!.error = 'Message queued. Browser startup failed: old';
   expect(await retryQueuedInputBrowser(request.id)).toBeNull();
+});
+it('forces an unclaimed reboot timeout exactly once under concurrent button clicks, without another enqueue', async () => {
+  await sendDesktopInput(request);
+  ports.open.mockClear();
+  ports.rows[0]!.state = 'failed';
+  ports.rows[0]!.error = 'Not sent: the browser did not pick up this message within 60 seconds.';
+  const [first, second] = await Promise.all([forceSendDesktopInput(request.id), forceSendDesktopInput(request.id)]);
+  expect(first).toMatchObject({ id: request.id, state: 'queued' });
+  expect(second?.id).toBe(first?.id);
+  expect(ports.force).toHaveBeenCalledTimes(1);
+  expect(ports.enqueue).toHaveBeenCalledTimes(1);
+  expect(ports.open).toHaveBeenCalledTimes(1);
+  expect(ports.rows).toHaveLength(1);
+});
+it('cannot force a browser-claimed or ambiguous message into another native Send', async () => {
+  await sendDesktopInput(request);
+  ports.open.mockClear();
+  ports.rows[0]!.state = 'browser';
+  ports.rows[0]!.owner = 'old-browser';
+  ports.rows[0]!.offeredAt = 5;
+  expect(await forceSendDesktopInput(request.id)).toBeNull();
+  ports.rows[0]!.state = 'cancelled';
+  expect(await forceSendDesktopInput(request.id)).toBeNull();
+  expect(ports.open).not.toHaveBeenCalled();
+  expect(ports.force).not.toHaveBeenCalled();
 });
 it('connects before publication and opens exactly one marked bootstrap while Eve Browser starts', async () => {
   let release!: () => void;

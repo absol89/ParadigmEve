@@ -38,7 +38,7 @@ import {
 } from '../shared/concept-settings.js';
 import { retryGoalBrowserHelper } from './goal.js';
 import { requestBrowserPreferences } from './browser-preferences.js';
-import { sendDesktopInput, cancelDesktopInput, retryQueuedInputBrowser } from './session/start-input.js';
+import { sendDesktopInput, cancelDesktopInput, retryQueuedInputBrowser, forceSendDesktopInput } from './session/start-input.js';
 import { wakeBrowserUrl } from './browser-startup.js';
 import { registerPluginIpc } from './plugins-ipc.js';
 import { readScheduleProjection } from './schedule-projection.js';
@@ -1534,6 +1534,7 @@ export function registerIpc(
     return reorderQueuedInputs(sessionId, ids);
   });
   handle('sessions:retryBrowser', async (payload) => retryQueuedInputBrowser(z.object({ id: z.string().uuid() }).parse(payload).id));
+  handle('sessions:forceSend', async (payload) => forceSendDesktopInput(z.object({ id: z.string().uuid() }).parse(payload).id));
   handle('sessions:pausedHelpers', async () => pausedBrowserHelpers());
   handle('sessions:retryHelper', async (payload) => {
     const { id, sourceSessionId } = z.object({ id: z.string().uuid(), sourceSessionId: z.string().min(8).max(64) }).parse(payload);

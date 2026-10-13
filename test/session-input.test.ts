@@ -10,7 +10,7 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueChatReviewAttention, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, BROWSER_COLD_START_MS
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, BROWSER_COLD_START_MS
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -22,7 +22,7 @@ import { trackInFlight, emptyEvidence, type CallContext } from '../src/main/mcp/
 const offerToolInput = async (...args: Parameters<typeof offerToolInputBatch>) => (await offerToolInputBatch(...args)).messages;
 vi.mock('../src/main/session/recorder.js', () => ({ noteChatOrigin: vi.fn(async () => undefined) }));
 
-const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, pendingUserAt: null as number | null, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
+const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', pastConversations: [] as string[], blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, localOnly: false, provider: null as null | { id: 'ollama'; model: string }, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, pendingUserAt: null as number | null, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
 vi.mock('../src/main/agents.js', () => ({ selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner) }));
 vi.mock('../src/main/session/store.js', () => ({
   listUsageSessions: vi.fn(async () => []),
@@ -37,7 +37,7 @@ vi.mock('../src/main/session/store.js', () => ({
     });
     return rows;
   }),
-  getSession: vi.fn(async (id: string) => ({ id, conversationId: id === 'session-two' ? 'conversation-b' : binding.conversationId, activeTurnId: binding.activeTurnId, endedAt: binding.endedAt,
+  getSession: vi.fn(async (id: string) => ({ id, conversationId: id === 'session-two' ? 'conversation-b' : binding.conversationId, chatIds: [...binding.pastConversations, id === 'session-two' ? 'conversation-b' : binding.conversationId], activeTurnId: binding.activeTurnId, endedAt: binding.endedAt, localOnly: binding.localOnly, provider: binding.provider,
     origin: { kind: binding.origin }, lastToolCallAt: binding.lastToolCallAt, lastAssistantFinalAt: binding.lastAssistantFinalAt,
     finishTurn: { turnId: binding.activeTurnId, released: binding.finishReleased },
     selectedModel: { conversationId: id === 'session-two' ? 'conversation-b' : binding.conversationId, model: binding.model } })),
@@ -91,7 +91,9 @@ beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clf-input-'));
   initDurableStore(directory);
   binding.conversationId = 'conversation-a';
+  binding.pastConversations = [];
   binding.blocked = false;
+  binding.localOnly = false; binding.provider = null;
   binding.origin = 'desktop';
   binding.recorded = true;
   binding.activeTurnId = null;
@@ -118,6 +120,105 @@ afterEach(async () => {
 });
 
 describe('durable user input ownership', () => {
+  it('lets a human force an unclaimed reboot-blocked message into its exact browser lane, not a late tool result', async () => {
+    binding.activeTurnId = 'stale-open-reboot-turn';
+    binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'stale-open-reboot-turn', time: now };
+    const row = await seedLegacyInput(input({ text: 'Please resume my Prime chat' }));
+    expect(await pendingBrowserInputs()).toEqual([]);
+    const forced = await forceBrowserInput(row.id);
+    expect(forced).toMatchObject({ id: row.id, state: 'queued', transportIntent: 'browser', forceBrowser: true });
+    expect(await offerToolInput(sessionId, binding.conversationId, 'late-request', now + 1)).toEqual([]);
+    expect(await pendingBrowserInputs()).toEqual([{ id: row.id, conversationId: binding.conversationId }]);
+    resetInputForTests(); // A reboot cannot lose the explicit recovery instruction.
+    expect(await pendingBrowserInputs()).toEqual([{ id: row.id, conversationId: binding.conversationId }]);
+    expect(await claimBrowserInput(row.id, 'correct-browser', 'conversation-b', true)).toBeNull();
+    expect(await claimBrowserInput(row.id, 'correct-browser', binding.conversationId, true))
+      .toMatchObject({ id: row.id, state: 'browser', forceBrowser: true });
+    expect(await authorizeBrowserInput(row.id, 'correct-browser', binding.conversationId)).toBe(true);
+    expect(await forceBrowserInput(row.id)).toBeNull();
+  });
+
+  it('reoffers a proven unclaimed browser-pickup timeout with the same durable id and no duplicate', async () => {
+    const row = await seedLegacyInput(input({ text: 'Untouched before reboot' }));
+    await writeDurableNow('session-input', (await listInputs()).map(entry =>
+      entry.id === row.id ? { ...entry, transportIntent: 'browser' as const } : entry));
+    resetInputForTests();
+    noteBrowserReady(now);
+    now += 60_100;
+    expect((await listInputs()).find(entry => entry.id === row.id))
+      .toMatchObject({ state: 'failed', error: expect.stringContaining('did not pick up') });
+    const forced = await forceBrowserInput(row.id);
+    expect(forced).toMatchObject({ id: row.id, state: 'queued', forceBrowser: true, error: undefined });
+    expect(await forceBrowserInput(row.id)).toMatchObject({ id: row.id, state: 'queued', forceBrowser: true });
+    expect((await listInputs()).filter(entry => entry.id === row.id)).toHaveLength(1);
+    expect(await pendingBrowserInputs()).toEqual([{ id: row.id, conversationId: binding.conversationId }]);
+  });
+
+  it('refuses Force Send after any browser claim, ambiguous cancellation, changed chat or competing input', async () => {
+    const row = await enqueueInput(input({ sessionId: null }));
+    await claimBrowserInput(row.id, 'page', null, true);
+    expect(await forceBrowserInput(row.id)).toBeNull();
+    now += 61_000;
+    expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('cancelled');
+    expect(await forceBrowserInput(row.id)).toBeNull();
+    const second = await seedLegacyInput(input());
+    binding.conversationId = 'different-conversation';
+    expect(await forceBrowserInput(second.id)).toBeNull();
+    binding.conversationId = 'conversation-a';
+    binding.blocked = true;
+    expect(await forceBrowserInput(second.id)).toBeNull();
+    binding.blocked = false;
+    await seedLegacyInput(input({ text: 'Newer draft takes precedence' }));
+    expect(await forceBrowserInput(second.id)).toBeNull();
+  });
+
+  it('does not use a force retry to override a later local-only or provider switch', async () => {
+    const row = await seedLegacyInput(input());
+    binding.localOnly = true;
+    expect(await forceBrowserInput(row.id)).toBeNull();
+    binding.localOnly = false; binding.provider = { id: 'ollama', model: 'llama3' };
+    expect(await forceBrowserInput(row.id)).toBeNull();
+    binding.provider = null;
+    const selected = await seedLegacyInput(input({ model: 'gpt-5.6', reasoningEffort: 'high' }));
+    expect(await forceBrowserInput(selected.id)).toBeNull(); // picker is now another model
+  });
+
+  it('rechecks privacy after Force Send but before the browser claim and native Send authorization', async () => {
+    const row = await seedLegacyInput(input({ text: 'Still my instruction' }));
+    expect(await forceBrowserInput(row.id)).toMatchObject({ forceBrowser: true, state: 'queued' });
+    binding.localOnly = true;
+    expect(await pendingBrowserInputs()).toEqual([]);
+    expect(await claimBrowserInput(row.id, 'late-page', binding.conversationId, true)).toBeNull();
+    binding.localOnly = false;
+    expect(await claimBrowserInput(row.id, 'page', binding.conversationId, true)).not.toBeNull();
+    binding.provider = { id: 'ollama', model: 'llama3' };
+    expect(await authorizeBrowserInput(row.id, 'page', binding.conversationId)).toBe(false);
+  });
+
+  it('follows a proven compacted Prime successor without sending into an unrelated rebind', async () => {
+    const row = await seedLegacyInput(input({ text: 'Continue after compaction' }));
+    expect(await forceBrowserInput(row.id)).toMatchObject({ forceBrowser: true, state: 'queued' });
+    binding.conversationId = 'conversation-successor';
+    expect(await pendingBrowserInputs()).toEqual([]); // No provenance for arbitrary rebind.
+    binding.pastConversations = ['conversation-a'];
+    expect(await pendingBrowserInputs()).toEqual([{
+      id: row.id, conversationId: 'conversation-successor', supersededConversationId: 'conversation-a'
+    }]);
+    expect(await claimBrowserInput(row.id, 'successor-page', 'conversation-successor', true))
+      .toMatchObject({ id: row.id, conversationId: 'conversation-successor', state: 'browser' });
+    expect(await authorizeBrowserInput(row.id, 'successor-page', 'conversation-successor')).toBe(true);
+    expect(await acknowledgeBrowserInput(row.id, 'successor-page', 'conversation-successor', 'authoritative-send')).toBe(true);
+  });
+
+  it('elects a human-forced browser message ahead of unrelated queued threads', async () => {
+    const other = await seedLegacyInput(input({ sessionId: 'session-two', text: 'Old unrelated thread' }));
+    const human = await seedLegacyInput(input({ text: 'I explicitly want this message sent now' }));
+    expect(await forceBrowserInput(human.id)).toMatchObject({ forceBrowser: true });
+    const offered = await pendingBrowserInputs();
+    expect(offered[0]).toMatchObject({ id: human.id, conversationId: binding.conversationId });
+    expect(offered.some(row => row.id === other.id)).toBe(true);
+  });
+
   it('retires an unclaimed restart wake when the human continues the same conversation', async () => {
     const wake = await enqueueInput(input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' }), undefined, { restartWake: true });
     expect(wake).toMatchObject({ restartWake: true, state: 'queued' });

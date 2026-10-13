@@ -299,7 +299,7 @@ it('does not let an abandoned pending input starve Plugins refresh after its ele
 });
 
 type Tab = { id: number; url?: string; pendingUrl?: string; windowId?: number; active?: boolean; pinned?: boolean };
-async function worker(inputs: Array<{ id: string; conversationId: string | null; directTurn?: { id: string; startedAt: number }; recoveryTurnId?: string; supersededConversationId?: string }>, modelCatalogRequest?: { nonce: string; expiresAt: number }, priorLocal: Record<string, unknown> = {}, pluginRefreshRequests: unknown[] = [], priorSession: Record<string, unknown> = {}) {
+async function worker(inputs: Array<{ id: string; conversationId: string | null; projectEntry?: { id: string; sourceConversationId: string }; directTurn?: { id: string; startedAt: number }; recoveryTurnId?: string; supersededConversationId?: string }>, modelCatalogRequest?: { nonce: string; expiresAt: number }, priorLocal: Record<string, unknown> = {}, pluginRefreshRequests: unknown[] = [], priorSession: Record<string, unknown> = {}) {
   const tabs: Tab[] = [];
   const event = { addListener: () => {} };
   const localSaved: Record<string, unknown> = { port: 8765, token: 'test-pairing', ...priorLocal };
@@ -336,7 +336,7 @@ async function worker(inputs: Array<{ id: string; conversationId: string | null;
     },
     fetch, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, TextEncoder, console
   });
-  vm.runInContext(`${source}\nglobalThis.testMaintenance = { load, maintain, releaseTab, serializeTab, noteTabConversation, createChatTab, prepareDesktopInputTarget, returnScheduledInputToBackground, authorizeDocument, ackDesktopInput, drainCommandAcks, inspectRequestedModels, desktopInput: HANDLERS.desktop_input, catalog: HANDLERS.model_catalog, events: HANDLERS.events, applyRequestedBrowserPreferences };`, context);
+  vm.runInContext(`${source}\nglobalThis.testMaintenance = { load, maintain, releaseTab, serializeTab, noteTabConversation, createChatTab, prepareDesktopInputTarget, waitFreshDesktopInputTarget, returnScheduledInputToBackground, authorizeDocument, ackDesktopInput, drainCommandAcks, inspectRequestedModels, desktopInput: HANDLERS.desktop_input, catalog: HANDLERS.model_catalog, events: HANDLERS.events, applyRequestedBrowserPreferences };`, context);
   const api = context.testMaintenance as { releaseTab(...args: any[]): Promise<any>; serializeTab(tab: number, operation: () => Promise<any>): Promise<any>; noteTabConversation(source: any, conversationId: string): Promise<any>; applyRequestedBrowserPreferences(request: object): Promise<void>; prepareDesktopInputTarget(tab: Tab, conversationId?: string | null): Promise<boolean>; returnScheduledInputToBackground(source: unknown): Promise<boolean>; authorizeDocument(sender: unknown, message: unknown): Promise<any>; catalog(message: unknown, sender: unknown, source: unknown): Promise<any>; load(): Promise<void>; maintain(): Promise<void>; createChatTab(url: string, background: boolean): Promise<Tab> };
   await api.load();
   Object.assign(api, { query });
@@ -1120,6 +1120,72 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     expect(h.tabs[0]!.url).toBe(url);
     expect(h.tabs[1]!.url).toBe(`https://chatgpt.com/?eve-input=${firstId}#eve-input=${firstId}`);
     expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-prepare-desktop-input')).toBe(false);
+  });
+  it('recognizes the exact marked Project entry as a fresh elected input after document registration', async () => {
+    const h = await worker([]);
+    const url = `https://chatgpt.com/c/${secondId}?eve-input=${firstId}#eve-input=${firstId}`;
+    h.tabs.push({ id: 7, url });
+    await h.authorizeDocument({ tab: { id: 7 }, documentId: 'fresh-project-entry', frameId: 0, url }, { navigationEpoch: 1 });
+    // deliverDesktopInputs deliberately creates this /c/<project source> URL when input.projectEntry
+    // is present. Its detached waiter must recognize the same elected marker before a later sweep.
+    expect(await (h as any).waitFreshDesktopInputTarget(7, firstId, 100,
+      { id: `g-p-${'a'.repeat(32)}`, sourceConversationId: secondId })).toMatchObject({ id: 7, url });
+    // Neither an arbitrary conversation nor an unmarked Project page may acquire this Send.
+    expect(await (h as any).waitFreshDesktopInputTarget(7, firstId, 100,
+      { id: `g-p-${'a'.repeat(32)}`, sourceConversationId: thirdId })).toBeNull();
+    expect(await (h as any).waitFreshDesktopInputTarget(7, firstId, 100)).toBeNull();
+    h.tabs[0]!.url = `https://chatgpt.com/c/${secondId}?eve-input=${firstId}#eve-input=${thirdId}`;
+    expect(await (h as any).waitFreshDesktopInputTarget(7, firstId, 100,
+      { id: `g-p-${'a'.repeat(32)}`, sourceConversationId: secondId })).toBeNull();
+  });
+  it('offers a Project-linked fresh input exactly once after its elected document registers', async () => {
+    const projectEntry = { id: `g-p-${'a'.repeat(32)}`, sourceConversationId: secondId };
+    const h = await worker([{ id: firstId, conversationId: null, projectEntry }]);
+    // This unrelated Settings tab must remain untouched. A project opening is
+    // never permitted to borrow its React composer or create a second elected tab.
+    const unrelated = 'https://chatgpt.com/#settings';
+    h.tabs.push({ id: 7, url: unrelated });
+    await h.authorizeDocument({ tab: { id: 7 }, documentId: 'unavailable', frameId: 0, url: unrelated }, { navigationEpoch: 1 });
+    h.sendMessage.mockImplementation(async (_id, message) =>
+      message.type === 'clf-input-reuse-state' ? { safe: false, navigationEpoch: 1 } as never : { ok: true });
+    h.create.mockImplementation(async ({ url: freshUrl, windowId }: { url: string; windowId?: number }) => {
+      const tab = { id: 8, pendingUrl: freshUrl, windowId };
+      h.tabs.push(tab);
+      setTimeout(() => {
+        (tab as Tab).url = freshUrl;
+        delete (tab as Tab).pendingUrl;
+        void h.authorizeDocument({ tab: { id: 8 }, documentId: 'project-opening', frameId: 0, url: freshUrl }, { navigationEpoch: 1 });
+      }, 0);
+      return tab;
+    });
+    await h.maintain();
+    await vi.waitFor(() => expect(h.sendMessage).toHaveBeenCalledWith(8, {
+      type: 'clf-desktop-input', id: firstId, conversationId: null, projectEntry
+    }));
+    expect(h.create).toHaveBeenCalledTimes(1);
+    expect(h.tabs[0]!.url).toBe(unrelated);
+    expect(h.tabs[1]!.url).toBe(`https://chatgpt.com/c/${secondId}?eve-input=${firstId}#eve-input=${firstId}`);
+    expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toHaveLength(1);
+  });
+  it('waits through an elected about:blank bootstrap before offering the exact fresh user message once', async () => {
+    const h = await worker([{ id: firstId, conversationId: null }]);
+    h.create.mockImplementation(async ({ url: freshUrl, windowId }: { url: string; windowId?: number }) => {
+      const tab = { id: 8, url: 'about:blank', windowId };
+      h.tabs.push(tab);
+      setTimeout(() => {
+        tab.url = freshUrl;
+        void h.authorizeDocument({ tab: { id: 8 }, documentId: 'root-bootstrap', frameId: 0, url: freshUrl }, { navigationEpoch: 1 });
+      }, 40);
+      // Real Chrome may expose only its blank URL before a pendingUrl exists.
+      // The harness's default create mock has pendingUrl, so deliberately omit it.
+      return tab as unknown as { id: number; pendingUrl: string; windowId: number | undefined };
+    });
+    await h.maintain();
+    await vi.waitFor(() => expect(h.sendMessage).toHaveBeenCalledWith(8,
+      { type: 'clf-desktop-input', id: firstId, conversationId: null }));
+    expect(h.create).toHaveBeenCalledTimes(1);
+    expect(h.tabs[0]!.url).toBe(`https://chatgpt.com/?eve-input=${firstId}#eve-input=${firstId}`);
+    expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toHaveLength(1);
   });
   it.each(['explicit-failure', 'ambiguous', 'closed'])('allows a single pre-send fallback only for %s', async reason => {
     const h = await worker([{ id: firstId, conversationId: null }]);
