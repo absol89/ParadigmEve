@@ -182,6 +182,8 @@ export interface ToolCallRecord {
   /** Recorded model evidence, when known; absence is not the current picker selection. */
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  /** Provider route that received bounded file content returned by file_action read, when known. */
+  contentRecipient?: ChatProviderRoute;
   callId: string;
   tool: string;
   attribution: CallAttribution;

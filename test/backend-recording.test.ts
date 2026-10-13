@@ -6,7 +6,7 @@ import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js
 import { initDurableStore, flushDurable, resetDurableForTests } from '../src/main/durable.js';
 import { observeRequestCorrelation, requestCorrelation } from '../src/main/session/correlation.js';
 import { recordToolCall, recordChatObservations, recordRequestEvidence, sessionForConversation, flushRecorder, resetRecorderForTests } from '../src/main/session/recorder.js';
-import { appendEvent, createSession, flushSessions, initSessionStore, readActivityEvents, readAsset, readEvents, readRecentEvents, resetSessionStoreForTests, unsetSessionRootForTests, upsertMessageEvent } from '../src/main/session/store.js';
+import { appendEvent, createSession, flushSessions, initSessionStore, readActivityEvents, readAsset, readEvents, readRecentEvents, resetSessionStoreForTests, setSessionProvider, unsetSessionRootForTests, upsertMessageEvent } from '../src/main/session/store.js';
 import { archivedTurns } from '../src/main/session/provider-history.js';
 
 let dir = '';
@@ -45,6 +45,38 @@ afterEach(async () => {
   await flushRecorder(); await flushSessions(); await flushDurable();
   resetRecorderForTests(); resetSessionStoreForTests(); unsetSessionRootForTests(); resetDurableForTests();
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+it('records which chat provider received file_action read content', async () => {
+  const openRouterSession = await sessionForConversation('conv-file-openrouter');
+  await setSessionProvider(openRouterSession!, { id: 'openrouter', model: 'fixture/model' });
+  await recordToolCall({
+    ...call('file-openrouter', 'conv-file-openrouter'),
+    tool: 'file_action',
+    args: { op: 'read', path: '/workspace/book.xlsx' },
+    content: [{ type: 'text', text: 'bounded cell output' }]
+  });
+  const openRouterEvent = (await readEvents(openRouterSession!, { kinds: ['tool_call'] }))[0]!;
+  expect(openRouterEvent.kind === 'tool_call' ? openRouterEvent.call.contentRecipient : undefined).toBe('openrouter');
+
+  const chatGptSession = await sessionForConversation('conv-file-chatgpt');
+  await recordToolCall({
+    ...call('file-chatgpt', 'conv-file-chatgpt'),
+    tool: 'file_action',
+    args: { op: 'read', path: '/workspace/letter.docx' },
+    content: [{ type: 'text', text: 'bounded paragraph output' }]
+  });
+  const chatGptEvent = (await readEvents(chatGptSession!, { kinds: ['tool_call'] }))[0]!;
+  expect(chatGptEvent.kind === 'tool_call' ? chatGptEvent.call.contentRecipient : undefined).toBe('chatgpt');
+
+  await recordToolCall({
+    ...call('file-inspect', 'conv-file-chatgpt'),
+    tool: 'file_action',
+    args: { op: 'inspect', path: '/workspace/letter.docx' },
+    content: [{ type: 'text', text: 'format: docx' }]
+  });
+  const inspectEvent = (await readEvents(chatGptSession!, { kinds: ['tool_call'] }))[1]!;
+  expect(inspectEvent.kind === 'tool_call' ? inspectEvent.call.contentRecipient : undefined).toBeUndefined();
 });
 
 it('a proven chat completes while an unrelated request waits for evidence; shutdown includes the waiter', async () => {

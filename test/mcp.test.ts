@@ -701,7 +701,7 @@ describe('model-facing surfaces', () => {
   it('advertises local and Computer-use tools together on ParadigmEve', async () => {
     everything();
     const names = toolNames(await core('tools/list'));
-    for (const name of ['agents', 'apply_patch', 'chat_review_plan', 'chat_review_complete', 'download_artifact', 'exec', 'exec_command', 'read', 'session', 'update_plan', 'view_image', 'write_stdin']) {
+    for (const name of ['agents', 'apply_patch', 'chat_review_plan', 'chat_review_complete', 'download_artifact', 'exec', 'exec_command', 'file_action', 'read', 'session', 'update_plan', 'view_image', 'write_stdin']) {
       expect(names, name).toContain(name);
     }
     // find is absent because exec_command is present — they are mutually exclusive.
@@ -939,9 +939,11 @@ describe('model-facing surfaces', () => {
     // work closes only from exact durable task-verification lineage rather than final prose/browser state.
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
     // queries, while `expenses` contains mutations only. Skills add one lazy view/manage tool;
-    // their full bodies never live in tools/list. Debug builds also
+    // their full bodies never live in tools/list. The provider-neutral file broker adds one
+    // bounded read-only file_action schema while keeping provider-specific tool sets off Core.
+    // Debug builds also
     // expose one narrow authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 36 : process.platform === 'darwin' ? 23 : 21);
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 37 : process.platform === 'darwin' ? 24 : 22);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');
@@ -966,7 +968,10 @@ describe('model-facing surfaces', () => {
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 42_800 : 42_600);
+    // 2.4.0 adds one explicit provider-neutral file_action schema (inspect/read plus bounded
+    // per-format selectors). That is deliberate discovery cost in exchange for keeping the
+    // full provider-specific ArtCraft/GridCraft tool sets off Core.
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 45_000 : 44_800);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
@@ -987,6 +992,8 @@ describe('model-facing surfaces', () => {
           : tool.name === 'computer'
           // Retain the existing legacy schema allowance on macOS.
           ? 7_400
+          : tool.name === 'file_action'
+            ? 3_500
           : tool.name === 'apply_patch'
             ? 5_000
             : tool.name === 'agents'

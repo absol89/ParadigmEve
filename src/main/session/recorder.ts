@@ -69,6 +69,7 @@ import {
 } from './correlation.js';
 import { RESUME_CLAIM_WINDOW_MS, resumeOpeningChat } from './resume-gate.js';
 import { summarizeToolCall } from './summarize.js';
+import { providerRoute } from './provider-history.js';
 
 interface LiveConversation {
   conversationId: string;
@@ -1419,8 +1420,12 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
     // worker chat. Recover only that worker id, never a guessed prime/current agent.
     let eventAgent = input.agent ?? null;
     let callModel: Pick<ToolCallRecord, 'model' | 'reasoningEffort'> = {};
+    let contentRecipient: ToolCallRecord['contentRecipient'];
     if (target.conversationId) {
       const summary = await getSession(sessionId);
+      if (input.tool === 'file_action' && input.args && typeof input.args === 'object' && (input.args as { op?: unknown }).op === 'read') {
+        contentRecipient = providerRoute(summary?.provider);
+      }
       const selection = summary?.selectedModel;
       const live = conversations.get(target.conversationId);
       // Selection evidence must precede this exact turn, not merely arrive before the
@@ -1465,6 +1470,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
 
     const call: ToolCallRecord = {
       ...callModel,
+      ...(contentRecipient ? { contentRecipient } : {}),
       callId: randomUUID(),
       tool: input.tool,
       attribution: target.attribution,
