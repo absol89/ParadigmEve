@@ -174,23 +174,35 @@ describe.runIf(IS_WINDOWS)('desktop helper', () => {
   });
 
   it('queries Windows UI Automation without requiring a screenshot', async () => {
-    const result = await findUi({ role: 'Button', maxResults: 5 });
-    expect(result.window).toBeGreaterThan(0);
-    expect(Array.isArray(result.elements)).toBe(true);
-    expect(result.elements.length).toBeLessThanOrEqual(5);
-    expect(result.snapshotId).toBeGreaterThan(0);
-    for (const element of result.elements) expect(element.ref).toMatch(/^g\d+_s\d+_e\d+$/);
+    // UIA may correctly refuse an unrelated foreground browser whose live root is missing.
+    // Use an owned control instead of accidentally gating on the user's active application.
+    const fixture = await ownedCaptureWindow();
+    try {
+      const result = await findUi({ window: fixture.id, role: 'Button', maxResults: 5 });
+      expect(result.window).toBe(fixture.id);
+      expect(result.elements.some(element => element.name === 'ParadigmEve owned UIA action')).toBe(true);
+      expect(result.elements.length).toBeLessThanOrEqual(5);
+      expect(result.snapshotId).toBeGreaterThan(0);
+      for (const element of result.elements) expect(element.ref).toMatch(/^g\d+_s\d+_e\d+$/);
+    } finally {
+      await fixture.close();
+    }
   });
 
   it('returns a Codex-style window state with semantic UI refs', async () => {
-    const target = await visibleWindow();
-    if (target === null) return;
-    const state = await getWindowState({ window: target, includeScreenshot: false, maxElements: 8 });
-    expect(state.window.id).toBeGreaterThan(0);
-    expect(state.screenshot).toBeNull();
-    expect(state.elements.length).toBeLessThanOrEqual(8);
-    expect(state.snapshotId).toBeGreaterThan(0);
-    for (const element of state.elements) expect(element.ref).toMatch(/^g\d+_s\d+_e\d+$/);
+    const fixture = await ownedCaptureWindow();
+    try {
+      const state = await getWindowState({ window: fixture.id, includeScreenshot: false, maxElements: 8 });
+      expect(state.window.id).toBe(fixture.id);
+      expect(state.screenshot).toBeNull();
+      expect(state.uiUnavailable).toBeNull();
+      expect(state.elements.some(element => element.name === 'ParadigmEve owned UIA action')).toBe(true);
+      expect(state.elements.length).toBeLessThanOrEqual(8);
+      expect(state.snapshotId).toBeGreaterThan(0);
+      for (const element of state.elements) expect(element.ref).toMatch(/^g\d+_s\d+_e\d+$/);
+    } finally {
+      await fixture.close();
+    }
   });
 
   it('refuses an invented semantic element ref instead of clicking cached coordinates', async () => {

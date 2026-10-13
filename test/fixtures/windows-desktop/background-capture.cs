@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -20,6 +21,7 @@ public static class BackgroundCaptureFixture {
       Width = 420,
       Height = 280,
       Background = Brushes.LimeGreen,
+      Content = new Button { Name = "OwnedAction", Content = "ParadigmEve owned UIA action" },
       ShowActivated = false,
       ShowInTaskbar = false
     };
