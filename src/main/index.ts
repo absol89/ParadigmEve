@@ -121,6 +121,7 @@ import { startupSplashDocument } from './startup-splash.js';
 import { readUiLanguage } from './ui-language.js';
 import { openParadigmEveChromeProfile, refreshParadigmEveCompanionForMaintenance, restartParadigmEveChromeForInstallerRecovery, restoreParadigmEveBrowser, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
 import { wakeBrowserUrl } from './browser-startup.js';
+import { recoverUnclaimedRestartWakes } from './session/input.js';
 import {
   beginRecoveryRun,
   markRecoveryRunClean,
@@ -998,7 +999,19 @@ void app.whenReady().then(async () => {
       logWarn(`could not open Companion browser profile on startup: ${error instanceof Error ? error.message : String(error)}`)
     );
   }
-  // The heartbeat's first tick must observe post-recovery session/identity state. Starting it before
+  // One-shot boot checks re-offer only the exact untouched wake already owned by this
+  // installation. The durable outbox and Companion remain the sole Send authorities.
+  // Neither checkpoint opens/reloads a ChatGPT tab or retries an authorized send.
+  if (restartRecoveryPlan?.entry) {
+    for (const delay of [60_000, 120_000]) {
+      const timer = setTimeout(() => {
+        if (quitting || !restartRecoveryPlan?.entry) return;
+        void recoverUnclaimedRestartWakes().catch((error: Error) =>
+          logWarn(`restart wake recovery checkpoint failed: ${error.message}`));
+      }, delay);
+      timer.unref?.();
+    }
+  }  // The heartbeat's first tick must observe post-recovery session/identity state. Starting it before
   // installer/crash restoration is exactly how a healthy Eva was reported as coordinator-less while
   // her Companion browser was still being restarted.
   if (startupBrowserRecovery) void startupBrowserRecovery.finally(startReviewHeartbeatMaintenance);
