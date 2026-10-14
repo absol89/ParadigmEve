@@ -183,6 +183,69 @@ async function exists(path: string): Promise<boolean> {
   try { await fs.stat(path); return true; } catch { return false; }
 }
 
+/** Finds the app's one desktop executable inside its private installation, a few levels deep. */
+async function findDesktopApp(root: string, name: string): Promise<string | null> {
+  const matches: string[] = [];
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (depth > 4 || matches.length > 1) return;
+    let entries: import('node:fs').Dirent[];
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = nodePath.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full, depth + 1);
+      else if (entry.isFile() && entry.name.toLowerCase() === name.toLowerCase()) matches.push(full);
+    }
+  };
+  await walk(root, 0);
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+type VisibleLauncher = (executable: string, file: string) => Promise<void>;
+/** Opens a document in a GUI app the way a double-click does: the path is its one argument. */
+let launchVisible: VisibleLauncher = async (executable, file) => {
+  const { spawn } = await import('node:child_process');
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(executable, [file], { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
+  });
+};
+/** Test seam: replaces the GUI launch. */
+export function setVisibleLauncherForTests(launcher: VisibleLauncher | null): void {
+  launchVisible = launcher ?? launchVisible;
+}
+
+/**
+ * "Show me" / "teach me": the same copy rule as a headless edit, but the copy is opened in the
+ * app's own window so Eve can work in it with Computer use while the user watches. Which route
+ * runs is the op the model chose from the user's request; nothing in a file selects it.
+ */
+export async function openVisibleCopy(request: Omit<EditRequest, 'steps' | 'allowFeatureLoss'>): Promise<{ copy: string; app: string }> {
+  const provider = fileCapabilityProvider(request.providerId);
+  const installed = pluginManager.fileProvider(request.providerId);
+  const directory = pluginManager.fileProviderDirectory(request.providerId);
+  if (!provider || !installed || !directory) {
+    throw new EditRefused(`PROVIDER_NOT_READY: ${provider?.displayName ?? request.providerId} is not installed. Offer it with file_edit install_provider first.`);
+  }
+  const slug = provider.id.replace(/^artcraft\./, '');
+  const executable = await findDesktopApp(nodePath.join(directory, 'app'), `${slug}${process.platform === 'win32' ? '.exe' : ''}`);
+  if (!executable) {
+    throw new EditRefused(`VISIBLE_UNAVAILABLE: only ${provider.displayName}'s headless tool is installed on this system, so there is no window to show. Use edit, or open the file in an app the user already has with Computer use.`);
+  }
+  const destination = nodePath.join(request.destination.realDir, request.destination.name);
+  if (await exists(destination)) throw new EditRefused(`OUTPUT_EXISTS: ${request.destination.virtualDir}/${request.destination.name} already exists; choose another output_path.`);
+  const inUse = await sourceInUse(request.source.real);
+  if (inUse) throw new EditRefused(`FILE_IN_USE: ${inUse}. Ask the user to save and close it first.`);
+  const { constants } = await import('node:fs');
+  await fs.copyFile(request.source.real, destination, constants.COPYFILE_EXCL);
+  try {
+    await launchVisible(executable, destination);
+  } catch {
+    throw new EditRefused(`VISIBLE_LAUNCH_FAILED: ${provider.displayName} could not be started. The copy is at ${request.destination.virtualDir}/${request.destination.name}.`);
+  }
+  return { copy: `${request.destination.virtualDir}/${request.destination.name}`, app: provider.displayName };
+}
+
 export function runProviderEdit(request: EditRequest): Promise<EditOutcome> {
   return serial(request.providerId, () => editOnce(request));
 }

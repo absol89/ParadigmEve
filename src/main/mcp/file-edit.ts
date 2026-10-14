@@ -1,7 +1,7 @@
 import nodePath from 'node:path';
 import { z } from 'zod';
 import { requestFileProviderInstall } from '../file-provider-consent.js';
-import { EditRefused, freeOutputName, INPUT_PLACEHOLDER, OUTPUT_PLACEHOLDER, runProviderEdit } from '../file-edit-transaction.js';
+import { EditRefused, freeOutputName, INPUT_PLACEHOLDER, openVisibleCopy, OUTPUT_PLACEHOLDER, runProviderEdit } from '../file-edit-transaction.js';
 import { pluginManager } from '../plugins/manager.js';
 import { toolDeclaration } from './tool-declarations.js';
 import { fail, guard, ok, resolveIn, type SurfaceRegistrar, type ToolResult } from './kernel.js';
@@ -15,14 +15,14 @@ import { fail, guard, ok, resolveIn, type SurfaceRegistrar, type ToolResult } fr
 // One flat object: per-op fields are checked in the handler, because a union repeats every field
 // in every chat's tools/list. The provider id is validated against the registry by its owners.
 export const fileEditArgs = z.object({
-  op: z.enum(['install_provider', 'provider_tools', 'edit']),
+  op: z.enum(['install_provider', 'provider_tools', 'edit', 'open_visible']),
   provider: z.string().regex(/^artcraft\.[a-z]+$/).describe('Id from a file_action provider_offer.'),
-  path: z.string().min(1).max(4096).optional().describe('edit: source file.'),
+  path: z.string().min(1).max(4096).optional().describe('edit/open_visible: source file.'),
   steps: z.array(z.object({
     tool: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
     arguments: z.record(z.string(), z.unknown()).optional()
   }).strict()).min(1).max(40).optional().describe(`edit: app tool calls; files only as "${INPUT_PLACEHOLDER}" (a copy) and "${OUTPUT_PLACEHOLDER}" (must be saved).`),
-  output_path: z.string().min(1).max(4096).optional().describe('edit: new file; default "<name> (Eve edit).<ext>".'),
+  output_path: z.string().min(1).max(4096).optional().describe('edit/open_visible: new file; default "<name> (Eve edit).<ext>".'),
   allow_feature_loss: z.boolean().optional()
 }).strict();
 
@@ -63,18 +63,36 @@ function providerTools(id: string): ToolResult {
   return ok(`${id} tools (use them as file_edit edit steps; open "${INPUT_PLACEHOLDER}" and save to "${OUTPUT_PLACEHOLDER}"):\n${lines.join('\n')}`);
 }
 
+async function copyTarget(reg: SurfaceRegistrar, path: string, outputPath: string | undefined) {
+  const source = await resolveIn(reg.ctx.roots, path);
+  if (outputPath) {
+    const target = await resolveIn(reg.ctx.roots, outputPath, { allowMissing: true });
+    return { source, destination: { realDir: nodePath.dirname(target.real), virtualDir: nodePath.posix.dirname(target.virtual), name: nodePath.basename(target.real) } };
+  }
+  const realDir = nodePath.dirname(source.real);
+  return { source, destination: { realDir, virtualDir: nodePath.posix.dirname(source.virtual), name: await freeOutputName(realDir, nodePath.basename(source.real)) } };
+}
+
+async function openVisible(reg: SurfaceRegistrar, args: FileEditArgs): Promise<ToolResult> {
+  if (!args.path || args.steps || args.allow_feature_loss !== undefined) return fail('INVALID_ARGUMENTS: open_visible takes provider, path and optional output_path.');
+  if (!reg.caps.create) return fail('TOOL_DISABLED: showing an edit writes a new copy, which needs the Create files permission in ParadigmEve.');
+  const { source, destination } = await copyTarget(reg, args.path, args.output_path);
+  try {
+    const opened = await openVisibleCopy({ providerId: args.provider, source, destination });
+    return ok(
+      `OPENED: ${opened.copy} is open in ${opened.app}'s window. The original ${source.virtual} was not changed. ` +
+      `Work in that window with the Desktop (Computer use) tools so the user can watch, narrating each step. Save in the app when done; it saves to the copy.`
+    );
+  } catch (error) {
+    if (error instanceof EditRefused) return fail(error.message);
+    throw error;
+  }
+}
+
 async function edit(reg: SurfaceRegistrar, args: FileEditArgs): Promise<ToolResult> {
   if (!args.path || !args.steps) return fail('INVALID_ARGUMENTS: edit needs path and steps.');
   if (!reg.caps.create) return fail('TOOL_DISABLED: editing writes a new file, which needs the Create files permission in ParadigmEve.');
-  const source = await resolveIn(reg.ctx.roots, args.path);
-  let destination: { realDir: string; virtualDir: string; name: string };
-  if (args.output_path) {
-    const target = await resolveIn(reg.ctx.roots, args.output_path, { allowMissing: true });
-    destination = { realDir: nodePath.dirname(target.real), virtualDir: nodePath.posix.dirname(target.virtual), name: nodePath.basename(target.real) };
-  } else {
-    const realDir = nodePath.dirname(source.real);
-    destination = { realDir, virtualDir: nodePath.posix.dirname(source.virtual), name: await freeOutputName(realDir, nodePath.basename(source.real)) };
-  }
+  const { source, destination } = await copyTarget(reg, args.path, args.output_path);
   try {
     const outcome = await runProviderEdit({
       providerId: args.provider,
@@ -109,16 +127,17 @@ export function registerFileEditTool(reg: SurfaceRegistrar): void {
       title: 'Change document files',
       description:
         'install_provider: after the user agreed in chat, ask them in ParadigmEve\'s dialog to install an offered app. ' +
-        'provider_tools: list its tools. edit: run them on a copy, saving a new file; the original never changes.',
+        'provider_tools: list its tools. edit (user wants it done): run them on a copy, saving a new file. open_visible (user wants to watch or learn): open a copy in the app for Computer use. The original never changes.',
       inputSchema: fileEditArgs,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
     })),
     async (args) => guard('file_edit', async (): Promise<ToolResult> => {
       if (!reg.caps.edit) return fail('TOOL_DISABLED: file_edit requires the Edit files permission in ParadigmEve.');
       const extra = (['path', 'steps', 'output_path', 'allow_feature_loss'] as const).filter((key) => args[key] !== undefined);
-      if (args.op !== 'edit' && extra.length > 0) return fail(`INVALID_ARGUMENTS: ${args.op} takes only provider (not ${extra.join(', ')}).`);
+      if ((args.op === 'install_provider' || args.op === 'provider_tools') && extra.length > 0) return fail(`INVALID_ARGUMENTS: ${args.op} takes only provider (not ${extra.join(', ')}).`);
       if (args.op === 'install_provider') return installProvider(args.provider);
       if (args.op === 'provider_tools') return providerTools(args.provider);
+      if (args.op === 'open_visible') return openVisible(reg, args);
       return edit(reg, args);
     })
   );

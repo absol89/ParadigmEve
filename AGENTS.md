@@ -1713,6 +1713,11 @@ registry) unless `allow_feature_loss`, runs the app's own tools (listed on deman
 argument may carry, re-validates the output with the built-in reader, reports a bounded
 structural diff, and publishes a new file by hard link (it must not exist). A failed publish keeps
 the staged result beside the destination and reports it. Edits run one at a time per app.
+"Just do it" is `edit` (headless MCP); "show me / teach me" is `open_visible`, which makes the same
+kind of new copy and opens it in the app's own window (its desktop executable, found in the private
+install) for the model to drive with Desktop/Computer-use tools. The op the model chose from the
+user's request is the only router; no file content selects a mode. A macOS install has only the
+CLI, so `open_visible` says no window is available there.
 
 ### Connections, tunnels and diagnostics
 

@@ -775,6 +775,11 @@ export class PluginManager {
     const row = this.records.find(row => brokerProvider(row) === providerId);
     return row ? { id: row.id, status: row.enabled ? row.status : 'disabled', version: row.version } : null;
   }
+  /** The private installation directory of an enabled broker provider (for its desktop app). */
+  fileProviderDirectory(providerId: string): string | null {
+    const row = this.records.find(row => brokerProvider(row) === providerId && row.enabled);
+    return row ? row.directory : null;
+  }
   /** Declarations of an installed broker provider, for on-demand discovery; never published. */
   fileProviderTools(providerId: string): Tool[] {
     const row = this.records.find(row => brokerProvider(row) === providerId && row.enabled);

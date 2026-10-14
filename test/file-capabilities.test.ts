@@ -3,7 +3,6 @@ import {
   FILE_CAPABILITY_PROVIDERS,
   capabilityProvidersForFormat,
   currentProviderPlatform,
-  executionModeForIntent,
   maturityOffered,
   providerAssetTemplate,
   type FileCapabilityProvider
@@ -54,11 +53,5 @@ describe('file capability registry', () => {
     expect(maturityOffered('unreleased', true)).toBe(false);
     expect(maturityOffered('in-development', false, 'beta')).toBe(false);
     expect(maturityOffered('in-development', true, 'beta')).toBe(true);
-  });
-
-  it('keeps autonomous work headless and teaching/watch workflows visible', () => {
-    expect(executionModeForIntent('just-do-it')).toBe('headless');
-    expect(executionModeForIntent('teach-me')).toBe('visible');
-    expect(executionModeForIntent('watch-me')).toBe('visible');
   });
 });

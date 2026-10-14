@@ -178,11 +178,3 @@ export function maturityOffered(maturity: ProviderMaturity, preview: boolean, th
   if (maturity === 'unreleased') return false;
   return preview || PROVIDER_MATURITY.indexOf(maturity) >= PROVIDER_MATURITY.indexOf(threshold);
 }
-
-/**
- * User intent decides whether automation should stay headless or be demonstrated visibly.
- * Provider choice comes afterwards; this policy must not be tied to ChatGPT/Ollama/OpenRouter.
- */
-export function executionModeForIntent(intent: 'just-do-it' | 'teach-me' | 'watch-me'): CapabilityExecutionMode {
-  return intent === 'just-do-it' ? 'headless' : 'visible';
-}

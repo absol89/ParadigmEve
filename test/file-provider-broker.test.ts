@@ -28,6 +28,7 @@ const { setProviderAcquireOptionsForTests } = await import('../src/main/file-pro
 const consent = await import('../src/main/file-provider-consent.js');
 const { registerFileActionTool } = await import('../src/main/mcp/file-action.js');
 const { registerFileEditTool } = await import('../src/main/mcp/file-edit.js');
+const { setVisibleLauncherForTests } = await import('../src/main/file-edit-transaction.js');
 const { createRegistrar } = await import('../src/main/mcp/kernel.js');
 const { DEFAULT_CAPABILITIES } = await import('../src/shared/types.js');
 
@@ -315,5 +316,41 @@ describe('file_edit edit transaction', () => {
     const denied = textOf(await registrar({ create: false }).invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/clip.wav', steps: steps() }, caller()));
     expect(denied).toMatch(/TOOL_DISABLED: editing writes a new file/);
     expect(textOf(await reg.invokeNested('file_edit', { op: 'provider_tools', provider: 'artcraft.gridcraft', path: '/workspace/clip.wav' }, caller()))).toMatch(/INVALID_ARGUMENTS: provider_tools takes only provider/);
+  });
+});
+
+describe('file_edit open_visible ("show me")', () => {
+  const workspace = () => path.join(dir, 'workspace');
+  afterEach(() => setVisibleLauncherForTests(null));
+
+  it('opens a new copy in the app window for Computer use and leaves the original alone', async () => {
+    publish('gridcraft', '0.6.1');
+    expect(await consent.requestFileProviderInstall('artcraft.gridcraft', async () => 'install')).toMatchObject({ status: 'installed' });
+    const source = path.join(workspace(), 'book.xlsx');
+    await fs.writeFile(source, 'original bytes');
+    const launched: Array<[string, string]> = [];
+    setVisibleLauncherForTests(async (exe, file) => { launched.push([exe, file]); });
+    const result = await registrar({ create: true }).invokeNested('file_edit', { op: 'open_visible', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx' }, caller());
+    expect(textOf(result)).toContain("OPENED: /workspace/book (Eve edit).xlsx is open in GridCraft's window. The original /workspace/book.xlsx was not changed.");
+    expect(launched).toHaveLength(1);
+    expect(path.basename(launched[0]![0])).toBe('gridcraft.exe');
+    expect(launched[0]![1]).toBe(path.join(workspace(), 'book (Eve edit).xlsx'));
+    expect(await fs.readFile(path.join(workspace(), 'book (Eve edit).xlsx'), 'utf8')).toBe('original bytes');
+    expect(await fs.readFile(source, 'utf8')).toBe('original bytes');
+  });
+
+  it('says so when only the headless tool exists, the app is missing, or the file is open elsewhere', async () => {
+    await fs.writeFile(path.join(workspace(), 'book.xlsx'), 'x');
+    const reg = registrar({ create: true });
+    const run = () => reg.invokeNested('file_edit', { op: 'open_visible', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx' }, caller());
+    expect(textOf(await run())).toMatch(/PROVIDER_NOT_READY/);
+    // A macOS-style install: the archive has only the CLI.
+    mock.releases.set('storytold/gridcraft', { tag: 'v0.6.1', assets: [{ name: 'gridcraft-0.6.1-windows-x64-portable.zip', bytes: zipSync({ 'gridcraft-cli.exe': strToU8('cli') }) }] });
+    expect(await consent.requestFileProviderInstall('artcraft.gridcraft', async () => 'install')).toMatchObject({ status: 'installed' });
+    const launcher = vi.fn(async () => undefined);
+    setVisibleLauncherForTests(launcher);
+    expect(textOf(await run())).toMatch(/VISIBLE_UNAVAILABLE: only GridCraft's headless tool is installed/);
+    expect(launcher).not.toHaveBeenCalled();
+    expect((await fs.readdir(workspace())).sort()).toEqual(['book.xlsx']);
   });
 });
