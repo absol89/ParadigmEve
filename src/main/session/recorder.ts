@@ -1423,12 +1423,12 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
     // worker chat. Recover only that worker id, never a guessed prime/current agent.
     let eventAgent = input.agent ?? null;
     let callModel: Pick<ToolCallRecord, 'model' | 'reasoningEffort'> = {};
-    // Every file_action result carries file-derived text (a read slice, or sheet names in an
+    // Every file_action/file_edit result carries file-derived text (a read slice, or sheet names in an
     // inspect or an error), so each one records the route it was returned to. The dispatcher
     // knows that route from where the call entered; the session's provider is only the fallback
     // for a caller that did not say, because it describes the newest turn, not this call.
     let contentRecipient: ToolCallRecord['contentRecipient'];
-    if (input.tool === 'file_action') {
+    if (input.tool === 'file_action' || input.tool === 'file_edit') {
       contentRecipient = input.contentRoute ?? providerRoute((await getSession(sessionId))?.provider);
     }
     if (target.conversationId) {

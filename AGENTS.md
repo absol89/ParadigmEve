@@ -1705,7 +1705,14 @@ answer. On yes, `file-provider-install.ts` reads the latest stable release, requ
 SHA-256 for this machine's single asset, verifies the bytes, extracts through the plugin installer's
 validated unzip and installs per-user as an `artcraft` PluginManager row. Those rows never publish
 or claim names on any connector; only `pluginManager.call(..., { broker })` reaches them. "No
-thanks" is durable per app until reset in Plugins. Craft-app edits never modify the source file.
+thanks" is durable per app until reset in Plugins. Craft-app edits never modify the source file:
+`file_edit edit` (`file-edit-transaction.ts`) refuses a source another program has open (Office
+owner file, LibreOffice lock, EBUSY), refuses documented feature loss (`unpreserved` in the
+registry) unless `allow_feature_loss`, runs the app's own tools (listed on demand by
+`provider_tools`) against a staged copy with `{{input}}`/`{{output}}` as the only file names any
+argument may carry, re-validates the output with the built-in reader, reports a bounded
+structural diff, and publishes a new file by hard link (it must not exist). A failed publish keeps
+the staged result beside the destination and reports it. Edits run one at a time per app.
 
 ### Connections, tunnels and diagnostics
 

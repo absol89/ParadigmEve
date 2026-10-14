@@ -968,9 +968,10 @@ describe('model-facing surfaces', () => {
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    // Post-2.4 adds explicit provider-neutral file_action/file_edit schemas. That is deliberate
-    // discovery cost in exchange for keeping the
-    // full provider-specific ArtCraft/GridCraft tool sets off Core.
+    // Post-2.4 adds the provider-neutral file broker: read-only file_action (inspect/read plus
+    // bounded per-format selectors) and its changing half file_edit (one flat object for
+    // install_provider/provider_tools/edit). That is deliberate discovery cost in exchange for
+    // keeping all thirteen ArtCraft apps' own tool sets off Core.
     expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 46_000 : 45_800);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 

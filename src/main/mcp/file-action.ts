@@ -262,6 +262,8 @@ function xlsxRead(file: SniffedFile, args: Extract<FileActionArgs, { op: 'read' 
   }
   return {
     text: lines.join('\n'),
+    cells,
+    sheetNames: sheets.map((sheet) => sheet.name),
     details: { sheet: chosen.name.slice(0, MAX_LISTED_NAME_CHARS), sheets: listNames(sheets.map((sheet) => sheet.name)), range: lines[1]!.slice(7) }
   };
 }
@@ -275,7 +277,7 @@ function docxRead(file: SniffedFile, args: Extract<FileActionArgs, { op: 'read' 
   const max = args.max_paragraphs ?? DEFAULT_PARAGRAPHS;
   const picked = paragraphs.slice(start, start + max);
   const text = picked.map((paragraph, index) => `${start + index + 1}. ${paragraph}`).join('\n');
-  return { text, details: { paragraph_start: start + 1, paragraph_count: picked.length, total_paragraphs: paragraphs.length } };
+  return { text, paragraphs: picked, details: { paragraph_start: start + 1, paragraph_count: picked.length, total_paragraphs: paragraphs.length } };
 }
 
 function pptxSlideNumber(name: string): number | null {
@@ -296,14 +298,44 @@ function pptxRead(file: SniffedFile, args: Extract<FileActionArgs, { op: 'read' 
   const wanted = new Set(selected.map((entry) => entry.name));
   const parts = unzipSelected(file.bytes, (name) => wanted.has(name));
   const lines: string[] = [];
+  const slides = new Map<number, string>();
   for (const entry of selected) {
     const bytes = parts[entry.name];
     if (!bytes) continue;
     const text = elements(parseXml(bytes), 't').map((node) => node.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim();
+    slides.set(entry.number, text);
     lines.push(`--- slide ${entry.number} ---\n${text}`);
   }
-  return { text: lines.join('\n\n'), details: { slide_start: start, slide_end: end, slides_returned: selected.length, total_slides: available.length } };
+  return { text: lines.join('\n\n'), slides, details: { slide_start: start, slide_end: end, slides_returned: selected.length, total_slides: available.length } };
 }
+
+/** Sheets, cells, paragraphs or slides a structural diff compares; bounded like any read. */
+const MAX_DIFF_SHEETS = 20;
+export function documentEntries(file: SniffedFile): Map<string, string> | null {
+  const read = (extra: Record<string, unknown>) => ({ op: 'read' as const, path: '', ...extra });
+  const entries = new Map<string, string>();
+  if (file.format === 'xlsx') {
+    const first = xlsxRead(file, read({}));
+    entries.set('sheets', first.sheetNames.join(', '));
+    for (const name of first.sheetNames.slice(0, MAX_DIFF_SHEETS)) {
+      const sheet = xlsxRead(file, read({ sheet: name, max_rows: MAX_XLSX_ROWS, max_columns: MAX_XLSX_COLUMNS }));
+      for (const [ref, value] of sheet.cells) if (value !== '') entries.set(`${name}!${ref}`, value);
+    }
+    return entries;
+  }
+  if (file.format === 'docx') {
+    docxRead(file, read({ max_paragraphs: MAX_PARAGRAPHS })).paragraphs.forEach((text, index) => entries.set(`paragraph ${index + 1}`, text));
+    return entries;
+  }
+  if (file.format === 'pptx') {
+    for (const [number, text] of pptxRead(file, read({ slide_start: 1, slide_end: MAX_SLIDES })).slides) entries.set(`slide ${number}`, text);
+    return entries;
+  }
+  return null;
+}
+
+/** Shared with the edit transaction: the same bounded, single-handle read file_action uses. */
+export { readSource, extensionFormat, type SniffedFile };
 
 interface PdfWorkerReply {
   ok: boolean;

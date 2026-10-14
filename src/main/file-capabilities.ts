@@ -36,6 +36,12 @@ export interface ProviderRelease {
   assets: Readonly<Partial<Record<ProviderPlatform, string>>>;
 }
 
+/**
+ * Something in a package that upstream documents as lost when the app saves: a ZIP part prefix,
+ * optionally narrowed to parts whose text contains a marker.
+ */
+export interface FidelityRisk { part: string; marker?: string; feature: string }
+
 export interface FileCapabilityProvider {
   id: string;
   displayName: string;
@@ -50,6 +56,8 @@ export interface FileCapabilityProvider {
   license: string;
   maturity: ProviderMaturity;
   release: ProviderRelease;
+  /** Per extension: what upstream's docs say a save through this app drops. Absent means not documented. */
+  unpreserved: Readonly<Record<string, readonly FidelityRisk[]>>;
 }
 
 const ARTCRAFT_AUTOMATION = Object.freeze(['cli', 'mcp', 'json-control', 'desktop'] as const);
@@ -70,7 +78,16 @@ function craftAssets(slug: string): ProviderRelease['assets'] {
   });
 }
 
-function artcraft(slug: string, displayName: string, domain: string, maturity: ProviderMaturity, formats: readonly string[], mcpArgs: readonly string[] = ['mcp']): FileCapabilityProvider {
+function artcraft(
+  slug: string,
+  displayName: string,
+  domain: string,
+  maturity: ProviderMaturity,
+  formats: readonly string[],
+  options: { mcpArgs?: readonly string[]; unpreserved?: Record<string, readonly FidelityRisk[]> } = {}
+): FileCapabilityProvider {
+  const mcpArgs = options.mcpArgs ?? ['mcp'];
+  const unpreserved = Object.fromEntries(Object.entries(options.unpreserved ?? {}).map(([ext, risks]) => [ext, Object.freeze(risks.map((risk) => Object.freeze({ ...risk })))]));
   return Object.freeze({
     id: `artcraft.${slug}`,
     displayName,
@@ -83,9 +100,38 @@ function artcraft(slug: string, displayName: string, domain: string, maturity: P
     homepage: `https://getartcraft.com/apps/${slug}`,
     license: 'Apache-2.0',
     maturity,
-    release: Object.freeze({ repo: `storytold/${slug}`, cli: `${slug}-cli`, mcpArgs: Object.freeze([...mcpArgs]), assets: craftAssets(slug) })
+    release: Object.freeze({ repo: `storytold/${slug}`, cli: `${slug}-cli`, mcpArgs: Object.freeze([...mcpArgs]), assets: craftAssets(slug) }),
+    unpreserved: Object.freeze(unpreserved)
   });
 }
+
+/** GridCraft docs/file-format-parity.md, "Not preserved" (union of its rows, 2026-10-14). */
+const GRIDCRAFT_XLSX_LOSSES: readonly FidelityRisk[] = [
+  { part: 'xl/slicerCaches/', feature: 'slicers' },
+  { part: 'xl/slicers/', feature: 'slicers' },
+  { part: 'xl/timelineCaches/', feature: 'timelines' },
+  { part: 'xl/timelines/', feature: 'timelines' },
+  { part: 'xl/model/', feature: 'data model' },
+  { part: 'xl/queryTables/', feature: 'query tables' },
+  { part: 'xl/externalLinks/', feature: 'external links' },
+  { part: 'xl/embeddings/', feature: 'embedded (OLE) objects' },
+  { part: 'xl/ctrlProps/', feature: 'form controls' },
+  { part: 'xl/activeX/', feature: 'ActiveX controls' },
+  { part: 'customXml/', feature: 'custom XML' },
+  { part: 'xl/workbook.xml', marker: 'http://purl.oclc.org/ooxml/', feature: 'Strict Open XML content (nothing is kept)' }
+];
+
+/** WordCraft docs/file-format-parity.md, "Dropped on write" (2026-10-14). */
+const WORDCRAFT_DOCX_LOSSES: readonly FidelityRisk[] = [
+  { part: 'word/charts/', feature: 'charts' },
+  { part: 'word/diagrams/', feature: 'SmartArt' },
+  { part: 'word/ink/', feature: 'ink' },
+  { part: 'word/embeddings/', feature: 'embedded (OLE) objects' },
+  { part: 'word/document.xml', marker: '<wps:wsp', feature: 'shapes' },
+  { part: 'word/document.xml', marker: '<w:txbxContent', feature: 'text boxes' },
+  { part: 'word/document.xml', marker: '<wpg:wgp', feature: 'grouped drawings' },
+  { part: 'word/document.xml', marker: '<m:oMath', feature: 'equations' }
+];
 
 /**
  * The whole suite, from https://getartcraft.com/apps and each app's docs/file-format-parity.md and
@@ -95,18 +141,18 @@ function artcraft(slug: string, displayName: string, domain: string, maturity: P
 // Frozen, entries included: nothing at runtime can add an app or re-point its source.
 export const FILE_CAPABILITY_PROVIDERS: readonly FileCapabilityProvider[] = Object.freeze([
   artcraft('photocraft', 'PhotoCraft', 'photo editing', 'early-alpha', ['psd', 'png', 'jpg', 'jpeg', 'tif', 'tiff', 'ora', 'pcraft']),
-  artcraft('vectorcraft', 'VectorCraft', 'vector illustration', 'in-development', ['ai', 'vectorcraft'], ['mcp', '--headless']),
+  artcraft('vectorcraft', 'VectorCraft', 'vector illustration', 'in-development', ['ai', 'vectorcraft'], { mcpArgs: ['mcp', '--headless'] }),
   artcraft('filmcraft', 'FilmCraft', 'video editing', 'in-development', ['mp4', 'm4v', 'mov', 'fcproj']),
   artcraft('lightcraft', 'LightCraft', 'photo library and RAW development', 'in-development', ['dng', 'jxl']),
   artcraft('pdfcraft', 'PdfCraft', 'PDF editing', 'early-alpha', ['pdf', 'fdf', 'xfdf']),
   artcraft('effectcraft', 'EffectCraft', 'motion graphics and compositing', 'in-development', ['ecproj', 'dpx', 'cin', 'tga']),
   artcraft('designcraft', 'DesignCraft', 'page layout and publishing', 'in-development', ['idml', 'designcraft']),
   artcraft('figcraft', 'FigCraft', 'interface design and prototyping', 'early-alpha', ['fig', 'figcraft']),
-  artcraft('wordcraft', 'WordCraft', 'word processing', 'in-development', ['docx', 'docm', 'dotx', 'dotm', 'rtf', 'odt']),
+  artcraft('wordcraft', 'WordCraft', 'word processing', 'in-development', ['docx', 'docm', 'dotx', 'dotm', 'rtf', 'odt'], { unpreserved: { docx: WORDCRAFT_DOCX_LOSSES } }),
   artcraft('soundcraft', 'SoundCraft', 'audio editing and mixing', 'in-development', ['wav', 'aif', 'aiff', 'flac', 'scraft']),
   artcraft('deckcraft', 'DeckCraft', 'presentations', 'in-development', ['pptx', 'deckcraft']),
   artcraft('cadcraft', 'CADCraft', 'computer-aided design and drafting', 'in-development', ['dwg', 'dxf', 'dwt']),
-  artcraft('gridcraft', 'GridCraft', 'spreadsheets and data analysis', 'in-development', ['xlsx', 'xlsm', 'csv', 'tsv'])
+  artcraft('gridcraft', 'GridCraft', 'spreadsheets and data analysis', 'in-development', ['xlsx', 'xlsm', 'csv', 'tsv'], { unpreserved: { xlsx: GRIDCRAFT_XLSX_LOSSES, xlsm: GRIDCRAFT_XLSX_LOSSES } })
 ]);
 
 export function capabilityProvidersForFormat(format: string): FileCapabilityProvider[] {

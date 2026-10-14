@@ -775,6 +775,11 @@ export class PluginManager {
     const row = this.records.find(row => brokerProvider(row) === providerId);
     return row ? { id: row.id, status: row.enabled ? row.status : 'disabled', version: row.version } : null;
   }
+  /** Declarations of an installed broker provider, for on-demand discovery; never published. */
+  fileProviderTools(providerId: string): Tool[] {
+    const row = this.records.find(row => brokerProvider(row) === providerId && row.enabled);
+    return row ? structuredClone(row.catalog) : [];
+  }
   /**
    * Installs exactly the release version the user approved; its tools stay off every connector.
    * Consent is the caller's. Health is the ordinary connect: MCP initialize plus tool discovery.

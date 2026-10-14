@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -194,5 +196,124 @@ describe('file provider broker', () => {
     expect(textOf(unknown)).toMatch(/UNAVAILABLE/);
     expect(textOf(await registrar().invokeNested('file_edit', { op: 'install_provider', provider: '../../x' }, caller()))).toMatch(/INVALID_ARGUMENTS/);
     expect(registrar({ edit: false }).registered()).not.toContain('file_edit');
+  });
+});
+
+/**
+ * A spreadsheet-app stand-in: open_workbook remembers a file, set_value records an edit,
+ * save_workbook writes the edited package, save_garbage writes something unreadable.
+ */
+const EDIT_FIXTURE = (fflate: string) => `const readline=require('node:readline');const fs=require('node:fs');const {unzipSync,zipSync,strFromU8,strToU8}=require(${JSON.stringify(fflate)});
+let opened=null;const edits={};
+const tools=['open_workbook','set_value','save_workbook','save_garbage','fail_step'].map(name=>({name,description:name+' fixture',inputSchema:{type:'object',properties:{path:{type:'string'},cell:{type:'string'},value:{type:'string'}}}}));
+function save(path){const bytes=fs.readFileSync(opened);if(!opened.endsWith('.xlsx')){fs.writeFileSync(path,Buffer.concat([bytes,Buffer.from([1])]));return;}
+const files=unzipSync(bytes);let xml=strFromU8(files['xl/worksheets/sheet1.xml']);for(const [cell,value] of Object.entries(edits))xml=xml.replace(new RegExp('(<c r="'+cell+'"[^>]*>)<v>[^<]*</v>'),'$1<v>'+value+'</v>');files['xl/worksheets/sheet1.xml']=strToU8(xml);fs.writeFileSync(path,zipSync(files));}
+readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;let result;
+if(m.method==='initialize')result={protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'grid fixture',version:'1'}};
+else if(m.method==='tools/list')result={tools};
+else if(m.method==='tools/call'){const a=m.params.arguments||{};const n=m.params.name;
+ if(n==='open_workbook'){opened=a.path;for(const k of Object.keys(edits))delete edits[k];result={content:[{type:'text',text:'opened'}]};}
+ else if(n==='set_value'){edits[a.cell]=a.value;result={content:[{type:'text',text:'set '+a.cell}]};}
+ else if(n==='save_workbook'){save(a.path);result={content:[{type:'text',text:'saved'}]};}
+ else if(n==='save_garbage'){fs.writeFileSync(a.path,'junk');result={content:[{type:'text',text:'saved'}]};}
+ else result={content:[{type:'text',text:'boom'}],isError:true};}
+else result={};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`;
+
+function workbook(extra: Record<string, Uint8Array> = {}): Uint8Array {
+  return zipSync({
+    'xl/workbook.xml': strToU8('<workbook xmlns:r="r"><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels': strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+    'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData><row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>42</v></c></row></sheetData></worksheet>'),
+    ...extra
+  });
+}
+
+describe('file_edit edit transaction', () => {
+  const workspace = () => path.join(dir, 'workspace');
+  const sha = async (file: string) => createHash('sha256').update(await fs.readFile(file)).digest('hex');
+  const leftovers = async () => (await fs.readdir(workspace())).filter((name) => name.startsWith('.eve-staging-'));
+  const steps = (value = '99') => [
+    { tool: 'open_workbook', arguments: { path: '{{input}}' } },
+    { tool: 'set_value', arguments: { cell: 'B1', value } },
+    { tool: 'save_workbook', arguments: { path: '{{output}}' } }
+  ];
+
+  beforeEach(async () => {
+    await fs.writeFile(fixturePath.value, EDIT_FIXTURE(createRequire(import.meta.url).resolve('fflate')));
+    publish('gridcraft', '0.6.1');
+    publish('soundcraft', '0.6.1');
+    expect(await consent.requestFileProviderInstall('artcraft.gridcraft', async () => 'install')).toMatchObject({ status: 'installed' });
+  });
+
+  it('edits a copy through the app, re-validates it, reports a compact diff and never touches the original', async () => {
+    const source = path.join(workspace(), 'book.xlsx');
+    await fs.writeFile(source, workbook());
+    const before = await sha(source);
+    const reg = registrar({ create: true });
+
+    const tools = textOf(await reg.invokeNested('file_edit', { op: 'provider_tools', provider: 'artcraft.gridcraft' }, caller()));
+    expect(tools).toContain('save_workbook(path?, cell?, value?)');
+
+    const result = await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps() }, caller());
+    const text = textOf(result);
+    expect(result.isError).not.toBe(true);
+    expect(text).toContain('EDITED: wrote /workspace/book (Eve edit).xlsx with artcraft.gridcraft 0.6.1. The original /workspace/book.xlsx was not changed.');
+    expect(text).toContain('validated: yes');
+    expect(text).toContain('~ S!B1: 42 → 99');
+    expect(result.structuredContent).toMatchObject({ output: '/workspace/book (Eve edit).xlsx', provider: { id: 'artcraft.gridcraft', version: '0.6.1' } });
+    expect(await sha(source)).toBe(before);
+    expect(await leftovers()).toEqual([]);
+
+    // A second edit never overwrites the first result.
+    const again = textOf(await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps('7') }, caller()));
+    expect(again).toContain('/workspace/book (Eve edit 2).xlsx');
+  });
+
+  it('refuses paths in step arguments, saves to the original, an existing output and a missing save', async () => {
+    await fs.writeFile(path.join(workspace(), 'book.xlsx'), workbook());
+    await fs.writeFile(path.join(workspace(), 'taken.xlsx'), 'x');
+    const reg = registrar({ create: true });
+    const run = (extra: Record<string, unknown>) => reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps(), ...extra }, caller());
+    for (const escape of ['D:\\elsewhere\\evil.xlsx', '/etc/passwd', '..\\up.xlsx', '\\\\server\\share\\x.xlsx']) {
+      const result = await run({ steps: [{ tool: 'save_workbook', arguments: { nested: [{ path: escape }] } }] });
+      expect(textOf(result)).toMatch(/PATH_NOT_ALLOWED: steps\[0\]\.arguments\.nested\[0\]\.path/);
+    }
+    expect(textOf(await run({ output_path: '/workspace/book.xlsx' }))).toMatch(/SOURCE_PROTECTED/);
+    expect(textOf(await run({ output_path: '/workspace/taken.xlsx' }))).toMatch(/OUTPUT_EXISTS/);
+    expect(textOf(await run({ steps: steps().slice(0, 2) }))).toMatch(/EDIT_NOT_SAVED/);
+    expect(textOf(await run({ steps: [{ tool: 'fail_step' }] }))).toMatch(/STEP_FAILED: step 1 \(fail_step\)/);
+    expect(textOf(await run({ steps: [steps()[0]!, { tool: 'save_garbage', arguments: { path: '{{output}}' } }] }))).toMatch(/OUTPUT_INVALID/);
+    expect(await leftovers()).toEqual([]);
+    expect((await fs.readdir(workspace())).sort()).toEqual(['book.xlsx', 'taken.xlsx']);
+  });
+
+  it('does not race a program that has the file open', async () => {
+    await fs.writeFile(path.join(workspace(), 'book.xlsx'), workbook());
+    await fs.writeFile(path.join(workspace(), '~$book.xlsx'), 'owner');
+    const result = await registrar({ create: true }).invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps() }, caller());
+    expect(textOf(result)).toMatch(/FILE_IN_USE: .*~\$book\.xlsx.*Computer use/);
+  });
+
+  it('refuses the silent route when the app would drop features the file has, unless the loss is accepted', async () => {
+    await fs.writeFile(path.join(workspace(), 'pivot.xlsx'), workbook({ 'xl/slicers/slicer1.xml': strToU8('<slicers/>'), 'xl/externalLinks/externalLink1.xml': strToU8('<externalLink/>') }));
+    const reg = registrar({ create: true });
+    const refused = textOf(await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/pivot.xlsx', steps: steps() }, caller()));
+    expect(refused).toMatch(/FIDELITY_RISK: GridCraft does not keep slicers, external links when it saves/);
+    const accepted = await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/pivot.xlsx', steps: steps(), allow_feature_loss: true }, caller());
+    expect(textOf(accepted)).toContain('EDITED: wrote /workspace/pivot (Eve edit).xlsx');
+  });
+
+  it('compares size and hash for formats without a built-in reader, and needs the app and the permission', async () => {
+    await fs.writeFile(path.join(workspace(), 'clip.wav'), Buffer.from('RIFF....WAVE'));
+    const reg = registrar({ create: true });
+    const missing = textOf(await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.soundcraft', path: '/workspace/clip.wav', steps: steps() }, caller()));
+    expect(missing).toMatch(/PROVIDER_NOT_READY: SoundCraft/);
+    expect(await consent.requestFileProviderInstall('artcraft.soundcraft', async () => 'install')).toMatchObject({ status: 'installed' });
+    const edited = textOf(await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.soundcraft', path: '/workspace/clip.wav', steps: [steps()[0]!, steps()[2]!] }, caller()));
+    expect(edited).toContain('validated: no built-in reader for this format');
+    expect(edited).toMatch(/bytes: 12 → 13/);
+    const denied = textOf(await registrar({ create: false }).invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/clip.wav', steps: steps() }, caller()));
+    expect(denied).toMatch(/TOOL_DISABLED: editing writes a new file/);
+    expect(textOf(await reg.invokeNested('file_edit', { op: 'provider_tools', provider: 'artcraft.gridcraft', path: '/workspace/clip.wav' }, caller()))).toMatch(/INVALID_ARGUMENTS: provider_tools takes only provider/);
   });
 });

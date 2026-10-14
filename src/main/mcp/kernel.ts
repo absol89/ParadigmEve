@@ -911,6 +911,7 @@ function needsWorkspaceIdentity(name: string, args: unknown): boolean {
     return paths.some(relative);
   }
   if (name === 'find' || name === 'file_action') return relative(input['path']);
+  if (name === 'file_edit') return relative(input['path']) || relative(input['output_path']);
   if (name === 'apply_patch') {
     // Codex's apply_patch surface has no cwd argument. Relative patch paths therefore always
     // consume the turn/chat cwd analogue maintained by this connector.
