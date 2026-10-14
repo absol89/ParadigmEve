@@ -12,6 +12,7 @@ import { createRegistrar, type ToolContext, type ToolResult } from './mcp/kernel
 import { emptyEvidence, type CallContext } from './mcp/call-context.js';
 import { toolSchemaJson } from './mcp/tool-declarations.js';
 import { registerCoreTools } from './mcp/tools-core.js';
+import { registerSkillTools } from './mcp/skill-tool.js';
 import { getConfig } from './config.js';
 import { createSession } from './session/store.js';
 import { AGENT_BACKEND_LABELS } from '../shared/agent-backends.js';
@@ -21,7 +22,8 @@ const LOCAL_CORE_TOOL_NAMES = new Set([
   'find',
   'apply_patch',
   'exec_command',
-  'write_stdin'
+  'write_stdin',
+  'skills'
 ]);
 
 const localRecordingSessions = new Map<string, Promise<string>>();
@@ -99,6 +101,7 @@ export function localAgentCoreTools(
     });
   });
   registerCoreTools(catalog);
+  registerSkillTools(catalog);
 
   return definitions.map((definition) => ({
     ...definition,
@@ -112,6 +115,7 @@ export function localAgentCoreTools(
       }
       const live = createRegistrar(null, { ...getContext(), exposedCaps }, 'core');
       registerCoreTools(live);
+      registerSkillTools(live);
       const sessionId = await localRecordingSession(presentedPrincipal);
       return localResult(await live.invokeNested(
         definition.name,

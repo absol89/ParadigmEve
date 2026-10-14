@@ -376,6 +376,7 @@ describe('authorized local Core adapter', () => {
     const tools = localAgentCoreTools(() => ctx, principal);
     const read = tools.find((row) => row.name === 'read');
     expect(read).toBeDefined();
+    expect(tools.some((row) => row.name === 'skills')).toBe(true);
     expect(tools.some((row) => row.name === 'exec_command')).toBe(false);
 
     const result = await read!.invoke({ paths: ['note.txt'] }, principal);

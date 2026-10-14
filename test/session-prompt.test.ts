@@ -7,6 +7,7 @@ import { addProject, assignSessionProject } from '../src/main/projects.js';
 import { createSession, initSessionStore, rebindSession, resetSessionStoreForTests } from '../src/main/session/store.js';
 import { fitSessionPrompt, prepareSessionPrompt } from '../src/main/session/prompt.js';
 import { VAULT_CONTEXT_MARKER } from '../src/main/vault-path.js';
+import { createSkill, initSkillStore, resetSkillStoreForTests } from '../src/main/skills.js';
 import { MAX_CHATGPT_MESSAGE_CHARS, prependUserPrompt, userPromptText } from '../src/shared/user-prompt.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
 
@@ -14,10 +15,11 @@ let directory: string;
 beforeEach(async () => {
   directory = await makeTempDir('cos-session-prompt-');
   initConfigPath(directory); initDurableStore(directory); initSessionStore(directory);
+  initSkillStore(directory);
   await saveConfig({ ...defaultConfig(), roots: [{ name: 'work', path: directory }] });
 });
 afterEach(async () => {
-  resetSessionStoreForTests(); resetDurableForTests();
+  resetSessionStoreForTests(); resetDurableForTests(); resetSkillStoreForTests();
   await removeTempDir(directory);
 });
 
@@ -85,6 +87,17 @@ it('bootstraps Eve-native workflow on a fresh unfiled chat without relying on pr
   expect(text).toContain('user\'s availability (`%schedule`) and Eve\'s routines (`%evecron`)');
   expect(text).not.toContain('# Eve Thread prompt · how');
   expect(text).toContain('local Vault/manual');
+});
+
+it('selects skills through compact natural-language prompt metadata without altering the authored request', async () => {
+  await createSkill('token-insights', '---\nname: token-insights\ndescription: Diagnose context and workflow token pressure.\n---\n\nFULL_SKILL_BODY_MUST_STAY_LAZY\n');
+  const text = await prepareSessionPrompt('Why did this conversation compact so often?');
+  expect(userPromptText(text)).toBe('Why did this conversation compact so often?');
+  expect(text).toContain('# Available skills');
+  expect(text).toContain('token-insights: Diagnose context and workflow token pressure. [eve r1]');
+  expect(text).toContain('call skills with action=view');
+  expect(text).toMatch(/do not require the user to type a slash command/i);
+  expect(text).not.toContain('FULL_SKILL_BODY_MUST_STAY_LAZY');
 });
 
 it('drops optional %how Vault context before an ultra-tight budget can truncate the current request', async () => {

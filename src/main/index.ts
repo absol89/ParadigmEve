@@ -18,6 +18,7 @@ import { pluginManager } from './plugins/manager.js';
 import { beginCompanionRecoveryAttempt, beginCompanionRecoveryEvidence, browserChatTabOpen, browserConversationOpen, companionRecoveryReady, onCompanionProtocolMismatch, setBrowserOpener, setCompanionBuild, setBrowserWorkArea, shutdownBridge, startBridge, watchRestartRecovery } from './bridge.js';
 import { companionBuild, extensionDir } from './extension-path.js';
 import { initPetLibrary } from './pet-library.js';
+import { initSkillStore } from './skills.js';
 import { shutdownPetOverlay, startPetOverlay } from './pet-overlay.js';
 import {
   findSessionByConversation,
@@ -617,6 +618,7 @@ void app.whenReady().then(async () => {
   initConfigPath(userData);
   initSecretsPath(userData);
   initSessionStore(userData);
+  initSkillStore(userData);
   archiveRuntime = new ArchiveRuntime({
     archiveRoot: path.join(userData, 'archive'),
     writerVersion: app.getVersion(),

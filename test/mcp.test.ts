@@ -938,9 +938,10 @@ describe('model-facing surfaces', () => {
     // heartbeat Plan acknowledgement and debt completion require exact semantic review, and scheduled
     // work closes only from exact durable task-verification lineage rather than final prose/browser state.
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
-    // queries, while `expenses` contains mutations only. Debug builds also expose one narrow
-    // authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 35 : process.platform === 'darwin' ? 22 : 20);
+    // queries, while `expenses` contains mutations only. Skills add one lazy view/manage tool;
+    // their full bodies never live in tools/list. Debug builds also
+    // expose one narrow authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 36 : process.platform === 'darwin' ? 23 : 21);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');
@@ -958,13 +959,14 @@ describe('model-facing surfaces', () => {
     // the 2.2.3 Pins/Thread, plan-continuity and heartbeat lifecycle additions, ~40.45 KB after the
     // 2.2.8 Pins prompt/Heart actions, ~41.16 KB after publishing the Expenses facts field contract,
     // without which record callers cannot form a valid facts object, ~41.64 KB after `move_eve_here`, ~41.93 KB after exec results gained the
-    // `supplemental_context` field that carries app notes to the model; Desktop 10,116
+    // `supplemental_context` field that carries app notes to the model, ~42.7 KB after the bounded
+    // progressive-disclosure Skills tool; Desktop 10,116
     // bytes on 2026-09-10) rather than at a
     // round number well above it: a budget with room to spare is a budget that never
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 42_000 : 41_800);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 42_800 : 42_600);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget

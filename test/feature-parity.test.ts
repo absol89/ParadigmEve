@@ -75,7 +75,7 @@ describe('portable browser-backed feature parity', () => {
     const config = defaultConfig('darwin', '21.4.0');
     expect(surfaceDefinition('core').tools).toEqual(expect.arrayContaining([
       'read', 'view_image', 'find', 'apply_patch', 'exec_command', 'write_stdin',
-      'download_artifact', 'session', 'update_plan', 'agents', 'session_finish', 'exec',
+      'download_artifact', 'session', 'update_plan', 'agents', 'session_finish', 'skills', 'exec',
       // The same ParadigmEve app can expose native Computer use after the Setup checkbox
       // is enabled; platform-specific registration still decides which contracts are live.
       'observe', 'computer', 'read_clipboard', 'write_clipboard'

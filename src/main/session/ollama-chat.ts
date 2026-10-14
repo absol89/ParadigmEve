@@ -34,6 +34,7 @@ import { localChatCoreTools } from '../local-chat-tools.js';
 import type { ToolContext } from '../mcp/kernel.js';
 import { ollamaConversation, ProviderCapabilityError } from './provider-history.js';
 import { OLLAMA_CONVERSATION_PREFIX, OLLAMA_TURN_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
+import { skillCatalogInstructions } from '../skills.js';
 
 const OWNER = 'ollama-local';
 const MAX_REPLY_INLINE = 256_000;
@@ -54,10 +55,14 @@ function chatToolContext(): ToolContext {
   };
 }
 
-function chatSystemPrompt(direct: boolean): string {
-  return SYSTEM_PROMPT_BASE + (direct
+async function chatSystemPrompt(direct: boolean, skillsAvailable: boolean): Promise<string> {
+  const config = getConfig();
+  const base = SYSTEM_PROMPT_BASE + (direct
     ? 'Use the available ParadigmEve tools whenever they are useful. Tool results are authoritative; never invent a result. Answer the newest user message when the requested work is complete.'
     : 'You do not have direct filesystem/computer tools. When the request needs tool execution, use delegate_worker and wait for its result. Do not pretend you performed delegated work yourself.');
+  if (!skillsAvailable) return base;
+  const catalog = await skillCatalogInstructions({ platform: process.platform, capabilities: effectiveCapabilities(config) }).catch(() => '');
+  return catalog ? `${base}\n\n${catalog}` : base;
 }
 
 interface LocalTurn { turnId: string; controller: AbortController }
@@ -199,7 +204,7 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
       vision = capabilities ? capabilities.includes('vision') : null;
     }
     const direct = settings.chatDirectTools !== false;
-    const messages = await ollamaConversation(sessionId, vision, chatSystemPrompt(direct));
+    const messages = await ollamaConversation(sessionId, vision, await chatSystemPrompt(direct, toolsSupported));
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: `chat:${sessionId}`, agentId: turnId });
     try {
       const tools = !toolsSupported ? [] : await localChatCoreTools({

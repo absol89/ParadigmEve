@@ -26,6 +26,7 @@ import { ensureOllamaModel, resolveOllamaEndpoint } from './ollama-client.js';
 import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, openRouterModelInfo } from './openrouter-client.js';
 import { logInfo, logWarn } from './logger.js';
 import type { ToolContext } from './mcp/kernel.js';
+import { skillCatalogInstructions } from './skills.js';
 
 const inFlight = new Map<string, AbortController>();
 
@@ -88,6 +89,10 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
       await ensureOllamaModel(model);
     }
     const tools = toolsSupported ? localAgentCoreTools(coreContext, principal) : [];
+    const skillCatalog = toolsSupported ? await skillCatalogInstructions({
+      platform: process.platform,
+      capabilities: effectiveCapabilities(getConfig())
+    }).catch(() => '') : '';
     const result = await runLocalAgent({
       backend,
       principal,
@@ -96,7 +101,7 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
       system:
         'You are a bounded ParadigmEve worker. Complete only the task you were given. ' +
         'Use the available local tools when useful, never invent tool results, and return a concise factual result to the owning agent. ' +
-        'You cannot create workers of your own.',
+        'You cannot create workers of your own.' + (skillCatalog ? `\n\n${skillCatalog}` : ''),
       task: worker.task,
       tools,
       runtime: routerKey ? createOpenRouterAgentModelRuntime(routerKey) : createOllamaAgentModelRuntime(),

@@ -23,6 +23,7 @@ import { registerPluginTools } from './tools-plugins.js';
 import { registerCodeMode } from './code-mode-tool.js';
 import { registerWorkContextTool } from './work-context.js';
 import { registerExpensesTool } from './expenses-tool.js';
+import { registerSkillTools } from './skill-tool.js';
 import { CORE_CONNECTOR_NAME, surfaceDefinition, type SurfaceId } from './surfaces.js';
 import { serverInstructions } from './instructions.js';
 import { APP_VERSION } from './../version.js';
@@ -60,6 +61,7 @@ export function buildServer(ctx: ToolContext, surface: SurfaceId, observe?: (con
   if (surface === 'core') {
     registerCoreTools(registrar);
     registerExpensesTool(registrar);
+    registerSkillTools(registrar);
     // One ChatGPT app / tunnel owns the normal ParadigmEve experience. Computer use is a
     // permission-gated capability inside that same surface, not a second app the user has to
     // remember to enable in every conversation. Keep the old Desktop surface below only for
@@ -85,6 +87,7 @@ export function buildServer(ctx: ToolContext, surface: SurfaceId, observe?: (con
     if (surface === 'core') {
       registerCoreTools(nested);
       registerExpensesTool(nested);
+      registerSkillTools(nested);
       if (desktopAutomationSupported()) registerDesktopTools(nested);
       registerWorkContextTool(nested);
     } else {

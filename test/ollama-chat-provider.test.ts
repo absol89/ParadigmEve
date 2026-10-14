@@ -47,6 +47,7 @@ const { registerIpc } = await import('../src/main/ipc.js');
 const { bridgePort, startBridge, stopBridge } = await import('../src/main/bridge.js');
 const input = await import('../src/main/session/input.js');
 const { resetOllamaChatForTests } = await import('../src/main/session/ollama-chat.js');
+const { createSkill, initSkillStore, resetSkillStoreForTests } = await import('../src/main/skills.js');
 const history = await import('../src/main/session/provider-history.js');
 const { makeTempDir, removeTempDir } = await import('./helpers.js');
 
@@ -152,6 +153,7 @@ beforeAll(async () => {
   vi.stubGlobal('fetch', fakeFetch);
   directory = await makeTempDir('eve-ollama-chat-');
   initConfigPath(directory); initSecretsPath(directory); initDurableStore(directory); initSessionStore(directory);
+  initSkillStore(directory);
   await saveConfig(defaultConfig());
   registerIpc(() => rendererWindow as never, () => undefined);
   await startBridge();
@@ -167,11 +169,13 @@ beforeEach(async () => {
   pulled = [];
   agentReplies = [];
   replyText = 'Hello from Ollama';
+  await fs.rm(`${directory}/skills`, { recursive: true, force: true });
   await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, enabled: false } });
 });
 afterAll(async () => {
   vi.unstubAllGlobals();
   await stopBridge(); await flushDurable(); resetSessionStoreForTests(); resetDurableForTests();
+  resetSkillStoreForTests();
   await removeTempDir(directory);
 });
 
@@ -232,6 +236,28 @@ it('lets a direct Ollama chat use an approved local read tool and feeds the resu
   expect(chats).toHaveLength(2);
   const toolMessage = chats[1]!.body.messages.find((message: any) => message.role === 'tool');
   expect(toolMessage?.content).toContain('VAULT TOOL CONTENT');
+});
+
+it('keeps natural-language skills available in conversational local chat without exposing direct filesystem tools', async () => {
+  await createSkill('token-insights', '---\nname: token-insights\ndescription: Diagnose context and workflow token pressure.\n---\n\nFULL_LAZY_BODY\n');
+  const base = defaultConfig();
+  await saveConfig({
+    ...base,
+    multiAgent: { ...base.multiAgent, enabled: false },
+    agentRuntime: { ollama: { ...base.agentRuntime.ollama, chatDirectTools: false } },
+    goal: { ...base.goal, enabled: false }
+  });
+
+  const id = randomUUID();
+  expect((await send({ id, provider: 'ollama', model: 'llama3.2', text: 'Why is this chat compacting so often?' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+
+  const chat = ollamaRequests.find(request => request.url.endsWith('/v1/chat/completions'))!;
+  const system = chat.body.messages.find((message: any) => message.role === 'system')?.content ?? '';
+  expect(system).toContain('# Available skills');
+  expect(system).toContain('token-insights: Diagnose context and workflow token pressure.');
+  expect(system).not.toContain('FULL_LAZY_BODY');
+  expect(chat.body.tools.map((tool: any) => tool.function?.name)).toEqual(['skills']);
 });
 
 it('builds provider-switch consent from canonical messages without scanning the forensic event journal', async () => {

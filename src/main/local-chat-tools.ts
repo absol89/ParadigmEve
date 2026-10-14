@@ -11,6 +11,7 @@ import { emptyEvidence, type CallContext } from './mcp/call-context.js';
 import { toolSchemaJson } from './mcp/tool-declarations.js';
 import { registerCoreTools } from './mcp/tools-core.js';
 import { registerExpensesTool } from './mcp/expenses-tool.js';
+import { registerSkillTools } from './mcp/skill-tool.js';
 import { registerWorkContextTool } from './mcp/work-context.js';
 import { desktopAutomationSupported } from './platform.js';
 import { onSwarmChange, statusForCaller } from './agents.js';
@@ -35,6 +36,7 @@ function localResult(result: ToolResult): LocalAgentToolResult {
 async function registerSurface(registrar: ReturnType<typeof createRegistrar>): Promise<void> {
   registerCoreTools(registrar);
   registerExpensesTool(registrar);
+  registerSkillTools(registrar);
   if (desktopAutomationSupported()) {
     if (process.platform === 'win32') {
       const { registerWindowsDesktopTools } = await import('./mcp/tools-desktop-windows.js');
@@ -114,7 +116,10 @@ export async function localChatCoreTools(input: {
   const definitions: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [];
   const registrar = createRegistrar(null, initial, 'core', (name, config) => {
     if (CHAT_LIFECYCLE_ONLY.has(name)) return;
-    if (input.mode === 'delegate') return;
+    // Conversational-only local chat still needs the read-only skill loader so natural-language
+    // skill selection behaves like browser/direct chat. It must not gain the ordinary local
+    // filesystem/computer surface merely because skills are available.
+    if (input.mode === 'delegate' && name !== 'skills') return;
     definitions.push({
       name,
       description: config.description,
@@ -124,8 +129,19 @@ export async function localChatCoreTools(input: {
   await registerSurface(registrar);
 
   if (input.mode === 'delegate') {
-    if (!initial.agentTools || !input.conversationId) return [];
-    return [{
+    const skillTools = definitions.map(definition => ({
+      ...definition,
+      invoke: async (args: unknown, presentedPrincipal: LocalAgentExecutionPrincipal) => {
+        if (presentedPrincipal.runtimeId !== input.principal.runtimeId || !localAgentExecutionPrincipalIssued(presentedPrincipal)) {
+          return { content: 'LOCAL_CHAT_CALLER_REJECTED: this local chat runtime is no longer active.', isError: true };
+        }
+        const live = createRegistrar(null, input.getContext(), 'core');
+        await registerSurface(live);
+        return localResult(await live.invokeNested(definition.name, args, parentContext(input.sessionId, input.conversationId)));
+      }
+    }));
+    if (!initial.agentTools || !input.conversationId) return skillTools;
+    return [...skillTools, {
       name: 'delegate_worker',
       description: 'Delegate one tool-requiring task to a ParadigmEve worker and wait for that exact worker result. Use this instead of performing filesystem, command, or computer actions yourself.',
       inputSchema: {
