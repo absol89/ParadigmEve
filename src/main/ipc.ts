@@ -26,7 +26,9 @@ import { draftOpeningMessage, onGoalChange, nativeGoalFailure } from './goal.js'
 import { cancelTaskRequest, runTaskRequest } from './task-request.js';
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { extname, join, resolve } from 'node:path';
+import { startTranscriptionJob, getTranscriptionJob, cancelTranscriptionJob, probeTranscriptionGpu, transcriptionGpuCapability } from './transcription-runner.js';
+import { appendEvent, writeAsset } from './session/store.js';
 import { BUILD_FLAVOR } from '../shared/build-flavor.js';
 import { classifyResourceDestination } from '../shared/resource-destination.js';
 import {
@@ -140,7 +142,8 @@ import {
   TRANSCRIPTION_PRIORITY_MAX,
   TRANSCRIPTION_PRIORITY_MIN,
   cloneTranscriptionSettings,
-  transcriptionSettingsIssue
+  transcriptionSettingsIssue,
+  transcriptionCloudKeyRemoved
 } from '../shared/transcription.js';
 import { getOrCreateLanPeerIdentity } from './lan-peer-identity.js';
 import { clearLanGroupKey, generateLanGroupKey, getLanGroupKey, parseLanGroupKey, setLanGroupKey } from './lan-peer-key.js';
@@ -609,6 +612,13 @@ function resolvedBinary(config: Config): string | null {
   return null;
 }
 
+/** Packaged: the bundled engine. Development: the staged runtime built by prepare-transcription-runtime. */
+function transcriptionEngineRoot(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'transcription-engine')
+    : resolve(app.getAppPath(), 'resources', 'packaging', 'transcription', `${process.platform}`, `${process.arch}`, 'transcription-engine');
+}
+
 async function buildState(): Promise<AppState> {
   const config = getConfig();
   const status = getStatus();
@@ -646,6 +656,7 @@ async function buildState(): Promise<AppState> {
     hasCustomProviderKey,
     hasOllamaKey,
     hasTranscriptionKey,
+    transcriptionGpu: transcriptionGpuCapability(),
     ...(lanPeerRuntimeAvailable() ? { lan: lanPeerRuntimeStatus(lanGroupKey !== null) } : {}),
     resolvedBinary: binary,
     bundledTunnelVersion: bundledVersion(),
@@ -1240,7 +1251,7 @@ export function registerIpc(
     await setSecret(key, value);
     // Cloud transcription is only ever on while its key exists. Removing the key turns it off in
     // the same step, so no later job can find Cloud enabled and fail (or worse, retry elsewhere).
-    if (key === 'transcriptionGroqApiKey' && value.trim() === '' && getConfig().transcription?.cloud.enabled) {
+    if (value.trim() === '' && transcriptionCloudKeyRemoved(getConfig().transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS, key)) {
       await updateConfig((latest) => {
         const transcription = cloneTranscriptionSettings(latest.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS);
         transcription.cloud.enabled = false;
@@ -1271,12 +1282,72 @@ export function registerIpc(
         cloud: avenue.extend({ provider: z.enum(TRANSCRIPTION_CLOUD_PROVIDERS) }).strict()
       }).strict()
     }).strict().parse(payload);
-    const issue = transcriptionSettingsIssue(settings, await hasSecret('transcriptionGroqApiKey'));
+    // GPU can only be switched on after the engine's compute probe has proven a usable device.
+    const gpu = settings.gpu.enabled ? await probeTranscriptionGpu(transcriptionEngineRoot()) : transcriptionGpuCapability();
+    const issue = transcriptionSettingsIssue(settings, await hasSecret('transcriptionGroqApiKey'), await hasSecret('openaiApiKey'),
+      gpu.status === 'usable');
     if (issue) throw new Error(issue);
     await updateConfig((latest) => ({ ...latest, transcription: cloneTranscriptionSettings(settings) }));
     logInfo(`transcription order saved: ${TRANSCRIPTION_AVENUES.filter((id) => settings[id].enabled)
       .sort((a, b) => settings[a].priority - settings[b].priority).join(' > ')}`);
     return buildState();
+  });
+
+  // The file picker is the authority for the selected recording. Neither its native path nor
+  // the model/runtime credentials are ever returned to the renderer.
+  handle('transcription:startFile', async payload => {
+    const { sessionId } = z.object({ sessionId: z.string().min(8).max(64).nullable() }).strict().parse(payload);
+    if (sessionId && !await getSession(sessionId)) throw new Error('The selected conversation is unavailable.');
+    const selection = await dialog.showOpenDialog({
+      title: 'Transcribe recording', properties: ['openFile'],
+      filters: [{ name: 'Audio and video', extensions: ['wav', 'mp3', 'm4a', 'mp4', 'mov', 'mkv', 'webm', 'ogg', 'flac', 'aac'] }]
+    });
+    if (selection.canceled || !selection.filePaths[0]) return null;
+    const file = selection.filePaths[0];
+    const engineRoot = transcriptionEngineRoot();
+    const job = await startTranscriptionJob({ audioPath: file, engineRoot,
+      outputRoot: join(app.getPath('userData'), 'transcriptions') });
+    if (sessionId) {
+      // Keep archive ownership in main and store the result with the established session
+      // asset/event writer. A finished transcript is saved independently of renderer lifetime.
+      const watch = setInterval(() => {
+        void (async () => {
+          const status = getTranscriptionJob(job.id);
+          if (!status || status.state === 'running') return;
+          clearInterval(watch);
+          if (status.state !== 'completed' || !status.transcript) return;
+          const bytes = Buffer.from(JSON.stringify(status.transcript, null, 2), 'utf8');
+          const asset = await writeAsset(sessionId, bytes, 'application/json');
+          const attachmentId = randomUUID();
+          const name = `Transcript - ${(file.split(/[\\/]/).pop() ?? 'recording').replace(/[^\w. -]/g, '_')}.json`;
+          const segments = (status.transcript as { segments?: unknown[] }).segments;
+          const summary = `Eve generated transcript · ${status.provider ?? status.avenue ?? 'unknown'} · ${Array.isArray(segments) ? segments.length : 0} speaker-labelled segments · ${name}`;
+          await appendEvent(sessionId, {
+            time: Date.now(), source: 'app', kind: 'user_message',
+            messageId: `transcription:${job.id}`,
+            message: { text: summary, chars: summary.length, truncated: false },
+            attachments: [{ id: attachmentId, name, size: bytes.length, mimeType: 'application/json' }],
+            archivedAttachments: [{ attachmentId, asset }]
+          });
+        })().catch(error => logWarn(`Could not archive transcription job ${job.id}: ${(error as Error).message}`));
+      }, 1500);
+      watch.unref?.();
+    }
+    return { id: job.id, name: file.split(/[\\/]/).pop() ?? 'Recording' };
+  });
+  // Re-run the GPU compute probe (Settings opens it). Returns state with the fresh capability.
+  handle('transcription:gpuProbe', async () => {
+    await probeTranscriptionGpu(transcriptionEngineRoot(), true);
+    return buildState();
+  });
+
+  handle('transcription:status', async payload => {
+    const { id } = z.object({ id: z.string().uuid() }).strict().parse(payload);
+    return getTranscriptionJob(id);
+  });
+  handle('transcription:cancel', async payload => {
+    const { id } = z.object({ id: z.string().uuid() }).strict().parse(payload);
+    return cancelTranscriptionJob(id);
   });
 
   /**

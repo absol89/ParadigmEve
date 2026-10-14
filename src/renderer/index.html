@@ -882,9 +882,9 @@
                 <h2 class="settings-section-title">Transcription</h2>
                 <div class="pane" id="transcriptionPane">
                   <p class="muted">Turns recordings into speaker-labelled transcripts. The lowest enabled number is tried first; if it cannot run on this computer, the next one is used. Telling speakers apart always happens on this computer.</p>
-                  <div class="setting"><span class="setting-text"><b>GPU</b><em>Fastest when a supported graphics card is present. Audio stays on this computer.</em></span><input id="transcriptionGpuPriority" class="num" type="number" min="1" max="99" step="1" aria-label="GPU priority" /><input id="transcriptionGpuEnabled" type="checkbox" aria-label="Use GPU transcription" /></div>
+                  <div class="setting"><span class="setting-text"><b>GPU</b><em id="transcriptionGpuState">Checking this computer's graphics card…</em></span><input id="transcriptionGpuPriority" class="num" type="number" min="1" max="99" step="1" aria-label="GPU priority" disabled /><input id="transcriptionGpuEnabled" type="checkbox" aria-label="Use GPU transcription" disabled /></div>
                   <div class="setting"><span class="setting-text"><b>Local</b><em>Runs on the processor. Works everywhere but takes about twice the recording's length. Audio stays on this computer.</em></span><input id="transcriptionLocalPriority" class="num" type="number" min="1" max="99" step="1" aria-label="Local priority" /><input id="transcriptionLocalEnabled" type="checkbox" aria-label="Use local transcription" /></div>
-                  <div class="setting"><span class="setting-text"><b>Cloud (Groq)</b><em>Uploads the recording's audio to Groq for the words; a 17-minute recording takes about 3 minutes. Needs the API key below.</em></span><input id="transcriptionCloudPriority" class="num" type="number" min="1" max="99" step="1" aria-label="Cloud priority" /><input id="transcriptionCloudEnabled" type="checkbox" aria-label="Use cloud transcription" /></div>
+                  <div class="setting"><span class="setting-text"><b>Cloud transcription</b><em>Uploads audio to your selected provider for speech recognition. Speaker separation runs locally.</em><select id="transcriptionCloudProvider" aria-label="Cloud transcription provider"><option value="groq">Groq</option><option value="openai">OpenAI (Eve's stored API key)</option></select></span><input id="transcriptionCloudPriority" class="num" type="number" min="1" max="99" step="1" aria-label="Cloud priority" /><input id="transcriptionCloudEnabled" type="checkbox" aria-label="Use cloud transcription" /></div>
                   <p class="muted" id="transcriptionOrder" role="status"></p>
                   <div class="field">
                     <label for="transcriptionKey">Groq API key for Cloud transcription</label>
@@ -1107,7 +1107,7 @@
                 </div>
               </div>
             </div>
-            <div class="composer-dock" id="composerDock"><section class="agent-plan" id="agentPlan" aria-label="Agent task plan" hidden></section><div id="recoveryStatus" role="status" hidden></div><div id="taskPlanPreview" aria-label="Plan stages" hidden></div><div id="finishQueue" aria-label="Queued tasks" hidden></div><div id="activeGoalRow" hidden></div></div>
+            <div class="composer-dock" id="composerDock"><section class="agent-plan" id="agentPlan" aria-label="Agent task plan" hidden></section><section id="transcriptionJobs" class="transcription-jobs" aria-label="Transcription jobs" hidden></section><div id="recoveryStatus" role="status" hidden></div><div id="taskPlanPreview" aria-label="Plan stages" hidden></div><div id="finishQueue" aria-label="Queued tasks" hidden></div><div id="activeGoalRow" hidden></div></div>
             <form class="composer" id="composer">
               <label class="sr-only" for="chatInput">Message ChatGPT</label>
               <div id="composerImages" class="composer-images" hidden></div><textarea dir="auto" id="chatInput" rows="1" maxlength="16000" placeholder="Ask anything…"></textarea>
@@ -1116,6 +1116,7 @@
                   <summary aria-label="Add attachments" title="Add attachments"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus" /></svg></summary>
                   <div class="composer-popover">
                     <button id="attachImages" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-image" /></svg>Add photos &amp; files</button>
+                    <button id="transcribeRecording" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-file-text" /></svg>Transcribe recording…</button>
                     <button id="composerFolder" type="button"><svg class="ico" viewBox="0 0 24 24"><use href="#i-folder" /></svg>Share a folder</button>
                   </div>
                 </details>

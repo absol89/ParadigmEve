@@ -64,3 +64,6 @@ docs/product/community-outreach/x-scout-*.md
 /.claude/
 /CLAUDE.local.md
 /.mcp.json
+
+# Built by scripts/build-whisper-vulkan.mjs from pinned sources.
+transcription-engine/.vendor/whisper.cpp/build-vulkan/

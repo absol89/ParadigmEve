@@ -3215,6 +3215,15 @@ nav button:hover, nav button.is-sel { background: var(--hover); color: var(--ink
 #composerModelLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-popover button { display: flex; width: 100%; gap: 10px; align-items: center; padding: 10px; border: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; border-radius: 8px; cursor: pointer; }
 .composer-popover button:hover { background: var(--hover); }
+.transcription-jobs { display: grid; gap: 8px; margin: 8px 0; }
+.transcription-jobs[hidden] { display: none; }
+.transcription-job { padding: 12px; border: 1px solid var(--edge); background: var(--card); border-radius: 10px; max-height: 360px; overflow: auto; }
+.transcription-job .muted { margin: 6px 0; }
+.transcription-speakers { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.transcription-speakers label { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.transcription-speakers input { width: 130px; max-width: 100%; border: 1px solid var(--edge); border-radius: 6px; padding: 4px; background: var(--sunk); color: var(--ink); }
+.transcription-lines { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.transcription-lines p { margin: 6px 0; }
 .composer-popover label { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px; color: var(--soft); font-size: 12px; }
 .composer-popover select { width: 145px; color: var(--ink); background: var(--sunk); border: 1px solid var(--edge); padding: 6px; border-radius: 7px; }
 .composer-toolbar { gap: 6px; }

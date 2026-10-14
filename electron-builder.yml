@@ -87,6 +87,9 @@ win:
     - from: resources/packaging/rg/win32/${arch}
       to: rg
       filter: ['**/*']
+    - from: resources/packaging/transcription/win32/${arch}/transcription-engine
+      to: transcription-engine
+      filter: ['**/*']
 
 nsis:
   include: scripts/windows-installer-acl.nsh

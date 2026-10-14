@@ -21,6 +21,8 @@ In development on `release/2.4.0` (from `v2.3.9`); not packaged or published.
   and a whole-number priority. The lowest enabled number runs first; unavailable options are skipped.
 - Cloud is off by default and can only be enabled while its own Groq key is stored in the OS
   credential store. Removing the key turns Cloud off.
+- GPU transcription on Windows x64 through Vulkan. The GPU switch stays disabled until Eve has
+  tested the graphics card, and every job records the backend and device that really ran.
 - See [docs/release-notes/v2.4.0.md](docs/release-notes/v2.4.0.md).
 
 ## [2.3.9] — Reliable sends and Prime continuity

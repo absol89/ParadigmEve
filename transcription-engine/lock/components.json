@@ -1,0 +1,75 @@
+{
+  "lock_version": 1,
+  "resolved_at": "2026-10-12",
+  "upstream": {
+    "repository": "https://github.com/PatrikHolopainen/local-diarization.git",
+    "commit": "77d570ed4f00e67a32cc244e1ce11570a353f051",
+    "resolution": "pinned-commit",
+    "reason": "Upstream publishes no releases or tags (checked 2026-10-12).",
+    "license": "MIT"
+  },
+  "whisper_cpp": {
+    "repository": "https://github.com/ggml-org/whisper.cpp.git",
+    "tag": "v1.9.4",
+    "commit": "927cfce34f31707e17f2bff35c349632fb9e2c3a",
+    "license": "MIT",
+    "approx_download_bytes": 15000000,
+    "build": "cmake -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DWHISPER_BUILD_TESTS=OFF; target whisper-cli",
+    "build_gpu": "scripts/build-whisper-vulkan.mjs: transcription-engine/native/CMakeLists.txt with GGML_VULKAN=ON, GGML_CUDA=OFF, BUILD_SHARED_LIBS=OFF; targets whisper-cli + ggml-probe; Vulkan inputs from transcription-engine/third_party/vulkan-build (SHA256SUMS.txt)"
+  },
+  "python_requirements": {
+    "file": "requirements-windows.txt",
+    "approx_download_bytes": 33000000,
+    "index": "https://pypi.org/simple",
+    "license_note": "sherpa-onnx/sherpa-onnx-core Apache-2.0 (bundles ONNX Runtime, MIT); numpy BSD-3; soundfile BSD-3 (bundles libsndfile LGPL-2.1); soundcard BSD-3; cffi MIT-0"
+  },
+  "downloads": {
+    "ffmpeg-win64": {
+      "kind": "tool",
+      "platforms": ["windows"],
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-11-13-04/ffmpeg-n9.0.2-25-g67b60c310b-win64-lgpl-shared-9.0.zip",
+      "size": 77230472,
+      "sha256": "95cac2103cd9c4b9b19ef89849ed731ddba23b5864edf283ac6a2afbfadd0625",
+      "sha256_source": "GitHub release asset digest",
+      "license": "LGPL-2.1-or-later (BtbN lgpl variant; FFmpeg project)",
+      "dest": ".tools/ffmpeg.zip",
+      "extract": "zip",
+      "extract_to": ".tools/ffmpeg"
+    },
+    "segmentation": {
+      "kind": "model",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+      "size": 6958444,
+      "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+      "sha256_source": "upstream scripts/download_models.py",
+      "license": "MIT (pyannote/segmentation-3.0, ONNX export by sherpa-onnx; original HF repo is gated)",
+      "dest": ".models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+      "extract": "tar.bz2",
+      "extract_to": ".models",
+      "expect": ".models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx"
+    },
+    "embedding": {
+      "kind": "model",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",
+      "size": 40257283,
+      "sha256": "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
+      "sha256_source": "upstream scripts/download_models.py",
+      "license": "Apache-2.0 (NVIDIA NeMo toolkit license per NGC model card)",
+      "dest": ".models/nemo_en_titanet_small.onnx"
+    }
+  },
+  "whisper_models": {
+    "_source": "https://huggingface.co/ggerganov/whisper.cpp (repo sha 5359861c739e955e79d9a303bcbc70fb988958b1); sha256 = HF LFS X-Linked-ETag; license MIT (OpenAI Whisper)",
+    "tiny":                {"size": 77691713,   "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"},
+    "base":                {"size": 147951465,  "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"},
+    "base-q5_1":           {"size": 59707625,   "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"},
+    "small":               {"size": 487601967,  "sha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"},
+    "small-q5_1":          {"size": 190085487,  "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"},
+    "medium":              {"size": 1533763059, "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"},
+    "medium-q5_0":         {"size": 539212467,  "sha256": "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f"},
+    "large-v3-turbo":      {"size": 1624555275, "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"},
+    "large-v3-turbo-q5_0": {"size": 574041195,  "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"},
+    "large-v3-turbo-q8_0": {"size": 874188075,  "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"}
+  },
+  "default_whisper_model": "large-v3-turbo-q5_0"
+}

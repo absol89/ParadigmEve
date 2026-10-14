@@ -57,6 +57,13 @@ accurate. Product vocabulary such as `%thread` and `#quilt` belongs in the answe
 with the user's actual question. The operating/evidence instructions in the starter should make
 answers more truthful, not become an exposition dump to the user.
 
+`%how` also acts as the plain-language doorway to newer capabilities that should not require the user
+to know their internal surface first. In particular, Eve should be able to explain and use installed
+**Skills** and the local **transcription/diarization** stack from the current packaged manual. Skills
+remain relevance-selected procedures rather than slash commands; transcription claims remain tied to
+the installed runtime's actual backend/device/provenance. See
+[Dynamic Skills and local transcription](17-dynamic-skills-and-local-transcription.md).
+
 `%appdata%`, also under `#Eve`, is the starter self-maintenance Thread. `/appdata` and
 `/paradigmeve` are managed app-owned roots rather than ambient Workspace approvals; they become
 visible only to the exact installation-owner Eve/Eva conversation. That owner may inspect
@@ -145,6 +152,8 @@ In practice:
   confident explanation of what probably happened;
 - use workers when the current account/runtime actually exposes them and parallel work is useful, but
   never assume a particular worker model, quota or concurrency exists;
+- scan the compact installed Skills catalog before substantial work and lazily load one clearly
+  matching procedure instead of teaching the user a command they did not ask for;
 - use the provider's native **Think** or higher-reasoning control when it is available and the step is
   genuinely reasoning-heavy; do not invent a local paid-tier reasoning mode when it is not;
 - when a step is too large for the available reasoning budget, reduce the step size or gather better

@@ -82,12 +82,18 @@ const message = (target: any) => ({
 
 it('ships %how as a question-first helper that consults the current manual quietly', () => {
   const how = DEFAULT_THREAD_DEFINITIONS.find(thread => thread.title === 'how')!;
-  expect(how.description).toContain('Ask Eve about ParadigmEve');
+  expect(how.description).toContain('current capabilities');
+  expect(how.description).toContain('Skills');
+  expect(how.description).toContain('local transcription');
   expect(how.prompt.startsWith('Help the user with whatever they want to know/do in ParadigmEve\n\n')).toBe(true);
   expect(how.prompt).toContain('Start with the user\'s current question');
   expect(how.prompt).toContain('What would you like to know or do in ParadigmEve?');
   expect(how.prompt).toContain('Quietly consult the current packaged ParadigmEve manual');
   expect(how.prompt).toContain('Use ParadigmEve\'s local file tools');
+  expect(how.prompt).toContain('reusable procedures selected automatically');
+  expect(how.prompt).toContain('not slash commands and are not Threads');
+  expect(how.prompt).toContain('speaker diarization locally');
+  expect(how.prompt).toContain('microphone and system-audio tracks separately');
   expect(how.prompt).toContain('instead of guessing or pretending you read it');
   expect(how.prompt).toContain('current product behavior and verified evidence');
   expect(how.prompt).toContain('The user\'s current request is authoritative');
@@ -366,13 +372,16 @@ it('updates an untouched old shipped how prompt but preserves a later explicitly
   expect((await pinsLibrary()).quilts.find(thread => thread.id === how.id)?.prompt).toBe(explicitlyResaved);
 });
 
-it('upgrades the immediately previous shipped how prompt to the simpler human-friendly prompt', async () => {
+it('upgrades the immediately previous shipped how prompt to the current capabilities-aware prompt', async () => {
   const current = DEFAULT_THREAD_DEFINITIONS.find(thread => thread.title === 'how')!;
   const immediatelyPreviousPrompt = SUPERSEDED_HOW_THREAD_PROMPTS[0]!;
-  expect(immediatelyPreviousPrompt).toContain('whatever they want to know or do in ParadigmEve.');
+  expect(immediatelyPreviousPrompt).toContain('whatever they want to know/do in ParadigmEve');
   expect(immediatelyPreviousPrompt).toContain('Quietly consult the current packaged ParadigmEve manual');
+  expect(immediatelyPreviousPrompt).not.toContain('reusable procedures selected automatically');
   expect(current.prompt).not.toContain('work_context');
   expect(current.prompt).toContain('whatever they want to know/do in ParadigmEve');
+  expect(current.prompt).toContain('reusable procedures selected automatically');
+  expect(current.prompt).toContain('speaker diarization locally');
 
   const how = await createQuilt({ title: 'how', collectionIds: [] });
   await setQuiltPrompt(how.id, immediatelyPreviousPrompt);

@@ -207,6 +207,17 @@ describe('cross-platform packaging targets', () => {
     expect(packagedRuntime).toContain('Packaged Vault page set');
     expect(packagedRuntime).toContain('does not match the source bytes');
     expect(packageScript).toContain("run(node, ['scripts/smoke-packaged-runtime.mjs', '--platform', platform, '--arch', arch]);");
+    expect(packageScript).toContain("run(node, ['scripts/prepare-transcription-runtime.mjs', ...targetArgs]);");
+    expect(builder.win.extraResources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        from: 'resources/packaging/transcription/win32/${arch}/transcription-engine',
+        to: 'transcription-engine'
+      })
+    ]));
+    expect(packagedRuntime).toContain("'transcription-engine/runtime/python.exe'");
+    expect(packagedRuntime).toContain("required('transcription-engine/UNAVAILABLE.txt')");
+    expect(packagedRuntime).toContain('transcription-python-ok');
+    expect(packagedRuntime).toContain("whisper-cli.exe");
     expect(packageScript).toContain("scripts/smoke-windows-installer-vault.mjs");
     expect(packageScript).toContain("`ParadigmEve-Windows-${arch}${artifactSuffix}.exe`");
     expect(installerVaultSmoke).toContain("arch === 'x64' ? 'app-64.7z' : 'app-arm64.7z'");
@@ -227,6 +238,10 @@ describe('cross-platform packaging targets', () => {
     expect(manual).toContain('`#quilt`');
     expect(manual).toContain('Quilt');
     expect(manual).toContain('legacy `collections`/`collectionIds` field names internally');
+    expect(manual).toContain('Dynamic Skills and local transcription');
+    expect(manual).toContain('reusable procedures selected by semantic relevance');
+    expect(manual).toContain('microphone and system audio as separate tracks');
+    expect(manual).toContain('GPU acceleration is a live capability');
   });
 
   it('grants sandbox read access only to the Windows install tree and fails on ACL errors', () => {

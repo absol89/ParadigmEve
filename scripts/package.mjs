@@ -81,6 +81,7 @@ for (const arch of arches) {
   run(node, ['scripts/fetch-ripgrep.mjs', ...targetArgs]);
   run(node, ['scripts/prepare-packaging-native.mjs', ...targetArgs]);
   run(node, ['scripts/prepare-macos-desktop-helper.mjs', ...targetArgs]);
+  run(node, ['scripts/prepare-transcription-runtime.mjs', ...targetArgs]);
 
   const builderArgs = [
     path.join('node_modules', 'electron-builder', 'out', 'cli', 'cli.js'),

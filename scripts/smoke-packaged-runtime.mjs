@@ -146,6 +146,23 @@ if (targetPlatform === 'win32') {
   required(`app.asar.unpacked/node_modules/node-pty/prebuilds/${nativeDir}/conpty.node`);
   required(`app.asar.unpacked/node_modules/node-pty/prebuilds/${nativeDir}/conpty_console_list.node`);
   required(`app.asar.unpacked/node_modules/node-pty/prebuilds/${nativeDir}/conpty/OpenConsole.exe`);
+  if (targetArch === 'x64') {
+    for (const relative of [
+      'transcription-engine/runtime/python.exe',
+      'transcription-engine/runtime/LICENSE.txt',
+      'transcription-engine/ldw/__main__.py',
+      'transcription-engine/lock/components.json',
+      'transcription-engine/upstream/src/local_diarization/__init__.py',
+      'transcription-engine/.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe',
+      'transcription-engine/LICENSE.local-diarization.txt',
+      'transcription-engine/LICENSE.whisper-cpp.txt'
+    ]) required(relative);
+    if (existsSync(path.join(resourcesDir, 'transcription-engine', 'runtime', 'pyvenv.cfg'))) {
+      throw new Error('Packaged transcription runtime must not contain pyvenv.cfg');
+    }
+  } else {
+    required('transcription-engine/UNAVAILABLE.txt');
+  }
 } else {
   required(`THIRD-PARTY-NOTICES-sharp-libvips-${targetPlatform}-${targetArch}.md`);
   required(`app.asar.unpacked/node_modules/@img/sharp-${targetPlatform}-${targetArch}/LICENSE`);
@@ -215,6 +232,14 @@ if (process.platform !== targetPlatform || process.arch !== targetArch) {
 runExecutable(path.join(resourcesDir, 'rg', `rg${suffix}`), ['--version'], RIPGREP.version);
 runExecutable(path.join(resourcesDir, 'tunnel', `tunnel-client${suffix}`), ['--version'], TUNNEL_CLIENT.version.replace(/^v/, ''));
 runExecutable(path.join(resourcesDir, 'tunnel', `cloudflared${suffix}`), ['--version']);
+if (targetPlatform === 'win32' && targetArch === 'x64') {
+  const transcription = path.join(resourcesDir, 'transcription-engine');
+  runExecutable(path.join(transcription, 'runtime', 'python.exe'), [
+    '-c', 'import cffi,numpy,sherpa_onnx,soundfile; print("transcription-python-ok")'
+  ], 'transcription-python-ok');
+  runExecutable(path.join(transcription, '.vendor', 'whisper.cpp', 'build', 'bin', 'Release', 'whisper-cli.exe'),
+    ['--version'], '1.9.4');
+}
 const probe = String.raw`
 (async () => {
   const base = process.env.COS_RESOURCES_DIR;

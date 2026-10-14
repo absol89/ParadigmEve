@@ -1,5 +1,5 @@
 import type { ChatModelCatalog } from '../shared/chat-models.js';
-import type { TranscriptionSettings } from '../shared/transcription.js';
+import type { TranscriptionJob, TranscriptionSettings } from '../shared/transcription.js';
 import type { TaskProgress } from '../shared/task-progress.js';
 import type { BrowserPreferences } from '../shared/browser-preferences.js';
 import type { SessionControlsView } from '../main/bridge.js';
@@ -189,6 +189,10 @@ const api = {
   // Cloud transcription's own key. The tunnel key above is restricted to Tunnels and cannot transcribe.
   setTranscriptionKey: (value: string) => call<AppState>('secret:set', { value, key: 'transcriptionGroqApiKey' }),
   saveTranscription: (settings: TranscriptionSettings) => call<AppState>('transcription:save', { settings }),
+  transcriptionStartFile: (sessionId: string | null) => call<{ id: string; name: string } | null>('transcription:startFile', { sessionId }),
+  transcriptionStatus: (id: string) => call<TranscriptionJob | null>('transcription:status', { id }),
+  transcriptionGpuProbe: () => call<AppState>('transcription:gpuProbe'),
+  transcriptionCancel: (id: string) => call<boolean>('transcription:cancel', { id }),
   listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud'; cloud: boolean; installed: boolean; vision?: boolean }>>('ollama:models'),
   listOpenRouterModels: () => call<{ models: Array<{ id: string; name: string; route: 'openrouter'; vision: boolean; tools: boolean; contextLength: number | null; free: boolean }>; hasKey: boolean }>('openrouter:models'),
   providerPreview: (id: string, provider: { id: 'ollama' | 'openrouter'; model: string } | null, traceId?: string) =>

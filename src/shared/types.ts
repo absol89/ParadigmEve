@@ -2,7 +2,7 @@ import type { ReasoningEffort } from './session.js';
 import type { AgentBackendExecutionStatus, AgentExecutionSettings, AgentRuntimeSettings } from './agent-backends.js';
 import type { LanPeerPresence } from './lan-peer.js';
 import type { ConceptPinPreviewDensity, ConceptPreviewTextSize } from './concept-settings.js';
-import type { TranscriptionSettings } from './transcription.js';
+import type { TranscriptionGpuCapability, TranscriptionSettings } from './transcription.js';
 import { WINDOWS_COMPUTER_READ_METHODS, WINDOWS_COMPUTER_INPUT_METHODS } from './windows-computer.js';
 /** Types shared between the main process and the renderer. No runtime logic here. */
 
@@ -714,6 +714,8 @@ export interface AppState {
   hasCustomProviderKey: boolean;
   /** An Ollama API key is stored (used only for HTTPS endpoints such as https://ollama.com/v1). */
   hasOllamaKey: boolean;
+  /** Result of the engine's GPU compute probe. The GPU avenue can only be enabled when status is 'usable'. */
+  transcriptionGpu?: TranscriptionGpuCapability;
   /** A Groq API key for cloud transcription is stored. Cloud transcription cannot be enabled without it. */
   hasTranscriptionKey: boolean;
   /** Present only in debug builds. Never includes the LAN group key. */

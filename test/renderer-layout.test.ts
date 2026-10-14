@@ -606,6 +606,12 @@ describe('the settings sheet', () => {
       // Interface language persists in the renderer; the event/storage behavior is
       // covered by renderer-i18n, independently of the app configuration channel.
       if (field.id === 'uiLanguage') continue;
+      // Transcription owns its provider selector and saves through its validated IPC call.
+      if (field.id.startsWith('transcription')) {
+        expect(transcriptionSource, `#${field.id} is never wired`).toContain(`'${field.id}'`);
+        expect(transcriptionSource).toContain("addEventListener('change'");
+        continue;
+      }
       expect(savesOnChange(field.id), `#${field.id} never saves`).toBe(true);
     }
   });

@@ -3,17 +3,17 @@
 Back to [vault index](README.md).
 
 This page is the current development operating checkpoint. It records what must be true in the
-2.3.7 source line and the acceptance gates to use before packaging, installing, or calling a change
+2.4.0 development source line and the acceptance gates to use before packaging, installing, or calling a change
 complete. Public release or installed-runtime status needs its own release/runtime evidence; source
 version alone does not prove either one.
 
 ## Current product state
 
-- Current source package/app line: **2.3.7**.
+- Current source package/app line: **2.4.0 development**.
 - The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
 - Bridge protocol: **15**.
-- A 2.3.7 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.3.7 runtime.
+- A 2.4.0 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
+  agree; do not mistake a dirty development tree for a shipped 2.4.0 runtime.
 - Laptop builds are **debug** builds unless the release policy explicitly changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
@@ -66,6 +66,44 @@ version alone does not prove either one.
   bytes stay explicit. A historical interrupted assistant snapshot may be preserved once a later user
   turn proves it is no longer the live frontier, allowing later stable evidence to remain visible
   while the session still reports partial capture.
+
+## Dynamic Skills
+
+- Skills are reusable procedures selected by semantic relevance from a compact installed catalog;
+  they are not slash commands and are not a replacement for Threads, Pins or Quilts.
+- Ordinary user language is sufficient. When one Skill clearly matches, Eve loads that Skill's
+  `SKILL.md` on demand and loads support files only when that procedure requires them.
+- The current authored user request remains higher authority than a Skill. Explicit Thread prompts
+  also remain durable authored context rather than being silently rewritten by a Skill.
+- Imported/external Skills are readable but not silently rewritten. Eve-owned Skills may be revised
+  and versioned through the Skills owner surface.
+- The prompt carries compact metadata only. Full procedures remain lazy so a growing installed skill
+  library does not consume the normal conversation budget.
+
+## Local transcription and diarization
+
+- Windows packages can include the local transcription engine, embedded Python runtime, pinned
+  Whisper/diarization components and a packaged `whisper.cpp` build.
+- First use may fetch pinned, verified FFmpeg and model payloads into the managed transcription
+  runtime. After those are present, local transcription and speaker diarization run offline.
+- GPU transcription is capability-driven, not assumed. `gpu-probe` distinguishes a compiled/usable
+  backend from unavailable hardware/runtime state. When Vulkan is usable, local ASR may run on the
+  selected GPU and records backend, device, GPU index and whether any fallback occurred.
+- CPU remains a supported path. A claimed GPU run must never actually be CPU work with a GPU label.
+- Speaker diarization stays local. Cloud ASR is an explicit provider choice and may upload audio;
+  choosing cloud transcription does not move diarization to the cloud.
+- Recording can preserve microphone and system audio as separate tracks. This matters when the user
+  wears headphones: system audio is still captured even though it may never reach the room microphone.
+  The two tracks are independent evidence sources and can be compared/aligned by timestamp instead of
+  forcing one mixed waveform to be the only source of truth.
+- A combined track can still be produced for compatibility, but production evidence fusion should
+  prefer the clearer per-span source using ASR confidence, acoustic quality, timing agreement and
+  diarization evidence rather than treating one track as globally authoritative.
+- Completed transcript artifacts preserve local-processing/privacy and execution provenance. Native
+  paths and credentials must not leak through renderer/browser-facing transcript metadata.
+
+See [Dynamic Skills and local transcription](17-dynamic-skills-and-local-transcription.md) for the
+full operating contract and current proof shape.
 
 ## Session, agent, and continuation identity
 
@@ -216,6 +254,14 @@ Prove the installed package contains the current main/renderer bundle and packag
 - `%how` starts from the user's question, consults the current packaged manual quietly when needed,
   uses local file tools without exposing their plumbing as the answer, and says what cannot be
   verified instead of guessing;
+- `%how` can explain installed Skills and local transcription/diarization without requiring slash
+  commands or stale chat memory;
+- the Skills catalog remains metadata-only until one clearly matching Skill is selected, and a large
+  installed catalog stays bounded without truncating the authored request;
+- a packaged transcription runtime reports its real CPU/GPU capability, and a GPU proof records the
+  actual backend/device/fallback state rather than inferring it from CLI flags;
+- mic + system-audio recording preserves separate tracks, allowing headphone-safe capture and later
+  per-span comparison/fusion before or instead of mixing;
 - Pin → Unpin repaints immediately and removal survives restart;
 - duplicate Pin protection;
 - a multi-item Plan's progress survives restart;

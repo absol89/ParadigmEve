@@ -56,6 +56,7 @@ import { decoratePinsWorkspaceReferences, onPinStateChanged, pinImageRefForMessa
 import { authoredMessageConversationId } from './pin-provenance.js';
 import { currentWorkspaceNavigation, navigateWorkspace, onWorkspaceNavigation, onWorkspaceThreadChatOpening } from './workspace-navigation.js';
 import { recentChatActivity, sessionWorking, workerReportedFinish } from '../shared/session-activity.js';
+import { initTranscriptionJobs } from './transcription-jobs.js';
 
 const api = window.api;
 
@@ -1816,7 +1817,7 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       return el('p', 'meta', () => t("Session started — {0}", [event.title]));
     case 'user_message': {
       const box = el('div', 'said is-user');
-      const you = el('b', '', () => t("You"));
+      const you = el('b', '', () => event.messageId?.startsWith('transcription:') ? t('Eve · Transcript') : t("You"));
       if (event.provider) you.append(el('span', 'provider-tag', () => t("to Ollama · {0}", [event.provider!.model])));
       box.append(you);
       const attachments = el('div', 'message-attachments');
@@ -4289,6 +4290,7 @@ function selectNewChat(
 
 export function initChat(next: Deps): void {
   deps = next;
+  initTranscriptionJobs(() => selectedId);
   onWorkspaceNavigation(state => {
     if (state.screen !== 'chat') return;
     pendingNewInput = null;

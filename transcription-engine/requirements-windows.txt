@@ -1,0 +1,11 @@
+# Pinned runtime requirements for the native Windows prototype.
+# Upstream requirements.txt: numpy>=1.24,<3 / sherpa-onnx==1.13.8 / soundfile>=0.12,<1
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8
+numpy==2.5.4
+soundfile==0.14.0
+# Capture (microphone + WASAPI loopback). Not used by upstream.
+soundcard==0.4.6
+cffi==2.1.1
+pycparser==3.11
+typing-extensions==4.16.0

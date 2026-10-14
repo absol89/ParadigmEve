@@ -31,7 +31,10 @@ function saved(): TranscriptionSettings {
 
 function formValue(): TranscriptionSettings {
   const settings = saved();
+  settings.cloud.provider = $<HTMLSelectElement>('transcriptionCloudProvider').value === 'openai' ? 'openai' : 'groq';
   for (const avenue of TRANSCRIPTION_AVENUES) {
+    // GPU is only editable once the compute probe proved a usable device; otherwise keep what is stored.
+    if (avenue === 'gpu' && state?.transcriptionGpu?.status !== 'usable') continue;
     settings[avenue].enabled = $<HTMLInputElement>(IDS[avenue].enabled).checked;
     // A blank or fractional entry stays as typed (NaN / 2.5) so validation rejects it instead
     // of silently rounding the user's number into a different order.
@@ -59,7 +62,8 @@ function orderText(settings: TranscriptionSettings): string {
 async function save(): Promise<void> {
   if (!state) return;
   const settings = formValue();
-  const issue = transcriptionSettingsIssue(settings, state.hasTranscriptionKey);
+  const issue = transcriptionSettingsIssue(settings, state.hasTranscriptionKey, state.hasApiKey,
+    state.transcriptionGpu?.status === 'usable');
   if (issue) {
     showStatus(settings, t(issue));
     return;
@@ -71,6 +75,20 @@ async function save(): Promise<void> {
 export function applyTranscriptionSettings(next: AppState): void {
   state = next;
   const settings = saved();
+  // The GPU switch follows the engine's compute probe, never a static assumption. It can always be
+  // switched off, but only switched on when a GPU passed the check on this computer.
+  const gpu = next.transcriptionGpu;
+  const gpuUsable = gpu?.status === 'usable';
+  $<HTMLInputElement>(IDS.gpu.enabled).disabled = !gpuUsable && !settings.gpu.enabled;
+  $<HTMLInputElement>(IDS.gpu.priority).disabled = !gpuUsable;
+  ui($('transcriptionGpuState'), 'textContent', () => gpuUsable
+    ? t('Uses {0} through Vulkan. Audio stays on this computer.', [gpu?.device ?? 'GPU'])
+    : gpu?.status === 'cpu-only-build'
+      ? t('Not available: this installation has no GPU engine.')
+      : gpu?.status === 'device-unavailable'
+        ? t('Not available on this computer: {0}', [gpu.reason ?? ''])
+        : t('Checking this computer\'s graphics card…'));
+  $<HTMLSelectElement>('transcriptionCloudProvider').value = settings.cloud.provider;
   const pane = $('transcriptionPane');
   const editing = pane.contains(document.activeElement);
   for (const avenue of TRANSCRIPTION_AVENUES) {
@@ -81,7 +99,7 @@ export function applyTranscriptionSettings(next: AppState): void {
     if (!editing || document.activeElement !== priority) priority.value = String(settings[avenue].priority);
   }
   // Cloud can be switched off at any time, but only switched on once its key is stored.
-  $<HTMLInputElement>(IDS.cloud.enabled).disabled = !next.hasTranscriptionKey && !settings.cloud.enabled;
+  $<HTMLInputElement>(IDS.cloud.enabled).disabled = !(settings.cloud.provider === 'openai' ? next.hasApiKey : next.hasTranscriptionKey) && !settings.cloud.enabled;
   if (!editing) showStatus(settings, null);
 
   const secureStorageAvailable = next.secureStorage?.available ?? true;
@@ -94,11 +112,15 @@ export function applyTranscriptionSettings(next: AppState): void {
       ? t('A key is stored with secure OS credential storage. Type a new one to replace it.')
       : t('Needed only for Cloud. Use a separate Groq key limited to the Whisper models. It is stored with secure OS credential storage and sent only to Groq.'));
   $('transcriptionKeyState').classList.toggle('is-warn', !secureStorageAvailable);
+  ui($('transcriptionKeyState'), 'title', () => t('OpenAI cloud transcription uses Eve’s existing stored OpenAI API key. No environment variable is needed.'));
   $<HTMLButtonElement>('transcriptionKeyRemove').disabled = !next.hasTranscriptionKey || !secureStorageAvailable;
 }
 
 export function initTranscriptionSettings(apply: (next: AppState) => void): void {
   onState = apply;
+  // Probe once per app run; the main process caches the result and re-checks on request.
+  void run(window.api.transcriptionGpuProbe()).then((next) => { if (next) onState(next); });
+  $('transcriptionCloudProvider').addEventListener('change', () => { void save(); });
   for (const avenue of TRANSCRIPTION_AVENUES) {
     $(IDS[avenue].enabled).addEventListener('change', () => { void save(); });
     $(IDS[avenue].priority).addEventListener('change', () => { void save(); });

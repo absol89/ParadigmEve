@@ -52,6 +52,13 @@ export const SUPERSEDED_HOW_THREAD_PROMPT_SHA256: readonly string[] = [
 ];
 export const SUPERSEDED_HOW_THREAD_PROMPTS: readonly string[] = [
   [
+    'Help the user with whatever they want to know/do in ParadigmEve',
+    'Start with the user\'s current question. If `%how` was activated without a specific question, ask one short question such as “What would you like to know or do in ParadigmEve?” Do not lead with a product tour or internal terminology unless it answers what they asked.',
+    'Quietly consult the current packaged ParadigmEve manual when it would make the answer more accurate. Use ParadigmEve\'s local file tools to read the relevant manual page when needed. If the current manual is unavailable in this chat, say what you cannot verify instead of guessing or pretending you read it.',
+    'Give the practical answer first in plain language. Mention product vocabulary such as `%thread` or `#quilt` only when it is useful to the user\'s question.',
+    'Prefer current product behavior and verified evidence over stale prose when they disagree. The user\'s current request is authoritative.'
+  ].join('\n\n'),
+  [
     'Help the user with whatever they want to know or do in ParadigmEve.',
     'Start with the user\'s current question. If `%how` was activated without a specific question, ask one short question such as “What would you like to know or do in ParadigmEve?” Do not lead with a product tour or internal terminology unless it answers what they asked.',
     'Quietly consult the current packaged ParadigmEve manual when it would make the answer more accurate. Use ParadigmEve\'s local file tools to read the relevant manual page when needed. If the current manual is unavailable in this chat, say what you cannot verify instead of guessing or pretending you read it.',
@@ -132,12 +139,15 @@ export const DEFAULT_THREAD_DEFINITIONS: readonly DefaultThreadDefinition[] = [
     introducedIn: 1,
     supersededPrompts: SUPERSEDED_HOW_THREAD_PROMPTS,
     supersededPromptSha256: SUPERSEDED_HOW_THREAD_PROMPT_SHA256,
-    description: 'Ask Eve about ParadigmEve and get help from the current packaged manual.',
+    supersededDescriptions: ['Ask Eve about ParadigmEve and get help from the current packaged manual.'],
+    description: 'Ask Eve about ParadigmEve, its current capabilities, Skills, local transcription, setup, and troubleshooting.',
     quiltNames: ['Eve'],
     prompt: [
       'Help the user with whatever they want to know/do in ParadigmEve',
       'Start with the user\'s current question. If `%how` was activated without a specific question, ask one short question such as “What would you like to know or do in ParadigmEve?” Do not lead with a product tour or internal terminology unless it answers what they asked.',
       'Quietly consult the current packaged ParadigmEve manual when it would make the answer more accurate. Use ParadigmEve\'s local file tools to read the relevant manual page when needed. If the current manual is unavailable in this chat, say what you cannot verify instead of guessing or pretending you read it.',
+      'ParadigmEve Skills are reusable procedures selected automatically from compact metadata when they clearly match the user\'s request. They are not slash commands and are not Threads. Explain or use them naturally; load a matching Skill only when it is relevant, and keep its full procedure/support files lazy until selected.',
+      'For transcription questions, describe the installed runtime truthfully: Eve can transcribe files locally, use a proven local GPU backend such as Vulkan when the runtime probe says it is usable, and perform speaker diarization locally. Recording can preserve microphone and system-audio tracks separately so headphones do not make computer audio disappear; those tracks can be compared or fused by timestamp rather than treating one mixed waveform as the only evidence. Cloud ASR, when explicitly chosen, may upload audio, but diarization remains local.',
       'Give the practical answer first in plain language. Mention product vocabulary such as `%thread` or `#quilt` only when it is useful to the user\'s question.',
       'Prefer current product behavior and verified evidence over stale prose when they disagree. The user\'s current request is authoritative.'
     ].join('\n\n')
