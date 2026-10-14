@@ -150,20 +150,129 @@ it('executes a due refresh before an unrelated input readiness probe settles', a
   } finally { release(); await flight; }
 });
 
-it('withholds queued input from a document being refreshed in the same pass', async () => {
-  const h = await worker([{ id: firstId, conversationId: secondId }]);
+it('withholds queued restart input from a document being refreshed in the same pass', async () => {
+  const h = await worker([{ id: firstId, conversationId: secondId, restartWake: true }]);
   h.tabs.push({ id: 8, url: `https://chatgpt.com/c/${secondId}` });
   const originalFetch = h.fetch.getMockImplementation()!;
   h.fetch.mockImplementation(async (url, init) => {
     const reply = await originalFetch(url, init);
     if (new URL(url).pathname === '/status') return { ...reply, json: async () => ({ ok: true,
-      inputs: [{ id: firstId, conversationId: secondId }], repairs: [{ conversationId: secondId, token: 'due-repair' }] }) };
+      inputs: [{ id: firstId, conversationId: secondId, restartWake: true }], repairs: [{ conversationId: secondId, token: 'due-repair' }] }) };
     return reply;
   });
   await h.maintain();
   expect(h.reload).toHaveBeenCalledExactlyOnceWith(8);
   expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-desktop-input')).toBe(false);
   expect(h.create).not.toHaveBeenCalled();
+});
+
+it('offers an exact restored Prime restart wake before an unrelated browser repair, once per maintenance pass', async () => {
+  const h = await worker([{ id: firstId, conversationId: thirdId, restartWake: true, recoveryTurnId: 'old-prime-turn' }]);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${thirdId}` }, { id: 8, url: `https://chatgpt.com/c/${secondId}` });
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'hydrated-prime', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 1 });
+  const baseFetch = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation(async (url, init) => {
+    const response = await baseFetch(url, init);
+    return new URL(url).pathname === '/status'
+      ? { ...response, json: async () => ({ ok: true, background: true,
+        inputs: [{ id: firstId, conversationId: thirdId, restartWake: true, recoveryTurnId: 'old-prime-turn' }],
+        repairs: [{ conversationId: secondId, token: 'unrelated-repair' }] }) } : response;
+  });
+  h.sendMessage.mockImplementation(async (_id, message) => {
+    if (message.type === 'clf-desktop-input') expect(h.reload).not.toHaveBeenCalled();
+    if (message.type === 'clf-restart-wake-readiness') return { ok: true, ready: true, conversationId: thirdId, navigationEpoch: 1 };
+    return { ok: true, ready: true };
+  });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toEqual([
+    [7, { type: 'clf-desktop-input', id: firstId, conversationId: thirdId, restartWake: true, recoveryTurnId: 'old-prime-turn' }, { documentId: 'hydrated-prime' }]
+  ]);
+  expect(h.reload).toHaveBeenCalledExactlyOnceWith(8);
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it('keeps the same durable wake unclaimed during cold frontend hydration and offers it once when ready', async () => {
+  const input = { id: firstId, conversationId: thirdId, restartWake: true as const };
+  const h = await worker([input]);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${thirdId}` });
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'restored-prime', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 2 });
+  let hydrated = false;
+  h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-restart-wake-readiness'
+    ? { ok: true, ready: hydrated, conversationId: thirdId, navigationEpoch: 2 }
+    : { ok: true });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toHaveLength(0);
+  expect(h.update).not.toHaveBeenCalled();
+  expect(h.create).not.toHaveBeenCalled();
+  hydrated = true; // Same page completes React/recorder initialization before the next maintenance wake.
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toEqual([
+    [7, { type: 'clf-desktop-input', id: firstId, conversationId: thirdId, restartWake: true }, { documentId: 'restored-prime' }]
+  ]);
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it('will not send a wake after the probed document navigates or changes its recovery epoch', async () => {
+  const h = await worker([{ id: firstId, conversationId: thirdId, restartWake: true }]);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${thirdId}` });
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'original-prime', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 3 });
+  h.sendMessage.mockImplementation(async (_id, message) => {
+    if (message.type === 'clf-restart-wake-readiness') {
+      h.tabs[0]!.url = `https://chatgpt.com/c/${secondId}`;
+      return { ok: true, ready: true, conversationId: thirdId, navigationEpoch: 3 };
+    }
+    return { ok: true };
+  });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-desktop-input')).toBe(false);
+  expect(h.update).not.toHaveBeenCalled();
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it('does not create a duplicate Prime chat while Chrome has not restored its exact tab yet', async () => {
+  const h = await worker([{ id: firstId, conversationId: thirdId, restartWake: true }]);
+  // /status can already return app-owned work while Chrome's session restore
+  // has not yet exposed a single ChatGPT tab to this extension.
+  await h.maintain();
+  expect(h.create).not.toHaveBeenCalled();
+  expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-desktop-input')).toBe(false);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${thirdId}` });
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'eventually-restored', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 1 });
+  h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-restart-wake-readiness'
+    ? { ok: true, ready: true, conversationId: thirdId, navigationEpoch: 1 }
+    : { ok: true });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toEqual([
+    [7, { type: 'clf-desktop-input', id: firstId, conversationId: thirdId, restartWake: true }, { documentId: 'eventually-restored' }]
+  ]);
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it('rechecks frontend hydration after selecting the restored window, before any Send offer', async () => {
+  const h = await worker([{ id: firstId, conversationId: thirdId, restartWake: true }]);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${thirdId}` });
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'react-remount', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 1 });
+  let probes = 0;
+  h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-restart-wake-readiness'
+    ? { ok: true, ready: ++probes === 1, conversationId: thirdId, navigationEpoch: 1 }
+    : { ok: true });
+  await h.maintain();
+  expect(probes).toBe(2);
+  expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-desktop-input')).toBe(false);
+  expect(h.create).not.toHaveBeenCalled();
+});
+
+it('does not force a restored Prime wake through a protected user draft or open another tab', async () => {
+  const h = await worker([{ id: firstId, conversationId: secondId, restartWake: true }]);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${secondId}` });
+  h.sendMessage.mockImplementation(async (_id, message) =>
+    message.type === 'clf-browser-repair-state'
+      ? { ok: true, protect: true, reason: 'human_draft', conversationId: secondId }
+      : { ok: true, ready: true });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-desktop-input')).toBe(false);
+  expect(h.create).not.toHaveBeenCalled();
+  expect(h.update).not.toHaveBeenCalled();
 });
 
 it('offers due Eve text after a recorder reconnect stalls, without reloading the active chat', async () => {
@@ -299,7 +408,7 @@ it('does not let an abandoned pending input starve Plugins refresh after its ele
 });
 
 type Tab = { id: number; url?: string; pendingUrl?: string; windowId?: number; active?: boolean; pinned?: boolean };
-async function worker(inputs: Array<{ id: string; conversationId: string | null; projectEntry?: { id: string; sourceConversationId: string }; directTurn?: { id: string; startedAt: number }; recoveryTurnId?: string; supersededConversationId?: string }>, modelCatalogRequest?: { nonce: string; expiresAt: number }, priorLocal: Record<string, unknown> = {}, pluginRefreshRequests: unknown[] = [], priorSession: Record<string, unknown> = {}) {
+async function worker(inputs: Array<{ id: string; conversationId: string | null; restartWake?: true; projectEntry?: { id: string; sourceConversationId: string }; directTurn?: { id: string; startedAt: number }; recoveryTurnId?: string; supersededConversationId?: string }>, modelCatalogRequest?: { nonce: string; expiresAt: number }, priorLocal: Record<string, unknown> = {}, pluginRefreshRequests: unknown[] = [], priorSession: Record<string, unknown> = {}) {
   const tabs: Tab[] = [];
   const event = { addListener: () => {} };
   const localSaved: Record<string, unknown> = { port: 8765, token: 'test-pairing', ...priorLocal };

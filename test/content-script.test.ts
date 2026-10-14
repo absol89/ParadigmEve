@@ -638,6 +638,38 @@ describe('desktop input delivery and helper ownership', () => {
   const chatB = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
   const text = 'Inspect the exact requested task';
   const claimed = (extra: Record<string, unknown> = {}) => ({ id: inputId, owner: 'input-owner', text, model: null, reasoningEffort: null, purpose: 'user', images: [], ...extra });
+  it('reports frontend hydration as pending without claiming, then accepts the same wake only with a native composer', async () => {
+    const claim = vi.fn((message: any) => ({ ok: true, data: message.authorize || message.ack || message.fail
+      ? { ok: true } : { input: claimed() } }));
+    live = await harness(`https://chatgpt.com/c/${chatA}`, { desktop_input: claim });
+    await settle();
+    const readiness = () => live!.runtimeMessage({ type: 'clf-restart-wake-readiness', conversationId: chatA });
+    const composer = live.document.querySelector('#prompt-textarea')!;
+    const parent = composer.parentNode!;
+    const next = composer.nextSibling;
+    composer.remove();
+    expect(await readiness()).toMatchObject({ ok: true, ready: false, conversationId: chatA });
+    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA, restartWake: true })).toEqual({ ok: false });
+    expect(claim).not.toHaveBeenCalled();
+    parent.insertBefore(composer, next);
+    await settle();
+    expect(await readiness()).toMatchObject({ ok: true, ready: true, conversationId: chatA });
+  });
+  it.each(['draft', 'voice', 'wrong conversation'] as const)('never claims a restart wake while its frontend has %s', async blocker => {
+    const claim = vi.fn();
+    live = await harness(`https://chatgpt.com/c/${chatA}`, { desktop_input: claim });
+    await settle();
+    if (blocker === 'draft') live.document.querySelector('#prompt-textarea')!.textContent = 'Do not replace my draft';
+    if (blocker === 'voice') {
+      const endVoice = live.document.createElement('button');
+      endVoice.setAttribute('aria-label', 'End voice mode');
+      live.document.body.append(endVoice);
+    }
+    const target = blocker === 'wrong conversation' ? chatB : chatA;
+    expect(await live.runtimeMessage({ type: 'clf-restart-wake-readiness', conversationId: target })).toMatchObject({ ok: true, ready: false });
+    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: target, restartWake: true })).toEqual({ ok: false });
+    expect(claim).not.toHaveBeenCalled();
+  });
   it.each(['accepted', 'refused', 'new-question', 'draft'])('direct delivery stops only the claimed source turn before normal Send (%s)', async change => {
     let directTurn: { id: string; startedAt: number };
     live = await nonProHarness(`https://chatgpt.com/c/${chatA}`, {
@@ -7911,7 +7943,8 @@ describe('a content script reloaded into a turn already in flight', () => {
       live!.document.querySelector('#prompt-textarea')!.textContent = '';
     });
     expect(live.document.querySelector('[data-testid="stop-button"]')).toBeNull();
-    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId, recoveryTurnId })).toEqual({ ok: true });
+    expect(await live.runtimeMessage({ type: 'clf-restart-wake-readiness', conversationId, recoveryTurnId })).toMatchObject({ ok: true, ready: true });
+    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId, restartWake: true, recoveryTurnId })).toEqual({ ok: true });
     expect(sends()).toBe(1);
     expect(live.sent).toContainEqual(expect.objectContaining({ type: 'desktop_input', id: inputId, owner: 'restart-owner', authorize: true }));
     expect(live.sent).toContainEqual(expect.objectContaining({ type: 'desktop_input', id: inputId, owner: 'restart-owner', ack: true }));

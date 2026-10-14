@@ -2110,11 +2110,12 @@ async function retireTerminalInputMarkers(activeIds, retiredIds) {
   if (changed || Array.isArray(activeIds)) await persistLive();
 }
 
-function offerDesktopInput(tabId, message) {
+function offerDesktopInput(tabId, message, options) {
   // The reply is not a delivery receipt: the content script synchronously owns
   // one desktopInputBusy slot, then the app's durable browser claim and one-time
   // sendAuthorizedAt fence every later offer. Waiting here only starves repairs.
-  void chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
+  const offer = options ? chrome.tabs.sendMessage(tabId, message, options) : chrome.tabs.sendMessage(tabId, message);
+  void offer.catch(() => undefined);
 }
 
 /**
@@ -2190,6 +2191,33 @@ async function prepareDesktopInputTarget(tab, conversationId = null) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Chrome registration, a matching /c URL, and a connected service worker only
+ * prove transport. The *registered current document* must report that its
+ * recorder has restored the turn and ChatGPT has hydrated a usable native
+ * composer before a restart wake may even select the tab. A false/missing
+ * response is transient: the app-owned outbox stays queued for the 30s retry
+ * alarm or a later document registration. This never claims or sends input.
+ */
+async function provenRestartWakeDocument(tab, input) {
+  const target = cleanConversationId(input?.conversationId);
+  if (!tab || !Number.isInteger(tab.id) || !target || tab.pendingUrl) return null;
+  const key = String(tab.id);
+  const source = { tab: tab.id, documentId: tabDocuments[key], navigationEpoch: tabEpochs[key] };
+  if (!ownsDocument(source)) return null;
+  const before = await chrome.tabs.get(tab.id).catch(() => null);
+  if (!before || before.pendingUrl || before.url !== tab.url || conversationForTab(before) !== target) return null;
+  const reply = await tabReply(tab.id,
+    { type: 'clf-restart-wake-readiness', conversationId: target,
+      ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}) },
+    { documentId: source.documentId }, 1000);
+  const after = await chrome.tabs.get(tab.id).catch(() => null);
+  return reply?.ok === true && reply.ready === true && reply.conversationId === target &&
+    reply.navigationEpoch === source.navigationEpoch && ownsDocument(source) &&
+    after && !after.pendingUrl && after.url === before.url && conversationForTab(after) === target
+    ? source : null;
 }
 
 /**
@@ -2304,6 +2332,11 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
       elected = elections[input.id];
     }
     if (elected?.tab != null) tab = candidates.find(candidate => candidate.id === elected.tab);
+    // Browser session restore can report zero tabs while Chrome is still booting.
+    // A Prime restart wake has exactly one recorded conversation: never invent a
+    // second chat tab during that gap. The same durable row is reconsidered on
+    // each maintenance wake when its exact restored conversation becomes visible.
+    if (input.restartWake === true && !tab) continue;
     // A prepare receipt can be lost after its exact document changes nothing. Do
     // not replay from elapsed time: only the still-elected, still-owned document
     // can prove that it is idle again and therefore no old preparation is live.
@@ -2447,13 +2480,25 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
       await elect(input.id, { ...elected, tab: tab.id, stage: 'ready' });
       elected = elections[input.id];
     }
+    const wakeDocument = input.restartWake === true ? await provenRestartWakeDocument(tab, input) : null;
+    if (input.restartWake === true && !wakeDocument) continue;
     browserPrioritySpent = true;
     if (!await prepareDesktopInputTarget(tab, target)) continue;
+    // Selecting an owned background tab can wake React and replace its editor.
+    // Re-prove the *same* document before offering. The content script rechecks
+    // again before the claim and native Send, so an intervening navigation or
+    // human action cannot inherit this authorization.
+    if (wakeDocument) {
+      const again = await provenRestartWakeDocument(tab, input);
+      if (!again || again.documentId !== wakeDocument.documentId || again.navigationEpoch !== wakeDocument.navigationEpoch) continue;
+    }
     offerDesktopInput(tab.id, { type: 'clf-desktop-input', id: input.id, conversationId: target,
+      ...(input.restartWake === true ? { restartWake: true } : {}),
       ...(!target && projectEntryOf(input) ? { projectEntry: projectEntryOf(input) } : {}),
       ...(input.directTurn ? { directTurn: input.directTurn } : {}),
       ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}),
-      ...(input.lifetime ? { lifetime: input.lifetime } : {}) });
+      ...(input.lifetime ? { lifetime: input.lifetime } : {}) },
+      wakeDocument ? { documentId: wakeDocument.documentId } : undefined);
   }
   return browserPrioritySpent;
 }
@@ -3228,6 +3273,29 @@ async function maintainOnce() {
       token: entry && typeof entry.token === 'string' && entry.token.length <= 64 ? entry.token : ''
     }))
     .filter((entry) => entry.conversationId && entry.token);
+  // A verified app-owned restart wake is a request to resume one specific Prime,
+  // not generic Chrome housekeeping. Offer it to its *already restored* exact
+  // tab before potentially slow unrelated attribution/window/repair operations.
+  // This does not grant Send: the page must prove idle/draft/Voice safety and the
+  // app still spends its sole durable claim + native authorization. If the tab
+  // is absent/loading or itself needs repair, defer to the regular maintenance
+  // path; do not invent a second tab or skip the required repair.
+  const priorityWakeIds = new Set();
+  let priorityWakeSpent = false;
+  const repairTargets = new Set([...repairs, ...attributionReconnects].map(entry => entry.conversationId));
+  if (Array.isArray(reply.data.inputs)) {
+    const readyWakes = reply.data.inputs.filter(input => {
+      const target = cleanConversationId(input?.conversationId);
+      if (input?.restartWake !== true || !target || repairTargets.has(target) ||
+          !/^[a-f0-9-]{36}$/i.test(input.id)) return false;
+      return observedTabs.some(tab => !tab.pendingUrl && conversationForTab(tab) === target);
+    });
+    if (readyWakes.length) {
+      for (const input of readyWakes) priorityWakeIds.add(input.id);
+      priorityWakeSpent = await deliverDesktopInputs(readyWakes, reply.data.background === true,
+        reply.data.reusableConversations, reply.data.inputOpeningIds);
+    }
+  }
   // Missing request attribution is first a recorder/Fiber transport problem. Ask the exact
   // existing page to reconnect and flush correlation evidence before any due browser repair can
   // mutate the provider response. This path never reloads, reopens or creates a ChatGPT tab.
@@ -3250,7 +3318,8 @@ async function maintainOnce() {
   // Reloading the same document races its final input offer. Repair it now; the
   // still-durable app row is offered on the next status pass after the reload.
   const inputs = Array.isArray(reply.data.inputs)
-    ? reply.data.inputs.filter(input => !repairConversations.has(cleanConversationId(input?.conversationId)))
+    ? reply.data.inputs.filter(input => !priorityWakeIds.has(input?.id) &&
+      !repairConversations.has(cleanConversationId(input?.conversationId)))
     : reply.data.inputs;
   // Automatic Guided setup runs only while the person's setup run asked for a step.
   void runSetupAutomation(reply.data.setupAutomation);
@@ -3262,7 +3331,7 @@ async function maintainOnce() {
   // Plugins tab beside the restored session. Defer only when this pass actually spent browser
   // placement authority. A durable input whose elected document is gone can remain listed until
   // its owner resolves that debt; it must not starve an unrelated schema refresh forever.
-  if (!inputBrowserPrioritySpent) {
+  if (!priorityWakeSpent && !inputBrowserPrioritySpent) {
     inspectRequestedModels(reply.data.modelCatalogRequest);
     inspectRequestedPluginRefresh(reply.data.pluginRefreshRequests, reply.data.background === true, reply.data.browserOnly === true);
   }

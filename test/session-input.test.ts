@@ -2291,7 +2291,7 @@ it('offers an exact restart wake immediately even when its recorded turn timesta
   }), undefined, { restartWake: true });
   await markRestartRecoveryInput(recovery.id, 'restart-future-clock');
   expect(await pendingBrowserInputs()).toEqual([{
-    id: recovery.id, conversationId: binding.conversationId, recoveryTurnId: 'restart-future-clock'
+    id: recovery.id, conversationId: binding.conversationId, restartWake: true, recoveryTurnId: 'restart-future-clock'
   }]);
   // An authored message in this same chat correctly supersedes an untouched
   // restart wake; use another session to prove its future dueAt stays fenced.
@@ -2344,7 +2344,7 @@ it('re-offers an untouched timed-out restart wake with the same durable id and e
     transportIntent: 'browser', owner: null, dueAt: now
   })]);
   expect(await pendingBrowserInputs()).toEqual([{
-    id: row.id, conversationId: binding.conversationId, recoveryTurnId: 'restart-open-turn'
+    id: row.id, conversationId: binding.conversationId, restartWake: true, recoveryTurnId: 'restart-open-turn'
   }]);
 });
 

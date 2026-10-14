@@ -1686,17 +1686,17 @@ async function nativeDestination(entry: InputEntry, conversationId: string | nul
     ? { id: project.nativeProjectId, sourceConversationId: project.nativeEntryConversationId }
     : 'unknown';
 }
-export function pendingBrowserInputs(): Promise<Array<{ id: string; conversationId: string | null; directTurn?: InputEntry['directTurn']; recoveryTurnId?: string; supersededConversationId?: string; lifetime?: 'temporary-planner'; projectEntry?: NativeProjectEntry }>> {
+export function pendingBrowserInputs(): Promise<Array<{ id: string; conversationId: string | null; restartWake?: true; directTurn?: InputEntry['directTurn']; recoveryTurnId?: string; supersededConversationId?: string; lifetime?: 'temporary-planner'; projectEntry?: NativeProjectEntry }>> {
   return serial(async () => {
-    const result: Array<{ id: string; conversationId: string | null; directTurn?: InputEntry['directTurn']; recoveryTurnId?: string; supersededConversationId?: string; lifetime?: 'temporary-planner'; projectEntry?: NativeProjectEntry }> = [];
+    const result: Array<{ id: string; conversationId: string | null; restartWake?: true; directTurn?: InputEntry['directTurn']; recoveryTurnId?: string; supersededConversationId?: string; lifetime?: 'temporary-planner'; projectEntry?: NativeProjectEntry }> = [];
     const current = await load();
     const unreachable = new Set<string>();
     // An explicit Force Send must not queue behind unrelated threads' stale
     // session/turn investigations. Keep the existing FIFO within each lane,
     // but resolve human-directed browser recovery before ordinary background work.
-    const candidates = ordered(current).sort((a, b) =>
-      Number(b.forceBrowser === true && b.state === 'queued') -
-      Number(a.forceBrowser === true && a.state === 'queued'));
+    const priority = (entry: InputEntry): number => entry.forceBrowser && entry.state === 'queued' ? 2
+      : entry.restartWake && entry.state === 'queued' ? 1 : 0;
+    const candidates = ordered(current).sort((a, b) => priority(b) - priority(a));
     for (const entry of candidates) {
       // The historical turn/session timestamp identifies the restart epoch;
       // it is not a delivery schedule. On some restored sessions that timestamp
@@ -1712,6 +1712,7 @@ export function pendingBrowserInputs(): Promise<Array<{ id: string; conversation
         // Never open a linked project's chat outside its ChatGPT Project; say why instead.
         if (projectEntry === 'unknown') { if (entry.state === 'queued') unreachable.add(entry.id); continue; }
         result.push({ id: entry.id, conversationId,
+          ...(entry.restartWake === true ? { restartWake: true as const } : {}),
           ...(projectEntry ? { projectEntry } : {}),
           ...(entry.directTurn ? { directTurn: entry.directTurn } : {}),
           ...(entry.recoveryTurnId ? { recoveryTurnId: entry.recoveryTurnId } : {}),

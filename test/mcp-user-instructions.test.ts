@@ -83,6 +83,15 @@ describe('the user’s own connector instructions', () => {
     expect(text).not.toMatch(/Astra only/);
   });
 
+  it('keeps standing restart guidance in Core instructions, without pretending it can create a model turn', () => {
+    const core = serverInstructions({ ...ctx, sessionTools: true, agentTools: true }, 'core', 'win32');
+    expect(core).toContain('After a ParadigmEve app restart, the standing policy is');
+    expect(core).toContain('A system/connector instruction alone cannot start a model turn');
+    expect(core).toContain('one exact startup wake to an idle, protected conversation');
+    expect(core).toContain('If the conversation has already continued, the wake is obsolete');
+    expect(serverInstructions(ctx, 'core', 'win32')).not.toContain('After a ParadigmEve app restart');
+  });
+
   it('projects a Unicode per-install name into Core guidance and work_context while keeping serverName stable', async () => {
     const config = getConfig();
     await saveConfig({ ...config, mcp: { ...config.mcp, connectorName: 'Eva Å' } });

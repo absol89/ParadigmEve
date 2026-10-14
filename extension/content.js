@@ -11465,6 +11465,10 @@
     }
     const recoveryTurnId = typeof message.recoveryTurnId === 'string' && message.recoveryTurnId.length <= 256
       ? message.recoveryTurnId : null;
+    // The service worker's preflight is advisory: React can replace this page's
+    // composer between that proof and an offered message. Recheck in the exact
+    // document before taking the busy slot or spending the durable claim.
+    if (message.restartWake === true && !restartWakeReadiness(message.conversationId, recoveryTurnId).ready) return false;
     // Restart recovery is not a direct-turn interruption. The app may offer its one durable
     // receipt while the recorder still carries the pre-restart generation, but this document
     // may claim it only after the *provider page* has stayed idle through the normal settle
@@ -11527,6 +11531,7 @@
       if ((!freshDraftReplaceable() && (composer.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return false;
       // Re-prove the Voice pause after the composer wait: the user or the reply may have started.
       if (!voicePause()) return false;
+      if (message.restartWake === true && !restartWakeReadiness(target, recoveryTurnId, true).ready) return false;
       const reply = await ask({ type: 'desktop_input', id: message.id, conversationId: target, requiresAuthorization: true });
       const input = reply?.data?.input;
       if (!input || !onTarget()) return false;
@@ -11870,6 +11875,28 @@
     if (draft) return { protect: true, reason: trustedComposerTakenOver ? 'human_draft' : 'stale_draft', conversationId: currentConversationId };
     return { protect: false, conversationId: currentConversationId };
   }
+  /**
+   * A browser tab and a content-script listener are not a hydrated ChatGPT frontend.
+   * Restart wakes wait outside the durable claim until this *exact document* has
+   * completed recorder restoration and the provider has a visible, idle, empty,
+   * editable native composer. React's transient blank /c shell is not readiness.
+   */
+  function restartWakeReadiness(expectedConversationId, recoveryTurnId = null, ownInputSlot = false) {
+    const currentConversationId = CLF_DOM.conversationId();
+    const staleTurnIdle = Boolean(recoveryTurnId && turnId === recoveryTurnId &&
+      !CLF_DOM.generating() && quietSince > 0 && Date.now() - quietSince >= TURN_SETTLE_MS);
+    const ready = Boolean(expectedConversationId && currentConversationId === expectedConversationId &&
+      conversationId === expectedConversationId && commandReadinessInitialized && alive &&
+      (!recoveryTurnId || turnId === recoveryTurnId) &&
+      (!generating || staleTurnIdle) && !CLF_DOM.generating() &&
+      pendingTools === 0 && !nativeBusy && !goalBusy && !job?.busy &&
+      (ownInputSlot || !desktopInputBusy) && !modelCatalogBusy && !pluginRefreshBusy &&
+      !desktopDecision && !commandAttempt && !commandJournalGate &&
+      !activeVoiceSession() && !trustedComposerTyping() &&
+      CLF_DOM.composerVisible() && CLF_DOM.composerSubmitReady() &&
+      !CLF_DOM.hasComposerAttachments());
+    return { ok: true, ready, conversationId: currentConversationId, navigationEpoch: epoch };
+  }
   async function prepareDesktopInputPage(message) {
     if (!/^[a-f0-9-]{36}$/i.test(message.id) || !inputReuseSafe()) return { ready: false };
     const startEpoch = epoch, startConversation = CLF_DOM.conversationId();
@@ -12030,6 +12057,10 @@
       if (message.type === 'clf-browser-repair-state') {
         const expectedConversationId = typeof message.conversationId === 'string' ? message.conversationId : '';
         sendResponse({ ok: true, ...browserRepairState(expectedConversationId) });
+        return false;
+      }
+      if (message.type === 'clf-restart-wake-readiness') {
+        sendResponse(restartWakeReadiness(message.conversationId, message.recoveryTurnId));
         return false;
       }
       if (message.type === 'clf-prepare-desktop-input') {
