@@ -306,7 +306,7 @@ it('uses existing process custody for nested exec and write_stdin across a conve
   const replacement = randomUUID(), requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
   expect(await rebindSession(a.session.id, a.conversationId, replacement)).toBe(true);
   observeRequestCorrelation({ requestId, conversationId: replacement, sessionId: a.session.id, messageId: randomUUID(), tool: 'exec', observedAt: Date.now() });
-  const continued = await call(requestId, `let result=await tools.write_stdin({session_id:${processId},chars:"owner\\r",yield_time_ms:1000}); for(let i=0;i<4&&result?.structuredContent?.session_id;i++) result=await tools.write_stdin({session_id:${processId},chars:"",yield_time_ms:5000}); text(result);`);
+  const continued = await call(requestId, `const results=[]; let result=await tools.write_stdin({session_id:${processId},chars:"owner\\r",yield_time_ms:1000}); results.push(result); for(let i=0;i<4&&result?.structuredContent?.session_id;i++){result=await tools.write_stdin({session_id:${processId},chars:"",yield_time_ms:5000});results.push(result);} text(results);`);
   expect(text(continued)).toContain('OWNED_RESULT');
 });
 

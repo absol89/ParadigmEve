@@ -56,7 +56,7 @@ it('exposes Windows sky values and displays each observation image once through 
 it('throws a sky tool failure before a dependent input and preserves its useful error text', async () => {
   const invoke = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'STALE_WINDOW: observe again' }], isError: true }));
   const output = await runCodeMode('await sky.press_key({window:{id:1,app:"fixture"},key:"a"}); await sky.press_key({});',
-    [{ name: 'press_key', description: 'fixture' }], invoke, limits, { windowsDesktop: true });
+    [{ name: 'press_key', description: 'fixture' }], invoke, { ...limits, cpuMs: 500 }, { windowsDesktop: true });
   expect(output.isError).toBe(true);
   expect(invoke).toHaveBeenCalledTimes(1);
   expect(rendered(output)).toContain('STALE_WINDOW: observe again');
