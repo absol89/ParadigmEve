@@ -827,6 +827,12 @@ export class ArchiveRuntime {
         break;
       }
     }
+    // One pass is enough to prove which turns already have a later stable final. Re-scanning the
+    // whole suffix for every mutable streaming row made projection quadratic on long transcripts.
+    const stableAssistantTurns = new Set(snapshot.events.flatMap(event =>
+      event.kind === 'assistant_message' && event.turnId && (event.final === true || event.state === 'final')
+        ? [event.turnId]
+        : []));
     const now = this.now();
     // Set once the published order and the source order disagree. From then on position no longer
     // identifies an event, so published evidence is matched by its logical id instead.
@@ -866,8 +872,7 @@ export class ArchiveRuntime {
         // row can permanently hide distinct stable final rows behind it when the source writes no
         // later event (the settled 2026-10-13 worker-3 archive reproduced this).
         const laterStableSameTurn = source.kind === 'assistant_message' && !!source.turnId &&
-          snapshot.events.slice(index + 1).some(event => event.kind === 'assistant_message' &&
-            event.turnId === source.turnId && (event.final === true || event.state === 'final'));
+          stableAssistantTurns.has(source.turnId);
         const historicalInterruptedAssistant = source.kind === 'assistant_message' &&
           (index < lastUserMessageIndex || laterStableSameTurn);
         // The page-authored user receipt grace expires with time, not another source commit.

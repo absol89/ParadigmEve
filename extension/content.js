@@ -2282,7 +2282,7 @@
    * final answer. The normal quiet-completion path still publishes the settled answer before
    * `turn_end` as before.
    */
-  function finishGeneration(ended, result, publishFinal = true) {
+  function finishGeneration(ended, result, publishFinal = true, refreshExact = false) {
     // Capture the durable identity before tearing local lifecycle state down. A generation
     // without one is not something the recorder can reconcile after reload, so it must never
     // publish a lifecycle boundary (or seed a settled-section mapping) that could close some
@@ -2318,7 +2318,7 @@
       };
       fiberSettleUntil = Date.now() + FIBER_SETTLE_MS;
     }
-    if (endedTurnId && publishFinal && result.outcome === 'completed') {
+    if (endedTurnId && (refreshExact || (publishFinal && result.outcome === 'completed'))) {
       void refreshFiber({
         pageTurnId: ended?.id || null,
         localTurnId: endedTurnId,
@@ -2547,7 +2547,12 @@
       // adapted to Eve's existing durable-adoption model.
       const nextQuestion = unwitnessedGeneration ? observedTurns.findIndex(turn =>
         turn.role === 'user' && CLF_DOM.messagesIn(turn).some(message => message.id === newUserMessage)) : -1;
-      const closingTurns = unwitnessedGeneration ? observedTurns.slice(0, Math.max(0, nextQuestion)) : observedTurns;
+      // If React has not exposed the new question's section yet, keep the full observed set. An
+      // absent index is not evidence that the old generation has no candidate turn; slicing at
+      // Math.max(0, -1) produced an empty set and manufactured an interruption.
+      const closingTurns = unwitnessedGeneration && nextQuestion >= 0
+        ? observedTurns.slice(0, nextQuestion)
+        : observedTurns;
       const ended = quietTurn || generationTurn(closingTurns);
       const fresh = endOutcome(ended);
       const result = quietOutcome && quietOutcome.outcome !== 'unknown' ? quietOutcome : fresh;
@@ -2559,19 +2564,11 @@
           ? { outcome: 'completed' }
           : { outcome: 'interrupted', detail: 'a new user message replaced the unfinished turn' }
         : result;
-      // The next user boundary used to suppress the normal final Fiber refresh entirely. If the
-      // final became visible in the same observer interval, Eve could therefore record only the
-      // next user message and later mark this turn interrupted, while chatgpt.com visibly held the
-      // completed answer (2026-10-14). Scan the exact old page turn before teardown. refreshFiber
-      // captures this owner synchronously before its first await and refuses route/epoch drift, so
-      // it cannot borrow prose from the next generation. Keep publishFinal=false: a whole-page
-      // fallback at this boundary would be unsafe.
-      if (ended && turnId) void refreshFiber({
-        pageTurnId: ended.id || null,
-        localTurnId: turnId,
-        pageTurn: ended
-      });
-      finishGeneration(ended, bounded, false);
+      // The next user boundary still needs an exact old-turn Fiber scan even when the DOM outcome
+      // is interrupted/unknown. Keep publishFinal=false: a whole-page fallback at this boundary
+      // would be unsafe. finishGeneration owns that exact refresh so every outcome follows one
+      // teardown path instead of duplicating the scan here.
+      finishGeneration(ended, bounded, false, true);
     }
 
     // A turn is opened by a send, and by nothing else.

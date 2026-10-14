@@ -254,6 +254,8 @@ describe('cross-platform packaging targets', () => {
     // not silently rotate that fingerprint by deleting the secret store.
     expect(config.nsis.deleteAppDataOnUninstall).toBe(false);
     expect(installer).toContain('SetFont "Segoe UI" 10');
+    expect(installer).toContain('nsExec::ExecToStack `"$SYSDIR\\icacls.exe"');
+    expect(installer).not.toContain('ExecWait \'"$SYSDIR\\icacls.exe"');
     // 2026-10-12: an install that had landed in %APPDATA%\paradigmeve let the next update's old
     // uninstaller delete the user's archive. One install folder, and never one that holds data.
     expect(config.nsis.allowToChangeInstallationDirectory).toBe(false);
@@ -276,7 +278,7 @@ describe('cross-platform packaging targets', () => {
     expect(installer).toContain('${FileExists} "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"');
     expect(installer).toContain('Var ParadigmEveHadExistingInstall');
     expect(installer).toContain('StrCpy $ParadigmEveHadExistingInstall "1"');
-    expect(installer).toContain('ExecWait');
+    expect(installer).toContain('nsExec::ExecToStack');
     expect(installer).toContain('"$SYSDIR\\icacls.exe" "$INSTDIR" /grant "*S-1-15-2-2:(OI)(CI)(RX)"');
     expect(installer).toContain('${If} ${Errors}');
     expect(installer).toContain('${If} $0 != 0');

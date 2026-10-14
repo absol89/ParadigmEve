@@ -822,7 +822,7 @@ async function waitForDedicatedParadigmEveChromeWindow(
  * Returns true only when an already-open dedicated profile was restarted. A false result means the
  * profile was closed and ordinary restore-last-session recovery should launch it normally.
  */
-export async function restartParadigmEveChromeForInstallerRecovery(timeoutMs = 10_000): Promise<boolean> {
+export async function restartParadigmEveChromeForInstallerRecovery(timeoutMs = 30_000): Promise<boolean> {
   if (!extensionDir()) {
     throw new Error('The packaged ParadigmEve Companion could not be materialized for installer recovery.');
   }

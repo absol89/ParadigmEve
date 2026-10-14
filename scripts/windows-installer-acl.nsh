@@ -20,7 +20,9 @@ Var ParadigmEveLaunchAfterInstall
 
 !macro grantSandboxReadAccess
   ClearErrors
-  ExecWait '"$SYSDIR\icacls.exe" "$INSTDIR" /grant "*S-1-15-2-2:(OI)(CI)(RX)" /Q' $0
+  nsExec::ExecToStack `"$SYSDIR\icacls.exe" "$INSTDIR" /grant "*S-1-15-2-2:(OI)(CI)(RX)" /Q`
+  Pop $0
+  Pop $1
   ${If} ${Errors}
     StrCpy $0 2
   ${EndIf}

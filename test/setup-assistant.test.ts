@@ -556,6 +556,29 @@ describe('ParadigmEve setup browser', () => {
     }
   });
 
+  it('allows a slow dedicated browser restart during installer recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = await modulePromise;
+      const target = { id: 77, app: 'Chrome.setupbrowserprofile.Default', title: 'ChatGPT - Google Chrome', process: 'chrome', x: 0, y: 0, width: 1200, height: 800, state: 'foreground' as const };
+      const replacement = { ...target, id: 88, state: 'open' as const };
+      let calls = 0;
+      mocked.listWindows.mockImplementation(async () => {
+        calls += 1;
+        return {
+          windows: calls < 90 ? [target] : [replacement],
+          screen: { x: 0, y: 0, width: 1920, height: 1080 },
+        };
+      });
+
+      const pending = setup.restartParadigmEveChromeForInstallerRecovery();
+      await vi.advanceTimersByTimeAsync(14_000);
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('waits for current live Companion proof after Chrome Update before maintenance succeeds', async () => {
     vi.useFakeTimers();
     try {
