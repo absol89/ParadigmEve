@@ -1469,6 +1469,89 @@ export function forceBrowserInput(id: string): Promise<InputEntry | null> {
   });
 }
 
+function restartWakeRow(row: Pick<InputEntry, 'restartWake' | 'text'>): boolean {
+  return row.restartWake === true || row.text.startsWith('[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]');
+}
+
+function retireUntouchedDuplicateRestartWakes(current: InputEntry[], confirmed: InputEntry): InputEntry[] {
+  if (!restartWakeRow(confirmed) || confirmed.state !== 'sent' || confirmed.deliveredAt === undefined ||
+      !confirmed.sessionId || !confirmed.conversationId) return current;
+  return current.map((row) => {
+    if (row === confirmed || !restartWakeRow(row) || row.sessionId !== confirmed.sessionId ||
+        row.conversationId !== confirmed.conversationId) return row;
+    const untouched = (row.state === 'queued' || row.state === 'failed') && row.owner === null &&
+      row.offeredAt === undefined && row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined;
+    return untouched ? { ...row, state: 'cancelled', error: 'Duplicate restart wake retired because this session already confirmed a wake send.' } : row;
+  });
+}
+
+/**
+ * Re-offer untouched deterministic restart wakes after startup recovery has had time to settle.
+ *
+ * This is deliberately narrower than the human Force Send path. A restart wake keeps its exact
+ * recovery-turn fence, so we must not set `forceBrowser`: doing so would bypass that turn identity
+ * inside browserInputAllowed(). The caller may invoke this at bounded boot checkpoints (currently
+ * +1m and +2m); repeated calls reuse the same durable input id and never authorize or perform Send.
+ */
+export function recoverUnclaimedRestartWakes(): Promise<InputEntry[]> {
+  return serial(async () => {
+    let current = await load();
+    for (const sent of current) {
+      if (!restartWakeRow(sent) || sent.state !== 'sent' || sent.deliveredAt === undefined) continue;
+      const cleaned = retireUntouchedDuplicateRestartWakes(current, sent);
+      if (cleaned.some((row, index) => row !== current[index])) current = cleaned;
+    }
+    if (current.some((row, index) => row !== entries![index])) await commit(current);
+    const recovered = new Map<string, InputEntry>();
+    let changedRows = false;
+    const next = [...current];
+    for (let index = 0; index < current.length; index++) {
+      const row = current[index]!;
+      // Exact-Prime idle recovery predates the internal restartWake stamp but uses the private
+      // restart-wake envelope. Open-turn recovery has both the stamp and recoveryTurnId. In either
+      // form this function grants no extra browser admission: browserInputAllowed remains the gate.
+      if (!restartWakeRow(row) || !row.sessionId ||
+          row.mode !== 'auto' || (row.purpose !== undefined && row.purpose !== 'user')) continue;
+      const unclaimed = row.owner === null && row.offeredAt === undefined &&
+        row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined;
+      const pickupFailed = row.state === 'failed' && !!row.error &&
+        (row.error.startsWith('Not sent: the browser did not pick up this message') ||
+          row.error.startsWith('Not sent: the browser did not connect'));
+      if (!unclaimed || !(row.state === 'queued' || pickupFailed)) continue;
+      const session = await getSession(row.sessionId);
+      // Automatic recovery is stricter than human Force Send: the restart debt belongs to one
+      // exact session/chat and one exact interrupted turn. Compact/Resume or a newer authored turn
+      // makes the old wake stale rather than redirectable.
+      if (!session || session.id !== row.sessionId || session.conversationId !== row.conversationId ||
+          !forceBrowserContextValid(row, session)) continue;
+      if (!session.conversationId || deliveryHooks?.voiceActive?.(session.conversationId) === true) continue;
+      if (row.recoveryTurnId) {
+        const [boundary] = await readRecentEvents(row.sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
+        if (!boundary || boundary.turnId !== row.recoveryTurnId) continue;
+        if (boundary.kind === 'turn_start') {
+          if (session.activeTurnId !== row.recoveryTurnId || inFlightToolCalls(session.conversationId) > 0) continue;
+        } else if (boundary.kind !== 'turn_end' || session.activeTurnId !== null) continue;
+      } else if (session.activeTurnId !== null || inFlightToolCalls(session.conversationId) > 0) continue;
+      if (!(await browserInputAllowed(row))) continue;
+      // A newer pending instruction in this exact composer wins. The normal enqueue path already
+      // retires an untouched restart wake when the human continues, but keep this fence here too
+      // for durable legacy/race states reconstructed after boot.
+      if (current.some(entry => entry !== row && entry.sessionId === row.sessionId &&
+          entry.purpose !== 'decision' && entry.purpose !== 'schedule' &&
+          ['queued', 'browser', 'tool'].includes(entry.state))) continue;
+      const now = Date.now();
+      const restored: InputEntry = { ...row, transportIntent: 'browser', state: 'queued', error: undefined, dueAt: now };
+      next[index] = restored;
+      browserOfferedSince.delete(row.id);
+      recovered.set(row.id, { ...restored });
+      changedRows = changedRows || restored.transportIntent !== row.transportIntent || row.state !== 'queued' ||
+        row.error !== undefined || row.dueAt !== now;
+    }
+    if (changedRows) await commit(next);
+    return [...recovered.values()];
+  });
+}
+
 /** Editing is possible only before handout; claimed text is immutable. */
 export function reorderQueuedInputs(sessionId: string, ids: string[]): Promise<boolean> {
   return serial(async () => {
@@ -1760,7 +1843,9 @@ export function acknowledgeBrowserInput(id: string, owner: string, conversationI
       deliveredSessionId: delivered?.id ?? null, state: entry.state === 'cancelled' ? 'cancelled' : entry.purpose === 'decision' ? 'decision' : 'sent',
       ...(entry.state === 'cancelled' ? { error: 'Cancelled locally; delivery was later confirmed in ChatGPT.' } : {}),
       ...(messageId ? { messageId } : {}), deliveredAt: Date.now() };
-    await transition(current, current.map((row) => row === entry ? acknowledged : row),
+    const acknowledgedRows = current.map((row) => row === entry ? acknowledged : row);
+    const next = acknowledged.state === 'sent' ? retireUntouchedDuplicateRestartWakes(acknowledgedRows, acknowledged) : acknowledgedRows;
+    await transition(current, next,
       entry.state !== 'cancelled' && !entry.sessionId && entry.automation && deliveredConversation && entry.purpose !== 'decision' ? [acknowledged] : [], 'after-send');
     logInfo(`input ${id}: browser acknowledged after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
     await publishHistory();

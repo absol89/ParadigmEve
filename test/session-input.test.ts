@@ -10,7 +10,7 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueChatReviewAttention, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, BROWSER_COLD_START_MS
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -2280,6 +2280,132 @@ it('offers one internally stamped restart recovery to the browser while its exac
   const claimed = await claimBrowserInput(row.id, 'recovery-document', binding.conversationId, true);
   expect(claimed).toMatchObject({ state: 'browser', transportIntent: 'browser', recoveryTurnId: 'restart-open-turn' });
   expect(await authorizeBrowserInput(row.id, 'recovery-document', binding.conversationId)).toBe(true);
+});
+
+it('re-offers an untouched timed-out restart wake with the same durable id and exact recovery turn', async () => {
+  binding.activeTurnId = 'restart-open-turn';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'restart-open-turn', time: now - 100 };
+  const row = await enqueueInput(input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' }), undefined, { restartWake: true });
+  await markRestartRecoveryInput(row.id, 'restart-open-turn');
+  expect(await recoverUnclaimedRestartWakes()).toEqual([
+    expect.objectContaining({ id: row.id, state: 'queued', transportIntent: 'browser' })
+  ]);
+  noteBrowserReady(now);
+  noteBrowserInputsOffered([row.id], now);
+  now += 60_000;
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed' });
+
+  const recovered = await recoverUnclaimedRestartWakes();
+  expect(recovered).toEqual([expect.objectContaining({
+    id: row.id, restartWake: true, recoveryTurnId: 'restart-open-turn', state: 'queued',
+    transportIntent: 'browser', owner: null, dueAt: now
+  })]);
+  expect(await pendingBrowserInputs()).toEqual([{
+    id: row.id, conversationId: binding.conversationId, recoveryTurnId: 'restart-open-turn'
+  }]);
+});
+
+it('never re-offers a restart wake after claim or after the exact recovery turn moved on', async () => {
+  binding.activeTurnId = 'restart-open-turn';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'restart-open-turn', time: now - 100 };
+  const claimedWake = await enqueueInput(input({ text: 'Claimed restart wake' }), undefined, { restartWake: true });
+  await markRestartRecoveryInput(claimedWake.id, 'restart-open-turn');
+  expect(await claimBrowserInput(claimedWake.id, 'recovery-document', binding.conversationId, true)).not.toBeNull();
+  expect(await recoverUnclaimedRestartWakes()).toEqual([]);
+  expect((await listInputs()).find(entry => entry.id === claimedWake.id)).toMatchObject({ state: 'browser', owner: 'recovery-document' });
+
+  await cancelInput(claimedWake.id);
+  const staleWake = await enqueueInput(input({ text: 'Stale restart wake' }), undefined, { restartWake: true });
+  await markRestartRecoveryInput(staleWake.id, 'restart-open-turn');
+  binding.activeTurnId = 'new-user-turn';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'new-user-turn', time: now + 1 };
+  expect(await recoverUnclaimedRestartWakes()).toEqual([]);
+  expect((await listInputs()).find(entry => entry.id === staleWake.id)).toMatchObject({ state: 'cancelled' });
+});
+
+it('does not expire a queued restart wake while its exact recovery turn is browser-ineligible', async () => {
+  binding.activeTurnId = 'restart-open-turn';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'restart-open-turn', time: now - 100 };
+  const row = await enqueueInput(input({ text: 'Restart recovery waits safely' }), undefined, { restartWake: true });
+  await markRestartRecoveryInput(row.id, 'restart-open-turn');
+  binding.blocked = true;
+  noteBrowserReady(now);
+  noteBrowserInputsOffered([], now);
+  now += 120_000;
+  expect(await pendingBrowserInputs()).toEqual([]);
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'queued' });
+  expect(await recoverUnclaimedRestartWakes()).toEqual([]);
+});
+
+it('re-offers the exact idle Prime restart envelope without needing an open-turn marker', async () => {
+  binding.activeTurnId = null;
+  binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'prior-turn', time: now - 1_000 };
+  const row = await enqueueInput(input({
+    text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nResume exact Prime after restart.'
+  }));
+  expect(row.restartWake).toBeUndefined();
+  expect(row.recoveryTurnId).toBeUndefined();
+
+  const recovered = await recoverUnclaimedRestartWakes();
+  expect(recovered).toEqual([expect.objectContaining({
+    id: row.id, state: 'queued', transportIntent: 'browser', conversationId: binding.conversationId
+  })]);
+  expect((await listInputs()).filter(entry => entry.id === row.id)).toHaveLength(1);
+});
+
+it('retires only untouched same-session same-conversation duplicate restart wakes after a confirmed send', async () => {
+  binding.activeTurnId = null;
+  binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'prior-turn', time: now - 1_000 };
+  const sentWake = await enqueueInput(input({
+    text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nPrimary wake.'
+  }));
+  expect(await claimBrowserInput(sentWake.id, 'wake-page', binding.conversationId, true)).not.toBeNull();
+
+  const untouchedSame: InputEntry = {
+    ...input({ id: randomUUID(), text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nDuplicate wake.' }),
+    state: 'queued', owner: null, createdAt: now, conversationId: binding.conversationId
+  };
+  const claimedSame: InputEntry = {
+    ...input({ id: randomUUID(), text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nClaimed duplicate.' }),
+    state: 'browser', owner: 'other-page', createdAt: now, conversationId: binding.conversationId, offeredAt: now,
+    requiresAuthorization: true
+  };
+  const otherConversation: InputEntry = {
+    ...input({ id: randomUUID(), text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nDifferent conversation.' }),
+    state: 'queued', owner: null, createdAt: now, conversationId: 'conversation-other'
+  };
+  await writeDurableNow('session-input', [...await listInputs(), untouchedSame, claimedSame, otherConversation]);
+  resetInputForTests();
+
+  expect(await acknowledgeBrowserInput(sentWake.id, 'wake-page', binding.conversationId, 'wake-message')).toBe(true);
+  const rows = await listInputs();
+  expect(rows.find(row => row.id === sentWake.id)).toMatchObject({ state: 'sent', messageId: 'wake-message', deliveredAt: now });
+  expect(rows.find(row => row.id === untouchedSame.id)).toMatchObject({
+    state: 'cancelled', error: 'Duplicate restart wake retired because this session already confirmed a wake send.'
+  });
+  expect(rows.find(row => row.id === claimedSame.id)).toMatchObject({ state: 'browser', owner: 'other-page' });
+  expect(rows.find(row => row.id === otherConversation.id)).toMatchObject({ state: 'queued', conversationId: 'conversation-other' });
+});
+
+it('cleans an untouched duplicate wake on boot recovery when a confirmed sent wake already exists', async () => {
+  const confirmed: InputEntry = {
+    ...input({ id: randomUUID(), text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nAlready sent.' }),
+    state: 'sent', owner: 'old-page', createdAt: now - 10_000, conversationId: binding.conversationId,
+    offeredAt: now - 9_000, sendAuthorizedAt: now - 8_000, deliveredAt: now - 7_000, messageId: 'wake-message'
+  };
+  const duplicate: InputEntry = {
+    ...input({ id: randomUUID(), text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]]\n\nLeftover duplicate.' }),
+    state: 'queued', owner: null, createdAt: now - 6_000, conversationId: binding.conversationId
+  };
+  await writeDurableNow('session-input', [confirmed, duplicate]);
+  resetInputForTests();
+
+  expect(await recoverUnclaimedRestartWakes()).toEqual([]);
+  const rows = await listInputs();
+  expect(rows.find(row => row.id === confirmed.id)).toMatchObject({ state: 'sent', messageId: 'wake-message' });
+  expect(rows.find(row => row.id === duplicate.id)).toMatchObject({
+    state: 'cancelled', error: 'Duplicate restart wake retired because this session already confirmed a wake send.'
+  });
 });
 
 it('retires a restart recovery instead of delivering it after a newer turn has replaced its interrupted turn', async () => {
