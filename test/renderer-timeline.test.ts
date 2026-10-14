@@ -1258,6 +1258,9 @@ it('offers Force send for an unclaimed reboot timeout without replacing a newer 
   });
   const force = w.document.querySelector<HTMLButtonElement>('#inputQueue [aria-label="Force send"]');
   expect(force?.querySelector('use')?.getAttribute('href')).toBe('#i-send');
+  const pending = force!.closest('.pending-message')!;
+  expect(pending.classList.contains('has-delivery-retry')).toBe(true);
+  expect(pending.querySelector('.pending-message-status')).not.toBeNull();
   force!.click();
   await settle();
   expect(api.forceSendInput).toHaveBeenCalledExactlyOnceWith(row.id);

@@ -3898,6 +3898,7 @@ async function refreshInputQueue(): Promise<void> {
       row.append(dockAction(() => t("Dismiss delivery notice"), 'i-x', () => dismissInputNotice(entry.id)));
       const retry = dockAction(() => t("Retry delivery"), 'i-retry', () => {});
       retry.classList.add('delivery-retry');
+      row.classList.add('has-delivery-retry');
       const unqueuedPlan = entry.stages !== undefined && !entry.stagesApplied;
       ui(retry, 'title', () => unqueuedPlan ? t("Retry stage one with the complete plan and queued checkpoints") : t("Restore this message to the composer for review and sending"));
       retry.onclick = () => {
@@ -3926,6 +3927,7 @@ async function refreshInputQueue(): Promise<void> {
     if (canForce) {
       const force = dockAction(() => t("Force send"), 'i-send', () => {});
       force.classList.add('delivery-retry');
+      row.classList.add('has-delivery-retry');
       ui(force, 'title', () => t("Ask the browser to send this original message now; it must still verify the exact chat and a safe composer."));
       force.onclick = async () => {
         force.disabled = true;
