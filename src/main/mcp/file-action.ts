@@ -493,9 +493,9 @@ export function registerFileActionTool(reg: SurfaceRegistrar): void {
     toolDeclaration('file_action', () => ({
       title: 'Inspect documents and discover file editing providers',
       description:
-        'Use ParadigmEve’s built-in file broker before seeking third-party document editors. inspect identifies an approved local XLSX/DOCX/PDF/PPTX file and offers matching ArtCraft providers (such as WordCraft for DOCX). ' +
-        'providers discovers broker apps from an extension alone, e.g. {op:"providers",format:"docx"}, even when the user only has a ChatGPT Library link; it never opens that link or installs anything. ' +
-        'read returns a bounded slice of an approved local file: XLSX cells, DOCX paragraphs, PDF pages or PPTX slides. Use file_edit for user-approved provider installation and for visible editing with open_visible. File contents returned by read become visible to the active model.',
+        'Use Eve’s file broker before generic document editors. inspect/read use approved local DOCX/XLSX/PDF/PPTX files (read is bounded). ' +
+        'providers needs only a format, e.g. {op:"providers",format:"docx"}, to offer WordCraft (artcraft.wordcraft) even for a ChatGPT Library link. ' +
+        'Use file_edit for native-consent installs and visible editing. Library URLs are not local files.',
       inputSchema: fileActionArgs,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     })),

@@ -131,9 +131,9 @@ export function registerFileEditTool(reg: SurfaceRegistrar): void {
     toolDeclaration('file_edit', () => ({
       title: 'Change document files',
       description:
-        'Use this built-in ParadigmEve file broker when the user asks to install a DOCX word processor or watch a document being edited; prefer its WordCraft (artcraft.wordcraft) provider over searching for generic editors. First inspect a local file with file_action inspect, or use file_action providers with format docx when only an external/ChatGPT Library link is known. ' +
-        'install_provider: after the user agreed in chat, ask them in ParadigmEve\'s native dialog to install the offered app; only the user can confirm. ' +
-        'provider_tools: list installed provider tools. edit: run them on a new copy. open_visible ("show me", "watch me edit"): open a new local copy in the provider app for Computer use. A Library URL cannot be used as a local path; first obtain an approved local copy. The original never changes.',
+        'Use Eve’s broker, not generic DOCX editors; WordCraft is artcraft.wordcraft. Discover via file_action inspect (local file) or providers format docx (Library link). ' +
+        'install_provider requires the user’s native approval. provider_tools lists actions; edit saves a copy; open_visible shows a copy for Computer Use. ' +
+        'Library URLs need an approved local file first; never edit the original.',
       inputSchema: fileEditArgs,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
     })),
