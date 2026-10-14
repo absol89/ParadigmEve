@@ -622,12 +622,24 @@ async function load(): Promise<InputEntry[]> {
 }
 /** Whether a live browser has ignored this queued message for a full minute (see browserOfferedSince). */
 function pickupOverdue(row: InputEntry, now = Date.now()): boolean {
+  // A restart wake has app-owned exact-session/turn authority, but /status only
+  // lists an offered id: it does not prove the extension reached the input
+  // delivery step after its own startup/repair awaits. Do not turn an unclaimed
+  // recovery obligation into a failed Send based on that provisional offer.
+  // The page still must pass its normal claim and native Send checks, and a
+  // newer user turn retires the stale obligation instead of retrying it.
+  if (row.restartWake || row.recoveryTurnId) return false;
   const waitingSince = Math.max(row.createdAt, row.dueAt, browserReadyAt ?? 0);
   if (browserReadyAt === null) return now - waitingSince >= BROWSER_COLD_START_MS;
   const offeredAt = browserOfferedSince.get(row.id);
   if (offeredAt !== undefined) return now - Math.max(offeredAt, row.dueAt) >= 60_000;
   // Never offered: the app is holding it. Only a browser that stopped asking for work at all fails it.
   return now - waitingSince >= 60_000 && (browserLastAskedAt === null || now - browserLastAskedAt >= 60_000);
+}
+
+/** A recovery timestamp identifies the old turn; it cannot schedule the new process's wake. */
+function dueForBrowser(entry: InputEntry, now = Date.now()): boolean {
+  return entry.dueAt <= now || entry.restartWake === true || entry.recoveryTurnId !== undefined;
 }
 async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
   const next = await Promise.all(current.map(async (row): Promise<InputEntry> => {
@@ -1686,7 +1698,12 @@ export function pendingBrowserInputs(): Promise<Array<{ id: string; conversation
       Number(b.forceBrowser === true && b.state === 'queued') -
       Number(a.forceBrowser === true && a.state === 'queued'));
     for (const entry of candidates) {
-      if (!preparable(entry) || entry.dueAt > Date.now()) continue;
+      // The historical turn/session timestamp identifies the restart epoch;
+      // it is not a delivery schedule. On some restored sessions that timestamp
+      // is ahead of the new process clock (observed c8: +121s), preventing the
+      // immediate wake from even reaching /status inside the two-minute window.
+      // Only app-stamped recovery inputs bypass that clock, never ordinary text.
+      if (!preparable(entry) || !dueForBrowser(entry)) continue;
       if (queuedFollowup(entry) && !(entry.state === 'browser' && entry.completedTurnId) && !(await completedStageBoundary(entry, current))) continue;
       if (!(await browserInputAllowed(entry))) continue;
       try {
@@ -1713,7 +1730,7 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
   return serial(async () => {
     const current = await load();
     const entry = current.find((row) => row.id === id);
-    if (!entry || !preparable(entry) || (entry.state === 'browser' && !requiresAuthorization) || entry.dueAt > Date.now() || !owner) return null;
+    if (!entry || !preparable(entry) || (entry.state === 'browser' && !requiresAuthorization) || !dueForBrowser(entry) || !owner) return null;
     const completedTurnId = queuedFollowup(entry) ? entry.state === 'browser' ? entry.completedTurnId : await completedStageBoundary(entry, current) : undefined;
     if (queuedFollowup(entry) && !completedTurnId) return null;
     if (await target(entry) !== conversationId) return null;
@@ -1722,7 +1739,7 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     if (entry.projectId) await projectWorkspace(entry.projectId);
     if (entry.sessionId) {
       if (current.some((row) => row.id !== id && row.sessionId === entry.sessionId && ['browser', 'tool'].includes(row.state))) return null;
-      const first = ordered(current).find((row) => row.sessionId === entry.sessionId && row.state === 'queued' && queuedFollowup(row) === queuedFollowup(entry) && row.dueAt <= Date.now());
+      const first = ordered(current).find((row) => row.sessionId === entry.sessionId && row.state === 'queued' && queuedFollowup(row) === queuedFollowup(entry) && dueForBrowser(row));
       // Follow-ups were already elected by completedStageBoundary with live
       // transport eligibility. Direct messages retain their separate FIFO.
       if (entry.state === 'queued' && !queuedFollowup(entry) && first !== entry) return null;

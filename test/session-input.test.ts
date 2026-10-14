@@ -2282,6 +2282,41 @@ it('offers one internally stamped restart recovery to the browser while its exac
   expect(await authorizeBrowserInput(row.id, 'recovery-document', binding.conversationId)).toBe(true);
 });
 
+it('offers an exact restart wake immediately even when its recorded turn timestamp is two minutes in the future', async () => {
+  binding.activeTurnId = 'restart-future-clock';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'restart-future-clock', time: now + 121_000 };
+  const recovery = await enqueueInput(input({
+    text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] Resume this exact turn',
+    dueAt: now + 121_000
+  }), undefined, { restartWake: true });
+  await markRestartRecoveryInput(recovery.id, 'restart-future-clock');
+  expect(await pendingBrowserInputs()).toEqual([{
+    id: recovery.id, conversationId: binding.conversationId, recoveryTurnId: 'restart-future-clock'
+  }]);
+  // An authored message in this same chat correctly supersedes an untouched
+  // restart wake; use another session to prove its future dueAt stays fenced.
+  const ordinary = await enqueueInput(input({ sessionId: 'session-two',
+    text: 'A genuinely scheduled message', dueAt: now + 121_000 }));
+  expect((await listInputs()).find(row => row.id === ordinary.id)?.state).toBe('queued');
+  expect(await claimBrowserInput(recovery.id, 'exact-page', binding.conversationId, true))
+    .toMatchObject({ state: 'browser', recoveryTurnId: 'restart-future-clock' });
+});
+
+it('does not misreport an unclaimed restart wake as browser pickup failure before the page processes the status offer', async () => {
+  binding.activeTurnId = 'restart-unclaimed';
+  binding.end = { kind: 'turn_start', outcome: '', turnId: 'restart-unclaimed', time: now - 100 };
+  const wake = await enqueueInput(input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] Resume' }), undefined, { restartWake: true });
+  await markRestartRecoveryInput(wake.id, 'restart-unclaimed');
+  noteBrowserReady(now);
+  noteBrowserInputsOffered([wake.id], now);
+  now += 121_000;
+  const unclaimed = (await listInputs()).find(row => row.id === wake.id);
+  expect(unclaimed).toMatchObject({ state: 'queued', owner: null });
+  expect(unclaimed?.offeredAt).toBeUndefined();
+  expect(unclaimed?.deliveredAt).toBeUndefined();
+  expect(await pendingBrowserInputs()).toContainEqual(expect.objectContaining({ id: wake.id }));
+});
+
 it('re-offers an untouched timed-out restart wake with the same durable id and exact recovery turn', async () => {
   binding.activeTurnId = 'restart-open-turn';
   binding.end = { kind: 'turn_start', outcome: '', turnId: 'restart-open-turn', time: now - 100 };
@@ -2293,6 +2328,14 @@ it('re-offers an untouched timed-out restart wake with the same durable id and e
   noteBrowserReady(now);
   noteBrowserInputsOffered([row.id], now);
   now += 60_000;
+  // Legacy c8 rows can already have this failure. Keep the exact-id recovery
+  // path, without making new post-fix wakes fail just for being unclaimed.
+  const legacyFailed = (await listInputs()).map(entry => entry.id === row.id ? {
+    ...entry, state: 'failed' as const,
+    error: 'Not sent: the browser did not pick up this message within 60 seconds.'
+  } : entry);
+  await writeDurableNow('session-input', legacyFailed);
+  resetInputForTests();
   expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed' });
 
   const recovered = await recoverUnclaimedRestartWakes();

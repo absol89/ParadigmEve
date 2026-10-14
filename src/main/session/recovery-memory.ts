@@ -320,7 +320,7 @@ export async function queuePrimeRestartRecovery(conversationId: string): Promise
       dueAt,
       model: null,
       reasoningEffort: null
-    });
+    }, undefined, { restartWake: true });
     plan.entry = activeTurnId ? await markRestartRecoveryInput(queued.id, activeTurnId) : queued;
     logInfo(`restart recovery queued immediate ${agentName} wake for session ${session.id}`);
   } catch (error) {

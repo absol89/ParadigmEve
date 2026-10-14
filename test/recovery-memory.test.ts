@@ -242,7 +242,7 @@ describe('restart recovery memory', () => {
       sessionId: prime.id,
       mode: 'auto',
       dueAt: 123
-    }));
+    }), undefined, { restartWake: true });
     expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('durable installation identity proves this exact conversation is Eve');
     expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('newest user messages');
     expect(ports.enqueue.mock.calls.at(-1)?.[0].text).toContain('Newer user corrections and newer verified state supersede older versioned instructions');
@@ -256,7 +256,8 @@ describe('restart recovery memory', () => {
     ports.sessions = [prime];
     const plan = await queuePrimeRestartRecovery(prime.conversationId);
     expect(plan).toMatchObject({ turnId: null, exactPrime: true, conversationId: prime.conversationId });
-    expect(ports.enqueue).toHaveBeenCalledWith(expect.objectContaining({ dueAt: 777, sessionId: prime.id }));
+    expect(ports.enqueue).toHaveBeenCalledWith(expect.objectContaining({ dueAt: 777, sessionId: prime.id }),
+      undefined, { restartWake: true });
     expect(ports.markRecovery).not.toHaveBeenCalled();
 
     ports.enqueue.mockClear();
@@ -264,5 +265,14 @@ describe('restart recovery memory', () => {
     expect(await queuePrimeRestartRecovery(prime.conversationId)).toBeNull();
     expect(ports.enqueue).not.toHaveBeenCalled();
     expect(ports.warn).toHaveBeenCalledWith(expect.stringContaining('refused duplicate local sessions'));
+  });
+
+  it('stamps idle Prime restart wakes as app-owned so a future session clock cannot schedule them two minutes late', async () => {
+    const prime = session('prime-clock-skew', Date.now() + 121_000, { activeTurnId: null });
+    ports.sessions = [prime];
+    const plan = await queuePrimeRestartRecovery(prime.conversationId);
+    expect(ports.enqueue).toHaveBeenCalledWith(expect.objectContaining({ dueAt: prime.updatedAt }),
+      undefined, { restartWake: true });
+    expect(plan?.entry).toMatchObject({ state: 'queued' });
   });
 });
