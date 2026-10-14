@@ -1,6 +1,6 @@
 import nodePath from 'node:path';
 import { z } from 'zod';
-import { requestFileProviderInstall } from '../file-provider-consent.js';
+import { confirmFileFeatureLoss, requestFileProviderInstall, type FeatureLossChoice } from '../file-provider-consent.js';
 import { EditRefused, freeOutputName, INPUT_PLACEHOLDER, openVisibleCopy, OUTPUT_PLACEHOLDER, runProviderEdit } from '../file-edit-transaction.js';
 import { pluginManager } from '../plugins/manager.js';
 import { toolDeclaration } from './tool-declarations.js';
@@ -22,12 +22,16 @@ export const fileEditArgs = z.object({
     tool: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
     arguments: z.record(z.string(), z.unknown()).optional()
   }).strict()).min(1).max(40).optional().describe(`edit: app tool calls; files only as "${INPUT_PLACEHOLDER}" (a copy) and "${OUTPUT_PLACEHOLDER}" (must be saved).`),
-  output_path: z.string().min(1).max(4096).optional().describe('edit/open_visible: new file; default "<name> (Eve edit).<ext>".'),
-  allow_feature_loss: z.boolean().optional()
+  output_path: z.string().min(1).max(4096).optional().describe('edit/open_visible: new file; default "<name> (Eve edit).<ext>".')
 }).strict();
 
 type FileEditArgs = z.output<typeof fileEditArgs>;
 const MAX_TOOL_LIST_CHARS = 12_000;
+let featureLossConfirm: (choice: FeatureLossChoice) => Promise<boolean> = confirmFileFeatureLoss;
+/** Test seam only: production approval always comes from Eve's native dialog. */
+export function setFeatureLossConfirmForTests(confirm: ((choice: FeatureLossChoice) => Promise<boolean>) | null): void {
+  featureLossConfirm = confirm ?? confirmFileFeatureLoss;
+}
 
 async function installProvider(id: string): Promise<ToolResult> {
   const outcome = await requestFileProviderInstall(id);
@@ -74,7 +78,7 @@ async function copyTarget(reg: SurfaceRegistrar, path: string, outputPath: strin
 }
 
 async function openVisible(reg: SurfaceRegistrar, args: FileEditArgs): Promise<ToolResult> {
-  if (!args.path || args.steps || args.allow_feature_loss !== undefined) return fail('INVALID_ARGUMENTS: open_visible takes provider, path and optional output_path.');
+  if (!args.path || args.steps) return fail('INVALID_ARGUMENTS: open_visible takes provider, path and optional output_path.');
   if (!reg.caps.create) return fail('TOOL_DISABLED: showing an edit writes a new copy, which needs the Create files permission in ParadigmEve.');
   const { source, destination } = await copyTarget(reg, args.path, args.output_path);
   try {
@@ -99,7 +103,7 @@ async function edit(reg: SurfaceRegistrar, args: FileEditArgs): Promise<ToolResu
       source,
       destination,
       steps: args.steps,
-      allowFeatureLoss: args.allow_feature_loss === true
+      confirmFeatureLoss: featureLossConfirm
     });
     const text = [
       `EDITED: wrote ${outcome.output} with ${outcome.provider.id} ${outcome.provider.version}. The original ${source.virtual} was not changed.`,
@@ -133,7 +137,7 @@ export function registerFileEditTool(reg: SurfaceRegistrar): void {
     })),
     async (args) => guard('file_edit', async (): Promise<ToolResult> => {
       if (!reg.caps.edit) return fail('TOOL_DISABLED: file_edit requires the Edit files permission in ParadigmEve.');
-      const extra = (['path', 'steps', 'output_path', 'allow_feature_loss'] as const).filter((key) => args[key] !== undefined);
+      const extra = (['path', 'steps', 'output_path'] as const).filter((key) => args[key] !== undefined);
       if ((args.op === 'install_provider' || args.op === 'provider_tools') && extra.length > 0) return fail(`INVALID_ARGUMENTS: ${args.op} takes only provider (not ${extra.join(', ')}).`);
       if (args.op === 'install_provider') return installProvider(args.provider);
       if (args.op === 'provider_tools') return providerTools(args.provider);

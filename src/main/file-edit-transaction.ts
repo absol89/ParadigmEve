@@ -35,7 +35,7 @@ export interface EditRequest {
   /** Destination directory (real/virtual) and file name; resolved by the caller. */
   destination: { realDir: string; virtualDir: string; name: string };
   steps: readonly EditStep[];
-  allowFeatureLoss: boolean;
+  confirmFeatureLoss?: (choice: { provider: string; source: string; output: string; losses: readonly string[] }) => Promise<boolean>;
 }
 
 export interface EditOutcome {
@@ -220,7 +220,7 @@ export function setVisibleLauncherForTests(launcher: VisibleLauncher | null): vo
  * app's own window so Eve can work in it with Computer use while the user watches. Which route
  * runs is the op the model chose from the user's request; nothing in a file selects it.
  */
-export async function openVisibleCopy(request: Omit<EditRequest, 'steps' | 'allowFeatureLoss'>): Promise<{ copy: string; app: string }> {
+export async function openVisibleCopy(request: Omit<EditRequest, 'steps' | 'confirmFeatureLoss'>): Promise<{ copy: string; app: string }> {
   const provider = fileCapabilityProvider(request.providerId);
   const installed = pluginManager.fileProvider(request.providerId);
   const directory = pluginManager.fileProviderDirectory(request.providerId);
@@ -270,11 +270,19 @@ async function editOnce(request: EditRequest): Promise<EditOutcome> {
   const source = await readSource(request.source.real);
   const ext = nodePath.extname(request.source.real).toLowerCase().slice(1);
   const losses = fidelityLosses(provider.unpreserved[ext] ?? [], source.bytes);
-  if (losses.length > 0 && !request.allowFeatureLoss) {
-    throw new EditRefused(
-      `FIDELITY_RISK: ${provider.displayName} does not keep ${losses.join(', ')} when it saves, and this file has them. ` +
-      'Tell the user. Edit it in its usual app with Computer use, or, only if the user accepts losing those in the new copy, retry with allow_feature_loss: true. The original is never changed.'
-    );
+  if (losses.length > 0) {
+    const output = `${request.destination.virtualDir}/${request.destination.name}`;
+    if (!request.confirmFeatureLoss || !(await request.confirmFeatureLoss({
+      provider: provider.displayName,
+      source: request.source.virtual,
+      output,
+      losses
+    }))) {
+      throw new EditRefused(
+        `FIDELITY_RISK_NOT_APPROVED: ${provider.displayName} does not keep ${losses.join(', ')} when it saves, and this file has them. ` +
+        'The edit was not run. Use the usual app with Computer use if those features must be preserved.'
+      );
+    }
   }
 
   // Both staged files live beside the destination, inside the approved folder, so a failed publish
@@ -309,16 +317,11 @@ async function editOnce(request: EditRequest): Promise<EditOutcome> {
       throw error instanceof EditRefused ? error : new EditRefused(`OUTPUT_INVALID: the saved file could not be read back (${(error as Error).message.slice(0, 200)}). Nothing was published.`);
     }
     try {
-      // A hard link publishes atomically and fails if the name was taken meanwhile. Volumes
-      // without hard links (FAT/exFAT) fall back to a rename after re-checking the name.
-      try {
-        await fs.link(stagedOutput, destination);
-        await fs.rm(stagedOutput, { force: true });
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if ((code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EXDEV') || await exists(destination)) throw error;
-        await fs.rename(stagedOutput, destination);
-      }
+      // A hard link is the publish primitive because it is atomic and fails if another writer
+      // claimed the destination first. If this filesystem cannot hard-link, fail closed instead of
+      // falling back to rename: rename may replace a raced destination on Windows or POSIX.
+      await fs.link(stagedOutput, destination);
+      await fs.rm(stagedOutput, { force: true });
       published = true;
     } catch {
       keepOutput = true;

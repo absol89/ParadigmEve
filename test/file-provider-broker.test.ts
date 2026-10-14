@@ -26,8 +26,10 @@ const { initDurableStore } = await import('../src/main/durable.js');
 const { pluginManager } = await import('../src/main/plugins/manager.js');
 const { setProviderAcquireOptionsForTests } = await import('../src/main/file-provider-install.js');
 const consent = await import('../src/main/file-provider-consent.js');
+const { fileCapabilityProvider } = await import('../src/main/file-capabilities.js');
+const { rawPromises } = await import('../src/main/rawfs.js');
 const { registerFileActionTool } = await import('../src/main/mcp/file-action.js');
-const { registerFileEditTool } = await import('../src/main/mcp/file-edit.js');
+const { registerFileEditTool, setFeatureLossConfirmForTests } = await import('../src/main/mcp/file-edit.js');
 const { setVisibleLauncherForTests } = await import('../src/main/file-edit-transaction.js');
 const { createRegistrar } = await import('../src/main/mcp/kernel.js');
 const { DEFAULT_CAPABILITIES } = await import('../src/shared/types.js');
@@ -60,6 +62,7 @@ beforeEach(async () => {
   consent.resetFileProviderConsentForTests('win32-x64');
 });
 afterEach(async () => {
+  setFeatureLossConfirmForTests(null);
   for (const row of pluginManager.snapshot().plugins) await pluginManager.uninstall(row.id);
   await pluginManager.close();
   await removeTempDir(dir);
@@ -83,6 +86,19 @@ const caller = () => ({ startedAt: Date.now(), transportKey: null, agent: null, 
 const textOf = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map((part) => part.text ?? '').join('\n');
 
 describe('file provider broker', () => {
+  it('makes Not now the default native install answer so Enter never approves an install', () => {
+    const provider = fileCapabilityProvider('artcraft.gridcraft')!;
+    const options = consent.providerInstallDialogOptions({
+      provider,
+      tag: 'v0.6.1',
+      version: '0.6.1',
+      asset: { name: 'gridcraft.zip', size: 1_048_576, sha256: 'a'.repeat(64), url: 'https://example.invalid/gridcraft.zip' }
+    });
+    expect(options.buttons).toEqual(['Install', 'No thanks', 'Not now']);
+    expect(options.defaultId).toBe(2);
+    expect(options.cancelId).toBe(2);
+  });
+
   it.each([
     ['gridcraft', '0.6.1', 'book.xlsx'],
     ['wordcraft', '0.7.0', 'letter.docx']
@@ -295,13 +311,60 @@ describe('file_edit edit transaction', () => {
     expect(textOf(result)).toMatch(/FILE_IN_USE: .*~\$book\.xlsx.*Computer use/);
   });
 
-  it('refuses the silent route when the app would drop features the file has, unless the loss is accepted', async () => {
+  it('requires app-owned approval for the exact fidelity risk and ignores model-supplied approval', async () => {
     await fs.writeFile(path.join(workspace(), 'pivot.xlsx'), workbook({ 'xl/slicers/slicer1.xml': strToU8('<slicers/>'), 'xl/externalLinks/externalLink1.xml': strToU8('<externalLink/>') }));
     const reg = registrar({ create: true });
+    const modelApproved = await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/pivot.xlsx', steps: steps(), allow_feature_loss: true }, caller());
+    expect(modelApproved.isError).toBe(true);
+    expect(textOf(modelApproved)).toMatch(/invalid|unrecognized|argument/i);
+
+    const asked: Array<{ provider: string; source: string; output: string; losses: readonly string[] }> = [];
+    setFeatureLossConfirmForTests(async (choice) => { asked.push(choice); return false; });
     const refused = textOf(await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/pivot.xlsx', steps: steps() }, caller()));
-    expect(refused).toMatch(/FIDELITY_RISK: GridCraft does not keep slicers, external links when it saves/);
-    const accepted = await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/pivot.xlsx', steps: steps(), allow_feature_loss: true }, caller());
+    expect(refused).toMatch(/FIDELITY_RISK_NOT_APPROVED: GridCraft does not keep slicers, external links/);
+    expect(asked).toEqual([{
+      provider: 'GridCraft',
+      source: '/workspace/pivot.xlsx',
+      output: '/workspace/pivot (Eve edit).xlsx',
+      losses: ['slicers', 'external links']
+    }]);
+    expect(consent.featureLossDialogOptions(asked[0]!)).toMatchObject({ defaultId: 1, cancelId: 1, buttons: ['Continue with feature loss', 'Keep features / cancel'] });
+    expect(await fs.readdir(workspace())).toEqual(['pivot.xlsx']);
+
+    setFeatureLossConfirmForTests(async (choice) => choice.source === '/workspace/pivot.xlsx' &&
+      choice.output === '/workspace/pivot (Eve edit).xlsx' && choice.losses.join('|') === 'slicers|external links');
+    const accepted = await reg.invokeNested('file_edit', { op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/pivot.xlsx', steps: steps() }, caller());
     expect(textOf(accepted)).toContain('EDITED: wrote /workspace/pivot (Eve edit).xlsx');
+  });
+
+  it('fails closed if atomic no-clobber publish loses a race instead of overwriting the destination', async () => {
+    await fs.writeFile(path.join(workspace(), 'book.xlsx'), workbook());
+    const destination = path.join(workspace(), 'book (Eve edit).xlsx');
+    const originalLink = rawPromises.link.bind(rawPromises);
+    const link = vi.spyOn(rawPromises, 'link').mockImplementationOnce(async (existing, target) => {
+      await fs.writeFile(destination, 'raced destination');
+      return originalLink(existing, target);
+    });
+    const result = await registrar({ create: true }).invokeNested('file_edit', {
+      op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps()
+    }, caller());
+    link.mockRestore();
+    expect(textOf(result)).toMatch(/PUBLISH_FAILED/);
+    expect(await fs.readFile(destination, 'utf8')).toBe('raced destination');
+    const staged = (await fs.readdir(workspace())).filter((name) => name.startsWith('.eve-staging-') && name.endsWith('book (Eve edit).xlsx'));
+    expect(staged).toHaveLength(1);
+  });
+
+  it('fails closed when atomic no-clobber publishing is unsupported instead of renaming over a future destination', async () => {
+    await fs.writeFile(path.join(workspace(), 'book.xlsx'), workbook());
+    const link = vi.spyOn(rawPromises, 'link').mockRejectedValueOnce(Object.assign(new Error('links unsupported'), { code: 'ENOTSUP' }));
+    const result = await registrar({ create: true }).invokeNested('file_edit', {
+      op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps()
+    }, caller());
+    link.mockRestore();
+    expect(textOf(result)).toMatch(/PUBLISH_FAILED/);
+    expect(await fs.stat(path.join(workspace(), 'book (Eve edit).xlsx')).then(() => true, () => false)).toBe(false);
+    expect((await fs.readdir(workspace())).some((name) => name.startsWith('.eve-staging-') && name.endsWith('book (Eve edit).xlsx'))).toBe(true);
   });
 
   it('compares size and hash for formats without a built-in reader, and needs the app and the permission', async () => {

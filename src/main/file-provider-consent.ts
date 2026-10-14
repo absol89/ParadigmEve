@@ -22,6 +22,12 @@ import { pluginManager } from './plugins/manager.js';
 
 export type ProviderAnswer = 'install' | 'decline' | 'later';
 export type ProviderConfirm = (choice: ProviderReleaseChoice) => Promise<ProviderAnswer>;
+export interface FeatureLossChoice {
+  provider: string;
+  source: string;
+  output: string;
+  losses: readonly string[];
+}
 
 interface ConsentState { declined: string[]; preview: boolean }
 
@@ -90,11 +96,9 @@ export type ProviderInstallOutcome =
 export const PROVIDER_CAVEAT = 'This is an in-development integration. Your original file is left alone: Eve edits a copy saved next to it.';
 
 /** Electron's native message box: an answer only the person at this computer can give. */
-async function nativeConfirm(choice: ProviderReleaseChoice): Promise<ProviderAnswer> {
+export function providerInstallDialogOptions(choice: ProviderReleaseChoice) {
   const { provider, version, asset } = choice;
-  const { BrowserWindow, dialog } = await import('electron');
-  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
-  const options = {
+  return {
     type: 'question' as const,
     title: `Install ${provider.displayName}?`,
     message: `Install ${provider.displayName} ${version} so Eve can work with this file?`,
@@ -105,12 +109,42 @@ async function nativeConfirm(choice: ProviderReleaseChoice): Promise<ProviderAns
       `ParadigmEve will download only the official build for this computer (${(asset.size / 1_048_576).toFixed(1)} MB), ` +
       'check it against the SHA-256 its release publishes, and install it for your user account only. You can remove it any time in Plugins.',
     buttons: ['Install', 'No thanks', 'Not now'],
-    defaultId: 0,
+    defaultId: 2,
     cancelId: 2,
     noLink: true
   };
+}
+
+async function nativeConfirm(choice: ProviderReleaseChoice): Promise<ProviderAnswer> {
+  const { BrowserWindow, dialog } = await import('electron');
+  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const options = providerInstallDialogOptions(choice);
   const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
   return response === 0 ? 'install' : response === 1 ? 'decline' : 'later';
+}
+
+/** Native, app-owned approval for one exact fidelity risk. The safe answer owns Enter/Escape. */
+export function featureLossDialogOptions(choice: FeatureLossChoice) {
+  return {
+    type: 'warning' as const,
+    title: `Keep all features in ${choice.source}?`,
+    message: `${choice.provider} cannot keep ${choice.losses.join(', ')} in this file.`,
+    detail:
+      `If you continue, those features will be lost only from the new copy ${choice.output}; the original ${choice.source} stays unchanged.\n\n` +
+      'Continue only if you accept losing exactly the features listed above.',
+    buttons: ['Continue with feature loss', 'Keep features / cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  };
+}
+
+export async function confirmFileFeatureLoss(choice: FeatureLossChoice): Promise<boolean> {
+  const { BrowserWindow, dialog } = await import('electron');
+  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const options = featureLossDialogOptions(choice);
+  const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+  return response === 0;
 }
 
 /**
