@@ -1673,6 +1673,19 @@ it('counts the pickup deadline only while the message is actually offered to a p
   expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'failed', error: expect.stringContaining('60 seconds') });
 });
 
+it('does not fail an unoffered browser message while this chat has an unfinished turn', async () => {
+  binding.activeTurnId = 'still-running';
+  binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'still-running', time: now };
+  const row = await seedLegacyInput(input({ text: 'Resume when it is safe' }));
+  await writeDurableNow('session-input', (await listInputs()).map(entry =>
+    entry.id === row.id ? { ...entry, transportIntent: 'browser' as const } : entry));
+  resetInputForTests();
+  noteBrowserReady(now);
+  noteBrowserInputsOffered([], now);
+  now += 120_000;
+  expect(await pendingBrowserInputs()).toEqual([]);
+  expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('queued');
+});
 it('still fails a held message once the browser stops asking for work', async () => {
   const row = await enqueueInput(input({ sessionId: null, dueAt: now }));
   noteBrowserReady(now);

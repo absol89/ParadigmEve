@@ -653,7 +653,8 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // rows are ambiguous and cannot safely be reclassified from today's activity.
     if (row.state === 'queued' && !isLocalProviderInput(row) && row.mode === 'auto' && !row.finishOwner && row.purpose !== 'attention' && row.purpose !== 'peer' &&
         (row.transportIntent === 'browser' || (!row.transportIntent && !row.sessionId)) &&
-        pickupOverdue(row))
+        // Do not expire a message that our own turn policy has never allowed the browser to pick up.
+        (await browserInputAllowed(row)) && pickupOverdue(row))
       return { ...row, state: 'failed', error: browserReadyAt === null
         ? 'Not sent: the browser did not connect within 5 minutes.'
         : 'Not sent: the browser did not pick up this message within 60 seconds.' };
