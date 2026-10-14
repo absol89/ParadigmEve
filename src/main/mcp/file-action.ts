@@ -10,6 +10,8 @@ import { fail, guard, ok, resolveIn, type SurfaceRegistrar, type ToolResult } fr
 import { currentCall } from './call-context.js';
 import { PDF_WORKER_SOURCE } from './file-action-pdf-worker.js';
 import { fileProviderOffers, PROVIDER_CAVEAT, type FileProviderOffer } from '../file-provider-consent.js';
+import { capabilityProvidersForFormat } from '../file-capabilities.js';
+import { pluginManager } from '../plugins/manager.js';
 
 export type BuiltInFileFormat = 'xlsx' | 'docx' | 'pdf' | 'pptx';
 
@@ -56,7 +58,11 @@ const readArgs = z.object({
 
 export const fileActionArgs = z.union([
   z.object({ op: z.literal('inspect'), path: filePathArg }).strict(),
-  readArgs
+  readArgs,
+  z.object({
+    op: z.literal('providers'),
+    format: z.string().regex(/^[a-z0-9]{1,16}$/i).describe('File extension only, for example docx (never a URL or local path).')
+  }).strict()
 ]);
 
 type FileActionArgs = z.output<typeof fileActionArgs>;
@@ -485,15 +491,32 @@ export function registerFileActionTool(reg: SurfaceRegistrar): void {
   reg.register(
     'file_action',
     toolDeclaration('file_action', () => ({
-      title: 'Inspect and read document files',
+      title: 'Inspect documents and discover file editing providers',
       description:
-        'Read common document formats through one provider-neutral Eve tool. inspect identifies XLSX/DOCX/PDF/PPTX from file content and reports extension mismatches. ' +
-        'read returns only a bounded requested slice: XLSX sheet/range, DOCX paragraph window, PDF page window, or PPTX slide window. File contents returned by this tool become visible to the active conversational model.',
+        'Use ParadigmEve’s built-in file broker before seeking third-party document editors. inspect identifies an approved local XLSX/DOCX/PDF/PPTX file and offers matching ArtCraft providers (such as WordCraft for DOCX). ' +
+        'providers discovers broker apps from an extension alone, e.g. {op:"providers",format:"docx"}, even when the user only has a ChatGPT Library link; it never opens that link or installs anything. ' +
+        'read returns a bounded slice of an approved local file: XLSX cells, DOCX paragraphs, PDF pages or PPTX slides. Use file_edit for user-approved provider installation and for visible editing with open_visible. File contents returned by read become visible to the active model.',
       inputSchema: fileActionArgs,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     })),
     async (args) => guard('file_action', async (): Promise<ToolResult> => {
       if (!reg.caps.read) return fail('TOOL_DISABLED: file_action requires file reading permission in ParadigmEve.');
+      if (args.op === 'providers') {
+        const format = args.format.toLowerCase();
+        const installed = capabilityProvidersForFormat(format).flatMap((provider) => {
+          const active = pluginManager.fileProvider(provider.id);
+          return active ? [`provider_installed: ${provider.displayName} (${provider.id}) status=${active.status}. For a ready provider, use file_edit provider_tools, then edit or open_visible with a local file path.`] : [];
+        });
+        const call = currentCall();
+        const offers = offerText(await fileProviderOffers(format, call?.caller.conversationId ?? call?.caller.sessionId ?? undefined));
+        return ok([
+          `format: ${format}`,
+          'provider_lookup: registry only; no file was inspected or downloaded. A ChatGPT Library URL is not a local file path; editing requires an accessible file inside an approved folder.',
+          ...installed,
+          offers ?? (installed.length ? '' : 'provider_lookup: no new provider offer; one may already have been shown in this conversation, or the provider may be unavailable or declined.'),
+          'provider_next_step: When the user wants to watch the edit, use file_edit open_visible after native install confirmation and after the source file is accessible locally.'
+        ].filter(Boolean).join('\n'));
+      }
       const resolved = await resolveIn(reg.ctx.roots, args.path);
       const extension = nodePath.extname(resolved.virtual).toLowerCase().slice(1);
       if (extension && !extensionFormat(resolved.virtual)) {

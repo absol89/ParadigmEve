@@ -35,6 +35,7 @@ the ParadigmEve product, the Companion extension or the loopback bridge.
 
 The complete possible Core family includes:
 
+- provider-neutral `file_action` (local file inspection/read and format-only provider discovery) and `file_edit` (consented ArtCraft installations and editing copies);
 - file read/image/search;
 - `apply_patch`;
 - shell execution + live stdin/polling;
@@ -51,6 +52,14 @@ The complete possible Core family includes:
 - per-surface JavaScript `exec` wrapper where available.
 
 See [`docs/tool-surface.md`](../tool-surface.md) for schemas and permission details.
+
+### File broker: inspect, offer, edit or show
+
+When a user wants a document processor, to edit a file, or to watch Eve edit it, start with ParadigmEve's built-in file broker. For an approved local file, use `file_action {op: "inspect", path: "/workspace/letter.docx"}` to identify its actual format and receive a `provider_offer`. For a ChatGPT Library link or a known extension without a local file path, use `file_action {op: "providers", format: "docx"}` to discover the registered broker provider without opening the file. Word processing uses WordCraft (`artcraft.wordcraft`) when offered. Its integration is in development and an official installable build must actually be available for the user's machine.
+
+If the user requests that provider, `file_edit {op: "install_provider", provider: "artcraft.wordcraft"}` initiates a separate native confirmation showing the official version and checksum requirements. The user must approve that dialog; a model cannot. Once installed, `file_edit {op: "provider_tools", provider: "artcraft.wordcraft"}` discovers its current tools. "Edit it" uses `file_edit`'s `edit` operation to save a new validated copy; "show me/watch me edit" uses `open_visible` to open a new copy in the app for Computer use. Neither path overwrites the original; a provider may be unable to preserve some DOCX features, which requires separate feature-loss approval. If no desktop app exists in an installed provider, `open_visible` reports that limitation.
+
+A ChatGPT Library URL is not an approved local file path and cannot be passed directly to `file_action inspect` or `file_edit`. Obtain a real attachment through `download_artifact` when the conversation provides its native file value, or establish an accessible copy under an approved root before editing. Provider lookup by extension does not inspect file contents or prove the Library file has been retrieved. If an ArtCraft provider is unavailable or declined, respect that result; only then discuss other options if the user wants them.
 
 ## Schedule workspace versus Core MCP
 

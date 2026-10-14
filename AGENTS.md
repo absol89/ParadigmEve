@@ -1693,7 +1693,7 @@ unsupported/manual-required stays visible instead of opening more helper tabs.
 
 ### File broker and ArtCraft file apps
 
-`file_action` (read-only: `inspect`, bounded `read`) and `file_edit` (changes) are the only Core
+`file_action` (read-only: `inspect`, bounded `read`, format-only `providers`) and `file_edit` (changes) are the only Core
 file-broker tools on every chat route (ChatGPT, local Ollama/OpenRouter chats and workers). Built-in
 XLSX/DOCX/PDF/PPTX readers are the zero-install fallback; PDF.js runs in a killable worker. Results
 are bounded before they reach a model, labelled as data, and `contentRecipient` records the route

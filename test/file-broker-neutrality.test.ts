@@ -36,7 +36,8 @@ const SCRIPT = [
   { name: 'file_action', args: { op: 'inspect', path: '/workspace/book.xlsx' } },
   { name: 'file_action', args: { op: 'read', path: '/workspace/book.xlsx', range: 'A1:B2' } },
   { name: 'file_action', args: { op: 'read', path: '/workspace/letter.docx' } },
-  { name: 'file_edit', args: { op: 'provider_tools', provider: 'artcraft.gridcraft' } }
+  { name: 'file_edit', args: { op: 'provider_tools', provider: 'artcraft.gridcraft' } },
+  { name: 'file_action', args: { op: 'providers', format: 'docx' } }
 ] as const;
 
 let dir = '';
@@ -104,6 +105,7 @@ describe('provider-neutral file broker', () => {
     expect(core[1]).toContain('Rent\t1200');
     expect(core[2]).toContain('Dear Ada');
     expect(core[3]).toMatch(/PROVIDER_NOT_READY/);
+    expect(core[4]).toContain('provider_next_step: When the user wants to watch the edit');
 
     for (const [backend, route] of [['ollama', 'ollama-local'], ['openrouter', 'openrouter']] as const) {
       const local = await viaLocalChat(backend, route);

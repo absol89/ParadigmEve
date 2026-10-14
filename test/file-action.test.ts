@@ -79,13 +79,14 @@ describe('file_action built-in read fallback', () => {
     expect(() => sniffBuiltInFile('fake.xlsx', xml('not a zip'))).toThrow(/MALFORMED_FILE/);
   });
 
-  it('publishes one read-only, explicit inspect/read Core tool', () => {
+  it('publishes one read-only, explicit inspect/read/providers Core tool', () => {
     const { definitions } = registrar();
     const tool = definitions.find((entry) => entry.name === 'file_action');
     expect(tool?.config.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     const json = tool?.config.inputSchema.toJSONSchema?.() ?? {};
     expect(JSON.stringify(json)).toContain('inspect');
     expect(JSON.stringify(json)).toContain('read');
+    expect(JSON.stringify(json)).toContain('providers');
   });
 
   it('reads bounded XLSX, DOCX, PPTX and PDF slices through the same broker', async () => {

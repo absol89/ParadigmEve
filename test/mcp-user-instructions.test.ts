@@ -74,6 +74,18 @@ afterEach(() => {
 });
 
 describe('the user’s own connector instructions', () => {
+  it('routes requested document editing through the available file broker before generic app recommendations', () => {
+    const instructions = serverInstructions(ctx, 'core', 'win32');
+    expect(instructions).toContain('file_action');
+    expect(instructions).toContain('file_edit');
+    expect(instructions).toContain('WordCraft');
+    expect(instructions).toContain('open_visible');
+    expect(instructions).toContain('Library');
+    const withoutRead = serverInstructions({ ...ctx, caps: { ...ctx.caps, read: false } }, 'core', 'win32');
+    expect(withoutRead).not.toContain('Prefer the ParadigmEve file broker');
+    const withoutEdit = serverInstructions({ ...ctx, caps: { ...ctx.caps, edit: false } }, 'core', 'win32');
+    expect(withoutEdit).not.toContain('file_edit');
+  });
   it('explains the transient ChatGPT safety refusal and offers session_finish to any model', () => {
     // Ported from Chat On Steroids 2.1.17 (#555, #556).
     const text = serverInstructions({ ...ctx, exposedFinishTool: true } as any, 'core', 'win32');

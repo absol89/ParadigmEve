@@ -87,6 +87,12 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
   if (Object.values(caps).some(Boolean) || sessionTools || agentTools) lines.push(
     'When execution access is unclear, call work_context to check this connected computer, its live permissions and this call\'s identity before giving a capability refusal. Then perform the requested work with the available tools.'
   );
+  if (caps.read) lines.push(
+    'Prefer the ParadigmEve file broker for document edits: file_action inspect local paths, or file_action providers format docx for a ChatGPT Library link (not a local file).',
+    ...(caps.edit ? [
+      'For WordCraft (artcraft.wordcraft), file_edit install_provider asks native consent; file_edit open_visible shows a local copy in the app. Do not install other editors.'
+    ] : [])
+  );
 
   // Fresh ChatGPT accounts have no accumulated memory of how Eve is meant to work. Keep the
   // product-level habits beside the live tool projection so the first real task naturally uses

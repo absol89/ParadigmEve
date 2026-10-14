@@ -99,6 +99,31 @@ describe('file provider broker', () => {
     expect(options.cancelId).toBe(2);
   });
 
+  it('discovers WordCraft by DOCX format when the user provides a Library link without a local file path', async () => {
+    const reg = registrar();
+    const response = await reg.invokeNested('file_action', { op: 'providers', format: 'docx' }, caller());
+    const description = textOf(response);
+    expect(response.isError).not.toBe(true);
+    expect(description).toContain('provider_offer: WordCraft (artcraft.wordcraft)');
+    expect(description).toContain('no file was inspected');
+    expect(description).toContain('file_edit');
+    expect(description).toContain('open_visible');
+    expect(mock.requests).toEqual([]);
+    expect(pluginManager.fileProvider('artcraft.wordcraft')).toBeNull();
+    const invalid = await reg.invokeNested('file_action', { op: 'providers', format: 'https://chatgpt.com/library/letter.docx' }, caller());
+    expect(invalid.isError).toBe(true);
+    const extraneous = await reg.invokeNested('file_action', { op: 'providers', format: 'docx', path: '/workspace/letter.docx' }, caller());
+    expect(extraneous.isError).toBe(true);
+  });
+
+  it('respects unavailable broker builds even for format-only discovery', async () => {
+    consent.resetFileProviderConsentForTests('linux-x64');
+    const response = await registrar().invokeNested('file_action', { op: 'providers', format: 'docx' }, caller());
+    expect(textOf(response)).toContain('provider_unavailable: WordCraft has no build for this operating system yet.');
+    expect(textOf(response)).not.toContain('provider_offer:');
+    expect(mock.requests).toEqual([]);
+  });
+
   it.each([
     ['gridcraft', '0.6.1', 'book.xlsx'],
     ['wordcraft', '0.7.0', 'letter.docx']
@@ -130,6 +155,9 @@ describe('file provider broker', () => {
 
     // Once installed, the offer is gone.
     expect(textOf(await reg.invokeNested('file_action', { op: 'inspect', path: `/workspace/${file}` }, caller()))).not.toContain('provider_offer');
+    const known = textOf(await reg.invokeNested('file_action', { op: 'providers', format: file.split('.').at(-1) }, caller()));
+    expect(known).toContain(`provider_installed: ${slug === 'gridcraft' ? 'GridCraft' : 'WordCraft'} (artcraft.${slug}) status=ready`);
+    expect(known).not.toContain('provider_offer:');
   });
 
   it('offers apps for formats the built-in readers cannot open, without reading the file', async () => {
