@@ -1011,7 +1011,8 @@ void app.whenReady().then(async () => {
       }, delay);
       timer.unref?.();
     }
-  }  // The heartbeat's first tick must observe post-recovery session/identity state. Starting it before
+  }
+  // The heartbeat's first tick must observe post-recovery session/identity state. Starting it before
   // installer/crash restoration is exactly how a healthy Eva was reported as coordinator-less while
   // her Companion browser was still being restarted.
   if (startupBrowserRecovery) void startupBrowserRecovery.finally(startReviewHeartbeatMaintenance);
