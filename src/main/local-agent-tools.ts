@@ -16,9 +16,11 @@ import { registerSkillTools } from './mcp/skill-tool.js';
 import { getConfig } from './config.js';
 import { createSession } from './session/store.js';
 import { AGENT_BACKEND_LABELS } from '../shared/agent-backends.js';
+import type { ChatProviderRoute } from '../shared/session.js';
 
 const LOCAL_CORE_TOOL_NAMES = new Set([
   'read',
+  'file_action',
   'find',
   'apply_patch',
   'exec_command',
@@ -61,7 +63,7 @@ function localResult(result: ToolResult): LocalAgentToolResult {
   };
 }
 
-function parentContext(principal: LocalAgentExecutionPrincipal, agent: string, sessionId: string | null): CallContext {
+function parentContext(principal: LocalAgentExecutionPrincipal, agent: string, sessionId: string | null, contentRoute: ChatProviderRoute | null): CallContext {
   return {
     startedAt: Date.now(),
     transportKey: null,
@@ -71,7 +73,8 @@ function parentContext(principal: LocalAgentExecutionPrincipal, agent: string, s
       requestId: null,
       conversationId: null,
       sessionId,
-      localPrincipal: principal
+      localPrincipal: principal,
+      contentRoute
     },
     outcome: null,
     evidence: emptyEvidence()
@@ -84,7 +87,9 @@ function parentContext(principal: LocalAgentExecutionPrincipal, agent: string, s
  */
 export function localAgentCoreTools(
   getContext: () => ToolContext,
-  principal: LocalAgentExecutionPrincipal
+  principal: LocalAgentExecutionPrincipal,
+  /** Route this worker's model loop sends tool results to; null when not known. */
+  route: ChatProviderRoute | null = null
 ): LocalAgentTool[] {
   const agent = agentForCaller({ localPrincipal: principal });
   if (!agent) return [];
@@ -120,7 +125,7 @@ export function localAgentCoreTools(
       return localResult(await live.invokeNested(
         definition.name,
         args,
-        parentContext(presentedPrincipal, liveAgent, sessionId)
+        parentContext(presentedPrincipal, liveAgent, sessionId, route)
       ));
     }
   }));

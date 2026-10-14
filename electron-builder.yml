@@ -62,6 +62,8 @@ asarUnpack:
   - '**/node_modules/@img/**'
   - '**/node_modules/tree-sitter/**'
   - '**/node_modules/tree-sitter-bash/**'
+  # file_action's PDF reader imports PDF.js inside a worker thread, from a real file.
+  - '**/node_modules/unpdf/**'
 compression: maximum
 
 # electron-builder 26 defaults to the legacy FUSE2 AppImage runtime. Ubuntu 24.04 renamed

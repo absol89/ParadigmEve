@@ -23,7 +23,7 @@ const { DEFAULT_CAPABILITIES } = await import('../src/shared/types.js');
 afterEach(() => resetLocalAgentRuntimeForTests());
 
 describe('provider-neutral file_action exposure', () => {
-  it.each(['ollama', 'openrouter'] as const)('publishes file_action to direct %s model loops', async (backend) => {
+  it.each([['ollama', 'ollama-local'], ['openrouter', 'openrouter']] as const)('publishes file_action to direct %s model loops', async (backend, route) => {
     const principal = issueLocalAgentExecutionPrincipal({ backend, runId: `test-${backend}`, agentId: 'local-chat' });
     const ctx = {
       roots: [{ name: 'workspace', path: process.cwd() }],
@@ -38,6 +38,7 @@ describe('provider-neutral file_action exposure', () => {
       principal,
       sessionId: `session-${backend}`,
       conversationId: `conversation-${backend}`,
+      route,
       mode: 'direct'
     });
     expect(tools.map((tool) => tool.name)).toContain('file_action');

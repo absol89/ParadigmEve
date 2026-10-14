@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FILE_CAPABILITY_PROVIDERS,
+  type FileCapabilityProvider,
   capabilityProvidersForFormat,
   executionModeForIntent
 } from '../src/main/file-capabilities.js';
@@ -17,6 +18,13 @@ describe('file capability registry', () => {
     expect(capabilityProvidersForFormat('docx').map((provider) => provider.id)).toEqual(['artcraft.wordcraft']);
     expect(capabilityProvidersForFormat('pptx').map((provider) => provider.id)).toEqual(['artcraft.deckcraft']);
     expect(capabilityProvidersForFormat('pdf').map((provider) => provider.id)).toContain('artcraft.pdfcraft');
+  });
+
+  it('cannot be mutated into an installable provider at runtime', () => {
+    const gridcraft = FILE_CAPABILITY_PROVIDERS.find((provider) => provider.id === 'artcraft.gridcraft')!;
+    expect(() => { (gridcraft.install as { autoInstallEligible: boolean }).autoInstallEligible = true; }).toThrow(TypeError);
+    expect(() => { (FILE_CAPABILITY_PROVIDERS as FileCapabilityProvider[]).push(gridcraft); }).toThrow(TypeError);
+    expect(gridcraft.install.autoInstallEligible).toBe(false);
   });
 
   it('keeps autonomous work headless and teaching/watch workflows visible', () => {

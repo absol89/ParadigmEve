@@ -878,6 +878,8 @@ async function dispatchTracked(
     requestId: context.caller.requestId,
     conversationId: context.caller.conversationId,
     sessionId: context.caller.sessionId ?? null,
+    // Connector calls come from ChatGPT; an in-process loop that did not name its route stays unknown.
+    contentRoute: context.caller.contentRoute ?? (context.caller.localPrincipal ? null : 'chatgpt'),
     endsActivity: isFinish && !result.isError
   });
   // Exact request-id identity needs no browser wait, so make its durable session append part
@@ -908,7 +910,7 @@ function needsWorkspaceIdentity(name: string, args: unknown): boolean {
     const paths = Array.isArray(input['paths']) ? input['paths'] : [];
     return paths.some(relative);
   }
-  if (name === 'find') return relative(input['path']);
+  if (name === 'find' || name === 'file_action') return relative(input['path']);
   if (name === 'apply_patch') {
     // Codex's apply_patch surface has no cwd argument. Relative patch paths therefore always
     // consume the turn/chat cwd analogue maintained by this connector.

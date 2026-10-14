@@ -13,7 +13,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AssetRef, FileChange, ToolCallRecord, ToolOutcome } from '../../shared/session.js';
+import type { AssetRef, ChatProviderRoute, FileChange, ToolCallRecord, ToolOutcome } from '../../shared/session.js';
 import type { OutputPublication } from '../codex/unified-exec.js';
 import type { LocalAgentExecutionPrincipal } from '../local-agent-runtime.js';
 
@@ -65,6 +65,11 @@ export interface CallCaller {
   sessionId?: string | null;
   /** App-owned local worker identity; absent for every external MCP transport call. */
   localPrincipal?: LocalAgentExecutionPrincipal | null;
+  /**
+   * Chat-provider route that receives this call's result, set by the in-process model loop that
+   * issued it. Absent means the call arrived over the MCP connector, whose caller is ChatGPT.
+   */
+  contentRoute?: ChatProviderRoute | null;
 }
 
 export interface CallContext {

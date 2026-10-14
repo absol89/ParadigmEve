@@ -25,6 +25,7 @@ import { createOllamaAgentModelRuntime } from './ollama-agent-runtime.js';
 import { ensureOllamaModel, resolveOllamaEndpoint } from './ollama-client.js';
 import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, openRouterModelInfo } from './openrouter-client.js';
 import { logInfo, logWarn } from './logger.js';
+import { providerRoute } from './session/provider-history.js';
 import type { ToolContext } from './mcp/kernel.js';
 import { skillCatalogInstructions } from './skills.js';
 
@@ -88,7 +89,9 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
     } else {
       await ensureOllamaModel(model);
     }
-    const tools = toolsSupported ? localAgentCoreTools(coreContext, principal) : [];
+    const endpoint = backend === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint;
+    const route = providerRoute({ id: backend === 'openrouter' ? 'openrouter' : 'ollama', model }, endpoint);
+    const tools = toolsSupported ? localAgentCoreTools(coreContext, principal, route) : [];
     const skillCatalog = toolsSupported ? await skillCatalogInstructions({
       platform: process.platform,
       capabilities: effectiveCapabilities(getConfig())
@@ -96,7 +99,7 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
     const result = await runLocalAgent({
       backend,
       principal,
-      endpoint: backend === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
+      endpoint,
       model,
       system:
         'You are a bounded ParadigmEve worker. Complete only the task you were given. ' +

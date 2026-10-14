@@ -35,7 +35,7 @@ function artcraft(
   formats: readonly string[],
   operations: FileCapabilityProvider['operations'] = ['read', 'write', 'create']
 ): FileCapabilityProvider {
-  return {
+  return Object.freeze({
     id,
     displayName,
     family: 'artcraft',
@@ -44,19 +44,20 @@ function artcraft(
     operations,
     automation: ARTCRAFT_AUTOMATION,
     executionModes: BOTH_MODES,
-    install: {
-      granularity: 'standalone-app-or-cli',
+    install: Object.freeze({
+      granularity: 'standalone-app-or-cli' as const,
       autoInstallEligible: false,
       reason: 'Exact platform artifact, version, source and hash have not yet been curated into ParadigmEve.'
-    }
-  };
+    })
+  });
 }
 
 /**
  * Whole-suite inventory. A provider being listed here does not mean ParadigmEve may install it:
  * auto-install stays false until its exact artifact metadata is separately vetted.
  */
-export const FILE_CAPABILITY_PROVIDERS: readonly FileCapabilityProvider[] = [
+// Frozen, entries included: nothing at runtime can flip an entry to installable.
+export const FILE_CAPABILITY_PROVIDERS: readonly FileCapabilityProvider[] = Object.freeze([
   artcraft('artcraft.photocraft', 'PhotoCraft', 'raster image editing', []),
   artcraft('artcraft.vectorcraft', 'VectorCraft', 'vector illustration', []),
   artcraft('artcraft.filmcraft', 'FilmCraft', 'video editing', []),
@@ -70,7 +71,7 @@ export const FILE_CAPABILITY_PROVIDERS: readonly FileCapabilityProvider[] = [
   artcraft('artcraft.deckcraft', 'DeckCraft', 'presentations and slide shows', ['pptx']),
   artcraft('artcraft.cadcraft', 'CADCraft', 'computer-aided design and drafting', []),
   artcraft('artcraft.gridcraft', 'GridCraft', 'spreadsheets and data analysis', ['xlsx', 'csv'])
-] as const;
+]);
 
 export function capabilityProvidersForFormat(format: string): FileCapabilityProvider[] {
   const normalized = format.toLowerCase().replace(/^\./, '');

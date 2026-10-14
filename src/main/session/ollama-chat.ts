@@ -32,7 +32,7 @@ import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, 
 import { issueLocalAgentExecutionPrincipal, revokeLocalAgentExecutionPrincipal, runLocalAgent, type LocalAgentMessage } from '../local-agent-runtime.js';
 import { localChatCoreTools } from '../local-chat-tools.js';
 import type { ToolContext } from '../mcp/kernel.js';
-import { ollamaConversation, ProviderCapabilityError } from './provider-history.js';
+import { ollamaConversation, ProviderCapabilityError, providerRoute } from './provider-history.js';
 import { OLLAMA_CONVERSATION_PREFIX, OLLAMA_TURN_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
 import { skillCatalogInstructions } from '../skills.js';
 
@@ -206,18 +206,20 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
     const direct = settings.chatDirectTools !== false;
     const messages = await ollamaConversation(sessionId, vision, await chatSystemPrompt(direct, toolsSupported));
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: `chat:${sessionId}`, agentId: turnId });
+    const endpoint = provider.id === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint;
     try {
       const tools = !toolsSupported ? [] : await localChatCoreTools({
         getContext: chatToolContext,
         principal,
         sessionId,
         conversationId: (await getSession(sessionId))?.conversationId ?? null,
+        route: providerRoute(provider, endpoint),
         mode: direct ? 'direct' : 'delegate'
       });
       const result = await runLocalAgent({
         backend: 'ollama',
         principal,
-        endpoint: provider.id === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint,
+        endpoint,
         model: provider.model,
         system: '',
         task: '',

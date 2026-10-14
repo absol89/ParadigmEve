@@ -21,6 +21,7 @@ import type {
   AgentMessage,
   AssetRef,
   CallAttribution,
+  ChatProviderRoute,
   SessionEvent,
   SessionOrigin,
   SessionSummary,
@@ -1279,6 +1280,8 @@ export interface ToolCallInput {
   sessionId?: string | null;
   /** A successful worker finish report is a hard activity boundary, not fresh work. */
   endsActivity?: boolean;
+  /** Route that received this call's result, from the dispatcher's ingress. See CallCaller. */
+  contentRoute?: ChatProviderRoute | null;
 }
 
 /** A workflow orders its calls before identity resolves; a session orders their storage.
@@ -1420,12 +1423,16 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
     // worker chat. Recover only that worker id, never a guessed prime/current agent.
     let eventAgent = input.agent ?? null;
     let callModel: Pick<ToolCallRecord, 'model' | 'reasoningEffort'> = {};
+    // Every file_action result carries file-derived text (a read slice, or sheet names in an
+    // inspect or an error), so each one records the route it was returned to. The dispatcher
+    // knows that route from where the call entered; the session's provider is only the fallback
+    // for a caller that did not say, because it describes the newest turn, not this call.
     let contentRecipient: ToolCallRecord['contentRecipient'];
+    if (input.tool === 'file_action') {
+      contentRecipient = input.contentRoute ?? providerRoute((await getSession(sessionId))?.provider);
+    }
     if (target.conversationId) {
       const summary = await getSession(sessionId);
-      if (input.tool === 'file_action' && input.args && typeof input.args === 'object' && (input.args as { op?: unknown }).op === 'read') {
-        contentRecipient = providerRoute(summary?.provider);
-      }
       const selection = summary?.selectedModel;
       const live = conversations.get(target.conversationId);
       // Selection evidence must precede this exact turn, not merely arrive before the

@@ -47,7 +47,7 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-it('records which chat provider received file_action read content', async () => {
+it('records which chat provider received file_action content', async () => {
   const openRouterSession = await sessionForConversation('conv-file-openrouter');
   await setSessionProvider(openRouterSession!, { id: 'openrouter', model: 'fixture/model' });
   await recordToolCall({
@@ -59,6 +59,17 @@ it('records which chat provider received file_action read content', async () => 
   const openRouterEvent = (await readEvents(openRouterSession!, { kinds: ['tool_call'] }))[0]!;
   expect(openRouterEvent.kind === 'tool_call' ? openRouterEvent.call.contentRecipient : undefined).toBe('openrouter');
 
+  // The dispatcher's ingress route wins over the session's newest-turn provider.
+  await recordToolCall({
+    ...call('file-ingress', 'conv-file-openrouter'),
+    tool: 'file_action',
+    args: { op: 'read', path: '/workspace/book.xlsx' },
+    content: [{ type: 'text', text: 'bounded cell output' }],
+    contentRoute: 'chatgpt'
+  });
+  const ingressEvent = (await readEvents(openRouterSession!, { kinds: ['tool_call'] }))[1]!;
+  expect(ingressEvent.kind === 'tool_call' ? ingressEvent.call.contentRecipient : undefined).toBe('chatgpt');
+
   const chatGptSession = await sessionForConversation('conv-file-chatgpt');
   await recordToolCall({
     ...call('file-chatgpt', 'conv-file-chatgpt'),
@@ -66,17 +77,45 @@ it('records which chat provider received file_action read content', async () => 
     args: { op: 'read', path: '/workspace/letter.docx' },
     content: [{ type: 'text', text: 'bounded paragraph output' }]
   });
-  const chatGptEvent = (await readEvents(chatGptSession!, { kinds: ['tool_call'] }))[0]!;
-  expect(chatGptEvent.kind === 'tool_call' ? chatGptEvent.call.contentRecipient : undefined).toBe('chatgpt');
-
+  // inspect returns sheet names and a refusal can quote them: both are file content too.
   await recordToolCall({
     ...call('file-inspect', 'conv-file-chatgpt'),
     tool: 'file_action',
     args: { op: 'inspect', path: '/workspace/letter.docx' },
     content: [{ type: 'text', text: 'format: docx' }]
   });
-  const inspectEvent = (await readEvents(chatGptSession!, { kinds: ['tool_call'] }))[1]!;
-  expect(inspectEvent.kind === 'tool_call' ? inspectEvent.call.contentRecipient : undefined).toBeUndefined();
+  await recordToolCall({
+    ...call('file-failed', 'conv-file-chatgpt'),
+    tool: 'file_action',
+    args: { op: 'read', path: '/workspace/book.xlsx', sheet: 'Missing' },
+    content: [{ type: 'text', text: 'SHEET_NOT_FOUND: Missing. Available sheets: Budget' }],
+    outcome: 'tool_rejected'
+  });
+  const chatGptEvents = await readEvents(chatGptSession!, { kinds: ['tool_call'] });
+  expect(chatGptEvents.map((event) => event.kind === 'tool_call' ? event.call.contentRecipient : undefined)).toEqual(['chatgpt', 'chatgpt', 'chatgpt']);
+
+  // Other tools never claim a content recipient.
+  await recordToolCall({ ...call('plain-read', 'conv-file-chatgpt'), contentRoute: 'chatgpt' });
+  const plain = (await readEvents(chatGptSession!, { kinds: ['tool_call'] }))[3]!;
+  expect(plain.kind === 'tool_call' ? plain.call.contentRecipient : undefined).toBeUndefined();
+});
+
+it('records the route of a conversation-less local worker file_action call', async () => {
+  const local = await createSession({ title: 'Local worker', conversationId: null });
+  await recordToolCall({
+    tool: 'file_action',
+    args: { op: 'read', path: '/workspace/paper.pdf' },
+    content: [{ type: 'text', text: 'page text' }],
+    outcome: 'ok',
+    durationMs: 1,
+    startedAt: Date.now(),
+    conversationId: null,
+    sessionId: local.id,
+    agent: 'worker-1',
+    contentRoute: 'ollama-local'
+  });
+  const event = (await readEvents(local.id, { kinds: ['tool_call'] }))[0]!;
+  expect(event.kind === 'tool_call' ? event.call.contentRecipient : undefined).toBe('ollama-local');
 });
 
 it('a proven chat completes while an unrelated request waits for evidence; shutdown includes the waiter', async () => {

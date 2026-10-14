@@ -15,6 +15,7 @@ import { registerSkillTools } from './mcp/skill-tool.js';
 import { registerWorkContextTool } from './mcp/work-context.js';
 import { desktopAutomationSupported } from './platform.js';
 import { onSwarmChange, statusForCaller } from './agents.js';
+import type { ChatProviderRoute } from '../shared/session.js';
 
 const CHAT_LIFECYCLE_ONLY = new Set(['chat_review_plan', 'chat_review_complete', 'session_finish']);
 const DELEGATE_TIMEOUT_MS = 10 * 60_000;
@@ -86,7 +87,7 @@ async function waitForWorker(conversationId: string, workerId: string): Promise<
   });
 }
 
-function parentContext(sessionId: string, conversationId: string | null): CallContext {
+function parentContext(sessionId: string, conversationId: string | null, contentRoute: ChatProviderRoute): CallContext {
   return {
     startedAt: Date.now(),
     transportKey: null,
@@ -96,7 +97,8 @@ function parentContext(sessionId: string, conversationId: string | null): CallCo
       requestId: null,
       conversationId,
       sessionId,
-      localPrincipal: null
+      localPrincipal: null,
+      contentRoute
     },
     outcome: null,
     evidence: emptyEvidence()
@@ -108,6 +110,8 @@ export async function localChatCoreTools(input: {
   principal: LocalAgentExecutionPrincipal;
   sessionId: string;
   conversationId: string | null;
+  /** The provider route this loop sends tool results to; recorded as their recipient. */
+  route: ChatProviderRoute;
   /** Direct exposes the normal Core surface; delegate exposes only the worker broker. */
   mode: 'direct' | 'delegate';
 }): Promise<LocalAgentTool[]> {
@@ -168,7 +172,7 @@ export async function localChatCoreTools(input: {
         const spawned = await live.invokeNested('agents', {
           action: 'spawn',
           workers: [{ label, task }]
-        }, parentContext(input.sessionId, input.conversationId));
+        }, parentContext(input.sessionId, input.conversationId, input.route));
         if (spawned.isError) return localResult(spawned);
         const structured = spawned.structuredContent as { workers?: Array<{ id?: unknown }> } | undefined;
         const workerId = structured?.workers?.[0]?.id;
@@ -191,7 +195,7 @@ export async function localChatCoreTools(input: {
       return localResult(await live.invokeNested(
         definition.name,
         args,
-        parentContext(input.sessionId, input.conversationId)
+        parentContext(input.sessionId, input.conversationId, input.route)
       ));
     }
   }));
