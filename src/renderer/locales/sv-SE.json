@@ -1958,5 +1958,10 @@
   "GPU transcription is not available on this computer.": "Transkribering med GPU är inte tillgänglig på den här datorn.",
   "Ran on GPU: {0}": "Körde på GPU: {0}",
   "Ran on CPU": "Körde på CPU",
-  "Fell back after: {0}": "Föll tillbaka efter: {0}"
+  "Fell back after: {0}": "Föll tillbaka efter: {0}",
+  "Find in chat": "Sök i chatten",
+  "Previous match": "Föregående träff",
+  "Next match": "Nästa träff",
+  "{0} of {1}": "{0} av {1}",
+  "No matches": "Inga träffar"
 }

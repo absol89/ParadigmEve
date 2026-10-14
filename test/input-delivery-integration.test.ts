@@ -823,3 +823,29 @@ it('retires a late-confirmed cancelled desktop send after two minutes even as th
     expect(resumed.closableConversations).not.toContain(conversationId);
   } finally { clock.mockRestore(); }
 });
+
+// Ported from Chat On Steroids 2.1.37 (737de925): an answer broke ("Connection interrupted") and was
+// reloaded, so the page never took the user's message into the running turn. It was never
+// authorized, so it was never sent: keep it for after the turn instead of cancelling it. An
+// authorized send may already have landed and is still never requeued.
+it('keeps a never-authorized message for a broken running turn for after the turn', async () => {
+  const conversationId = randomUUID();
+  const session = await createSession({ title: 'Message for a broken turn', conversationId });
+  const time = Date.now();
+  await post('/events', { conversationId, events: [
+    { kind: 'model_selection', model: 'gpt-5.6-sol', reasoningEffort: 'high', time },
+    { kind: 'user_message', messageId: 'broken-user', text: 'Inspect the current task', time },
+    { kind: 'turn_start', turnId: 'broken-turn', time: time + 1 }
+  ] });
+  const kept = await input.enqueueInput({ ...message(session.id, 'off'), mode: 'auto' });
+  expect(kept.directTurn?.id).toBe('broken-turn');
+  expect((await post('/input/claim', { id: kept.id, owner: 'turn-page', conversationId, requiresAuthorization: true })).body.input).toMatchObject({ id: kept.id });
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    vi.setSystemTime(Date.now() + 61_000);
+    const row = (await input.listInputs()).find(entry => entry.id === kept.id);
+    expect(row).toMatchObject({ state: 'queued', mode: 'after-turn', owner: null });
+    expect(row?.directTurn).toBeUndefined();
+    expect(row?.error).toMatch(/after the running answer/);
+  } finally { vi.useRealTimers(); }
+});

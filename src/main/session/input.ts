@@ -661,10 +661,22 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // hydration. App-staged attachments are already local bytes by the time the browser owns the
     // claim; keeping that claim for twelve minutes only hides a failed native upload from the user.
     // Once Send is authorized, its 30s receipt + 15s fresh-route wait are the entire tail.
-    if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? ((row.attachments?.length || row.images?.length) ? 120_000 : 60_000) : 45_000))
+    if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? ((row.attachments?.length || row.images?.length) ? 120_000 : 60_000) : 45_000)) {
+      // A message the user sent into the running answer that the page could not take (its answer
+      // broke and was reloaded) was never authorized, so it was never sent: keep it for after that
+      // turn rather than cancelling what the person typed. An authorized send may already have
+      // landed and is never requeued. Ported from Chat On Steroids 2.1.37 (737de925), narrowed to
+      // the never-authorized case.
+      if (row.directTurn && row.requiresAuthorization && row.sendAuthorizedAt === undefined &&
+          (row.purpose === undefined || row.purpose === 'user') && !row.finishOwner && !row.recoveryTurnId) {
+        const { directTurn: _turn, offeredAt: _offered, requiresAuthorization: _authorization, ...rest } = row;
+        return { ...rest, state: 'queued', mode: 'after-turn', owner: null,
+          error: 'Kept for after the running answer: ChatGPT could not take it into the answer.' };
+      }
       return { ...row, state: 'cancelled', error: row.requiresAuthorization && row.sendAuthorizedAt === undefined
         ? 'Not sent: browser preparation timed out. This attempt was cancelled.'
         : 'Stopped waiting for delivery confirmation. The message may already have been sent; it will not be resent.' };
+    }
     return row;
   }));
   if (next.some((row, index) => row !== current[index])) await commit(next);

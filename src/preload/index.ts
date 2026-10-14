@@ -8,6 +8,7 @@ import type { UsageOverview } from '../shared/usage.js';
 import type { PetLibraryState, PetOverlayControlState, PetRuntimeAsset } from '../shared/pets.js';
 import type { InputArgs, InputEntry } from '../main/session/input.js';
 import type { ProviderSwitchPreview } from '../main/session/provider-history.js';
+import type { ChatFindMatch } from '../main/session/find.js';
 import type {
   ArchiveRendererOpenResult,
   ArchiveRendererRebuildResult,
@@ -286,6 +287,8 @@ const api = {
   getSessionImageThumbnail: (id: string, assetId: string) => call<string | null>('sessions:imageThumbnail', { id, assetId }),
   getSession: (id: string, options?: { from?: number; before?: number; limit?: number }) =>
     call<SessionDetail>('sessions:events', { id, ...options }),
+  /** Find in chat: the chat's messages holding `query`, in spoken order (at most 500). */
+  findInChat: (id: string, query: string) => call<ChatFindMatch[]>('sessions:find', { id, query }),
   stopSessionTurn: (id: string, expectedTurnId: string) => call<SessionControlsView>('sessions:stopTurn', { id, expectedTurnId }),
   releaseSessionFinish: (id: string, expectedTurnId: string) => call<SessionControlsView>('sessions:releaseFinish', { id, expectedTurnId }),
   generateFinishGoal: (id: string, expectedTurnId: string) => call<string>('sessions:generateFinishGoal', { id, expectedTurnId }),
