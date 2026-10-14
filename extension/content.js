@@ -10275,6 +10275,9 @@
    */
   let commandReadinessInitialized = false;
   const commandReadinessWaiters = new Set();
+  // Restart wake offers stay in the app outbox until this exact page becomes usable.
+  // A one-shot notification avoids depending solely on Chrome's 30-second alarm.
+  const watchedRestartWakes = new Map();
 
   function notifyCommandReadiness() {
     for (const check of [...commandReadinessWaiters]) {
@@ -10285,6 +10288,7 @@
         // must never disturb observation/recording of the turn whose completion it is waiting on.
       }
     }
+    notifyRestartWakeReadiness();
   }
 
   /**
@@ -11897,6 +11901,21 @@
       !CLF_DOM.hasComposerAttachments());
     return { ok: true, ready, conversationId: currentConversationId, navigationEpoch: epoch };
   }
+  function notifyRestartWakeReadiness() {
+    for (const [id, watch] of watchedRestartWakes) {
+      if (!alive || epoch !== watch.epoch || Date.now() > watch.until ||
+          CLF_DOM.conversationId() !== watch.conversationId) {
+        watchedRestartWakes.delete(id);
+        continue;
+      }
+      if (!restartWakeReadiness(watch.conversationId, watch.recoveryTurnId).ready) continue;
+      // No claim, composer insertion, Send or new tab. The service worker must
+      // re-obtain the current app outbox and repeat exact-document readiness.
+      watchedRestartWakes.delete(id);
+      void ask({ type: 'restart_wake_ready', id, conversationId: watch.conversationId },
+        () => alive && epoch === watch.epoch && CLF_DOM.conversationId() === watch.conversationId);
+    }
+  }
   async function prepareDesktopInputPage(message) {
     if (!/^[a-f0-9-]{36}$/i.test(message.id) || !inputReuseSafe()) return { ready: false };
     const startEpoch = epoch, startConversation = CLF_DOM.conversationId();
@@ -12061,6 +12080,18 @@
       }
       if (message.type === 'clf-restart-wake-readiness') {
         sendResponse(restartWakeReadiness(message.conversationId, message.recoveryTurnId));
+        return false;
+      }
+      if (message.type === 'clf-watch-restart-wake-readiness') {
+        const id = typeof message.id === 'string' ? message.id : '';
+        const target = typeof message.conversationId === 'string' ? message.conversationId : '';
+        if (!/^[a-f0-9-]{36}$/i.test(id) || !target || !alive || CLF_DOM.conversationId() !== target) {
+          sendResponse({ ok: false }); return false;
+        }
+        watchedRestartWakes.set(id, { conversationId: target,
+          recoveryTurnId: message.recoveryTurnId || null, epoch, until: Date.now() + 120000 });
+        sendResponse({ ok: true });
+        notifyRestartWakeReadiness();
         return false;
       }
       if (message.type === 'clf-prepare-desktop-input') {

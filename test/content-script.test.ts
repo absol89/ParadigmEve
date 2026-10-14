@@ -655,6 +655,35 @@ describe('desktop input delivery and helper ownership', () => {
     await settle();
     expect(await readiness()).toMatchObject({ ok: true, ready: true, conversationId: chatA });
   });
+  it('notifies the worker once an armed exact wake has a hydrated idle composer, without claiming or sending', async () => {
+    const claim = vi.fn();
+    live = await harness(`https://chatgpt.com/c/${chatA}`, { desktop_input: claim });
+    await settle();
+    const composer = live.document.querySelector('#prompt-textarea')!;
+    const parent = composer.parentNode!;
+    const next = composer.nextSibling;
+    composer.remove();
+    expect(await live.runtimeMessage({ type: 'clf-watch-restart-wake-readiness', id: inputId, conversationId: chatA })).toEqual({ ok: true });
+    await settle();
+    expect(live.sent.some((row: any) => row.type === 'restart_wake_ready')).toBe(false);
+    parent.insertBefore(composer, next);
+    // A mounted editor containing a human draft is not the idle state that
+    // allowed the last confirmed wake to be delivered.
+    composer.textContent = 'My unsent draft';
+    live.hook.observe();
+    await settle();
+    expect(live.sent.some((row: any) => row.type === 'restart_wake_ready')).toBe(false);
+    composer.textContent = '';
+    live.hook.observe();
+    await settle();
+    expect(live.sent.filter((row: any) => row.type === 'restart_wake_ready')).toEqual([
+      expect.objectContaining({ type: 'restart_wake_ready', id: inputId, conversationId: chatA })
+    ]);
+    live.hook.observe();
+    await settle();
+    expect(live.sent.filter((row: any) => row.type === 'restart_wake_ready')).toHaveLength(1);
+    expect(claim).not.toHaveBeenCalled();
+  });
   it.each(['draft', 'voice', 'wrong conversation'] as const)('never claims a restart wake while its frontend has %s', async blocker => {
     const claim = vi.fn();
     live = await harness(`https://chatgpt.com/c/${chatA}`, { desktop_input: claim });

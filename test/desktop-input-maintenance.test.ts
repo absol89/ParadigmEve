@@ -211,6 +211,28 @@ it('keeps the same durable wake unclaimed during cold frontend hydration and off
   ]);
   expect(h.create).not.toHaveBeenCalled();
 });
+it('reacts to the exact frontend becoming ready without waiting for the next 30-second alarm', async () => {
+  const h = await worker([{ id: firstId, conversationId: thirdId, restartWake: true }]);
+  h.tabs.push({ id: 7, url: `https://chatgpt.com/c/${thirdId}` });
+  await h.authorizeDocument({ tab: { id: 7 }, documentId: 'hydrating-prime', frameId: 0, url: h.tabs[0]!.url }, { navigationEpoch: 3 });
+  let hydrated = false;
+  h.sendMessage.mockImplementation(async (_id, message) => message.type === 'clf-restart-wake-readiness'
+    ? { ok: true, ready: hydrated, conversationId: thirdId, navigationEpoch: 3 }
+    : { ok: true });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-watch-restart-wake-readiness')).toBe(true);
+  expect(h.sendMessage.mock.calls.some(([, message]) => message.type === 'clf-desktop-input')).toBe(false);
+  expect(await h.wakeReady({ id: firstId, conversationId: thirdId }, null,
+    { tab: 7, documentId: 'other-document', navigationEpoch: 3 })).toEqual({ ok: false });
+  hydrated = true;
+  expect(await h.wakeReady({ id: firstId, conversationId: thirdId }, null,
+    { tab: 7, documentId: 'hydrating-prime', navigationEpoch: 3 })).toEqual({ ok: true });
+  await h.maintain();
+  expect(h.sendMessage.mock.calls.filter(([, message]) => message.type === 'clf-desktop-input')).toEqual([
+    [7, { type: 'clf-desktop-input', id: firstId, conversationId: thirdId, restartWake: true }, { documentId: 'hydrating-prime' }]
+  ]);
+  expect(h.create).not.toHaveBeenCalled();
+});
 
 it('will not send a wake after the probed document navigates or changes its recovery epoch', async () => {
   const h = await worker([{ id: firstId, conversationId: thirdId, restartWake: true }]);
@@ -445,8 +467,8 @@ async function worker(inputs: Array<{ id: string; conversationId: string | null;
     },
     fetch, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, TextEncoder, console
   });
-  vm.runInContext(`${source}\nglobalThis.testMaintenance = { load, maintain, releaseTab, serializeTab, noteTabConversation, createChatTab, prepareDesktopInputTarget, waitFreshDesktopInputTarget, returnScheduledInputToBackground, authorizeDocument, ackDesktopInput, drainCommandAcks, inspectRequestedModels, desktopInput: HANDLERS.desktop_input, catalog: HANDLERS.model_catalog, events: HANDLERS.events, applyRequestedBrowserPreferences };`, context);
-  const api = context.testMaintenance as { releaseTab(...args: any[]): Promise<any>; serializeTab(tab: number, operation: () => Promise<any>): Promise<any>; noteTabConversation(source: any, conversationId: string): Promise<any>; applyRequestedBrowserPreferences(request: object): Promise<void>; prepareDesktopInputTarget(tab: Tab, conversationId?: string | null): Promise<boolean>; returnScheduledInputToBackground(source: unknown): Promise<boolean>; authorizeDocument(sender: unknown, message: unknown): Promise<any>; catalog(message: unknown, sender: unknown, source: unknown): Promise<any>; load(): Promise<void>; maintain(): Promise<void>; createChatTab(url: string, background: boolean): Promise<Tab> };
+  vm.runInContext(`${source}\nglobalThis.testMaintenance = { load, maintain, releaseTab, serializeTab, noteTabConversation, createChatTab, prepareDesktopInputTarget, waitFreshDesktopInputTarget, returnScheduledInputToBackground, authorizeDocument, ackDesktopInput, drainCommandAcks, inspectRequestedModels, desktopInput: HANDLERS.desktop_input, catalog: HANDLERS.model_catalog, events: HANDLERS.events, wakeReady: HANDLERS.restart_wake_ready, applyRequestedBrowserPreferences };`, context);
+  const api = context.testMaintenance as { releaseTab(...args: any[]): Promise<any>; serializeTab(tab: number, operation: () => Promise<any>): Promise<any>; noteTabConversation(source: any, conversationId: string): Promise<any>; applyRequestedBrowserPreferences(request: object): Promise<void>; prepareDesktopInputTarget(tab: Tab, conversationId?: string | null): Promise<boolean>; returnScheduledInputToBackground(source: unknown): Promise<boolean>; authorizeDocument(sender: unknown, message: unknown): Promise<any>; catalog(message: unknown, sender: unknown, source: unknown): Promise<any>; wakeReady(message: unknown, sender: unknown, source: unknown): Promise<any>; load(): Promise<void>; maintain(): Promise<void>; createChatTab(url: string, background: boolean): Promise<Tab> };
   await api.load();
   Object.assign(api, { query });
   vm.runInContext('Object.assign(testMaintenance, { offerStopTurns, noteTabConversation, ackCommand })', context);

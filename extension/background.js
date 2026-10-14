@@ -2201,6 +2201,7 @@ async function prepareDesktopInputTarget(tab, conversationId = null) {
  * response is transient: the app-owned outbox stays queued for the 30s retry
  * alarm or a later document registration. This never claims or sends input.
  */
+const restartWakeReadinessWatches = new Map();
 async function provenRestartWakeDocument(tab, input) {
   const target = cleanConversationId(input?.conversationId);
   if (!tab || !Number.isInteger(tab.id) || !target || tab.pendingUrl) return null;
@@ -2214,6 +2215,17 @@ async function provenRestartWakeDocument(tab, input) {
       ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}) },
     { documentId: source.documentId }, 1000);
   const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (reply?.ok === true && reply.ready === false && ownsDocument(source) &&
+      after && !after.pendingUrl && after.url === before.url && conversationForTab(after) === target) {
+    // Install a one-shot readiness notification in this exact owned document.
+    // It only schedules a fresh /status check; the document cannot authorize Send.
+    if (restartWakeReadinessWatches.size >= 100) restartWakeReadinessWatches.clear();
+    restartWakeReadinessWatches.set(input.id, { ...source, conversationId: target });
+    await tabReply(tab.id, { type: 'clf-watch-restart-wake-readiness', id: input.id,
+      conversationId: target, ...(input.recoveryTurnId ? { recoveryTurnId: input.recoveryTurnId } : {}) },
+    { documentId: source.documentId }, 1000);
+  }
+  if (reply?.ready === true) restartWakeReadinessWatches.delete(input.id);
   return reply?.ok === true && reply.ready === true && reply.conversationId === target &&
     reply.navigationEpoch === source.navigationEpoch && ownsDocument(source) &&
     after && !after.pendingUrl && after.url === before.url && conversationForTab(after) === target
@@ -3924,6 +3936,17 @@ const HANDLERS = {
     if (result && result.ok === true) void recoverDeferredRevivals().catch(() => undefined);
     return result;
   },
+  async restart_wake_ready(message, _sender, source) {
+    const watch = restartWakeReadinessWatches.get(message.id);
+    if (!watch || watch.conversationId !== message.conversationId ||
+        watch.tab !== source.tab || watch.documentId !== source.documentId ||
+        watch.navigationEpoch !== source.navigationEpoch || !ownsDocument(source)) return { ok: false };
+    restartWakeReadinessWatches.delete(message.id);
+    // This is a wake-up hint, never a Send or claim receipt. The new pass asks
+    // the main process whether the same durable wake is still eligible.
+    void maintain(true).catch(() => undefined);
+    return { ok: true };
+  },
   async status() {
     await load();
     const found = await discover();
@@ -4543,6 +4566,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     'stop_redeem',
     'stop_ack',
     'desktop_input',
+    'restart_wake_ready',
     'desktop_input_project_unreachable',
     'model_catalog',
     'plugin_refresh',
