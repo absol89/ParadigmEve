@@ -52,6 +52,7 @@ import {
 } from '../shared/goal.js';
 import { browserExtensionRequired, DEFAULT_CORE_CONNECTOR_NAME, type AppState, type Config } from '../shared/types.js';
 import { $, ago, clockTime, compactNumber, el, filterSettingsSections, icon, run, toast } from './dom.js';
+import { initChatFind } from './chat-find.js';
 import { decoratePinsWorkspaceReferences, onPinStateChanged, pinImageRefForMessage, pinStateForDraft, threadContextLabel, togglePinTarget, type PinDraft } from './workspace-library.js';
 import { authoredMessageConversationId } from './pin-provenance.js';
 import { currentWorkspaceNavigation, navigateWorkspace, onWorkspaceNavigation, onWorkspaceThreadChatOpening } from './workspace-navigation.js';
@@ -122,6 +123,7 @@ let sessionPageLoading = false;
 let loadedOlderSessions = false;
 let activeId: string | null = null;
 let selectedId: string | null = null;
+let chatFind: ReturnType<typeof initChatFind> | null = null;
 let newChatSelected = true;
 /** True only for the explicit owner-replacement New Chat surface while identity is fail-closed. */
 let newChatAgentClaim = false;
@@ -830,7 +832,7 @@ function paintSessions(): void {
           if (selectedProjectId === id) {
             if (!selectedId) {
               const oldKey = draftKey();
-              selectedProjectId = null; selectionGeneration++;
+              selectedProjectId = null; selectionGeneration++; chatFind?.selectionChanged();
               // Keep the visible draft and its attachments while moving to unfiled.
               rememberDraft(); inputDrafts.delete(oldKey);
               const images = imageDrafts.get(oldKey);
@@ -4221,6 +4223,7 @@ function selectSession(
 ): void {
   rememberDraft();
   selectionGeneration++;
+  chatFind?.selectionChanged();
   newChatSelected = false;
   newChatAgentClaim = false;
   newChatAgentReplacementFrom = null;
@@ -4260,7 +4263,7 @@ function selectNewChat(
   contextQuiltId: string | null = null,
   options: { resetDraft?: boolean; replaceAgentIdentityFrom?: string | null } = {}
 ): void {
-  rememberDraft(); selectionGeneration++; pendingNewInput = null;
+  rememberDraft(); selectionGeneration++; chatFind?.selectionChanged(); pendingNewInput = null;
   newChatSelected = true; selectedId = null; selectedProjectId = projectId; selectedContextQuiltId = contextQuiltId; detailFor = null; detailCursor = null;
   newChatAgentClaim = projectId === null && claimAgentIdentity && swarm?.currentAgentConversationId === null;
   newChatAgentReplacementFrom = projectId === null && !newChatAgentClaim
@@ -4290,6 +4293,12 @@ function selectNewChat(
 
 export function initChat(next: Deps): void {
   deps = next;
+  chatFind = initChatFind({
+    selectedId: () => selectedId,
+    find: async (id, query) => (await run(api.findInChat(id, query))) ?? null,
+    // The same reveal as a Pin source: load the page around the row, open its groups, center it.
+    reveal: async (id, match) => { if (selectedId === id) await revealSourceEvent(match.seq); }
+  });
   initTranscriptionJobs(() => selectedId);
   onWorkspaceNavigation(state => {
     if (state.screen !== 'chat') return;

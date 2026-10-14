@@ -1952,5 +1952,10 @@
   "GPU transcription is not available on this computer.": "La transcripción con GPU no está disponible en esta computadora.",
   "Ran on GPU: {0}": "Se ejecutó en GPU: {0}",
   "Ran on CPU": "Se ejecutó en CPU",
-  "Fell back after: {0}": "Se usó la alternativa después de: {0}"
+  "Fell back after: {0}": "Se usó la alternativa después de: {0}",
+  "Find in chat": "Buscar en el chat",
+  "Previous match": "Coincidencia anterior",
+  "Next match": "Coincidencia siguiente",
+  "{0} of {1}": "{0} de {1}",
+  "No matches": "Sin coincidencias"
 }

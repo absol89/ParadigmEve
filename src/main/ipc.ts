@@ -1,5 +1,6 @@
 import { startOllamaChatDriver } from './session/ollama-chat.js';
 import { getOpenSession } from './session/store.js';
+import { findInSession } from './session/find.js';
 import { logRendererProviderSwitchMark, markProviderSwitch, traceProviderSwitch } from './provider-switch-trace.js';
 import { sendPlanRevision } from './plans.js';
 import { applyLoginStartup, supportsLoginStartup } from './window-lifecycle.js';
@@ -1490,6 +1491,11 @@ export function registerIpc(
   handle('sessions:imageThumbnail', async (payload) => {
     const { id, assetId } = z.object({ id: z.string().min(8).max(64).regex(/^[0-9a-z-]+$/i), assetId: z.string().max(100).regex(/^[a-f0-9]{8,64}\.(?:bin|png|jpg)$/) }).parse(payload);
     return recordedInputImageThumbnail(id, assetId);
+  });
+  // Find in chat: every message of one chat holding a phrase, read from the whole recording.
+  handle('sessions:find', async (payload) => {
+    const { id, query } = sessionIdArg.extend({ query: z.string().max(200) }).strict().parse(payload);
+    return findInSession(id, query);
   });
   handle('sessions:events', async (payload) => {
     const { id, from, before, limit } = z
