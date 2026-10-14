@@ -111,11 +111,12 @@ async function edit(reg: SurfaceRegistrar, args: FileEditArgs): Promise<ToolResu
       'changes:',
       ...outcome.diff,
       'steps:',
-      ...outcome.steps
+      ...outcome.steps,
+      ...(outcome.warning ? [outcome.warning] : [])
     ].join('\n');
     return {
       content: [{ type: 'text', text }],
-      structuredContent: { output: outcome.output, source: source.virtual, provider: outcome.provider, validated: outcome.validated, changes: outcome.diff, steps: outcome.steps }
+      structuredContent: { output: outcome.output, source: source.virtual, provider: outcome.provider, validated: outcome.validated, changes: outcome.diff, steps: outcome.steps, ...(outcome.warning ? { warning: outcome.warning } : {}) }
     };
   } catch (error) {
     if (error instanceof EditRefused) return fail(error.message);

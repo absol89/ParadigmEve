@@ -44,6 +44,7 @@ export interface EditOutcome {
   steps: string[];
   diff: string[];
   validated: boolean;
+  warning?: string;
 }
 
 export class EditRefused extends Error {}
@@ -316,12 +317,11 @@ async function editOnce(request: EditRequest): Promise<EditOutcome> {
       await fs.rm(stagedOutput, { force: true });
       throw error instanceof EditRefused ? error : new EditRefused(`OUTPUT_INVALID: the saved file could not be read back (${(error as Error).message.slice(0, 200)}). Nothing was published.`);
     }
+    // A hard link is the publish primitive because it is atomic and fails if another writer
+    // claimed the destination first. If this filesystem cannot hard-link, fail closed instead of
+    // falling back to rename: rename may replace a raced destination on Windows or POSIX.
     try {
-      // A hard link is the publish primitive because it is atomic and fails if another writer
-      // claimed the destination first. If this filesystem cannot hard-link, fail closed instead of
-      // falling back to rename: rename may replace a raced destination on Windows or POSIX.
       await fs.link(stagedOutput, destination);
-      await fs.rm(stagedOutput, { force: true });
       published = true;
     } catch {
       keepOutput = true;
@@ -330,12 +330,21 @@ async function editOnce(request: EditRequest): Promise<EditOutcome> {
         `It is kept at ${request.destination.virtualDir}/${stagedOutputName}.`
       );
     }
+    // The destination is already committed. Antivirus/locking failures while removing the
+    // extra hard link must not turn a successful publication into a failed operation.
+    let warning: string | undefined;
+    try {
+      await fs.rm(stagedOutput, { force: true });
+    } catch {
+      warning = `CLEANUP_WARNING: the edited copy was saved, but the staging file at ${request.destination.virtualDir}/${stagedOutputName} could not be removed. It can be deleted later.`;
+    }
     return {
       output: `${request.destination.virtualDir}/${request.destination.name}`,
       provider: { id: provider.id, version: installed.version },
       steps: transcript,
       diff: diff.lines,
-      validated: diff.validated
+      validated: diff.validated,
+      ...(warning ? { warning } : {})
     };
   } finally {
     await fs.rm(stagedInput, { force: true }).catch(() => undefined);

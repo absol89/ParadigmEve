@@ -367,6 +367,44 @@ describe('file_edit edit transaction', () => {
     expect((await fs.readdir(workspace())).some((name) => name.startsWith('.eve-staging-') && name.endsWith('book (Eve edit).xlsx'))).toBe(true);
   });
 
+  it('reports a successful publish and retained staging file when post-link cleanup fails', async () => {
+    const source = path.join(workspace(), 'book.xlsx');
+    const destination = path.join(workspace(), 'book (Eve edit).xlsx');
+    await fs.writeFile(source, workbook());
+    const sourceHash = await sha(source);
+    const originalRm = rawPromises.rm.bind(rawPromises);
+    let linkedBeforeCleanup = false;
+    const rm = vi.spyOn(rawPromises, 'rm').mockImplementation(async (target, options) => {
+      if (typeof target === 'string' && target.includes('.eve-staging-') && target.endsWith('book (Eve edit).xlsx')) {
+        linkedBeforeCleanup = await fs.stat(destination).then(() => true, () => false);
+        throw Object.assign(new Error('staging output is locked'), { code: 'EPERM' });
+      }
+      return originalRm(target, options);
+    });
+    let result: Awaited<ReturnType<ReturnType<typeof registrar>['invokeNested']>>;
+    try {
+      result = await registrar({ create: true }).invokeNested('file_edit', {
+        op: 'edit', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx', steps: steps()
+      }, caller());
+    } finally {
+      rm.mockRestore();
+    }
+
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain('EDITED: wrote /workspace/book (Eve edit).xlsx');
+    expect(textOf(result)).not.toContain('PUBLISH_FAILED');
+    expect(textOf(result)).toMatch(/CLEANUP_WARNING:.*\.eve-staging-.*book \(Eve edit\)\.xlsx/);
+    expect(result.structuredContent).toMatchObject({ output: '/workspace/book (Eve edit).xlsx' });
+    expect(result.structuredContent).toMatchObject({ warning: expect.stringMatching(/CLEANUP_WARNING:.*\/workspace\/\.eve-staging-/) });
+    expect(linkedBeforeCleanup).toBe(true);
+    expect(await sha(source)).toBe(sourceHash);
+    expect(await fs.stat(destination).then(() => true, () => false)).toBe(true);
+    const staged = (await fs.readdir(workspace())).filter((name) => name.startsWith('.eve-staging-') && name.endsWith('book (Eve edit).xlsx'));
+    expect(staged).toHaveLength(1);
+    expect(await leftovers()).toHaveLength(1);
+    expect(await sha(path.join(workspace(), staged[0]!))).toBe(await sha(destination));
+  });
+
   it('compares size and hash for formats without a built-in reader, and needs the app and the permission', async () => {
     await fs.writeFile(path.join(workspace(), 'clip.wav'), Buffer.from('RIFF....WAVE'));
     const reg = registrar({ create: true });
