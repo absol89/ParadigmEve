@@ -15,6 +15,7 @@ import { terminateProcessTree } from '../exec.js';
 import { pluginCatalog, reviewedPluginLicense } from './catalog.js';
 import sharp from 'sharp';
 import { pluginExposure } from './exposure.js';
+import { fileCapabilityProvider } from '../file-capabilities.js';
 import { PluginOAuth, PluginNeedsAuth, PluginOAuthSetupError, clearPluginOAuth } from './oauth.js';
 export { PLUGIN_MAX_TOOLS, PLUGIN_MAX_SCHEMA_BYTES } from './exposure.js';
 
@@ -104,7 +105,7 @@ export class PluginManager {
     void Promise.all(this.records.filter(row => row.enabled).map(row => this.connect(row))).catch(() => undefined);
   }
   private exposure() {
-    return this.exposureCache ??= pluginExposure(this.records.map(row => ({
+    return this.exposureCache ??= pluginExposure(this.records.filter(row => !brokerProvider(row)).map(row => ({
       id: row.id, name: row.name, enabled: row.enabled && !['error', 'needs-auth', 'authenticating'].includes(row.status) && (row.source.auth !== 'oauth' || this.live.has(row.id)),
       tools: row.catalog, disabledTools: row.disabledTools,
     })));
@@ -187,7 +188,7 @@ export class PluginManager {
         typeof p.enabled !== 'boolean' ||
         !p.source ||
         (p.source.auth !== undefined && (p.source.auth !== 'oauth' || p.source.kind !== 'remote')) ||
-        !['command', 'npm', 'python', 'mcpb', 'remote'].includes(p.source.kind) ||
+        !['command', 'npm', 'python', 'mcpb', 'remote', 'artcraft'].includes(p.source.kind) ||
         !p.launch ||
         typeof p.launch.command !== 'string' ||
         !Array.isArray(p.launch.args) ||
@@ -769,8 +770,28 @@ export class PluginManager {
     this.changed();
   }
   tools(): Tool[] { return [...this.exposure().tools]; }
+  /** The installed, enabled row for one broker file provider, if any. */
+  fileProvider(providerId: string): { id: string; status: PluginView['status']; version: string } | null {
+    const row = this.records.find(row => brokerProvider(row) === providerId);
+    return row ? { id: row.id, status: row.enabled ? row.status : 'disabled', version: row.version } : null;
+  }
+  /**
+   * Installs exactly the release version the user approved; its tools stay off every connector.
+   * Consent is the caller's. Health is the ordinary connect: MCP initialize plus tool discovery.
+   */
+  installFileProvider(providerId: string, version: string): Promise<PluginSnapshot> {
+    const provider = fileCapabilityProvider(providerId);
+    if (!provider) return Promise.reject(new Error('This file app is not in the registry.'));
+    if (this.fileProvider(providerId)) return Promise.reject(new Error(`${provider.displayName} is already installed.`));
+    return this.install({ source: { kind: 'artcraft', package: provider.id, version }, name: provider.displayName });
+  }
+  /**
+   * Calls a published plugin tool by name, or with `broker`, one tool of that broker file provider.
+   * Broker providers are unreachable by name: a published-surface call can never route to them.
+   */
   async call(name: string, args: Record<string, unknown> = {},
-    onOutcome?: (outcome: 'tool_rejected' | 'tool_execution_error') => void): Promise<CallToolResult> {
+    onOutcome?: (outcome: 'tool_rejected' | 'tool_execution_error') => void,
+    options: { broker?: string } = {}): Promise<CallToolResult> {
     // The invocation owner knows whether a tool failed or was never admitted.
     // Keep this internal evidence out of the upstream MCP result/content contract.
     const errorResult = (text: string, outcome: 'tool_rejected' | 'tool_execution_error' = 'tool_execution_error'): CallToolResult => {
@@ -780,15 +801,18 @@ export class PluginManager {
     let startupFailed = false;
     let acquired: { row: RecordEntry; live: Live; tool: Tool } | undefined;
     try {
-      acquired = await this.serial(this.exposure().owners.get(name) ?? name, async () => {
+      const ownerOf = () => options.broker
+        ? this.records.find(row => brokerProvider(row) === options.broker)?.id
+        : this.exposure().owners.get(name);
+      acquired = await this.serial(ownerOf() ?? name, async () => {
         if (this.closing) return;
-        const owner = this.exposure().owners.get(name);
+        const owner = ownerOf();
         const row = this.records.find(row => row.id === owner && row.enabled);
         if (!row) return;
         let live = this.live.get(row.id);
         if (!live) { await this.connect(row); live = this.live.get(row.id); startupFailed = !live && row.enabled && row.status === 'error'; }
         // Discovery/configuration may have changed the exact declaration during startup.
-        if (!live || !row.enabled || this.closing || this.exposure().owners.get(name) !== row.id) {
+        if (!live || !row.enabled || this.closing || ownerOf() !== row.id) {
           if (live && live.users === 0) await this.disconnect(row);
           return;
         }
@@ -848,4 +872,9 @@ export class PluginManager {
     this.changed();
   }
 }
+/** Registry id of a broker-owned file provider row, else null. */
+function brokerProvider(row: { source: { kind: string; package?: string } }): string | null {
+  return row.source.kind === 'artcraft' && row.source.package ? row.source.package : null;
+}
+
 export const pluginManager = new PluginManager();

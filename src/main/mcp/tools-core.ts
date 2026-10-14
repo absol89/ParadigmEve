@@ -179,6 +179,7 @@ import {
 } from '../vault-path.js';
 import { selfMaintenanceRoots, selfMaintenanceSettings, updateSelfMaintenanceSettings, type SelfMaintenanceUpdate } from '../self-maintenance.js';
 import { registerFileActionTool } from './file-action.js';
+import { registerFileEditTool } from './file-edit.js';
 
 /** Entries one `read` of a directory returns before it says it stopped. */
 const MAX_DIR_ENTRIES = 200;
@@ -334,6 +335,7 @@ async function rootsForSelfMaintenance(
 export function registerCoreTools(reg: SurfaceRegistrar): void {
   const { ctx, caps, exposedCaps } = reg;
   registerFileActionTool(reg);
+  registerFileEditTool(reg);
   // Named from the live roots, never from a `/project` that may not exist: a worked example the
   // model cannot act on costs a refused call and a retry. What followed the root had the same
   // problem and cost more of them. `/<root>/src/main.ts` is a project's shape, so it read as a

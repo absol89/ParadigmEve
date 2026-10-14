@@ -1957,5 +1957,10 @@
   "Previous match": "Coincidencia anterior",
   "Next match": "Coincidencia siguiente",
   "{0} of {1}": "{0} de {1}",
-  "No matches": "Sin coincidencias"
+  "No matches": "Sin coincidencias",
+  "File apps (ArtCraft)": "Apps de archivos (ArtCraft)",
+  "When Eve works with a file that a free ArtCraft app can edit, she can offer to install that app. Nothing is installed unless you click Install in ParadigmEve’s own prompt; only the official build for this computer is downloaded and checked against its published SHA-256. Installed apps appear in the list above and can be removed there.": "Cuando Eve trabaja con un archivo que una app gratuita de ArtCraft puede editar, puede ofrecerte instalar esa app. No se instala nada a menos que hagas clic en Instalar en el aviso propio de ParadigmEve; solo se descarga la compilación oficial para esta computadora y se verifica con su SHA-256 publicado. Las apps instaladas aparecen en la lista de arriba y puedes quitarlas desde ahí.",
+  "Ask again about apps I declined": "Volver a preguntar por las apps que rechacé",
+  "Declined: {0}": "Rechazadas: {0}",
+  "You have not declined any file app.": "No has rechazado ninguna app de archivos."
 }

@@ -289,5 +289,13 @@ export function initPlugins(onState: (next: AppState) => void = () => {}): void 
   $('pluginsSetupLink').addEventListener('click', showConnection);
   $('pluginsOpenChatGPT').addEventListener('click', async () => { await run(window.api.openLink('https://chatgpt.com/#settings/Plugins')); });
   $('pluginsLegalOpen').addEventListener('click', async () => { await run(window.api.openLegalNotices()); });
+  const showFileApps = (settings: { declined: string[]; preview: boolean } | null) => {
+    if (!settings || !Array.isArray(settings.declined)) return;
+    $('fileAppsDeclined').textContent = settings.declined.length
+      ? t('Declined: {0}', [settings.declined.map((id) => id.replace('artcraft.', '')).join(', ')])
+      : t('You have not declined any file app.');
+  };
+  $('fileAppsReset').addEventListener('click', async () => { showFileApps(await run(window.api.fileProviderUpdate({ resetDeclined: true }))); });
+  void run(window.api.fileProviderSettings()).then(showFileApps);
   window.api.onPluginsChanged(() => { void refreshPlugins(); }); void refreshPlugins();
 }

@@ -1691,6 +1691,22 @@ Refresh targets the exact account-observed installed app id, durably claims befo
 and completes only after observed declarations fully match. Automatic refresh is opt-in;
 unsupported/manual-required stays visible instead of opening more helper tabs.
 
+### File broker and ArtCraft file apps
+
+`file_action` (read-only: `inspect`, bounded `read`) and `file_edit` (changes) are the only Core
+file-broker tools on every chat route (ChatGPT, local Ollama/OpenRouter chats and workers). Built-in
+XLSX/DOCX/PDF/PPTX readers are the zero-install fallback; PDF.js runs in a killable worker. Results
+are bounded before they reach a model, labelled as data, and `contentRecipient` records the route
+that received them. `file-capabilities.ts` is data only: the 13 ArtCraft apps, their formats,
+official repos and per-OS/arch asset templates. Nothing is bundled or preinstalled. A matching file
+yields a `provider_offer` (once per conversation for built-in formats); `file_edit install_provider`
+only opens `file-provider-consent.ts`'s native dialog, which the model and file content cannot
+answer. On yes, `file-provider-install.ts` reads the latest stable release, requires its published
+SHA-256 for this machine's single asset, verifies the bytes, extracts through the plugin installer's
+validated unzip and installs per-user as an `artcraft` PluginManager row. Those rows never publish
+or claim names on any connector; only `pluginManager.call(..., { broker })` reaches them. "No
+thanks" is durable per app until reset in Plugins. Craft-app edits never modify the source file.
+
 ### Connections, tunnels and diagnostics
 
 `connection.ts` serializes endpoint/tunnel generations and publishes only live eligible surfaces.

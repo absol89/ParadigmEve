@@ -3,6 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { pluginManager } from './plugins/manager.js';
 import { refreshPluginPublication } from './connection.js';
+import { fileProviderSettings, updateFileProviderSettings } from './file-provider-consent.js';
 
 const values = z.record(z.string().min(1).max(128), z.string().max(16_384)).refine(value => Object.keys(value).length <= 64, 'At most 64 configuration fields');
 const source = z.object({
@@ -44,6 +45,10 @@ export function registerPluginIpc(handle: Register, getWindow: () => BrowserWind
     const result = await dialog.showOpenDialog({ title: 'Import MCP bundle', properties: ['openFile'], filters: [{ name: 'MCP bundles', extensions: ['mcpb'] }] });
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
+  handle('fileProviders:settings', async () => fileProviderSettings());
+  handle('fileProviders:update', async payload => updateFileProviderSettings(
+    z.object({ resetDeclined: z.boolean().optional(), preview: z.boolean().optional() }).strict().parse(payload)
+  ));
   pluginManager.onChanged(() => {
     refreshPluginPublication('plugins');
     const window = getWindow();

@@ -108,7 +108,8 @@ describe('file_action built-in read fallback', () => {
     const { reg } = registrar();
     const caller = { startedAt: Date.now(), transportKey: null, agent: null, caller: { transportKey: null, requestId: null, conversationId: null, sessionId: null, localPrincipal: null }, outcome: null, evidence: { offeredMessageIds: [], consumedMessageIds: [], createdWorkerIds: [], touchedWorkerIds: [], outputLines: 0, outputBytes: 0, changedFiles: [], count: null, detail: null, execSessionId: null, execCommand: null } } as any;
     const bounded = await reg.invokeNested('file_action', { op: 'read', path: '/workspace/long.docx', max_chars: 512 }, caller);
-    expect((bounded.content[0] as any).text.length).toBeLessThan(800);
+    // The slice itself is bounded by max_chars; the header (and a one-time app offer) sit above it.
+    expect((bounded.content[0] as any).text.split(String.fromCharCode(10, 10)).slice(1).join('').length).toBeLessThanOrEqual(512);
     expect((bounded.content[0] as any).text).toContain('truncated: yes');
     const escaped = await reg.invokeNested('file_action', { op: 'inspect', path: '/workspace/../escape.docx' }, caller);
     expect(escaped.isError).toBe(true);
@@ -219,7 +220,7 @@ describe('file_action hardening', () => {
     expect(textOf(missing)).toContain('(+70 more)');
     expect(textOf(missing).length).toBeLessThan(4_000);
     const inspect = await reg.invokeNested('file_action', { op: 'inspect', path: '/workspace/wide.xlsx' }, callerContext());
-    expect(textOf(inspect).length).toBeLessThan(4_000);
+    expect(textOf(inspect).length).toBeLessThan(5_000);
   });
 
   it('gives ChatGPT the bounded slice in structuredContent and labels it as data', async () => {

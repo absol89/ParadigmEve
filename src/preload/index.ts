@@ -127,6 +127,8 @@ const api = {
   pluginsSetEnabled: (id: string, enabled: boolean) => call<PluginSnapshot>('plugins:enabled', { id, enabled }),
   pluginsSetToolEnabled: (id: string, name: string, enabled: boolean) => call<PluginSnapshot>('plugins:tool', { id, name, enabled }),
   pluginsImportBundle: () => call<string | null>('plugins:importBundle'),
+  fileProviderSettings: () => call<{ declined: string[]; preview: boolean }>('fileProviders:settings'),
+  fileProviderUpdate: (patch: { resetDeclined?: boolean; preview?: boolean }) => call<{ declined: string[]; preview: boolean }>('fileProviders:update', patch),
   onPluginsChanged: (listener: (snapshot: PluginSnapshot) => void): (() => void) => {
     const wrapped = (_event: unknown, snapshot: PluginSnapshot): void => listener(snapshot);
     ipcRenderer.on('plugins:changed', wrapped);

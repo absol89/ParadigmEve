@@ -1963,5 +1963,10 @@
   "Previous match": "Föregående träff",
   "Next match": "Nästa träff",
   "{0} of {1}": "{0} av {1}",
-  "No matches": "Inga träffar"
+  "No matches": "Inga träffar",
+  "File apps (ArtCraft)": "Filappar (ArtCraft)",
+  "When Eve works with a file that a free ArtCraft app can edit, she can offer to install that app. Nothing is installed unless you click Install in ParadigmEve’s own prompt; only the official build for this computer is downloaded and checked against its published SHA-256. Installed apps appear in the list above and can be removed there.": "När Eve arbetar med en fil som en gratis ArtCraft-app kan redigera kan hon erbjuda att installera appen. Inget installeras om du inte klickar på Installera i ParadigmEves egen fråga; bara den officiella versionen för den här datorn laddas ned och kontrolleras mot sin publicerade SHA-256. Installerade appar visas i listan ovan och kan tas bort där.",
+  "Ask again about apps I declined": "Fråga igen om appar jag har tackat nej till",
+  "Declined: {0}": "Nej tack till: {0}",
+  "You have not declined any file app.": "Du har inte tackat nej till någon filapp."
 }

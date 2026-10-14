@@ -88,10 +88,12 @@ async function bundledPlaywright(source: PluginSource): Promise<InstalledLaunch 
   };
 }
 
-/** Validate central-directory metadata before decompression, then extract into a new private directory only. */
-export async function extractBundle(input: string, directory: string): Promise<unknown> {
-  if ((await fs.stat(input)).size > MAX_BUNDLE_BYTES) throw new Error('MCPB exceeds the 128 MiB archive limit');
-  const zip = await fs.readFile(input);
+/**
+ * Validates a ZIP's central directory before any decompression: no ZIP64/multipart, no links,
+ * absolute/traversal/device names, duplicates, encryption or path collisions, and bounded
+ * entry count and total size. Returns the inflated files and each entry's Unix mode.
+ */
+export function unzipValidated(zip: Buffer, label: string, maxBytes: number): { files: Record<string, Uint8Array>; modes: Map<string, number> } {
   let total = 0,
     entries = 0;
   const seen = new Map<string, { name: string; size: number; mode: number }>();
@@ -107,15 +109,15 @@ export async function extractBundle(input: string, directory: string): Promise<u
     zip.readUInt16LE(end + 6) ||
     zip.readUInt16LE(end + 8) !== zip.readUInt16LE(end + 10)
   )
-    throw new Error('Invalid or multipart MCPB archive');
+    throw new Error(`Invalid or multipart ${label} archive`);
   const count = zip.readUInt16LE(end + 10),
     centralSize = zip.readUInt32LE(end + 12),
     centralOffset = zip.readUInt32LE(end + 16);
   if (count === 65535 || centralOffset + centralSize !== end)
-    throw new Error('ZIP64 and malformed MCPB archives are unsupported');
+    throw new Error(`ZIP64 and malformed ${label} archives are unsupported`);
   let i = centralOffset;
   for (let index = 0; index < count; index++) {
-    if (i + 46 > end || zip.readUInt32LE(i) !== 0x02014b50) throw new Error('Invalid MCPB central directory');
+    if (i + 46 > end || zip.readUInt32LE(i) !== 0x02014b50) throw new Error(`Invalid ${label} central directory`);
     const size = zip.readUInt32LE(i + 24),
       length = zip.readUInt16LE(i + 28);
     const name = zip.subarray(i + 46, i + 46 + length).toString('utf8');
@@ -126,41 +128,53 @@ export async function extractBundle(input: string, directory: string): Promise<u
       name.includes('\0') ||
       name.split('/').some((p) => /[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(p))
     )
-      throw new Error('MCPB contains an unsafe archive path or symbolic link');
+      throw new Error(`${label} contains an unsafe archive path or symbolic link`);
     const key = name.toLowerCase();
     if (seen.has(key) || zip.readUInt16LE(i + 8) & 1)
-      throw new Error('MCPB contains duplicate paths or encrypted files');
+      throw new Error(`${label} contains duplicate paths or encrypted files`);
     seen.set(key, { name, size, mode });
     total += size;
     entries++;
-    if (total > MAX_BUNDLE_BYTES || entries > 10000 || size === 0xffffffff)
-      throw new Error('MCPB extraction limit exceeded');
+    if (total > maxBytes || entries > 10000 || size === 0xffffffff)
+      throw new Error(`${label} extraction limit exceeded`);
     i += 46 + length + zip.readUInt16LE(i + 30) + zip.readUInt16LE(i + 32);
   }
-  if (!entries || i !== end) throw new Error('MCPB is not a supported ZIP archive');
+  if (!entries || i !== end) throw new Error(`${label} is not a supported ZIP archive`);
   for (const { name } of seen.values()) {
     const parts = name.replace(/\/$/, '').split('/');
     for (let n = 1; n < parts.length; n++)
-      if (seen.has(parts.slice(0, n).join('/').toLowerCase())) throw new Error('MCPB file/directory path collision');
+      if (seen.has(parts.slice(0, n).join('/').toLowerCase())) throw new Error(`${label} file/directory path collision`);
   }
   const files = unzipSync(zip, {
     filter: (file) => {
       const entry = seen.get(file.name.toLowerCase());
-      if (!entry || entry.name !== file.name || entry.size !== file.originalSize) throw new Error('Invalid MCPB entry');
+      if (!entry || entry.name !== file.name || entry.size !== file.originalSize) throw new Error(`Invalid ${label} entry`);
       return true;
     },
   });
-  const manifestBytes = files['manifest.json'];
-  if (!manifestBytes || manifestBytes.length > 256000) throw new Error('MCPB needs a bounded root manifest.json');
-  const manifest = vAny.McpbManifestSchema.parse(JSON.parse(Buffer.from(manifestBytes).toString('utf8')));
+  return { files, modes: new Map([...seen.values()].map((entry) => [entry.name, entry.mode])) };
+}
+
+/** Writes validated files into a new private directory; nothing may land outside it. */
+export async function writeUnzipped(files: Record<string, Uint8Array>, modes: Map<string, number>, directory: string): Promise<void> {
   await fs.mkdir(directory, { recursive: true });
   for (const [name, bytes] of Object.entries(files)) {
     if (name.endsWith('/')) continue;
     const target = path.resolve(directory, name);
-    if (!target.startsWith(path.resolve(directory) + path.sep)) throw new Error('Unsafe bundle path');
+    if (!target.startsWith(path.resolve(directory) + path.sep)) throw new Error('Unsafe archive path');
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, bytes, { flag: 'wx', mode: seen.get(name.toLowerCase())!.mode & 0o111 ? 0o700 : 0o600 });
+    await fs.writeFile(target, bytes, { flag: 'wx', mode: (modes.get(name) ?? 0) & 0o111 ? 0o700 : 0o600 });
   }
+}
+
+/** Validate central-directory metadata before decompression, then extract into a new private directory only. */
+export async function extractBundle(input: string, directory: string): Promise<unknown> {
+  if ((await fs.stat(input)).size > MAX_BUNDLE_BYTES) throw new Error('MCPB exceeds the 128 MiB archive limit');
+  const { files, modes } = unzipValidated(await fs.readFile(input), 'MCPB', MAX_BUNDLE_BYTES);
+  const manifestBytes = files['manifest.json'];
+  if (!manifestBytes || manifestBytes.length > 256000) throw new Error('MCPB needs a bounded root manifest.json');
+  const manifest = vAny.McpbManifestSchema.parse(JSON.parse(Buffer.from(manifestBytes).toString('utf8')));
+  await writeUnzipped(files, modes, directory);
   return manifest;
 }
 
@@ -235,6 +249,11 @@ export async function installSource(source: PluginSource, dir: string): Promise<
   const bundled = await bundledPlaywright(source);
   if (bundled) return bundled;
   if (source.kind === 'remote') return { command: '', args: [], version: 'remote', license: 'See server terms' };
+  if (source.kind === 'artcraft') {
+    const { acquireFileProvider } = await import('../file-provider-install.js');
+    if (!source.version) throw new Error('A file app installation needs the version the user approved.');
+    return acquireFileProvider(source.package ?? '', dir, { expectVersion: source.version });
+  }
   if (source.kind === 'command') {
     if (!source.command?.trim()) throw new Error('An executable is required');
     return {

@@ -939,11 +939,11 @@ describe('model-facing surfaces', () => {
     // work closes only from exact durable task-verification lineage rather than final prose/browser state.
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
     // queries, while `expenses` contains mutations only. Skills add one lazy view/manage tool;
-    // their full bodies never live in tools/list. The provider-neutral file broker adds one
-    // bounded read-only file_action schema while keeping provider-specific tool sets off Core.
+    // their full bodies never live in tools/list. The provider-neutral file broker adds bounded
+    // file_action/file_edit schemas while keeping provider-specific tool sets off Core.
     // Debug builds also
     // expose one narrow authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 37 : process.platform === 'darwin' ? 24 : 22);
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 38 : process.platform === 'darwin' ? 25 : 23);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');
@@ -968,10 +968,10 @@ describe('model-facing surfaces', () => {
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    // 2.4.0 adds one explicit provider-neutral file_action schema (inspect/read plus bounded
-    // per-format selectors). That is deliberate discovery cost in exchange for keeping the
+    // Post-2.4 adds explicit provider-neutral file_action/file_edit schemas. That is deliberate
+    // discovery cost in exchange for keeping the
     // full provider-specific ArtCraft/GridCraft tool sets off Core.
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 45_000 : 44_800);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 46_000 : 45_800);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget

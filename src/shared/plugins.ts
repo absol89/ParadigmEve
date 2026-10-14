@@ -1,5 +1,6 @@
 export type PluginSource = {
-  kind: 'npm' | 'python' | 'command' | 'remote' | 'mcpb' | 'github';
+  /** `artcraft`: a curated file-capability provider (package = its registry id), used only by file_action. */
+  kind: 'npm' | 'python' | 'command' | 'remote' | 'mcpb' | 'github' | 'artcraft';
   package?: string;
   version?: string;
   /** Reviewed exact Python dependency pins, resolved together with the server package. */
