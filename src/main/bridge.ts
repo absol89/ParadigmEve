@@ -265,6 +265,11 @@ export const BROWSER_RECOVERY_COOLDOWN_MS = 3 * 60_000;
  */
 export const UNATTRIBUTED_RECONNECT_GRACE_MS = 15_000;
 const STALE_SWARM_SWEEP_MS = 30_000;
+/** Working chats get this long to reconnect after a sleeping/paused machine resumes. */
+export const WAKE_GRACE_MS = 90_000;
+/** Missing at least this much of the 30-second sweep cadence means the process did not run. */
+const WAKE_GAP_MS = 2 * 60_000;
+let lastRecoverySweepTickAt = 0;
 /** /events batches currently between parse and durable/session+worker lifecycle completion. */
 let observationWritesInFlight = 0;
 /** Requests allowed per rolling minute, across all routes. */
@@ -5075,7 +5080,11 @@ async function startBridgeOnce(epoch: number): Promise<number | null> {
         cancelWorkerCommands(reason, undefined, runId);
       });
       if (staleSwarmTimer) clearInterval(staleSwarmTimer);
+      // A freshly started bridge has no previous timer tick to compare with. Treating process
+      // startup as a wake would grant arbitrary activity to chats that were already stale.
+      lastRecoverySweepTickAt = 0;
       staleSwarmTimer = setInterval(() => {
+        noteRecoverySweepTick(Date.now());
         void runStaleSwarmSweep().catch((err: Error) => logWarn(`stale swarm sweep failed: ${err.message}`));
       }, STALE_SWARM_SWEEP_MS);
       staleSwarmTimer.unref?.();
@@ -6005,6 +6014,28 @@ interface ActivityGrant {
 }
 
 const activeUntil = new Map<string, ActivityGrant>();
+
+/**
+ * Give already-working chats one reconnect window after the machine wakes.
+ *
+ * During sleep no 30-second recovery timer fires, so all ordinary activity deadlines are in the
+ * past when JavaScript resumes. Recovering immediately can reload several healthy ChatGPT pages
+ * before they have a chance to reconnect and report. This ports the bounded 2.1.36 wake grace;
+ * it grants no new work and changes no other Eve recovery authority.
+ */
+export function noteRecoverySweepTick(now: number): boolean {
+  const gap = lastRecoverySweepTickAt === 0 ? 0 : now - lastRecoverySweepTickAt;
+  lastRecoverySweepTickAt = now;
+  if (gap < WAKE_GAP_MS) return false;
+  let held = 0;
+  for (const grant of activeUntil.values()) {
+    if (grant.until >= now + WAKE_GRACE_MS) continue;
+    grant.until = now + WAKE_GRACE_MS;
+    held += 1;
+  }
+  logInfo(`bridge: recovery sweep paused for ${Math.round(gap / 60_000)} minute(s); ${held} working chat(s) get ${WAKE_GRACE_MS / 1000} seconds to reconnect`);
+  return true;
+}
 
 /** Chats reloaded by the app whose page has given no sign of life since. */
 const awaitingReturn = new Set<string>();
@@ -9389,6 +9420,7 @@ export function resetBridgeForTests(): void {
   identityProbeRequests.clear();
   clearUnattributedIncident();
   activeUntil.clear();
+  lastRecoverySweepTickAt = 0;
   awaitingReturn.clear();
   lastAttributedCallAt.clear();
   attributedTurns.clear();

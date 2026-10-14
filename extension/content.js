@@ -1933,6 +1933,15 @@
    * whole point of this batch is that the local session log stops containing those.
    */
   function generationTurn(turns = CLF_DOM.turns()) {
+    // A reloaded/adopted generation already has a durable question in the app. React hydration
+    // can remount an older answer with a fresh node after our baseline; node novelty alone must
+    // not let that old answer become the adopted generation's owner. Only assistant sections
+    // after the newest rendered question are candidates. Ported narrowly from Chat On Steroids
+    // 2.1.36; Eve keeps its own provider/session ownership and presentation rules around it.
+    if (unwitnessedGeneration) {
+      const question = turns.findLastIndex(turn => turn.role === 'user');
+      if (question >= 0) turns = turns.slice(question + 1);
+    }
     if (genNode) {
       const held = turnForNode(genNode, turns);
       if (held) return held;
@@ -2532,7 +2541,14 @@
     // version that asked only whether *this page load* had journalled the message closed a
     // live turn on every reload, and split every chat's opening turn in two.
     if (generating && newUserMessage) {
-      const ended = quietTurn || generationTurn(observedTurns);
+      // Hydration can publish the adopted answer and the next user question in one observer
+      // batch. Close the old generation only against the prefix before that new question, never
+      // against a newly mounting response below it. This is the upstream 2.1.36 boundary fix,
+      // adapted to Eve's existing durable-adoption model.
+      const nextQuestion = unwitnessedGeneration ? observedTurns.findIndex(turn =>
+        turn.role === 'user' && CLF_DOM.messagesIn(turn).some(message => message.id === newUserMessage)) : -1;
+      const closingTurns = unwitnessedGeneration ? observedTurns.slice(0, Math.max(0, nextQuestion)) : observedTurns;
+      const ended = quietTurn || generationTurn(closingTurns);
       const fresh = endOutcome(ended);
       const result = quietOutcome && quietOutcome.outcome !== 'unknown' ? quietOutcome : fresh;
       // A new user message is an actual boundary, unlike a disappearing Stop control. Once
@@ -2543,6 +2559,18 @@
           ? { outcome: 'completed' }
           : { outcome: 'interrupted', detail: 'a new user message replaced the unfinished turn' }
         : result;
+      // The next user boundary used to suppress the normal final Fiber refresh entirely. If the
+      // final became visible in the same observer interval, Eve could therefore record only the
+      // next user message and later mark this turn interrupted, while chatgpt.com visibly held the
+      // completed answer (2026-10-14). Scan the exact old page turn before teardown. refreshFiber
+      // captures this owner synchronously before its first await and refuses route/epoch drift, so
+      // it cannot borrow prose from the next generation. Keep publishFinal=false: a whole-page
+      // fallback at this boundary would be unsafe.
+      if (ended && turnId) void refreshFiber({
+        pageTurnId: ended.id || null,
+        localTurnId: turnId,
+        pageTurn: ended
+      });
       finishGeneration(ended, bounded, false);
     }
 

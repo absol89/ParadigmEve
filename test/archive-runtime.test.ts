@@ -926,6 +926,70 @@ describe('ArchiveRuntime', () => {
     expect(runtime.status().lastError).toBeNull();
   });
 
+  it('does not let distinct streaming rows hide a later stable final of the same turn', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-stable-final-behind-streaming';
+    const turnId = 'g-archive-tail-0-1';
+    const events: SessionEvent[] = [
+      { ...user(1, 'run the audit'), messageId: 'user-audit' } as SessionEvent,
+      { ...assistant(2, 'Checking source wiring.', false), messageId: 'assistant-progress-1', turnId } as SessionEvent,
+      { ...assistant(3, 'The focused tests are still running.', false), messageId: 'assistant-progress-2', turnId } as SessionEvent,
+      { ...assistant(4, 'C1 integration QA complete.', true), messageId: 'assistant-final', turnId } as SessionEvent
+    ];
+    const runtime = new ArchiveRuntime({
+      archiveRoot,
+      writerVersion: 'runtime-test',
+      source: sourceFor({ summary: summary(id), events })
+    });
+
+    await runtime.start();
+    await runtime.drain();
+
+    const archived = await runtime.store.readSession(id);
+    expect(archived.events.map(event => event.eventId)).toEqual([
+      'user:user-audit',
+      'assistant:assistant-progress-1',
+      'assistant:assistant-progress-2',
+      'assistant:assistant-final'
+    ]);
+    expect(archived.events.at(-1)?.payload).toMatchObject({ text: 'C1 integration QA complete.', final: true });
+    expect(archived.manifest?.captureState).toBe('partial');
+  });
+
+  it('reconciles a page user row when its receipt grace expires without another source commit', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-14T00:00:00.000Z'));
+      const archiveRoot = await tempArchiveRoot();
+      const id = 'session-user-receipt-expiry';
+      const time = Date.now();
+      const pageUser: SessionEvent = {
+        seq: 1,
+        time,
+        source: 'extension',
+        kind: 'user_message',
+        messageId: 'page-user-no-receipt',
+        message: { text: 'last browser message', chars: 20, truncated: false }
+      };
+      const runtime = new ArchiveRuntime({
+        archiveRoot,
+        writerVersion: 'runtime-test',
+        source: sourceFor({ summary: summary(id), events: [pageUser] })
+      });
+
+      await runtime.start();
+      await runtime.drain();
+      expect((await runtime.store.readSession(id)).events).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(PAGE_USER_RECEIPT_GRACE_MS + 2);
+      await runtime.drain();
+      expect((await runtime.store.readSession(id)).events.map(event => event.eventId)).toEqual(['user:page-user-no-receipt']);
+      await runtime.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves a historical interrupted assistant row and later stable evidence after a later user boundary', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-interrupted-history';

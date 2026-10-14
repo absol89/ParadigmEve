@@ -7809,6 +7809,71 @@ describe('a content script reloaded into a turn already in flight', () => {
     expect(order.indexOf('bind')).toBeLessThan(order.indexOf('events'));
   });
 
+  it('records an adopted final that lands with the next user question instead of losing it as interrupted', async () => {
+    const conversationId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const recordedTurnId = 'g-adopted-final-boundary';
+    live = await harness(`https://chatgpt.com/c/${conversationId}`, {
+      activity: () => activity({ activeTurnId: recordedTurnId,
+        userAnchors: [{ seq: 20, time: 1700000000000, messageId: 'm-adopted-current-question' }] })
+    }, document => {
+      const previous = assistantTurn(document, 'previous-answer', []);
+      prose(document, previous, 'previous-prose', 'An older answer.');
+      userTurn(document, 'adopted-current-question', 'Finish the current audit.', { sent: false });
+      startGenerating(document, { send: false });
+    });
+    live.hook.observe();
+    await settle();
+    expect(emitted(live.sent, 'turn_start')).toHaveLength(0);
+
+    // ChatGPT finishes the adopted answer and the human sends the next question before the
+    // recorder gets another ordinary observation. The old bug closed the durable turn first,
+    // disabled its Fiber refresh, and left no canonical assistant row for this visible answer.
+    stopGenerating(live.document);
+    const answer = assistantTurn(live.document, 'adopted-answer', []);
+    prose(live.document, answer, 'adopted-final-prose', 'The archive audit is complete.');
+    userTurn(live.document, 'next-question-after-final', 'Thanks, now check upstream.');
+
+    const window = live.window as any;
+    const instant = window.setTimeout;
+    window.setTimeout = (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms);
+    const onAsk = (event: any) => {
+      if (event.data?.source !== 'clf-fiber-ask') return;
+      const scanToken = event.data.nonce;
+      answer.setAttribute('data-clf-fiber-turn', `${scanToken}:0`);
+      window.dispatchEvent(new window.MessageEvent('message', { source: window, data: {
+        source: 'clf-fiber-reply', nonce: scanToken, scanToken, v: 12, scanOk: true, rows: [],
+        turns: [{
+          index: 0,
+          turnId: 'adopted-answer',
+          conversationId,
+          endMessageId: 'site-adopted-final',
+          calls: [], activities: [],
+          messages: [{
+            messageId: 'site-adopted-final', rawMessageId: 'adopted-final-prose', stable: true,
+            rawText: 'The archive audit is complete.', renderedHtml: '<p>The archive audit is complete.</p>'
+          }]
+        }]
+      } }));
+    };
+    window.addEventListener('message', onAsk);
+    try {
+      live.hook.observe();
+      await vi.waitFor(async () => {
+        await live!.hook.flush();
+        expect(emitted(live!.sent, 'assistant_message').some(row =>
+          row.event.messageId === 'site-adopted-final' && row.event.turnId === recordedTurnId)).toBe(true);
+      }, { timeout: 1000, interval: 10 });
+    } finally {
+      window.removeEventListener('message', onAsk);
+      window.setTimeout = instant;
+    }
+
+    expect(emitted(live.sent, 'turn_end')).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ turnId: recordedTurnId, outcome: 'completed' })
+    }));
+    expect(emitted(live.sent, 'user_message').some(row => row.event.messageId === 'm-next-question-after-final')).toBe(true);
+  });
+
   it('self-prompts an adopted restart turn only after the provider page stays idle, without clicking Stop', async () => {
     const conversationId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     const recoveryTurnId = 'g-old-run-0-4';

@@ -471,6 +471,8 @@ export class ArchiveRuntime {
   private runningDerived: Promise<ArchiveDerivedResult> | null = null;
   private pendingSiteRefresh: Promise<ArchiveDerivedResult> | null = null;
   private staticRefreshTimer: NodeJS.Timeout | null = null;
+  /** Time-dependent mutable frontiers need a retry even when no later source event is written. */
+  private readonly reconcileRetryTimers = new Map<string, { at: number; timer: NodeJS.Timeout }>();
   private sourceRevision = 0;
   private derivedRevision = 0;
 
@@ -560,9 +562,35 @@ export class ArchiveRuntime {
     }
   }
 
+  private clearScheduledReconcile(sessionId: string): void {
+    const pending = this.reconcileRetryTimers.get(sessionId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.reconcileRetryTimers.delete(sessionId);
+  }
+
+  private scheduleSessionReconcileAt(sessionId: string, at: number): void {
+    if (this.disposed || !Number.isFinite(at)) return;
+    const target = Math.max(this.now() + 1, Math.floor(at));
+    const existing = this.reconcileRetryTimers.get(sessionId);
+    if (existing && existing.at <= target) return;
+    if (existing) clearTimeout(existing.timer);
+    const timer = setTimeout(() => {
+      const held = this.reconcileRetryTimers.get(sessionId);
+      if (!held || held.timer !== timer) return;
+      this.reconcileRetryTimers.delete(sessionId);
+      if (!this.disposed) this.queueSessionReconcile(sessionId);
+    }, Math.max(1, target - this.now()));
+    timer.unref?.();
+    this.reconcileRetryTimers.set(sessionId, { at: target, timer });
+  }
+
   private async runReconcileLoop(sessionId: string, state: ReconcileState): Promise<void> {
     await this.initialize();
     while (!this.disposed) {
+      // A real source commit supersedes any old time-based retry. projectCurrentSession() will
+      // arrange another one if the freshly read snapshot is still behind a timed frontier.
+      this.clearScheduledReconcile(sessionId);
       await this.acquireReconcileSlot();
       try {
         const snapshot = await this.source.readSession(sessionId);
@@ -777,6 +805,8 @@ export class ArchiveRuntime {
     if (this.disposed) return;
     if (this.staticRefreshTimer) clearTimeout(this.staticRefreshTimer);
     this.staticRefreshTimer = null;
+    for (const { timer } of this.reconcileRetryTimers.values()) clearTimeout(timer);
+    this.reconcileRetryTimers.clear();
     this.unsubscribe?.();
     this.unsubscribe = null;
     await this.drain();
@@ -797,6 +827,7 @@ export class ArchiveRuntime {
         break;
       }
     }
+    const now = this.now();
     // Set once the published order and the source order disagree. From then on position no longer
     // identifies an event, so published evidence is matched by its logical id instead.
     let publishedIds: Set<string> | null = null;
@@ -828,9 +859,23 @@ export class ArchiveRuntime {
         }
       }
       if (publishedIds?.has(eventId)) continue;
-      if (knownMutableEvent(source, this.now())) {
+      if (knownMutableEvent(source, now)) {
         context.partial = true;
-        const historicalInterruptedAssistant = source.kind === 'assistant_message' && index < lastUserMessageIndex;
+        // A later stable final of this exact turn proves a preceding streaming assistant row is
+        // historical, just as a later user boundary does. Without this exception one streaming
+        // row can permanently hide distinct stable final rows behind it when the source writes no
+        // later event (the settled 2026-10-13 worker-3 archive reproduced this).
+        const laterStableSameTurn = source.kind === 'assistant_message' && !!source.turnId &&
+          snapshot.events.slice(index + 1).some(event => event.kind === 'assistant_message' &&
+            event.turnId === source.turnId && (event.final === true || event.state === 'final'));
+        const historicalInterruptedAssistant = source.kind === 'assistant_message' &&
+          (index < lastUserMessageIndex || laterStableSameTurn);
+        // The page-authored user receipt grace expires with time, not another source commit.
+        // Schedule that missing wake-up so input id / archived attachment enrichment can settle
+        // even when the chat becomes completely idle after this row.
+        if (source.kind === 'user_message' && source.source === 'extension' && !source.inputId) {
+          this.scheduleSessionReconcileAt(summary.id, source.time + PAGE_USER_RECEIPT_GRACE_MS + 1);
+        }
         if (!historicalInterruptedAssistant) break;
       }
       events.push(await this.projectEvent(summary.id, source, events.length + 1, context));
