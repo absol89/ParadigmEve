@@ -10,7 +10,7 @@ Give ChatGPT a place to help with the practical work on your computer: the folde
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download ParadigmEve</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.3.9.md">2.3.9 guide &amp; release notes</a>
+  <a href="docs/release-notes/v2.4.0.md">2.4.0 preview &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -153,6 +153,10 @@ scheduled chat does not have to guess what the reminder originally meant.
 Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Choose which ones appear in **Settings → Pets**. You can drag them around your desktop and click a pet to return to Eve.
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
+
+## 2.4.0 Windows preview
+
+2.4.0 is a **beta preview** with locally verified Windows x64 installation. The c7 candidate passed 5,766 automated checks (42 skipped), the installer no longer showed the previously reported command-window popup, and the first restart wake reached the right Eve chat with a confirmed delivery receipt and no queued duplicate. The guarded one- and two-minute recovery path is covered by tests but was not exercised against a real failed pickup. macOS, Linux and Windows ARM64 have not received matching live installation acceptance. Check the [2.4.0 release notes](docs/release-notes/v2.4.0.md) for required prerequisites, platform caveats, and exact provenance. A source tag is not proof of published installers.
 
 ## What's changing in 2.3.9
 

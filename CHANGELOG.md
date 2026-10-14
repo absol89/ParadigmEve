@@ -13,9 +13,9 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
-## [2.4.0] — Transcription settings
+## [2.4.0] — Windows preview, resilient wakes and transcription
 
-In development on `release/2.4.0` (from `v2.3.9`); not packaged or published.
+Windows x64 **preview accepted locally** (2026-10-14): the c7 installer built from `1ac504221d15`, passed 5,766 automated tests (42 skipped), installed with no visible command-window popup, and delivered one confirmed restart wake to the exact Eve chat without any pending duplicate. The +1/+2-minute fallback has test coverage but has not been live-tested against a deliberate pickup failure. Other operating systems and Windows ARM64 have not received live acceptance. The public preview tag and publication are separate actions.
 
 - Settings → Transcription: GPU (priority 1), Local (2) and Cloud via Groq (3), each with a switch
   and a whole-number priority. The lowest enabled number runs first; unavailable options are skipped.
@@ -23,6 +23,9 @@ In development on `release/2.4.0` (from `v2.3.9`); not packaged or published.
   credential store. Removing the key turns Cloud off.
 - GPU transcription on Windows x64 through Vulkan. The GPU switch stays disabled until Eve has
   tested the graphics card, and every job records the backend and device that really ran.
+- Safe restart wake recovery at one and two minutes after boot preserves the original message ID, exact conversation, draft/Voice safeguards and send authority; confirmed sent wakes retire untouched same-chat duplicates.
+- The renderer separates the Force Send arrow from the pending timer/watch icon.
+- The 2.1.37 Chat On Steroids port, bounded archive projection updates, and user-facing recording transcription and skill routing are included in source; provider/platform coverage varies.
 - See [docs/release-notes/v2.4.0.md](docs/release-notes/v2.4.0.md).
 
 ## [2.3.9] — Reliable sends and Prime continuity
