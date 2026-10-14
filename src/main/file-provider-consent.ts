@@ -115,9 +115,20 @@ export function providerInstallDialogOptions(choice: ProviderReleaseChoice) {
   };
 }
 
+export function focusNativeProviderConsentWindow(window: Pick<import('electron').BrowserWindow, 'isMinimized' | 'restore' | 'isVisible' | 'show' | 'focus' | 'moveTop'> | null, platform = process.platform): void {
+  if (platform !== 'win32' || !window) return;
+  if (window.isMinimized()) window.restore();
+  if (!window.isVisible()) window.show();
+  window.focus();
+  window.moveTop();
+}
+
 async function nativeConfirm(choice: ProviderReleaseChoice): Promise<ProviderAnswer> {
   const { BrowserWindow, dialog } = await import('electron');
-  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.isVisible()) ?? BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed()) ?? null;
+  // The native consent must be visible in front of Eve, never silently hidden
+  // behind Chrome. Raising Eve does not interact with any ChatGPT tab.
+  focusNativeProviderConsentWindow(window);
   const options = providerInstallDialogOptions(choice);
   const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
   return response === 0 ? 'install' : response === 1 ? 'decline' : 'later';
