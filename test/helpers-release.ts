@@ -49,4 +49,3 @@ export function mockReleaseServer() {
 export function craftZip(slug: string, extra: Record<string, Uint8Array> = {}): Uint8Array {
   return zipSync({ [`${slug}/${slug}-cli.exe`]: strToU8(`fake ${slug} cli`), [`${slug}/${slug}.exe`]: strToU8('fake desktop app'), ...extra });
 }
-

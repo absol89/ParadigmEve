@@ -141,7 +141,7 @@ export async function localChatCoreTools(input: {
         }
         const live = createRegistrar(null, input.getContext(), 'core');
         await registerSurface(live);
-        return localResult(await live.invokeNested(definition.name, args, parentContext(input.sessionId, input.conversationId)));
+        return localResult(await live.invokeNested(definition.name, args, parentContext(input.sessionId, input.conversationId, input.route)));
       }
     }));
     if (!initial.agentTools || !input.conversationId) return skillTools;

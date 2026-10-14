@@ -698,6 +698,22 @@ describe('model-facing surfaces', () => {
     }
   });
 
+  it('gives ChatGPT the bounded file_action slice in structuredContent, read-only and without file_edit', async () => {
+    const { zipSync, strToU8 } = await import('fflate');
+    await fs.writeFile(path.join(approved, 'brief.docx'), zipSync({ 'word/document.xml': strToU8('<w:document xmlns:w="w"><w:body><w:p><w:r><w:t>Quarterly brief</w:t></w:r></w:p></w:body></w:document>') }));
+    try {
+      const listed = toolList(await core('tools/list')).find((tool) => tool.name === 'file_action');
+      expect(listed?.annotations).toMatchObject({ readOnlyHint: true });
+      expect(toolNames(await core('tools/list'))).not.toContain('file_edit');
+      const reply = await core('tools/call', { name: 'file_action', arguments: { op: 'read', path: '/workspace/brief.docx' } });
+      expect(failed(reply)).toBe(false);
+      expect(reply.body.result.structuredContent).toMatchObject({ format: 'docx', text: expect.stringContaining('Quarterly brief') });
+      expect(textOf(reply)).toContain('Quarterly brief');
+    } finally {
+      await fs.rm(path.join(approved, 'brief.docx'), { force: true });
+    }
+  });
+
   it('advertises local and Computer-use tools together on ParadigmEve', async () => {
     everything();
     const names = toolNames(await core('tools/list'));
@@ -972,7 +988,7 @@ describe('model-facing surfaces', () => {
     // bounded per-format selectors) and its changing half file_edit (one flat object for
     // install_provider/provider_tools/edit). That is deliberate discovery cost in exchange for
     // keeping all thirteen ArtCraft apps' own tool sets off Core.
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 46_000 : 45_800);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 47_000 : 46_800);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
