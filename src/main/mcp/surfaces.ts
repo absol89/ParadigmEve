@@ -107,7 +107,7 @@ function coreSurface(connectorName: string): SurfaceDefinition {
     description:
       'Keep using ChatGPT the way you already do — by typing, dictating or talking naturally — and let it take care of more of the work on this PC while it is on. ' +
       `${connectorName} lets your conversation work across files and projects, create and update documents, notes, data or code, save useful outputs, run longer jobs and pick up earlier work. ` +
-      `For Word documents (DOCX), PDFs, spreadsheets (XLSX) and presentations (PPTX), including proofreading, conversion and visible editing, ${connectorName} has a built-in file-format broker: ask it to discover providers with file_action before searching for or installing other office software. ` +
+      'For Word documents (DOCX), PDFs, spreadsheets (XLSX) and presentations (PPTX), including proofreading, conversion and visible editing, use the built-in file-format broker: discover providers with file_action before searching for or installing other office software. ' +
       `By default, ${connectorName} also works from other ChatGPT chats and devices; Settings can restore strict main-chat-only access. ` +
       `When you enable Computer use in ParadigmEve, the same ${connectorName} app can also see supported app windows, use the mouse and keyboard, and work with the clipboard. ` +
       'It reduces the need to copy and paste between apps, switch windows repeatedly or translate what you want into technical steps. ' +
