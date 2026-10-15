@@ -252,6 +252,8 @@ it('keeps natural-language skills available in conversational local chat without
   expect((await send({ id, provider: 'ollama', model: 'llama3.2', text: 'Why is this chat compacting so often?' })).ok).toBe(true);
   await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
 
+  // 'sent' means the turn was accepted; its chat payload (skills included) is built afterwards.
+  await vi.waitFor(() => expect(ollamaRequests.some(request => request.url.endsWith('/v1/chat/completions'))).toBe(true), { timeout: 5000 });
   const chat = ollamaRequests.find(request => request.url.endsWith('/v1/chat/completions'))!;
   const system = chat.body.messages.find((message: any) => message.role === 'system')?.content ?? '';
   expect(system).toContain('# Available skills');
