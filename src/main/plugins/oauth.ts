@@ -68,9 +68,24 @@ export class PluginOAuth implements OAuthClientProvider {
           provider.data = {
             endpoint: endpoint.href,
             ...(typeof value.redirectUri === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/oauth\/callback$/.test(value.redirectUri) ? { redirectUri: value.redirectUri } : {}),
-            ...(value.client && typeof value.client.client_id === 'string' ? { client: value.client } : {}),
-            ...(value.tokens && typeof value.tokens.access_token === 'string' && typeof value.tokens.token_type === 'string' ? { tokens: value.tokens } : {}),
+            // SDK 2.2.0 checks the authorization-server issuer when it is
+            // present, but legacy stored credentials without an issuer can
+            // still be offered to an authorization server chosen by a remote
+            // MCP endpoint. Never restore those records; the user must sign
+            // in again to establish a verified issuer binding.
+            ...(value.client && typeof value.client.client_id === 'string' &&
+              typeof value.client.issuer === 'string' && value.client.issuer.length > 0
+              ? { client: value.client } : {}),
+            ...(value.tokens && typeof value.tokens.access_token === 'string' &&
+              typeof value.tokens.token_type === 'string' &&
+              typeof value.tokens.issuer === 'string' && value.tokens.issuer.length > 0
+              ? { tokens: value.tokens } : {}),
           };
+          // Clear legacy issuer-less credentials from secure storage as well
+          // as memory, so a later restart cannot reintroduce them.
+          if ((value.client && !provider.data.client) || (value.tokens && !provider.data.tokens)) {
+            await provider.save();
+          }
           provider.rememberSecrets();
         }
       }

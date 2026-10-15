@@ -9,6 +9,7 @@ import { pluginCatalog } from '../src/main/plugins/catalog.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
 
 // Opt-in: actual pinned packages on each CI OS; editor discovery needs no user project.
+// A cold start (fresh venv, first import, Windows file scanning) can exceed 20 s on a slow runner.
 // Playwright executes against an ephemeral loopback page, never the user's browser/profile.
 for (const id of ['blender', 'unity', 'playwright']) {
   it.runIf(process.env.COS_PLUGIN_LIVE_TEST === '1')(`installs ${id} and verifies its advertised tool preview over stdio`, async () => {
@@ -25,7 +26,7 @@ for (const id of ['blender', 'unity', 'playwright']) {
         await runInstaller(launch.command, [path.join(playwrightRoot, 'cli.js'), 'install', 'chromium'], directory);
         launch.args.push('--headless', '--browser', 'chromium', '--isolated');
       }
-      await client.connect(new StdioClientTransport({ command: launch.command, args: launch.args, cwd: directory, stderr: 'ignore' }), { timeout: 20000 });
+      await client.connect(new StdioClientTransport({ command: launch.command, args: launch.args, cwd: directory, stderr: 'ignore' }), { timeout: 60000 });
       const names = (await client.listTools({}, { timeout: 15000 })).tools.map(tool => tool.name);
       expect(names.length).toBeGreaterThan(0);
       expect(names).toEqual(expect.arrayContaining(recipe.tools!));
@@ -44,7 +45,8 @@ for (const id of ['blender', 'unity', 'playwright']) {
     } finally {
       await client.close();
       if (page.listening) await new Promise<void>((resolve, reject) => page.close(error => error ? reject(error) : resolve()));
-      await removeTempDir(directory);
+      // Windows releases a stopped server's venv files late; give EBUSY time to clear.
+      await removeTempDir(directory, 20);
     }
   }, 180000);
 }

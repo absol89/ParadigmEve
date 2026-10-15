@@ -57,6 +57,8 @@ it('performs SDK DCR + PKCE with a real loopback callback, retains endpoint/issu
   expect(provider.tokens()?.access_token).toBe('access-private-token');
   const raw = stored.get('plugin:one:oauth:state')!;
   expect(raw).toContain(endpoint.href); expect(raw).toContain('refresh-private-token');
+  expect(JSON.parse(raw).tokens.issuer).toBe(issuer);
+  expect(JSON.parse(raw).client.issuer).toBe(issuer);
   expect(raw).not.toMatch(/code_verifier|authorization-private-code|"state"/);
   expect(redacted).toHaveBeenCalledWith('access-private-token'); expect(redacted).toHaveBeenCalledWith('client-private-id');
   provider.dispose();
@@ -68,6 +70,54 @@ it('performs SDK DCR + PKCE with a real loopback callback, retains endpoint/issu
   expect((await load(server.fetcher, 'two')).tokens()).toBeUndefined();
   expect((await load(server.fetcher, 'one', new URL('https://tools.example/other'))).tokens()).toBeUndefined();
   await clearPluginOAuth('one'); expect(stored.has('plugin:one:oauth:state')).toBe(false);
+});
+
+it('never restores pre-2.2 issuer-less OAuth credentials or forwards their refresh token', async () => {
+  stored.set('plugin:one:oauth:state', JSON.stringify({ endpoint: endpoint.href,
+    client: { client_id: 'legacy-client', client_secret: 'legacy-secret' },
+    tokens: { access_token: 'legacy-access', refresh_token: 'legacy-refresh', token_type: 'Bearer' }
+  }));
+  const server = authority();
+  const provider = await load(server.fetcher);
+  expect(provider.tokens()).toBeUndefined();
+  expect(() => provider.clientInformation()).toThrow(PluginNeedsAuth);
+  expect(stored.get('plugin:one:oauth:state')).not.toContain('legacy-access');
+  expect(stored.get('plugin:one:oauth:state')).not.toContain('legacy-refresh');
+  expect(stored.get('plugin:one:oauth:state')).not.toContain('legacy-secret');
+  await expect(auth(provider, { serverUrl: endpoint, fetchFn: provider.fetch })).rejects.toBeInstanceOf(PluginNeedsAuth);
+  expect(server.requests.some(request => request.url.endsWith('/token'))).toBe(false);
+  expect(server.requests.some(request => request.body.includes('legacy-refresh') || request.body.includes('legacy-secret'))).toBe(false);
+});
+
+it('does not send stored credentials to a new authorization issuer advertised by a compromised MCP endpoint', async () => {
+  const legitimate = authority();
+  const provider = await load(legitimate.fetcher);
+  await provider.signIn(async url => { await legitimate.browser(url); });
+  provider.dispose();
+
+  const attackerIssuer = 'https://attacker.example';
+  const attackerRequests: Array<{ url: string; body: string }> = [];
+  const compromisedFetch = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.includes('/.well-known/oauth-protected-resource')) {
+      return Response.json({ resource: endpoint.href, authorization_servers: [attackerIssuer] });
+    }
+    if (url.startsWith(attackerIssuer)) {
+      attackerRequests.push({ url, body: String(init?.body ?? '') });
+      if (url.includes('/.well-known/')) {
+        return Response.json({ issuer: attackerIssuer, authorization_endpoint: `${attackerIssuer}/authorize`,
+          token_endpoint: `${attackerIssuer}/token`, registration_endpoint: `${attackerIssuer}/register`,
+          response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
+          code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'] });
+      }
+      throw new Error('Unexpected contact with attacker token or registration endpoint');
+    }
+    return legitimate.fetcher(input, init);
+  });
+  const restored = await load(compromisedFetch);
+  await expect(auth(restored, { serverUrl: endpoint, fetchFn: restored.fetch })).rejects.toThrow();
+  expect(attackerRequests.some(request => request.url.endsWith('/token') || request.url.endsWith('/register'))).toBe(false);
+  expect(attackerRequests.some(request => request.body.includes('refresh-private-token') || request.body.includes('client-private-id'))).toBe(false);
 });
 
 it('rejects wrong/duplicate/Unicode state without killing the callback and accepts the exact state afterward', async () => {
