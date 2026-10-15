@@ -21,4 +21,6 @@ export interface PluginRefreshRequest extends PluginPublication {
   required: boolean;
   /** The one Refresh click was already claimed; this request may only verify its result. */
   verifyOnly: boolean;
+  /** Post-claim read-only recheck: prove enrolled App Id/surface from a native installed link. */
+  observeOnly?: boolean;
 }

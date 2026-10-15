@@ -11746,9 +11746,12 @@
   async function refreshManagedPlugin(request) {
     if (pluginRefreshBusy || !request || !/^[a-f0-9-]{36}$/i.test(request.id) || !ownsPluginRefreshPage(request.id)) return false;
     pluginRefreshBusy = true;
-    const requestEpoch = epoch;
-    const ownsRequest = () => epoch === requestEpoch && ownsPluginRefreshPage(request.id);
-    const fail = error => ask({ type: 'plugin_refresh', action: 'fail', id: request.id, error });
+    const requestEpoch = epoch, requestHref = location.href;
+    // The same app/marker can survive an SPA navigation. Its new URL cannot inherit
+    // custody of the old Refresh button across an asynchronous claim.
+    const ownsRequest = () => epoch === requestEpoch && location.href === requestHref && ownsPluginRefreshPage(request.id);
+    const fail = error => ownsRequest()
+      ? ask({ type: 'plugin_refresh', action: 'fail', id: request.id, error }, ownsRequest) : null;
     const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);
     const schemaKey = tools => Array.isArray(tools) ? canonical(tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })).sort((a, b) => a.name.localeCompare(b.name))) : null;
     try {
@@ -11756,7 +11759,12 @@
       const listUrl = new URL(location.href);
       const pathList = listUrl.pathname === '/settings/plugins-settings' && !listUrl.hash;
       if (pathList || (listUrl.pathname === '/' && listUrl.hash === '#settings/Plugins')) {
-        if (request.appId) {
+        const installedAppId = request.observeOnly === true ? request.appId ?? null : null;
+        const installedSurface = installedAppId ? request.surface ?? null : null;
+        // Mutating refreshes may open their already enrolled exact App directly. A
+        // read-only recheck must first prove its native installed link with that ID.
+        if (request.appId && !installedAppId) {
+          if (!/^asdk_app_[A-Za-z0-9_-]{1,160}$/.test(request.appId)) return false;
           const url = new URL(location.href);
           // The installed plugin's own page, not its settings view (see background exactPluginPath).
           if (pathList) url.pathname = `/plugins/plugin_${request.appId}`;
@@ -11764,10 +11772,36 @@
           if (!current()) return false;
           location.assign(url.href); return true;
         }
-        const buttons = await waitPageView(() => CLF_DOM.pluginInstalledButtons(request.connectorName), current, 8000);
-        if (!buttons || !current()) return false;
-        if (buttons.length !== 1) { await fail('Installed connector identity is unavailable or ambiguous'); return false; }
-        buttons[0].click();
+        const listHref = location.href;
+        const stillOnList = () => current() && location.href === listHref;
+        const buttons = await waitPageView(
+          () => CLF_DOM.pluginInstalledButtons(request.connectorName, installedAppId, installedSurface), stillOnList, 8000);
+        if (!stillOnList()) return false;
+        if (!buttons && !installedAppId) return false; // List may still be loading.
+        if (!buttons || buttons.length !== 1 || (installedAppId && buttons[0].tagName !== 'A')) {
+          await fail('Installed connector identity is unavailable or ambiguous'); return false;
+        }
+        const button = buttons[0];
+        if (button.tagName === 'A') {
+          // Keep the same native link and href across the wait. Attach custody before
+          // navigating to Eve's known-good /plugins/plugin_<appId> management route.
+          const found = CLF_DOM.pluginInstalledButtons(request.connectorName, installedAppId, installedSurface);
+          if (!stillOnList() || button.isConnected === false || found?.length !== 1 || found[0] !== button) return false;
+          const native = new URL(button.href, listHref);
+          const route = /^\/(?:plugins|settings\/plugins-settings)\/plugin_(asdk_app_[A-Za-z0-9_-]+)$/.exec(native.pathname);
+          if (native.origin !== listUrl.origin || native.hash || native.search || !route ||
+              (installedAppId && route[1] !== installedAppId)) return false;
+          const url = new URL(listHref);
+          url.pathname = `/plugins/plugin_${route[1]}`;
+          url.hash = '';
+          url.searchParams.delete(LEGACY_PLUGIN_REFRESH_MARKER);
+          url.searchParams.set(PLUGIN_REFRESH_MARKER, request.id);
+          if (stillOnList() && button.href === native.href) { location.assign(url.href); return true; }
+          return false;
+        }
+        if (!stillOnList() || button.isConnected === false ||
+            CLF_DOM.pluginInstalledButtons(request.connectorName)?.length !== 1) return false;
+        button.click();
         // The provider's installed-row navigation drops the query marker. This
         // already-owned discovery may learn its resulting exact App Id, but cannot
         // claim Refresh until the management document has its marker again.
@@ -11801,17 +11835,20 @@
         // A prior exact claim already owns the one Refresh click. The matching provider
         // declaration is now the missing receipt itself, so close the generation directly.
         if (request.verifyOnly === true) {
-          return (await ask({ type: 'plugin_refresh', action: 'complete', id: request.id, appId, tools: view.tools, versionId: view.versionId }))?.data?.ok === true && stillCurrent();
+          return (await ask({ type: 'plugin_refresh', action: 'complete', id: request.id, appId, tools: view.tools, versionId: view.versionId }, stillCurrent))?.data?.ok === true && stillCurrent();
         }
-        return (await ask({ type: 'plugin_refresh', action: 'current', id: request.id, appId, connectorName: request.connectorName, tools: view.tools }))?.data?.ok === true && stillCurrent();
+        return (await ask({ type: 'plugin_refresh', action: 'current', id: request.id, appId, connectorName: request.connectorName, tools: view.tools }, stillCurrent))?.data?.ok === true && stillCurrent();
       }
+      // Enrollment observation can confirm current declarations, but a stale
+      // snapshot is never authority to claim or click Refresh, regardless of verifyOnly.
+      if (request.observeOnly === true) { await fail('Exact connector settings could not be verified'); return false; }
       // Post-click recovery may observe again, but must never authorize a second Refresh.
       if (request.verifyOnly === true) return false;
       if (!view.refresh || view.refresh.disabled) {
         const error = 'Connector schema differs, but ChatGPT exposes no Refresh control. Recreate or republish this custom app to load the current tool schema.';
-        return (await ask({ type: 'plugin_refresh', action: 'manual', id: request.id, appId, connectorName: request.connectorName, tools: view.tools, error }))?.data?.ok === true && stillCurrent();
+        return (await ask({ type: 'plugin_refresh', action: 'manual', id: request.id, appId, connectorName: request.connectorName, tools: view.tools, error }, stillCurrent))?.data?.ok === true && stillCurrent();
       }
-      const claimed = await ask({ type: 'plugin_refresh', action: 'claim', id: request.id, appId, connectorName: request.connectorName, tools: view.tools });
+      const claimed = await ask({ type: 'plugin_refresh', action: 'claim', id: request.id, appId, connectorName: request.connectorName, tools: view.tools }, stillCurrent);
       if (!claimed?.data?.ok || !stillCurrent() || view.refresh.isConnected === false || view.refresh.disabled) { await fail('Connector refresh claim or page ownership was not confirmed'); return false; }
       view.refresh.click(); // the durable main-process attempt owns this one click
       const after = await waitPageView(async () => {
@@ -11819,7 +11856,7 @@
         return next && before !== expected && schemaKey(next.tools) === expected ? next : null;
       }, stillCurrent, 12000);
       if (!after) { await fail('Refresh was requested, but a changed matching schema was not observed'); return false; }
-      return (await ask({ type: 'plugin_refresh', action: 'complete', id: request.id, appId, tools: after.tools, versionId: after.versionId }))?.data?.ok === true;
+      return (await ask({ type: 'plugin_refresh', action: 'complete', id: request.id, appId, tools: after.tools, versionId: after.versionId }, stillCurrent))?.data?.ok === true && stillCurrent();
     } catch { await fail('Connector refresh could not be verified'); return false; }
     finally { pluginRefreshBusy = false; }
   }
@@ -12114,6 +12151,16 @@
       if (message.type === 'clf-desktop-input') {
         void acceptDesktopInput(message).then((ok) => sendResponse({ ok })).catch(() => sendResponse({ ok: false }));
         return true;
+      }
+      if (message.type === 'clf-route-changed') {
+        // The extension saw this page take a new address. A background tab's own observe tick can be
+        // held back for long; observe now, and let any wait on page evidence re-check (#1514 upstream).
+        if (recorderHandle.healthy()) {
+          try { observe(); } catch { /* The regular tick observes again. */ }
+          for (const check of pageViewChecks) { try { void check(); } catch { /* A check owns its own retry. */ } }
+        }
+        sendResponse({ ok: true });
+        return false;
       }
       if (message.type === 'clf-recorder-ping') {
         const commandId = typeof message.commandId === 'string' ? message.commandId : '';

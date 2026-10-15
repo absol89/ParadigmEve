@@ -152,7 +152,9 @@ export function pendingPluginRefreshes(): Promise<PluginRefreshRequest[]> {
     return current.flatMap(row => {
       const publication = publications.get(row.surface);
       return publication && (settling.get(row.surface)?.readyAt ?? 0) <= Date.now() && publication.schemaId === row.schemaId && !row.manual && !row.deferred && row.completedSchemaId !== row.schemaId
-        ? [{ ...structuredClone(publication), id: row.id, appId: row.appId, required: row.required, verifyOnly: row.attempted }] : [];
+        ? [{ ...structuredClone(publication), id: row.id, appId: row.appId, required: row.required,
+            verifyOnly: row.attempted,
+            ...(row.attempted && row.appId !== null ? { observeOnly: true } : {}) }] : [];
     });
   });
 }

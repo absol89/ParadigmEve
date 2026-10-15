@@ -207,7 +207,10 @@ it.each([{ deny: true }, { navigateDuringClaim: true }])('never clicks after den
   const h = workflow(options);
   expect(await h.run()).toBe(false);
   expect(h.click).not.toHaveBeenCalled();
-  expect(h.ask.mock.calls.map(([message]) => message.action)).toEqual(['claim', 'fail']);
+  // Once the page navigates, the old helper loses custody: it must not send a
+  // failure on behalf of the replacement page either.
+  expect(h.ask.mock.calls.map(([message]) => message.action)).toEqual(
+    options.navigateDuringClaim ? ['claim'] : ['claim', 'fail']);
 });
 it.each(['unpinned', 'pinned', 'pinned-during-proof'])('reuses management tabs and respects pinning (%s)', async mode => {
   const code = background.slice(background.indexOf('let pluginRefreshFlight = null;'), background.indexOf('async function catalogProbe('));

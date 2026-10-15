@@ -2868,6 +2868,15 @@ function pluginSettingsRoute(url) {
 function exactPluginPath(pathname, appId) {
   return pathname === `/plugins/plugin_${appId}` || pathname === `/settings/plugins-settings/plugin_${appId}`;
 }
+function exactPluginRoute(url, appId) {
+  return exactPluginPath(url.pathname, appId) ||
+    (url.pathname === '/' && url.hash === `#settings/Plugins/plugin_${appId}`);
+}
+/** Only a generic index is safe to advance to the elected installed app. */
+function genericPluginSettingsIndex(url) {
+  return (url.pathname === '/settings/plugins-settings' && !url.hash) ||
+    (url.pathname === '/' && url.hash === '#settings/Plugins');
+}
 function pluginRefreshMarker(tab) {
   try {
     const url = new URL(tab?.pendingUrl || tab?.url || '');
@@ -2879,6 +2888,12 @@ function pluginRefreshMarker(tab) {
 /** The installed plugin's own page when its App Id is known; the settings index is discovery only. */
 function pluginRefreshPageUrl(request) {
   const marker = `${PLUGIN_REFRESH_MARKER}=${encodeURIComponent(request.id)}`;
+  // An enrolled post-click observation must re-establish exact native installed-app
+  // identity from the provider list before opening the app page. A mutating refresh
+  // may use its already-enrolled exact App Id directly.
+  if (request.observeOnly === true && request.appId) {
+    return `https://chatgpt.com/settings/plugins-settings?${marker}`;
+  }
   return typeof request.appId === 'string' && /^asdk_app_[a-zA-Z0-9_-]+$/.test(request.appId)
     ? `https://chatgpt.com/plugins/plugin_${request.appId}?${marker}`
     : `https://chatgpt.com/settings/plugins-settings?${marker}`;
@@ -2897,12 +2912,22 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
     if (owner && requests.some(request => request.id === owner.id)) {
       const current = await chrome.tabs.get(owner.tab).catch(() => null);
       if (!current) return; // A user-closed helper is not permission to reopen it every poll.
+      // A pinned tab is human-owned, and pending navigation may already be taking it somewhere
+      // else. A stale MV3 owner record must never retarget either one just to restore a marker.
+      if (current.pinned || current.pendingUrl) return;
       const request = requests.find(candidate => candidate.id === owner.id);
       const url = new URL(current.pendingUrl || current.url || '');
       if (!pluginSettingsRoute(url)) return;
       const appId = request?.appId || null;
-      if (pluginRefreshMarker(current) !== owner.id || (appId && !exactPluginPath(url.pathname, appId))) {
-        if (appId && !exactPluginPath(url.pathname, appId)) { url.pathname = `/plugins/plugin_${appId}`; url.hash = ''; }
+      // A user may have navigated this formerly-owned tab to a *different* app.
+      // A stale marker/owner record cannot reclaim it by retargeting to our app.
+      if (appId && !exactPluginRoute(url, appId) &&
+          !genericPluginSettingsIndex(url)) return;
+      if (pluginRefreshMarker(current) !== owner.id ||
+          (appId && request?.observeOnly !== true && !exactPluginRoute(url, appId))) {
+        if (appId && request?.observeOnly !== true && !exactPluginRoute(url, appId)) {
+          url.pathname = `/plugins/plugin_${appId}`; url.hash = '';
+        }
         url.searchParams.delete(LEGACY_PLUGIN_REFRESH_MARKER);
         url.searchParams.set(PLUGIN_REFRESH_MARKER, owner.id);
         if (request?.verifyOnly === true && owner.verifyOnly !== true) {
@@ -2922,7 +2947,7 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
       if (current && !current.pinned && !current.pendingUrl && pluginRefreshMarker(current) === id) await closeTabLogged(tab.id, current, 'plugin-refresh-helper', 'plugin refresh marker');
     }
     if (!requests.length) return;
-    const held = tabs.find(tab => requests.some(request => request.id === pluginRefreshMarker(tab)));
+    let held = tabs.find(tab => requests.some(request => request.id === pluginRefreshMarker(tab)));
     const request = requests.find(request => request.id === pluginRefreshMarker(held)) || requests[0];
     if (!held) {
       if (browserOnly) return;
@@ -2938,6 +2963,19 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
         await call('/plugin-refresh', { method: 'POST', body: JSON.stringify({ action: 'fail', id: request.id, error: 'The background plugin refresh tab could not be created' }) });
       }
       return;
+    }
+    // The query snapshot can be stale. Before migrating, reloading or dispatching to a
+    // discovered helper without a durable owner record, recheck its live custody. A
+    // pinned or navigating tab may now belong to the human, even with an old marker.
+    const liveHeld = await chrome.tabs.get(held.id).catch(() => null);
+    if (!liveHeld || liveHeld.pinned || liveHeld.pendingUrl || pluginRefreshMarker(liveHeld) !== request.id) return;
+    held = liveHeld;
+    // A marker does not let a read-only observation reclaim a tab that the user
+    // subsequently navigated to some other installed app. This also applies to
+    // observeOnly operations, which intentionally do not auto-retarget the list.
+    if (request.appId) {
+      const liveUrl = new URL(held.url);
+      if (!exactPluginRoute(liveUrl, request.appId) && !genericPluginSettingsIndex(liveUrl)) return;
     }
     // An active operation from an older Companion may still own a legacy cos-plugin-refresh URL.
     // Preserve the tab, but migrate its marker in place before handing the request to a document.
@@ -2958,11 +2996,12 @@ function inspectRequestedPluginRefresh(publications, background, browserOnly = f
     // Older helpers can retain the generic settings index (or legacy hash redirect) even when
     // the exact installed app ID is durable. Retarget ONLY that previously elected helper, never
     // an ordinary ChatGPT tab. This navigation preserves the one-click verifyOnly fence.
-    if (request.appId) {
+    if (request.appId && request.observeOnly !== true) {
       const current = await chrome.tabs.get(held.id).catch(() => null);
       if (!current || current.pinned || current.pendingUrl || pluginRefreshMarker(current) !== request.id) return;
       const currentUrl = new URL(current.url);
       if (!exactPluginPath(currentUrl.pathname, request.appId) || currentUrl.hash) {
+        if (!exactPluginRoute(currentUrl, request.appId) && !genericPluginSettingsIndex(currentUrl)) return;
         await chrome.storage.session.set({ pluginRefreshOwner: { id: request.id, tab: held.id, ...(request.verifyOnly === true ? { verifyOnly: true } : {}) } });
         await chrome.tabs.update(held.id, { url: pluginRefreshPageUrl(request) });
         return;
@@ -4655,6 +4694,14 @@ chrome.tabs.onUpdated.addListener((id, changeInfo) => {
   const fullNavigation = changeInfo.status === 'loading';
   const completedNavigation = changeInfo.status === 'complete';
   const leftChatGpt = typeof changeInfo.url === 'string' && !isChatGptUrl(changeInfo.url);
+  // A same-document address change inside ChatGPT. A background tab's own once-a-second check can
+  // be held back for many seconds; messages reach it at once, so tell the page to observe now.
+  // Ported from Chat On Steroids #1514's route nudge.
+  if (!fullNavigation && !completedNavigation && typeof changeInfo.url === 'string' && !leftChatGpt) {
+    const documentId = tabDocuments[String(id)];
+    void tabReply(id, { type: 'clf-route-changed' }, documentId ? { documentId } : undefined).catch(() => undefined);
+    return;
+  }
   if (!fullNavigation && !completedNavigation && !leftChatGpt) return;
   if (fullNavigation || leftChatGpt) clearDeferredRevivalOffersForTab(id);
   // A loading transition is a browser document boundary even when both URLs are ChatGPT.

@@ -66,6 +66,23 @@ it('deduplicates unchanged reconnects, durably acknowledges a matching generatio
   expect(updated.required).toBe(false);
   expect(await completePluginRefresh({ ...request, appId, tools })).toBe(false);
 });
+
+it('retains exact enrolled App Id and surface during read-only post-click rechecks', async () => {
+  publish();
+  const first = (await pendingPluginRefreshes())[0]!;
+  expect(first.observeOnly).toBeUndefined();
+  expect(first.verifyOnly).toBe(false);
+  expect(await claim(first)).toBe(true);
+
+  const recheck = (await pendingPluginRefreshes())[0]!;
+  expect(recheck).toMatchObject({
+    id: first.id, appId, surface: 'core', connectorName: 'ParadigmEve',
+    verifyOnly: true, observeOnly: true
+  });
+  expect(await claim(recheck)).toBe(false); // Read-only observation never re-arms the claimed click.
+  expect(await completePluginRefresh({ ...recheck, appId, tools })).toBe(true);
+  expect(await pendingPluginRefreshes()).toEqual([]);
+});
 it('keeps live schema maintenance optional but makes a changed startup generation recovery-required', async () => {
   publish(); const first = (await pendingPluginRefreshes())[0]!;
   expect(await claim(first)).toBe(true);

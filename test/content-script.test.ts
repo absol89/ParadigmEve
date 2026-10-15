@@ -13,6 +13,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -27,6 +28,131 @@ beforeAll(async () => {
     fs.readFile(path.join(process.cwd(), 'extension', 'chatgpt-dom.js'), 'utf8'),
     fs.readFile(path.join(process.cwd(), 'extension', 'content.js'), 'utf8')
   ]);
+});
+
+describe('enrolled plugin identity on the installed-app list (64b0a8e2)', () => {
+  const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const listed = `https://chatgpt.com/settings/plugins-settings?eve-plugin-refresh=${id}`;
+  const app = 'asdk_app_enrolled';
+
+  async function installed() {
+    live = await harness(listed, {}, (document, dom) => {
+      dom.window.HTMLElement.prototype.getClientRects = function () {
+        return (this.hidden || this.closest('[hidden]') ? [] : [{}]) as unknown as DOMRectList;
+      };
+      document.querySelector('main')!.innerHTML = `
+        <a href="/settings/plugins-settings/plugin_${app}"><span>Renamed by user 日本語</span></a>
+        <a href="/settings/plugins-settings/plugin_asdk_app_other"><span>ParadigmEve</span></a>`;
+    });
+    const main = live.document.querySelector('main')!;
+    return { api: (live.window as any).CLF_DOM, main, enrolled: main.querySelector('a')! };
+  }
+
+  it('keeps exact enrollment through a rename and a colliding visible connector name', async () => {
+    const { api, main, enrolled } = await installed();
+    expect(api.pluginInstalledButtons('ParadigmEve', app, 'core')).toEqual([enrolled]);
+    expect(api.pluginInstalledButtons('ParadigmEve')).toHaveLength(1); // The name-only lookup chose the wrong app.
+    main.querySelectorAll('a')[1]!.textContent = 'Renamed by user 日本語';
+    expect(api.pluginInstalledButtons('ParadigmEve', app, 'core')).toEqual([enrolled]);
+  });
+
+  it.each(['missing', 'wrong-link', 'duplicate', 'hidden', 'foreign-origin', 'hash', 'name-only', 'wrong-surface', 'invalid-id'])(
+    'refuses the wrong enrolled native link or surface (%s)', async mode => {
+      const { api, main, enrolled } = await installed();
+      let expectedId = app, surface = 'core';
+      if (mode === 'missing') enrolled.remove();
+      if (mode === 'wrong-link') enrolled.href = '/settings/plugins-settings/plugin_asdk_app_foreign';
+      if (mode === 'duplicate') main.append(enrolled.cloneNode(true));
+      if (mode === 'hidden') enrolled.hidden = true;
+      if (mode === 'foreign-origin') enrolled.href = `https://example.org/plugins/plugin_${app}`;
+      if (mode === 'hash') enrolled.href = `/plugins/plugin_${app}#details`;
+      if (mode === 'name-only') enrolled.outerHTML = '<button><span>ParadigmEve</span></button>';
+      if (mode === 'wrong-surface') surface = 'plugins';
+      if (mode === 'invalid-id') expectedId = 'not-an-app-id';
+      const found = api.pluginInstalledButtons('ParadigmEve', expectedId, surface);
+      if (mode === 'duplicate') expect(found).toHaveLength(2); // Workflow must reject ambiguous duplicates.
+      else expect(found).toBeNull();
+    }
+  );
+
+  it('requires the same exact installed link before read-only navigation, and keeps Eve’s canonical route', async () => {
+    const { api, enrolled } = await installed();
+    const assign = vi.fn(), ask = vi.fn();
+    const location = { pathname: '/settings/plugins-settings', hash: '', href: listed, assign };
+    const context = vm.createContext({ URL, alive: true, generating: false, epoch: 1, ask,
+      location, CLF_DOM: { generating: () => false, pluginManagementIdle: () => true,
+        pluginInstalledButtons: (...args: unknown[]) => api.pluginInstalledButtons(...args) } });
+    const section = contentSource.slice(contentSource.indexOf('  let pluginRefreshBusy = false;'), contentSource.indexOf('  function catalogPageReady('));
+    vm.runInContext(`${section}\nwaitPageView = async (read, current) => current() ? read() : null; globalThis.run = refreshManagedPlugin;`, context);
+    const request = { id, appId: app, surface: 'core', connectorName: 'ParadigmEve', tools: [], observeOnly: true };
+    expect(await (context.run as Function)(request)).toBe(true);
+    expect(assign).toHaveBeenCalledExactlyOnceWith(`https://chatgpt.com/plugins/plugin_${app}?eve-plugin-refresh=${id}`);
+    expect(ask).not.toHaveBeenCalled();
+
+    // A stale native link whose href changes after the first read cannot be followed.
+    let reads = 0;
+    const changing = vm.createContext({ URL, alive: true, generating: false, epoch: 1, ask,
+      location, CLF_DOM: { generating: () => false, pluginManagementIdle: () => true,
+        pluginInstalledButtons: (...args: unknown[]) => {
+          const found = api.pluginInstalledButtons(...args);
+          if (++reads === 1) enrolled.href = '/plugins/plugin_asdk_app_other';
+          return found;
+        } } });
+    vm.runInContext(`${section}\nwaitPageView = async (read, current) => current() ? read() : null; globalThis.run = refreshManagedPlugin;`, changing);
+    expect(await (changing.run as Function)(request)).toBe(false);
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('plugin refresh page custody and read-only observation', () => {
+  const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const appId = 'asdk_app_enrolled';
+  const page = `https://chatgpt.com/plugins/plugin_${appId}?eve-plugin-refresh=${id}`;
+  const tools = [{ name: 'read', description: 'Current schema', inputSchema: { type: 'object' } }];
+
+  function runRefresh(options: { observeOnly?: boolean; changeUrlOnClaim?: boolean; unchanged?: boolean } = {}) {
+    const location = { pathname: `/plugins/plugin_${appId}`, href: page };
+    let refreshed = false;
+    const click = vi.fn(() => { refreshed = true; });
+    const ask = vi.fn(async (message: { action: string }) => {
+      if (message.action === 'claim' && options.changeUrlOnClaim) {
+        // Same installed App ID and refresh marker, but a different provider route.
+        // A stale DOM Refresh button must no longer be clicked.
+        location.pathname = `/settings/plugins-settings/plugin_${appId}`;
+        location.href = `https://chatgpt.com/settings/plugins-settings/plugin_${appId}?eve-plugin-refresh=${id}`;
+      }
+      return { data: { ok: true } };
+    });
+    const context = vm.createContext({ URL, location, alive: true, generating: false, epoch: 1, ask,
+      CLF_DOM: { generating: () => false, pluginManagementIdle: () => true,
+        pluginRefreshView: () => ({ appId, refresh: { click }, tools: options.unchanged || refreshed
+          ? tools : [{ ...tools[0], description: 'Stale schema' }] }) } });
+    const section = contentSource.slice(contentSource.indexOf('  let pluginRefreshBusy = false;'), contentSource.indexOf('  function catalogPageReady('));
+    vm.runInContext(`${section}\nwaitPageView = async (read, current) => current() ? read() : null; globalThis.run = refreshManagedPlugin;`, context);
+    return { click, ask, run: () => (context.run as Function)({ id, appId, surface: 'core', connectorName: 'ParadigmEve', tools,
+      observeOnly: options.observeOnly === true, verifyOnly: false }) as Promise<boolean> };
+  }
+
+  it('refuses a stale Refresh click when the same app and marker move to another URL during claim', async () => {
+    const h = runRefresh({ changeUrlOnClaim: true });
+    expect(await h.run()).toBe(false);
+    expect(h.click).not.toHaveBeenCalled();
+    expect(h.ask.mock.calls.map(([message]) => message.action)).toEqual(['claim']);
+  });
+
+  it('never claims or clicks a stale schema in observeOnly mode even without verifyOnly', async () => {
+    const h = runRefresh({ observeOnly: true });
+    expect(await h.run()).toBe(false);
+    expect(h.click).not.toHaveBeenCalled();
+    expect(h.ask.mock.calls.map(([message]) => message.action)).toEqual(['fail']);
+  });
+
+  it('can acknowledge an already matching schema in observeOnly mode without Refresh', async () => {
+    const h = runRefresh({ observeOnly: true, unchanged: true });
+    expect(await h.run()).toBe(true);
+    expect(h.click).not.toHaveBeenCalled();
+    expect(h.ask.mock.calls.map(([message]) => message.action)).toEqual(['current']);
+  });
 });
 
 it('uses ParadigmEve Goal markers in the extension instruction', () => {
@@ -8940,6 +9066,52 @@ describe('how a turn is recorded as having ended', () => {
       recoverable: true,
       turnId: started.turnId
     });
+  });
+
+  /**
+   * Live 2026-10-15 exchange renderer: a bare bordered card above the composer, with no Retry
+   * button, no alert role and no assistant markdown. Unrecognised, the Prime tab sat blank on it
+   * while its model kept working and the interrupted-response reload was never requested.
+   */
+  it('records a bare connection-interrupted card with no Retry control or alert role', async () => {
+    live = await harness();
+    startGenerating(live.document);
+    assistantTurn(live.document, 'turn-bare-interrupted-card', []);
+    live.hook.observe();
+    await settle();
+
+    const card = live.document.createElement('div');
+    const copy = live.document.createElement('div');
+    copy.textContent = 'Connection interrupted. Waiting for the complete answer';
+    card.append(copy);
+    // Above the composer, inside the thread's <main>, like the live card.
+    live.document.querySelector('main')!.append(card);
+    live.hook.observe();
+    await settle();
+
+    const [failure] = emitted(live.sent, 'chat_error').map((entry) => entry.event);
+    const [started] = emitted(live.sent, 'turn_start').map((entry) => entry.event);
+    expect(failure).toMatchObject({
+      text: 'Connection interrupted. Waiting for the complete answer',
+      recoverable: true,
+      turnId: started.turnId
+    });
+  });
+
+  it('does not read the exact failure sentence in the composer as a page failure', async () => {
+    live = await harness();
+    startGenerating(live.document);
+    assistantTurn(live.document, 'turn-composer-quote', []);
+    const draft = live.document.createElement('div');
+    draft.setAttribute('contenteditable', 'true');
+    const line = live.document.createElement('p');
+    line.textContent = 'Connection interrupted. Waiting for the complete answer';
+    draft.append(line);
+    live.document.querySelector('main')!.append(draft);
+    live.hook.observe();
+    await settle();
+
+    expect(emitted(live.sent, 'chat_error')).toEqual([]);
   });
 
   it('does not turn ordinary assistant prose into an error because it quotes transport-failure wording', async () => {

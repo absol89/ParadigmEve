@@ -372,6 +372,46 @@ var CLF_DOM = (() => {
   }
 
   /**
+   * Transport-failure notices with neither an alert role nor a Retry control.
+   *
+   * The 2026-10-15 exchange renderer showed "Connection interrupted. Waiting for the complete
+   * answer" as a bare bordered card above the composer: no role="alert", no Retry button and no
+   * assistant markdown. None of the other paths saw it, the app never asked for the
+   * interrupted-response reload, and the Prime tab stayed blank while its model kept working.
+   * Only an element whose whole text is one recognised failure line counts, so prose that
+   * quotes the wording, user messages, the composer and our own surfaces never do.
+   */
+  function plainNoticeFailures() {
+    return safe(() => {
+      const root = document.querySelector('main') || document.body;
+      if (!root) return [];
+      const found = [];
+      const seen = new Set();
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const raw = node.nodeValue || '';
+        if (raw.length < 8 || raw.length > 300 || !/interrupted|couldn|timed out|went wrong|error|expired|unavailable/i.test(raw)) continue;
+        const start = node.parentElement;
+        if (!start || (start.closest && start.closest(
+          `${PROSE}, ${USER_HOLDER}, ${OWN_SURFACES}, [contenteditable="true"], textarea, form, [aria-hidden="true"], [hidden]`
+        ))) continue;
+        let element = start;
+        for (let up = 0; element && up < 4 && element !== root; up++, element = element.parentElement) {
+          const value = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+          if (value.length >= 300) break;
+          if (!transportFailure(value)) continue;
+          if (!seen.has(element) && displayed(element)) {
+            seen.add(element);
+            found.push({ text: value, node: element });
+          }
+          break;
+        }
+      }
+      return found;
+    }, []);
+  }
+
+  /**
    * The conversation a ChatGPT path names, or null when it names none.
    *
    * A conversation inside a Project is routed as `/g/<project>/c/<id>`, so anchoring at
@@ -1563,6 +1603,11 @@ var CLF_DOM = (() => {
         texts.add(failure.text);
         out.push({ ...failure, turnId: null, recoverable: true });
       }
+      for (const failure of plainNoticeFailures()) {
+        if (texts.has(failure.text)) continue;
+        texts.add(failure.text);
+        out.push({ ...failure, turnId: null, recoverable: true });
+      }
       for (const turn of turns()) {
         if (turn.role !== 'assistant') continue;
         for (const section of turnNodes(turn)) {
@@ -2142,17 +2187,41 @@ var CLF_DOM = (() => {
     return typeof snapshot.refreshAvailable === 'boolean' && buttons.length === (snapshot.refreshAvailable ? 1 : 0) ? { appId: snapshot.appId, connectorName: snapshot.connectorName, versionId: typeof snapshot.versionId === 'string' ? snapshot.versionId.slice(0, 200) : null,
       tools: snapshot.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })), refresh: buttons[0] || null } : null;
   }
-  function pluginInstalledButtons(connectorName) {
+  function pluginInstalledButtons(connectorName, expectedAppId = null, expectedSurface = null) {
+    // An enrolled recheck is scoped by the durable App Id and surface. Its visible name
+    // can change (or collide with another connector); a native installed link must prove
+    // the exact ID. A name-only row cannot establish that identity.
+    if (expectedAppId !== null && (typeof expectedAppId !== 'string' ||
+        !/^asdk_app_[A-Za-z0-9_-]{1,160}$/.test(expectedAppId))) return null;
+    if (expectedAppId !== null && !['core', 'desktop', 'plugins'].includes(expectedSurface)) return null;
+    const nativeSurface = { ParadigmEve: 'core', 'ParadigmEve Desktop': 'desktop', 'ParadigmEve Plugins': 'plugins' }[connectorName];
+    if (expectedAppId !== null && nativeSurface && nativeSurface !== expectedSurface) return null;
     return safe(() => {
       // The newer shell lists installed plugins on the /settings/plugins-settings page itself
       // (ported from upstream chat-on-steroids 839716d).
       if (location.pathname === '/settings/plugins-settings' && !location.hash) {
         const main = document.querySelector('main');
         if (!main) return null;
-        const rows = [...main.querySelectorAll('button')].filter(button => !button.disabled && button.getClientRects().length > 0 &&
-          [...button.querySelectorAll('*')].some(node => !node.children.length && text(node) === connectorName));
+        // Native list links expose the real ID in their destination; other anchors
+        // (catalog, off-origin, hash routes) and name-only buttons never prove enrollment.
+        const rows = [...main.querySelectorAll('button,a[href]')].filter(button => {
+          if (!button.isConnected || button.disabled || button.getClientRects().length === 0 ||
+              button.closest(`${OWN_SURFACES}, ${TURN}, [hidden], [aria-hidden="true"], [inert]`) ||
+              !composerCssVisible(button)) return false;
+          if (button.tagName === 'A') {
+            const url = new URL(button.href, location.href);
+            const match = /^\/(?:plugins|settings\/plugins-settings)\/plugin_(asdk_app_[A-Za-z0-9_-]+)$/.exec(url.pathname);
+            if (url.origin !== location.origin || !match || url.hash || url.search) return false;
+            if (expectedAppId !== null) return match[1] === expectedAppId;
+          }
+          if (expectedAppId !== null) return false;
+          return [...button.querySelectorAll('*')].some(node => !node.children.length && text(node) === connectorName);
+        });
         return rows.length ? rows : null;
       }
+      // Old tabpanel rows are buttons with no App Id; retain them for first enrollment
+      // only, never as proof of an existing scoped app.
+      if (expectedAppId !== null) return null;
       const panels = [...document.querySelectorAll('[role="tabpanel"]')].filter(panel => panel.getClientRects().length > 0 &&
         panel.getAttribute('aria-labelledby')?.endsWith('-trigger-Plugins'));
       if (panels.length !== 1) return null;
