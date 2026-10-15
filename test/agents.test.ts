@@ -182,11 +182,13 @@ describe('app-owned heartbeat review worker', () => {
     try {
       const spawned: Array<{ id: string; task: string }> = [];
       onSpawnRequest((workers) => spawned.push(...workers));
-      const first = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:maintenance-1', 'Read/review only. Return findings to Prime.');
+      const first = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:maintenance-1');
       expect(first.reused).toBe(false);
       expect(spawned).toHaveLength(1);
       expect(spawned[0]!.task).toContain('[[PARADIGMEVE-HEARTBEAT-REVIEW-WORKER:v1]]');
       expect(spawned[0]!.task).toContain('[[PARADIGMEVE-HEARTBEAT-REVIEW:heartbeat:maintenance-1]]');
+      expect(spawned[0]!.task).toContain('chat_review_payload');
+      expect(spawned[0]!.task.length).toBeLessThan(4_000);
 
       expect(bindConversation(first.workerId, 'c-heartbeat-review')).toBe(true);
       expect(heartbeatReviewWorkerOwnsKey({ conversationId: 'c-heartbeat-review' }, 'heartbeat:maintenance-1', PRIME_CHAT)).toBe(true);
@@ -196,14 +198,13 @@ describe('app-owned heartbeat review worker', () => {
       restoreSwarm(acceptedSnapshot);
       expect(heartbeatReviewWorkerOwnsKey({ conversationId: 'c-heartbeat-review' }, 'heartbeat:maintenance-1', PRIME_CHAT)).toBe(true);
 
-      const retry = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:maintenance-1', 'Read/review only. Return findings to Prime.');
+      const retry = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:maintenance-1');
       expect(retry).toMatchObject({ workerId: first.workerId, runId: first.runId, reused: true });
       expect(spawned).toHaveLength(1);
 
       await expect(dispatchHeartbeatReviewWorker(
         PRIME_CHAT,
-        'heartbeat:maintenance-2',
-        'A later review must wait until the prior worker turn releases its slot.'
+        'heartbeat:maintenance-2'
       )).rejects.toThrow('still finishing its previous epoch');
       expect(heartbeatReviewWorkerOwnsKey({ conversationId: 'c-heartbeat-review' }, 'heartbeat:maintenance-1', PRIME_CHAT)).toBe(true);
       expect(heartbeatReviewWorkerOwnsKey({ conversationId: 'c-heartbeat-review' }, 'heartbeat:maintenance-2', PRIME_CHAT)).toBe(false);

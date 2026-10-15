@@ -1252,6 +1252,27 @@ var CLF_DOM = (() => {
   }
 
   /**
+   * Whether Overwrite can prove a stable native activity slot for this renderer shape.
+   *
+   * Legacy per-role sections have always tolerated an external synthetic stream. The current
+   * virtualized exchange renderer does not: injecting rows into an exchange that exposes neither
+   * a progress container nor a native tool row can leave the virtualizer's cached height stale and
+   * visibly stack later content over the synthetic stream. In that unowned shape, fail closed to
+   * ChatGPT's native rendering until the page exposes an activity anchor we can safely replace.
+   */
+  function canReplaceActivity(turn) {
+    return safe(() => {
+      const sections = turnNodes(turn);
+      const first = sections[0] || null;
+      if (!first) return false;
+      if (!matches(first, EXCHANGE) || matches(first, LEGACY_TURN)) return true;
+      const hasProgress = sections.some(section =>
+        progressRoots(section).some(box => !(box.closest && box.closest(OWN_SURFACES))));
+      return hasProgress || toolBlocks(turn).length > 0;
+    }, false);
+  }
+
+  /**
    * Whether this block is a connector (API tool) row rather than a built-in one.
    *
    * Structural, not textual: the row carries the control named by CONNECTOR, and built-in
@@ -2916,6 +2937,7 @@ var CLF_DOM = (() => {
     interrupted,
     markProgress,
     toolBlocks,
+    canReplaceActivity,
     activityItems,
     isConnectorBlock,
     markLocalBlock,

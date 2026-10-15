@@ -1603,12 +1603,15 @@ export interface HeartbeatReviewDispatchResult {
  */
 export async function dispatchHeartbeatReviewWorker(
   primeConversationId: string,
-  key: string,
-  reviewText: string
+  key: string
 ): Promise<HeartbeatReviewDispatchResult> {
-  if (!primeConversationId || !key || !reviewText.trim()) throw new AgentError('Heartbeat review dispatch is incomplete.');
+  if (!primeConversationId || !key) throw new AgentError('Heartbeat review dispatch is incomplete.');
   const marker = heartbeatReviewEpochMarker(key);
-  const task = `${HEARTBEAT_REVIEW_WORKER_MARKER}\n${marker}\n${reviewText}`;
+  const task = `${HEARTBEAT_REVIEW_WORKER_MARKER}\n${marker}\n` +
+    `This is ParadigmEve's app-owned read/review-only 22-minute heartbeat side worker. ` +
+    `Before reviewing anything, call chat_review_payload directly with key ${JSON.stringify(key)} and follow the returned exact obligations. ` +
+    `Do not execute or delegate user work, send messages, edit/install, drive the browser, or mutate Plans. ` +
+    `Prime alone owns execution; finish only after the exact heartbeat lifecycle receipt.`;
   let owner = runForConversation(primeConversationId);
   const dormant = owner ? null : dormantRunForPrime(primeConversationId);
   const existing = heartbeatReviewWorker(owner ?? dormant);
@@ -1629,7 +1632,7 @@ export async function dispatchHeartbeatReviewWorker(
     // Broker delivery may acknowledge/remove the queue row on the worker's first read-only call;
     // later lifecycle calls in the same turn must still prove this exact key belongs to this worker.
     existing.info.task = task;
-    const staged = stageMessages({ conversationId: primeConversationId }, [{ to: existing.info.id, text: `${marker}\n${reviewText}` }]);
+    const staged = stageMessages({ conversationId: primeConversationId }, [{ to: existing.info.id, text: task }]);
     let accepted = false;
     try {
       if (!(await persistCriticalSwarmNow())) throw new AgentError('Heartbeat review could not cross its durable worker-message barrier.');

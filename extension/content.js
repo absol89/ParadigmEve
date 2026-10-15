@@ -6225,7 +6225,8 @@
         streamRootsByKey.delete(streamKey);
         existing = null;
       }
-      if (!enabled) {
+      const replacementOwned = typeof CLF_DOM.canReplaceActivity !== 'function' || CLF_DOM.canReplaceActivity(turn);
+      if (!enabled || !replacementOwned) {
         if (existing) existing.remove();
         if (streamKey) streamRootsByKey.delete(streamKey);
         for (const node of nodes) if (node && node.dataset) delete node.dataset.clfStreamKey;

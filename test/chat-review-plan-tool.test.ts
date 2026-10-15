@@ -37,6 +37,12 @@ const fixture = vi.hoisted(() => ({
     readyToArchive: false,
     archivedAt: null as number | null
   },
+  reviewAttention: {
+    key: 'heartbeat:review',
+    sinceAt: 100,
+    untilAt: 200,
+    plans: []
+  },
   acknowledge: vi.fn(async (_input: any, options: any = {}) => {
     if (fixture.acknowledgement !== 'acknowledged') return fixture.acknowledgement;
     if (options.mutate) await options.mutate(fixture.currentPlan);
@@ -48,7 +54,8 @@ const fixture = vi.hoisted(() => ({
     live: fixture.reviewedPlan.archivedAt === null ? [{ ...fixture.reviewedPlan }] : [],
     done: fixture.reviewedPlan.archivedAt === null ? [] : [{ ...fixture.reviewedPlan }]
   })),
-  resolveContinuity: vi.fn(async () => fixture.continuity)
+  resolveContinuity: vi.fn(async () => fixture.continuity),
+  attentionForKey: vi.fn(async () => fixture.reviewAttention)
 }));
 
 vi.mock('../src/main/agents.js', () => ({
@@ -65,6 +72,7 @@ vi.mock('../src/main/mcp/call-context.js', () => ({
 vi.mock('../src/main/chat-review-heartbeat.js', () => ({
   CHAT_REVIEW_PLAN_CLASSIFICATIONS: ['ready-to-archive', 'tbd', 'blocked', 'superseded', 'awaiting-user'],
   acknowledgeChatReviewPlan: fixture.acknowledge,
+  chatReviewAttentionForKey: fixture.attentionForKey,
   chatReviewRequiresWorker: vi.fn(async () => fixture.workerRequired),
   resolveChatReviewContinuity: fixture.resolveContinuity
 }));
@@ -107,6 +115,20 @@ function registered() {
   } as any);
   if (!capture.handler || !capture.declaration) throw new Error('chat_review_plan was not registered');
   return capture as { declaration: any; handler: (args: any) => Promise<any> };
+}
+
+function registeredNamed(name: string) {
+  const captures = new Map<string, { declaration: any; handler: (args: any) => Promise<any> }>();
+  registerChatReviewPlanTool({
+    sessionToolsLive: true,
+    register: (registeredName: string, declaration: unknown, handler: (args: any) => Promise<any>) => {
+      captures.set(registeredName, { declaration, handler });
+    },
+    featureDisabled: () => ({ isError: true })
+  } as any);
+  const capture = captures.get(name);
+  if (!capture) throw new Error(`${name} was not registered`);
+  return capture;
 }
 
 const input = {
@@ -161,6 +183,21 @@ describe('chat_review_plan lifecycle tool', () => {
     fixture.archivePlan.mockClear();
     fixture.listPlans.mockClear();
     fixture.resolveContinuity.mockClear();
+    fixture.attentionForKey.mockClear();
+  });
+
+  it('lets only the exact app-owned heartbeat worker read the durable review payload', async () => {
+    const payload = registeredNamed('chat_review_payload');
+    const rejected = await payload.handler({ key: 'heartbeat:review' });
+    expect(rejected.isError).toBe(true);
+    expect(fixture.attentionForKey).not.toHaveBeenCalled();
+
+    fixture.reviewWorker = true;
+    const accepted = await payload.handler({ key: 'heartbeat:review' });
+    expect(accepted.isError).not.toBe(true);
+    expect(accepted.content[0].text).toContain('[[PARADIGMEVE-CHAT-REVIEW:v1]]');
+    expect(accepted.content[0].text).toContain('heartbeat:review');
+    expect(fixture.attentionForKey).toHaveBeenCalledWith('heartbeat:review');
   });
 
   it('publishes the exact bounded lifecycle schema', () => {

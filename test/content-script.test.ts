@@ -4352,6 +4352,28 @@ describe('the app-owned chronological stream', () => {
     }
   });
 
+  it('fails a native-anchor-free virtualized exchange back to ChatGPT instead of mounting an overlapping stream', async () => {
+    live = await harness(undefined, { activity });
+    renderingOn();
+    const exchange = live.document.createElement('div');
+    exchange.setAttribute('data-turn-key', turnId);
+    const answer = live.document.createElement('div');
+    answer.className = 'markdown';
+    answer.textContent = 'Native GPT-6 answer remains the only renderer.';
+    exchange.append(answer);
+    live.document.querySelector('#thread')!.append(exchange);
+    await bindFiberTurns([{ section: exchange, turn: {
+      turnId,
+      calls: [{ messageId: 'fiber-wfr-app-stream', tool: 'read_file', order: 0, answered: true, requestId: 'wfr-app-stream' }]
+    } }]);
+    await live.hook.pullActivity();
+    live.hook.renderStreams();
+
+    expect(exchange.querySelector('.clf-stream')).toBeNull();
+    expect(exchange.getAttribute('data-clf-turn-replaced')).toBeNull();
+    expect(answer.textContent).toBe('Native GPT-6 answer remains the only renderer.');
+  });
+
   it('exposes bounded metadata through native, keyboard-operable tool disclosures', async () => {
     const withDetails = () => {
       const payload = activity();

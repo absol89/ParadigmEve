@@ -1826,11 +1826,10 @@ it('dispatches a heartbeat review to the app-owned worker without queueing anyth
   const result = await dispatchChatReviewWorker(sessionId, review);
   expect(result).toMatchObject({ workerId: 'worker-1' });
   expect(binding.dispatchHeartbeatReviewWorker).toHaveBeenCalledTimes(1);
-  const calls = binding.dispatchHeartbeatReviewWorker.mock.calls as unknown as Array<[string, string, string]>;
+  const calls = binding.dispatchHeartbeatReviewWorker.mock.calls as unknown as Array<[string, string]>;
   expect(calls[0]![0]).toBe(binding.conversationId);
   expect(calls[0]![1]).toBe(review.key);
-  expect(calls[0]![2]).toContain('read/review-only maintenance turn');
-  expect(calls[0]![2]).not.toContain('Carry out bounded unworked requests');
+  expect(calls[0]).toHaveLength(2);
   expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({
     state: 'cancelled',
     error: expect.stringContaining('read-only worker lane')

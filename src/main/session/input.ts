@@ -1147,7 +1147,7 @@ export async function dispatchChatReviewWorker(sessionId: string, review: ChatRe
   if (!session?.conversationId || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {
     throw new Error('Heartbeat review requires one exact ordinary Prime session.');
   }
-  return dispatchHeartbeatReviewWorker(session.conversationId, review.key, chatReviewAttentionText(review));
+  return dispatchHeartbeatReviewWorker(session.conversationId, review.key);
 }
 
 /**

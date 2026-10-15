@@ -959,7 +959,7 @@ describe('model-facing surfaces', () => {
     // file_action/file_edit schemas while keeping provider-specific tool sets off Core.
     // Debug builds also
     // expose one narrow authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 38 : process.platform === 'darwin' ? 25 : 23);
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 39 : process.platform === 'darwin' ? 26 : 24);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');

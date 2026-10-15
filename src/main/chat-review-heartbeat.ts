@@ -530,6 +530,19 @@ async function attentionForDebt(
   return { ...base, plans: snapshots.map(plan => planSnapshot(plan!)) };
 }
 
+/** Exact current review payload for the app-owned worker that already holds this durable epoch. */
+export async function chatReviewAttentionForKey(
+  key: string,
+  dependencies: Partial<Dependencies> = {}
+): Promise<ChatReviewAttention | null> {
+  if (!key || key.length > 512) return null;
+  const deps = { ...defaults, ...dependencies };
+  const state = await deps.readState();
+  const debt = state?.debt;
+  if (!debt || debt.key !== key) return null;
+  return attentionForDebt(debt, deps);
+}
+
 /** Newest exact non-worker conversation that has positively used Eve's connector. */
 export function chatReviewCoordinatorCandidates(sessions: readonly SessionSummary[]): SessionSummary[] {
   return sessions
