@@ -187,7 +187,8 @@ describe('app-owned heartbeat review worker', () => {
       expect(spawned).toHaveLength(1);
       expect(spawned[0]!.task).toContain('[[PARADIGMEVE-HEARTBEAT-REVIEW-WORKER:v1]]');
       expect(spawned[0]!.task).toContain('[[PARADIGMEVE-HEARTBEAT-REVIEW:heartbeat:maintenance-1]]');
-      expect(spawned[0]!.task).toContain('chat_review_payload');
+      expect(spawned[0]!.task).toContain('/appdata/state/chat-review-heartbeat.json');
+      expect(spawned[0]!.task).toContain('/appdata/state/plans.json');
       expect(spawned[0]!.task.length).toBeLessThan(4_000);
 
       expect(bindConversation(first.workerId, 'c-heartbeat-review')).toBe(true);

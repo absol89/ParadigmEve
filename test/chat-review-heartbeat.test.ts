@@ -9,7 +9,6 @@ import {
   CHAT_REVIEW_PLAN_BATCH_SIZE,
   CHAT_REVIEW_RETRY_MS,
   acknowledgeChatReviewPlan,
-  chatReviewAttentionForKey,
   chatReviewCoordinatorCandidates,
   completeChatReviewHeartbeat,
   resolveChatReviewContinuity,
@@ -1003,14 +1002,6 @@ describe('chat review heartbeat', () => {
       expectedCycle.slice(0, CHAT_REVIEW_PLAN_BATCH_SIZE)
     );
 
-    const exactPayload = await chatReviewAttentionForKey('heartbeat:plan-batch', {
-      readState: async () => state,
-      plans: async () => ({ live, done: [] })
-    });
-    expect(exactPayload?.plans?.map(snapshot => snapshot.id)).toEqual(
-      expectedCycle.slice(0, CHAT_REVIEW_PLAN_BATCH_SIZE)
-    );
-    expect(exactPayload?.plans).toHaveLength(4);
   });
 
   it('rejects a pending Plan debt whose selected batch no longer belongs to the durable sweep', async () => {

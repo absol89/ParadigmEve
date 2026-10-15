@@ -699,7 +699,7 @@ async function dispatchTracked(
   const localCallerRejected = Boolean(context.caller.localPrincipal) && !localCaller;
   if (localCaller) context.agent = localCaller;
   const heartbeatReviewWorker = isHeartbeatReviewWorkerCaller(context.caller);
-  const heartbeatReviewToolAllowed = new Set(['session', 'read', 'search', 'view_image', 'chat_review_payload', 'chat_review_plan', 'chat_review_complete']);
+  const heartbeatReviewToolAllowed = new Set(['session', 'read', 'search', 'view_image', 'chat_review_plan', 'chat_review_complete']);
   const allowUnattributed = getConfig().multiAgent.allowUnattributedCalls;
   const sharedEveAccess = sharedEveOwnerForCurrentCall() !== null;
   const retiredLeaseAmbiguous =

@@ -1609,7 +1609,10 @@ export async function dispatchHeartbeatReviewWorker(
   const marker = heartbeatReviewEpochMarker(key);
   const task = `${HEARTBEAT_REVIEW_WORKER_MARKER}\n${marker}\n` +
     `This is ParadigmEve's app-owned read/review-only 22-minute heartbeat side worker. ` +
-    `Before reviewing anything, call chat_review_payload directly with key ${JSON.stringify(key)} and follow the returned exact obligations. ` +
+    `Use only existing read/session lifecycle tools. First read /appdata/state/chat-review-heartbeat.json and verify its current debt.key is exactly ${JSON.stringify(key)}; if not, fail closed. ` +
+    `Then read /appdata/state/plans.json and review only the exact debt.planBatch Plan ids/revisions and their provenance, plus locally recorded session requests from debt.sinceAt through debt.untilAt. Do not inspect ChatGPT browser history. ` +
+    `For every selected Plan, follow its exact source with session search/read before calling chat_review_plan with the debt key, plan id, expected updatedAt and a review classification. ` +
+    `After the recent-request review and every selected Plan acknowledgement, call chat_review_complete with this exact key and the proper result/finding. ` +
     `Do not execute or delegate user work, send messages, edit/install, drive the browser, or mutate Plans. ` +
     `Prime alone owns execution; finish only after the exact heartbeat lifecycle receipt.`;
   let owner = runForConversation(primeConversationId);
@@ -1617,14 +1620,15 @@ export async function dispatchHeartbeatReviewWorker(
   const existing = heartbeatReviewWorker(owner ?? dormant);
 
   if (existing) {
-    const alreadyRunningThisEpoch = occupiesSlot(existing.info.state) &&
-      (existing.info.task.includes(marker) || existing.queue.some((message) => message.text.includes(marker)));
+    const alreadyRunningThisEpoch = occupiesSlot(existing.info.state) && existing.info.task === task;
     if (alreadyRunningThisEpoch) {
       const runId = owner?.runId;
       if (!runId) throw new AgentError('Heartbeat review worker has no durable run owner.');
       return { workerId: existing.info.id, runId, reused: true };
     }
-    if (occupiesSlot(existing.info.state)) {
+    const sameEpochNeedsUpdatedBootstrap = occupiesSlot(existing.info.state) &&
+      (existing.info.task.includes(marker) || existing.queue.some((message) => message.text.includes(marker)));
+    if (occupiesSlot(existing.info.state) && !sameEpochNeedsUpdatedBootstrap) {
       throw new AgentError('The heartbeat review worker is still finishing its previous epoch; the new review remains pending.');
     }
     const previousTask = existing.info.task;

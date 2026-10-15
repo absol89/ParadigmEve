@@ -113,6 +113,7 @@ import {
   agentForCaller,
   currentRunId,
   heartbeatReviewWorkerOwnsKey,
+  isHeartbeatReviewWorkerCaller,
   noteAgentContextTokens,
   persistCriticalSwarmNow,
   PRIME_ID,
@@ -319,6 +320,14 @@ async function rootsForSelfMaintenance(
   if (requestedManaged.length === 0) {
     return [...ordinaryRoots];
   }
+  const heartbeatReviewStateRead = tool === 'read' &&
+    isHeartbeatReviewWorkerCaller(currentCaller()) &&
+    requestedManaged.every((root) => root.name === 'appdata') &&
+    requestedPaths.every((requested) => {
+      const normalized = requested.replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
+      return normalized === '/appdata/state/chat-review-heartbeat.json' || normalized === '/appdata/state/plans.json';
+    });
+  if (heartbeatReviewStateRead) return [...ordinaryRoots, ...requestedManaged];
   if (!currentCallMayUseEveAuthority()) await exactToolConversation(tool);
   if (!currentCallMayUseEveAuthority()) {
     throw new SandboxError('SELF_MAINTENANCE_IDENTITY_REQUIRED: only this installation’s current Eve/Eva conversation may use ParadigmEve self-maintenance paths.');

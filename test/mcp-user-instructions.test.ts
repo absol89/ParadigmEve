@@ -200,6 +200,8 @@ describe('the user’s own connector instructions', () => {
     expect(text).toContain('Schedule is a first-class ParadigmEve workspace.');
     expect(text).toContain('use the `schedule` tool rather than leaving a prose promise');
     expect(text).toContain('Preserve the conversation-backed purpose');
+    expect(text).toContain('`%Thread`/`%Instruction` instruction references');
+    expect(text).not.toContain('%Hotlink');
     expect(text).toContain('the tool binds source chat identity itself, so never invent source ids');
     expect(text).toContain('`#expenses` alone never authorizes receipt filing or ledger writes');
     expect(text).toContain('“tomorrow instead”');

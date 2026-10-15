@@ -3,11 +3,9 @@ import { PRIME_ID, heartbeatReviewWorkerOwnsKey } from '../agents.js';
 import {
   acknowledgeChatReviewPlan,
   CHAT_REVIEW_PLAN_CLASSIFICATIONS,
-  chatReviewAttentionForKey,
   chatReviewRequiresWorker,
   resolveChatReviewContinuity
 } from '../chat-review-heartbeat.js';
-import { chatReviewAttentionText } from '../session/input.js';
 import { archivePlan, completePlanItemsForReview, listPlans } from '../plans.js';
 import { getConfig } from '../config.js';
 import { getSession } from '../session/store.js';
@@ -30,25 +28,6 @@ function reconciliationFailure(error: unknown): ReturnType<typeof fail> {
 
 /** Heartbeat-only lifecycle surface for acknowledging one exact durable Plan review target. */
 export function registerChatReviewPlanTool(reg: SurfaceRegistrar): void {
-  reg.register('chat_review_payload', toolDeclaration('chat_review_payload', () => ({
-    title: 'Review',
-    description: 'Read.',
-    inputSchema: z.object({
-      key: z.string().min(1).max(512)
-    }).strict(),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
-  })), async ({ key }) => guard('chat_review_payload', async () => {
-    if (!reg.sessionToolsLive) return reg.featureDisabled('Session recording', 'Settings → Chat');
-    const continuity = await resolveChatReviewContinuity(key);
-    const caller = currentCaller();
-    if (!continuity || !heartbeatReviewWorkerOwnsKey(caller, key, continuity.conversationId)) {
-      return fail('CHAT_REVIEW_PAYLOAD_CALLER_REJECTED: only the exact app-owned heartbeat worker for this durable epoch may read its review payload.');
-    }
-    const review = await chatReviewAttentionForKey(key);
-    if (!review) return fail('CHAT_REVIEW_PAYLOAD_STALE: this heartbeat epoch is no longer pending. Do not guess or reuse another key.');
-    return ok(chatReviewAttentionText(review));
-  }));
-
   reg.register('chat_review_plan', toolDeclaration('chat_review_plan', () => ({
     title: 'Acknowledge heartbeat Plan review',
     description:
