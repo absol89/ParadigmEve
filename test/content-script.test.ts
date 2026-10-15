@@ -4675,6 +4675,20 @@ describe('the app-owned chronological stream', () => {
     for (let tick = 0; tick < 20; tick++) live.hook.renderStreams();
     expect(live.document.querySelectorAll('.clf-stream')).toHaveLength(1);
     expect(live.document.querySelectorAll('.clf-stream-tool-disclosure')).toHaveLength(1);
+
+    // Ported from upstream CoS 76961267. A successful, unchanged replacement must
+    // not emit attribute mutations once per poll: they wake ChatGPT's own observers
+    // and previously caused high-frequency redraws during GPT-6 responses.
+    const mutations: MutationRecord[] = [];
+    const observer = new (live.document.defaultView as unknown as { MutationObserver: typeof MutationObserver })
+      .MutationObserver(records => mutations.push(...records));
+    observer.observe(live.document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+    live.hook.renderStreams();
+    live.hook.renderStreams();
+    await Promise.resolve();
+    mutations.push(...observer.takeRecords());
+    observer.disconnect();
+    expect(mutations.map(record => `${record.type}:${record.attributeName || ''}`)).toEqual([]);
   });
 
   it('retires predecessor activity roots when a recorder takes ownership of the document', async () => {

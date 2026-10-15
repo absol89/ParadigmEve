@@ -699,6 +699,9 @@
    * moving it merely because React transiently moved the native host across a user boundary.
    */
   const streamRootsByKey = new Map();
+  // Keep the successful-render grace clock outside the DOM: rewriting the same timestamp
+  // every second causes a MutationObserver storm in both Companion and ChatGPT.
+  const completeAtByRoot = new WeakMap();
   // Recorder takeover starts a new presentation owner. Sibling roots cannot be adopted
   // through native section descendants, and an older recorder could leave unkeyed roots
   // outside its registry. Retire that projection once; the durable feed rebuilds it.
@@ -6246,9 +6249,11 @@
       // back to native, which would put ChatGPT's copy of prose the stream above already
       // carries right back on the page.
       if (streamKey && painted.has(streamKey)) {
-        for (const node of nodes) if (node && node.dataset) node.dataset.clfStreamKey = streamKey;
+        for (const node of nodes) if (node?.dataset && node.dataset.clfStreamKey !== streamKey) node.dataset.clfStreamKey = streamKey;
         CLF_DOM.hideProgress(turn, true);
-        for (const block of CLF_DOM.toolBlocks(turn)) block.setAttribute('data-clf-native-hidden', '1');
+        for (const block of CLF_DOM.toolBlocks(turn)) {
+          if (block.getAttribute('data-clf-native-hidden') !== '1') block.setAttribute('data-clf-native-hidden', '1');
+        }
         CLF_DOM.replaceActivity(turn, null, true);
         continue;
       }
@@ -6257,7 +6262,7 @@
       // Never mount a sibling that this registry cannot find again on the next paint.
       // Native relabelling stays available until a durable group/message key arrives.
       if (!streamKey || rendered.length === 0 || !completeReplacementForTurn(turn, rendered)) {
-        const lastComplete = existing ? Number(existing.dataset.clfCompleteAt) : 0;
+        const lastComplete = existing ? (completeAtByRoot.get(existing) ?? Number(existing.dataset.clfCompleteAt)) : 0;
         // A one-second observer and a two-second activity pull race each other by design.
         // Once this exact section has already been proven complete, do not tear ownership
         // down just because one transient Fiber scan or feed page is a beat behind. That
@@ -6286,14 +6291,18 @@
 
       const activityRows = rendered.filter((entry) => entry.kind !== 'assistant_message');
       const root = existing || document.createElement('div');
-      root.className = 'clf-stream';
+      if (root.className !== 'clf-stream') root.className = 'clf-stream';
       if (streamKey) {
-        root.dataset.clfKey = streamKey;
+        if (root.dataset.clfKey !== streamKey) root.dataset.clfKey = streamKey;
         streamRootsByKey.set(streamKey, root);
-        for (const node of nodes) if (node && node.dataset) node.dataset.clfStreamKey = streamKey;
+        for (const node of nodes) if (node?.dataset && node.dataset.clfStreamKey !== streamKey) node.dataset.clfStreamKey = streamKey;
       }
-      root.dataset.clfCompleteAt = String(Date.now());
-      root.dataset.clfTurn = turn.id || (group && group.id) || localId || 'anchored';
+      // The grace window must advance on each successful paint, but its clock is not
+      // presentation data. An unchanging DOM must remain fully untouched on the next tick.
+      completeAtByRoot.set(root, Date.now());
+      if (!root.dataset.clfCompleteAt) root.dataset.clfCompleteAt = String(Date.now());
+      const turnLabel = turn.id || (group && group.id) || localId || 'anchored';
+      if (root.dataset.clfTurn !== turnLabel) root.dataset.clfTurn = turnLabel;
       // Commentary text is part of the signature: one caption grows in place under the same
       // seq, so a signature made of seq and kind alone would never notice it had changed.
       const signature = `${SHOW_TIMES ? 'times:1' : 'times:0'}|` + activityRows
@@ -6327,11 +6336,14 @@
           replacement?.querySelector('summary')?.focus({ preventScroll: true });
         }
       }
-      root.dataset.clfStrongKeys = JSON.stringify([...strongStreamIdentityKeys(rendered)]);
+      const strongKeys = JSON.stringify([...strongStreamIdentityKeys(rendered)]);
+      if (root.dataset.clfStrongKeys !== strongKeys) root.dataset.clfStrongKeys = strongKeys;
       // Hide only the native activity that these exact rows replace. The assistant answer and
       // its React-backed controls remain mounted, visible and interactive.
       CLF_DOM.hideProgress(turn, true);
-      for (const block of CLF_DOM.toolBlocks(turn)) block.setAttribute('data-clf-native-hidden', '1');
+      for (const block of CLF_DOM.toolBlocks(turn)) {
+        if (block.getAttribute('data-clf-native-hidden') !== '1') block.setAttribute('data-clf-native-hidden', '1');
+      }
       CLF_DOM.replaceActivity(turn, root, true);
       if (streamKey) painted.add(streamKey);
     }
@@ -6346,7 +6358,7 @@
         continue;
       }
       if (seenStreamKeys.has(key)) continue;
-      const lastComplete = Number(root.dataset && root.dataset.clfCompleteAt);
+      const lastComplete = completeAtByRoot.get(root) ?? Number(root.dataset && root.dataset.clfCompleteAt);
       if (!Number.isFinite(lastComplete) || now - lastComplete >= REPLACEMENT_GRACE_MS) {
         root.remove();
         streamRootsByKey.delete(key);

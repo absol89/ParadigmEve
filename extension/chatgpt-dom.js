@@ -1822,8 +1822,9 @@ var CLF_DOM = (() => {
             holds = holdsAnswer(box);
             if (memo) memo.answers.set(box, holds);
           }
-          if (hidden && !holds) box.setAttribute('data-clf-native-hidden', '1');
-          else box.removeAttribute('data-clf-native-hidden');
+          if (hidden && !holds) {
+            if (box.getAttribute('data-clf-native-hidden') !== '1') box.setAttribute('data-clf-native-hidden', '1');
+          } else if (box.hasAttribute('data-clf-native-hidden')) box.removeAttribute('data-clf-native-hidden');
         }
       }
     }, undefined);
@@ -1850,8 +1851,10 @@ var CLF_DOM = (() => {
       const sections = turnNodes(turn);
       if (sections.length === 0) return false;
       for (const section of sections) {
-        if (replaced) section.setAttribute('data-clf-turn-replaced', '1');
-        else section.removeAttribute('data-clf-turn-replaced');
+        // Ported from CoS 76961267: identical writes still wake every page MutationObserver.
+        if (replaced) {
+          if (section.getAttribute('data-clf-turn-replaced') !== '1') section.setAttribute('data-clf-turn-replaced', '1');
+        } else if (section.hasAttribute('data-clf-turn-replaced')) section.removeAttribute('data-clf-turn-replaced');
       }
       if (replaced && root) {
         const first = sections[0];
