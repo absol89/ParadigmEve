@@ -13870,8 +13870,11 @@ the carried handoff behind a lost reply`;
       release({ ok: true, command: { id: 'cmd-model-remount', type: 'worker', text: 'Worker task after remount',
         agent: 'worker-1', model: 'gpt-5.6-sol', reasoningEffort: 'high' } });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await settle(600);
+      // macOS CI can schedule the 50 ms remount and the content script's DOM
+      // observer on different event-loop turns. Wait for the actual authored
+      // Send receipt instead of assuming a fixed 700 ms is sufficient.
+      await vi.waitFor(() => expect(submitted).toBe('Worker task after remount'), { timeout: 5000, interval: 25 });
+      await settle(100);
 
       // Before the port this failed at once with composer_missing and never sent. ParadigmEve
       // confirms the sent worker message later, from its own authored-message proof.

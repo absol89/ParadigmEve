@@ -26,14 +26,17 @@ export async function validatePortablePython(root) {
     throw new Error('Portable Python is missing bundled diarization dependencies.');
 }
 
-export async function stageTranscriptionRuntime(source, portablePython, destination) {
+export async function stageTranscriptionRuntime(source, portablePython, destination, { includeVulkan = false } = {}) {
   const target = path.resolve(destination);
   if ((await readdir(path.dirname(target))).includes(path.basename(target)))
     throw new Error('Destination already exists; staging must not overwrite prior output.');
   await validatePortablePython(portablePython);
+  const vulkan = path.join('.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release');
+  const gpuFiles = ['whisper-cli.exe', 'ggml-probe.exe', 'build-info.json'];
   for (const relative of ['ldw', 'upstream/src/local_diarization', 'lock/components.json',
     '.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe',
-    'requirements-windows.txt']) {
+    'requirements-windows.txt', 'LICENSE.local-diarization.txt', 'LICENSE.whisper-cpp.txt',
+    ...(includeVulkan ? [...gpuFiles.map(name => path.join(vulkan, name)), 'third_party/vulkan-build/licenses'] : [])]) {
     await stat(path.join(source, relative));
   }
   await mkdir(target, { recursive: false });
@@ -51,16 +54,14 @@ export async function stageTranscriptionRuntime(source, portablePython, destinat
     cp(path.join(source, 'LICENSE.whisper-cpp.txt'), path.join(target, 'LICENSE.whisper-cpp.txt')),
     cp(portablePython, path.join(target, 'runtime'), { recursive: true })
   ]);
-  // GPU (Vulkan) build: both binaries come from the same ggml sources. ggml-probe proves a device at
-  // run time; without it Eve keeps the GPU avenue unavailable. build-info.json records the pins.
-  const vulkan = path.join('.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release');
-  for (const name of ['whisper-cli.exe', 'ggml-probe.exe', 'build-info.json']) await stat(path.join(source, vulkan, name));
-  await mkdir(path.join(target, vulkan), { recursive: true });
-  for (const name of ['whisper-cli.exe', 'ggml-probe.exe', 'build-info.json']) {
-    await cp(path.join(source, vulkan, name), path.join(target, vulkan, name));
+  // Optional manually built GPU payload. Default/CI packages contain no Vulkan executable,
+  // so ldw's probe truthfully reports cpu-only-build instead of advertising unavailable hardware.
+  if (includeVulkan) {
+    await mkdir(path.join(target, vulkan), { recursive: true });
+    for (const name of gpuFiles) await cp(path.join(source, vulkan, name), path.join(target, vulkan, name));
+    await cp(path.join(source, 'third_party', 'vulkan-build', 'licenses'), path.join(target, 'licenses', 'vulkan-build'),
+      { recursive: true });
   }
-  await cp(path.join(source, 'third_party', 'vulkan-build', 'licenses'), path.join(target, 'licenses', 'vulkan-build'),
-    { recursive: true });
   return target;
 }
 

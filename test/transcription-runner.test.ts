@@ -16,6 +16,23 @@ describe('main-process transcription jobs', () => {
     expect(availableTranscriptionAvenues(settings, { groq: null, openai: 'available' })).toEqual(['local']);
     expect(availableTranscriptionAvenues(settings, { groq: 'available', openai: null })).toEqual(['cloud', 'local']);
   });
+  it('uses priority 2 CPU when priority 1 GPU cannot run', () => {
+    const settings = cloneTranscriptionSettings();
+    settings.gpu.enabled = true;
+    settings.gpu.priority = 1;
+    settings.local.enabled = true;
+    settings.local.priority = 2;
+    const keys = { groq: null, openai: null };
+    expect(availableTranscriptionAvenues(settings, keys, {
+      status: 'cpu-only-build', device: null, reason: 'No GPU build included'
+    })).toEqual(['local']);
+    expect(availableTranscriptionAvenues(settings, keys, {
+      status: 'device-unavailable', device: null, reason: 'No usable GPU on runner'
+    })).toEqual(['local']);
+    expect(availableTranscriptionAvenues(settings, keys, {
+      status: 'usable', device: 'Vulkan GPU', reason: null
+    })).toEqual(['gpu', 'local']);
+  });
   it('does not issue a job or spawn a child for an absent audio source', async () => {
     await expect(startTranscriptionJob({
       audioPath: 'this-audio-file-does-not-exist-3bc07683.wav',

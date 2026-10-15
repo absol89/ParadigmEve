@@ -89,22 +89,26 @@ async function prepareX64(outDir) {
     'import cffi,numpy,sherpa_onnx,soundfile; print("transcription-python-ok")'
   ], { cwd: runtime });
 
-  // The GPU engine is rebuilt from pinned sources whenever it is missing (first build on a machine).
-  if (!existsSync(path.join(source, '.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release', 'ggml-probe.exe'))) {
+  // Vulkan is optional and deliberately excluded from CI release packages. Building the
+  // GPU engine requires a separate explicit local opt-in; the normal package is CPU-ready.
+  const includeVulkan = !process.env.CI && process.env.EVE_PACKAGE_VULKAN === '1';
+  if (includeVulkan && !existsSync(path.join(source, '.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release', 'ggml-probe.exe'))) {
     await buildWhisperVulkan();
   }
-  await stageTranscriptionRuntime(source, runtime, outDir);
+  await stageTranscriptionRuntime(source, runtime, outDir, { includeVulkan });
   run(path.join(outDir, 'runtime', 'python.exe'), ['-c',
     'import cffi,numpy,sherpa_onnx,soundfile; print("staged-transcription-python-ok")'
   ], { cwd: outDir });
   run(path.join(outDir, '.vendor', 'whisper.cpp', 'build', 'bin', 'Release', 'whisper-cli.exe'),
     ['--version'], { cwd: outDir });
-  // The staged GPU probe must start and report Vulkan compiled in. Device usability is decided on the
-  // user's machine at run time, never here.
-  const probe = JSON.parse(execFileSync(path.join(outDir, '.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release',
-    'ggml-probe.exe'), { encoding: 'utf8' }).trim().split(/\r?\n/).pop());
-  if (!probe.backends?.includes('Vulkan')) throw new Error('Staged ggml-probe does not include the Vulkan backend.');
-  run(path.join(outDir, 'runtime', 'python.exe'), ['-m', 'ldw', 'gpu-probe'], { cwd: outDir });
+  if (includeVulkan) {
+    // On a local opt-in build, prove the staged GPU binary has Vulkan compiled in.
+    // Actual device usability is determined on the user's machine at runtime.
+    const probe = JSON.parse(execFileSync(path.join(outDir, '.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release',
+      'ggml-probe.exe'), { encoding: 'utf8' }).trim().split(/\r?\n/).pop());
+    if (!probe.backends?.includes('Vulkan')) throw new Error('Staged ggml-probe does not include the Vulkan backend.');
+    run(path.join(outDir, 'runtime', 'python.exe'), ['-m', 'ldw', 'gpu-probe'], { cwd: outDir });
+  }
 }
 
 async function main() {

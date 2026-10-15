@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 // @ts-expect-error JavaScript staging CLI intentionally has no generated declaration file.
-import { validatePortablePython } from '../scripts/stage-transcription-runtime.mjs';
+import { stageTranscriptionRuntime, validatePortablePython } from '../scripts/stage-transcription-runtime.mjs';
 // @ts-expect-error Build scripts are intentionally plain ESM JavaScript.
 import { PYTHON_ASSET, PYTHON_SHA256, PYTHON_URL, PYTHON_VERSION, configureEmbeddedPython } from '../scripts/prepare-transcription-runtime.mjs';
 
@@ -29,7 +29,75 @@ describe('portable transcription runtime staging', () => {
       await expect(validatePortablePython(root)).resolves.toBeUndefined();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  it('ships the CPU transcription runtime without optional Vulkan binaries by default', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'eve-cpu-stage-'));
+    try {
+      const { source, portable, target } = await stagingFixture(root);
+      await stageTranscriptionRuntime(source, portable, target);
+      expect(await readFile(path.join(target, '.vendor', 'whisper.cpp', 'build', 'bin', 'Release', 'whisper-cli.exe'), 'utf8'))
+        .toBe('cpu-whisper');
+      await expect(stat(path.join(target, '.vendor', 'whisper.cpp', 'build-vulkan')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(path.join(target, 'licenses', 'vulkan-build')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(path.join(target, 'runtime', 'python314._pth'), 'utf8')).toContain('import site');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.runIf(!process.env.CI)('only stages a complete optional GPU payload when explicitly requested', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'eve-gpu-stage-'));
+    try {
+      const { source, portable, target } = await stagingFixture(root);
+      await stageTranscriptionRuntime(source, portable, target, { includeVulkan: true });
+      for (const file of ['whisper-cli.exe', 'ggml-probe.exe', 'build-info.json']) {
+        expect(await readFile(path.join(target, '.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release', file), 'utf8'))
+          .toBe(`gpu-${file}`);
+      }
+      expect(await readFile(path.join(target, 'licenses', 'vulkan-build', 'LICENSE.txt'), 'utf8'))
+        .toBe('vulkan-license');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.runIf(!process.env.CI)('rejects an incomplete optional GPU payload before publishing any output', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'eve-gpu-incomplete-'));
+    try {
+      const { source, portable, target } = await stagingFixture(root);
+      await rm(path.join(source, '.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release', 'ggml-probe.exe'));
+      await expect(stageTranscriptionRuntime(source, portable, target, { includeVulkan: true }))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });
+
+async function stagingFixture(root: string) {
+  const source = path.join(root, 'source');
+  const portable = path.join(root, 'python');
+  const target = path.join(root, 'output');
+  const write = async (base: string, relative: string, value: string) => {
+    const file = path.join(base, relative);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, value);
+  };
+  for (const [file, value] of Object.entries({
+    'ldw/__main__.py': 'pass',
+    'upstream/src/local_diarization/__init__.py': 'pass',
+    'lock/components.json': '{}',
+    '.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe': 'cpu-whisper',
+    'requirements-windows.txt': 'pinned',
+    'LICENSE.local-diarization.txt': 'local-license',
+    'LICENSE.whisper-cpp.txt': 'whisper-license',
+    '.vendor/whisper.cpp/build-vulkan/bin/Release/whisper-cli.exe': 'gpu-whisper-cli.exe',
+    '.vendor/whisper.cpp/build-vulkan/bin/Release/ggml-probe.exe': 'gpu-ggml-probe.exe',
+    '.vendor/whisper.cpp/build-vulkan/bin/Release/build-info.json': 'gpu-build-info.json',
+    'third_party/vulkan-build/licenses/LICENSE.txt': 'vulkan-license'
+  })) await write(source, file, value);
+  await write(portable, 'python.exe', 'python-stub');
+  await write(portable, 'python314._pth', 'python314.zip\n.\n..\nLib/site-packages\nimport site\n');
+  await write(portable, 'Lib/site-packages/sherpa_onnx/__init__.py', 'pass');
+  return { source, portable, target };
+}
 
 // Vulkan GPU validation is manual/local only. CI must not execute Vulkan tests.
 // Opt in locally with EVE_TEST_VULKAN=1; CI still skips even if that is set.
