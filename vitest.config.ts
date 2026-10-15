@@ -1,8 +1,11 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
+    // Transcription/Whisper are optional, candidate-tested features. Keep every
+    // dedicated suite on the laptop, but do not require them on GitHub CI hosts.
+    exclude: [...configDefaults.exclude, ...(process.env.CI ? ['test/transcription-*.test.ts'] : [])],
     environment: 'node',
     // This suite mixes real filesystem work, child processes, HTTP servers, Electron/native
     // helpers and worker threads. On an 8-way Windows host Vitest's full file parallelism can

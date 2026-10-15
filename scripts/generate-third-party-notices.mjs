@@ -61,6 +61,25 @@ notices.push('='.repeat(80), 'Native image-library license supplements', 'The fo
 for (const file of ['README.md', 'COMPONENT-NOTICES.txt', 'LGPL-3.0.txt', 'GPL-3.0.txt', 'MPL-2.0.txt']) {
   notices.push(`--- ${file} ---`, await fs.readFile(path.join(root, 'docs/licenses/native', file), 'utf8'), '');
 }
+// These non-npm native/Python components are distributed by the Windows x64
+// transcription package. Its runtime also retains each installed wheel's own
+// dist-info license files. sherpa-onnx-core declares Apache-2.0 but omits a
+// license file from its wheel, so ship a separately reviewed exact supplement.
+notices.push('='.repeat(80), 'Windows x64 optional transcription runtime',
+  'whisper.cpp v1.9.4 (pinned commit 927cfce34f31707e17f2bff35c349632fb9e2c3a): MIT.',
+  'Source: https://github.com/ggml-org/whisper.cpp',
+  'local-diarization (pinned commit 77d570ed4f00e67a32cc244e1ce11570a353f051): MIT.',
+  'Source: https://github.com/PatrikHolopainen/local-diarization',
+  'sherpa-onnx 1.13.8 and sherpa-onnx-core 1.13.8: Apache-2.0.',
+  'Source: https://github.com/k2-fsa/sherpa-onnx',
+  'ONNX Runtime DLL bundled by sherpa-onnx-core: MIT.',
+  'Source: https://github.com/microsoft/onnxruntime',
+  'Other pinned Python wheels retain their respective dist-info licenses inside the embedded runtime.', '');
+for (const file of ['LICENSE.whisper-cpp.txt', 'LICENSE.local-diarization.txt',
+  'LICENSE.sherpa-onnx-core.txt', 'LICENSE.onnxruntime.txt']) {
+  notices.push(`--- transcription-engine/${file} ---`,
+    await fs.readFile(path.join(root, 'transcription-engine', file), 'utf8'), '');
+}
 // Catalog packages are optional downloads, but their reviewed license texts must
 // also be reachable from the app's Legal Notices action before installation.
 const catalogLicenses = JSON.parse(await fs.readFile(path.join(root, 'docs/licenses/plugins/inventory.json'), 'utf8'));

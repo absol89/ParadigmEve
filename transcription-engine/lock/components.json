@@ -15,6 +15,11 @@
     "license": "MIT",
     "approx_download_bytes": 15000000,
     "build": "cmake -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DWHISPER_BUILD_TESTS=OFF; target whisper-cli",
+    "windows_cpu_binary": {
+      "path": ".vendor/whisper.cpp/build/bin/Release/whisper-cli.exe",
+      "sha256": "4903d1f50f2a94eb9910b4c9126c7975b5922d89438c343ba0cc04a4ec7ad7f7",
+      "source": "v1.9.4 (927cfce34f31707e17f2bff35c349632fb9e2c3a), CPU-only Windows x64 release build"
+    },
     "build_gpu": "scripts/build-whisper-vulkan.mjs: transcription-engine/native/CMakeLists.txt with GGML_VULKAN=ON, GGML_CUDA=OFF, BUILD_SHARED_LIBS=OFF; targets whisper-cli + ggml-probe; Vulkan inputs from transcription-engine/third_party/vulkan-build (SHA256SUMS.txt)"
   },
   "python_requirements": {

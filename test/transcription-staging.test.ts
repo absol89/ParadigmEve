@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +43,18 @@ describe('portable transcription runtime staging', () => {
       await expect(stat(path.join(target, 'licenses', 'vulkan-build')))
         .rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(path.join(target, 'runtime', 'python314._pth'), 'utf8')).toContain('import site');
+      expect(await readFile(path.join(target, 'LICENSE.sherpa-onnx-core.txt'), 'utf8')).toBe('core-license');
+      expect(await readFile(path.join(target, 'LICENSE.onnxruntime.txt'), 'utf8')).toBe('onnx-license');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('rejects a modified or unpinned CPU binary before creating a package', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'eve-cpu-hash-'));
+    try {
+      const { source, portable, target } = await stagingFixture(root);
+      await writeFile(path.join(source, '.vendor', 'whisper.cpp', 'build', 'bin', 'Release', 'whisper-cli.exe'), 'changed-cpu');
+      await expect(stageTranscriptionRuntime(source, portable, target)).rejects.toThrow('checksum mismatch');
+      await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -80,14 +93,22 @@ async function stagingFixture(root: string) {
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, value);
   };
+  const cpuCli = '.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe';
+  const cpuContent = 'cpu-whisper';
+  const lock = JSON.stringify({ whisper_cpp: { windows_cpu_binary: {
+    path: cpuCli,
+    sha256: createHash('sha256').update(cpuContent).digest('hex')
+  } } });
   for (const [file, value] of Object.entries({
     'ldw/__main__.py': 'pass',
     'upstream/src/local_diarization/__init__.py': 'pass',
-    'lock/components.json': '{}',
-    '.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe': 'cpu-whisper',
+    'lock/components.json': lock,
+    [cpuCli]: cpuContent,
     'requirements-windows.txt': 'pinned',
     'LICENSE.local-diarization.txt': 'local-license',
     'LICENSE.whisper-cpp.txt': 'whisper-license',
+    'LICENSE.sherpa-onnx-core.txt': 'core-license',
+    'LICENSE.onnxruntime.txt': 'onnx-license',
     '.vendor/whisper.cpp/build-vulkan/bin/Release/whisper-cli.exe': 'gpu-whisper-cli.exe',
     '.vendor/whisper.cpp/build-vulkan/bin/Release/ggml-probe.exe': 'gpu-ggml-probe.exe',
     '.vendor/whisper.cpp/build-vulkan/bin/Release/build-info.json': 'gpu-build-info.json',

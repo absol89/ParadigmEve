@@ -4,6 +4,7 @@
  * The portable runtime must already include site-packages installed from locked wheels.
  * This script rejects venvs rather than copying local absolute-path launchers.
  */
+import { createHash } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,13 +32,23 @@ export async function stageTranscriptionRuntime(source, portablePython, destinat
   if ((await readdir(path.dirname(target))).includes(path.basename(target)))
     throw new Error('Destination already exists; staging must not overwrite prior output.');
   await validatePortablePython(portablePython);
+  const cpuCli = '.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe';
+  const lock = JSON.parse(await readFile(path.join(source, 'lock', 'components.json'), 'utf8'));
+  const pinnedCpu = lock.whisper_cpp?.windows_cpu_binary;
+  if (pinnedCpu?.path !== cpuCli || !/^[0-9a-f]{64}$/.test(pinnedCpu.sha256 ?? '')) {
+    throw new Error('Pinned Windows x64 CPU Whisper executable is not declared in the component lock.');
+  }
   const vulkan = path.join('.vendor', 'whisper.cpp', 'build-vulkan', 'bin', 'Release');
   const gpuFiles = ['whisper-cli.exe', 'ggml-probe.exe', 'build-info.json'];
   for (const relative of ['ldw', 'upstream/src/local_diarization', 'lock/components.json',
-    '.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe',
-    'requirements-windows.txt', 'LICENSE.local-diarization.txt', 'LICENSE.whisper-cpp.txt',
+    cpuCli, 'requirements-windows.txt', 'LICENSE.local-diarization.txt', 'LICENSE.whisper-cpp.txt',
+    'LICENSE.sherpa-onnx-core.txt', 'LICENSE.onnxruntime.txt',
     ...(includeVulkan ? [...gpuFiles.map(name => path.join(vulkan, name)), 'third_party/vulkan-build/licenses'] : [])]) {
     await stat(path.join(source, relative));
+  }
+  const actualCpuHash = createHash('sha256').update(await readFile(path.join(source, cpuCli))).digest('hex');
+  if (actualCpuHash !== pinnedCpu.sha256) {
+    throw new Error(`CPU whisper-cli checksum mismatch: expected ${pinnedCpu.sha256}, got ${actualCpuHash}`);
   }
   await mkdir(target, { recursive: false });
   await mkdir(path.join(target, '.vendor', 'whisper.cpp', 'build', 'bin', 'Release'), { recursive: true });
@@ -52,6 +63,8 @@ export async function stageTranscriptionRuntime(source, portablePython, destinat
     cp(path.join(source, 'requirements-windows.txt'), path.join(target, 'requirements-windows.txt')),
     cp(path.join(source, 'LICENSE.local-diarization.txt'), path.join(target, 'LICENSE.local-diarization.txt')),
     cp(path.join(source, 'LICENSE.whisper-cpp.txt'), path.join(target, 'LICENSE.whisper-cpp.txt')),
+    cp(path.join(source, 'LICENSE.sherpa-onnx-core.txt'), path.join(target, 'LICENSE.sherpa-onnx-core.txt')),
+    cp(path.join(source, 'LICENSE.onnxruntime.txt'), path.join(target, 'LICENSE.onnxruntime.txt')),
     cp(portablePython, path.join(target, 'runtime'), { recursive: true })
   ]);
   // Optional manually built GPU payload. Default/CI packages contain no Vulkan executable,

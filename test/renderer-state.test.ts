@@ -816,18 +816,27 @@ it('toggles desktop timing capture from Activity without changing the Problems f
   expect(toggle.getAttribute('aria-pressed')).toBe('false');
   doc.querySelector<HTMLButtonElement>('#logFilter [data-filter="bad"]')!.click();
   toggle.click();
-  await vi.waitFor(() => expect(toggle.textContent).toBe('Timing: On'));
+  await vi.waitFor(() => {
+    expect(toggle.textContent).toBe('Timing: On');
+    expect(toggle.disabled).toBe(false);
+  });
   expect(toggle.getAttribute('aria-pressed')).toBe('true');
   expect(setDesktopTimingLogs).toHaveBeenCalledExactlyOnceWith(true);
   expect(doc.querySelector<HTMLButtonElement>('#logFilter [data-filter="bad"]')!.classList.contains('is-sel')).toBe(true);
   toggle.click();
-  await vi.waitFor(() => expect(toggle.textContent).toBe('Timing: Off'));
+  await vi.waitFor(() => {
+    expect(toggle.textContent).toBe('Timing: Off');
+    expect(toggle.disabled).toBe(false);
+  });
   expect(setDesktopTimingLogs).toHaveBeenLastCalledWith(false);
   const { setLanguage } = await import('../src/renderer/i18n.js');
   setLanguage('sv-SE');
   expect(toggle.textContent).toBe('Tidslogg: Av');
   toggle.click();
-  await vi.waitFor(() => expect(toggle.textContent).toBe('Tidslogg: På'));
+  await vi.waitFor(() => {
+    expect(toggle.textContent).toBe('Tidslogg: På');
+    expect(toggle.disabled).toBe(false);
+  });
   expect(toggle.getAttribute('aria-pressed')).toBe('true');
   setLanguage('es-419');
   expect(toggle.textContent).toBe('Tiempos: activados');

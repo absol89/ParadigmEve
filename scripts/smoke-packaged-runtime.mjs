@@ -155,7 +155,9 @@ if (targetPlatform === 'win32') {
       'transcription-engine/upstream/src/local_diarization/__init__.py',
       'transcription-engine/.vendor/whisper.cpp/build/bin/Release/whisper-cli.exe',
       'transcription-engine/LICENSE.local-diarization.txt',
-      'transcription-engine/LICENSE.whisper-cpp.txt'
+      'transcription-engine/LICENSE.whisper-cpp.txt',
+      'transcription-engine/LICENSE.sherpa-onnx-core.txt',
+      'transcription-engine/LICENSE.onnxruntime.txt'
     ]) required(relative);
     if (existsSync(path.join(resourcesDir, 'transcription-engine', 'runtime', 'pyvenv.cfg'))) {
       throw new Error('Packaged transcription runtime must not contain pyvenv.cfg');
