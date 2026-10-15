@@ -42,6 +42,16 @@ Eve can:
 
 You do **not** have to enable all of that to use Eve.
 
+## Work with Word documents, spreadsheets, PDFs and slides
+
+Ask Eve to open, proofread, edit or show you work on a DOCX, XLSX, PDF or PPTX file in an ordinary **fresh chat**. ParadigmEve exposes a built-in file broker through Eve's Core tools and standing guidance, so you do not need to activate `%how` or explain its tools. Eve should check the broker **before** suggesting a generic office-suite install. Built-in readers can inspect these formats without installing another editor.
+
+If the file is in a folder you approved, `file_action` can inspect the actual file and discover suitable editing providers. If you only have a **ChatGPT Library link**, Eve can still ask `file_action` which provider handles a known extension, such as `docx`, but that lookup does **not** open or download the Library file. Actual editing requires an accessible local copy in an approved folder (for example, a native attachment saved there when available). A Library URL alone is not a local file path.
+
+For Word documents, the broker can offer **WordCraft** (`artcraft.wordcraft`), a separate in-development file app rather than a preinstalled office suite. `file_edit` can discover an installed provider's tools, edit a **new copy**, or open that copy visibly when the provider has a desktop app for your system. Installing WordCraft requires your confirmation in ParadigmEve's native dialog, and broker-managed edits that would drop detected features require separate approval. Eve leaves the original file unchanged. Offers and visible editing depend on available builds, your permissions and the connected tools; no app is silently installed.
+
+See the [file-broker workflow in the engineering manual](docs/vault/03-mcp-connectors-and-tools.md#file-broker-inspect-offer-edit-or-show) for the exact operations.
+
 ## The easiest way to start
 
 1. Download **[ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** for your computer.

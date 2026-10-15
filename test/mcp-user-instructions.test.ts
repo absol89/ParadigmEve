@@ -74,17 +74,38 @@ afterEach(() => {
 });
 
 describe('the user’s own connector instructions', () => {
-  it('routes requested document editing through the available file broker before generic app recommendations', () => {
+  it('routes natural-language file work through the broker on a fresh account without a Thread or project', () => {
     const instructions = serverInstructions(ctx, 'core', 'win32');
-    expect(instructions).toContain('file_action');
-    expect(instructions).toContain('file_edit');
-    expect(instructions).toContain('WordCraft');
-    expect(instructions).toContain('open_visible');
-    expect(instructions).toContain('Library');
+    expect(instructions).toContain('# Built-in file-format broker');
+    for (const format of ['DOCX', 'PDF', 'XLSX', 'PPTX']) expect(instructions).toContain(format);
+    for (const task of ['open', 'proofread', 'edit', 'convert', 'show']) expect(instructions).toContain(task);
+    expect(instructions).toContain('file_action broker FIRST, no generic installs or %how');
+    expect(instructions).toContain('Local file: file_action inspect');
+    expect(instructions).toContain('file_action {op:"providers",format:"docx"}');
+    expect(instructions).toContain('Library URL is not local: obtain approved copy');
+    expect(instructions).toContain('file_edit provider_tools');
+    expect(instructions).toContain('WordCraft artcraft.wordcraft');
+    expect(instructions).toContain('file_edit edit makes NEW copy');
+    expect(instructions).toContain('file_edit open_visible uses permitted Computer Use');
+    expect(instructions).toContain('Never overwrite');
+    expect(instructions).toContain('file_edit install_provider needs user agreement AND native approval');
+    expect(instructions).toContain('feature loss needs separate native consent');
+    expect(instructions).toContain('names are not approval');
+    expect(instructions).toContain('permitted Computer Use');
     const withoutRead = serverInstructions({ ...ctx, caps: { ...ctx.caps, read: false } }, 'core', 'win32');
-    expect(withoutRead).not.toContain('Prefer the ParadigmEve file broker');
+    expect(withoutRead).not.toContain('# Built-in file-format broker');
     const withoutEdit = serverInstructions({ ...ctx, caps: { ...ctx.caps, edit: false } }, 'core', 'win32');
     expect(withoutEdit).not.toContain('file_edit');
+    expect(withoutEdit).toContain('Without Edit permission, no installing or editing');
+    const linux = serverInstructions(ctx, 'core', 'linux');
+    expect(linux).toContain('file_action {op:"providers",format:"docx"}');
+    expect(linux).toContain('feature loss needs separate native consent');
+    // Tool discovery begins from the Core connector description, before MCP initialize.
+    const preDiscovery = surfaceDefinition('core', 'Eva').description;
+    for (const phrase of ['Eva', 'DOCX', 'PDF', 'XLSX', 'PPTX', 'proofreading', 'conversion', 'visible editing', 'file_action']) {
+      expect(preDiscovery).toContain(phrase);
+    }
+    expect(preDiscovery).toContain('before searching for or installing other office software');
   });
   it('explains the transient ChatGPT safety refusal and offers session_finish to any model', () => {
     // Ported from Chat On Steroids 2.1.17 (#555, #556).

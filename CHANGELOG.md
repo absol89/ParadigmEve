@@ -15,6 +15,13 @@ operation.
 
 ## [2.4.0] — Windows preview, resilient wakes and transcription
 
+### In development: built-in file-format broker (not yet shipped)
+
+- Upcoming 2.4.0 source instructions make Eve discover and use its **built-in file-format broker** whenever a user asks to open, edit, proofread, convert or otherwise work with a Word document (DOCX), PDF, spreadsheet or slide presentation. This guidance is intended to be available automatically in fresh conversations without a special command or earlier chat context.
+- Resolve supported file providers and broker capabilities **before** suggesting an unrelated external editor installation. Provider availability is checked rather than assumed; missing capabilities must be reported honestly.
+- Preserve the original file: edits use a separate local working copy, with fidelity or feature-loss risks identified before proceeding. Native application installation, opening a visible editor, and other consent-sensitive actions remain subject to explicit user approval and existing safety checks.
+- These changes describe the **development source path for a future 2.4.0 candidate**. They are not a claim that the feature is present in any already-installed c7/c8/c9/c10 candidate or publicly released installer.
+
 Windows x64 **preview accepted locally** (2026-10-14): the c7 installer built from `1ac504221d15`, passed 5,766 automated tests (42 skipped), installed with no visible command-window popup, and delivered one confirmed restart wake to the exact Eve chat without any pending duplicate. The +1/+2-minute fallback has test coverage but has not been live-tested against a deliberate pickup failure. Other operating systems and Windows ARM64 have not received live acceptance. The public preview tag and publication are separate actions.
 
 - Settings → Transcription: GPU (priority 1), Local (2) and Cloud via Groq (3), each with a switch

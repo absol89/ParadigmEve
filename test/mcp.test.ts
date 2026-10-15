@@ -1058,6 +1058,8 @@ describe('model-facing surfaces', () => {
     expect(coreDescription).toMatch(/typing, dictating or talking naturally/i);
     expect(coreDescription).toMatch(/while it is on/i);
     expect(coreDescription).toMatch(/documents|notes|data/i);
+    expect(coreDescription).toContain('built-in file-format broker');
+    expect(coreDescription).toContain('file_action before searching for or installing other office software');
     expect(coreDescription).toMatch(/longer jobs/i);
     expect(coreDescription).toMatch(/copy and paste between apps/i);
     expect(coreDescription).toMatch(/voice-first/i);
@@ -1361,7 +1363,8 @@ describe('2025-era clients', () => {
     }
     // 2.3.8 carries Eve's general visual-design guidance (release-visual-design.md) in the
     // coding instructions themselves, not only behind the manual link (~650 characters).
-    expect(instructions.length).toBeLessThan(18_700);
+    // Broker discovery is part of the fresh-chat instructions, not a %how-only manual.
+    expect(instructions.length).toBeLessThan(19_100);
   });
 
   it('includes Computer-use guidance in ParadigmEve while keeping legacy Desktop self-contained', async () => {

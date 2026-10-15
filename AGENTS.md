@@ -1693,6 +1693,18 @@ unsupported/manual-required stays visible instead of opening more helper tabs.
 
 ### File broker and ArtCraft file apps
 
+**Always-on discovery contract:** An ordinary fresh, unfiled ChatGPT/Eve conversation must
+discover the built-in file broker for natural-language document work without `%how`, a selected
+Thread, prior chat memory, or this repository's project-scoped `AGENTS.md`. The Core connector's
+pre-discovery description (`src/main/mcp/surfaces.ts`) must advertise the capability; its delivered
+instructions (`src/main/mcp/instructions.ts`, including `src/main/session/prompt.ts` fresh-chat framing) must direct
+`file_action` provider lookup first. For an approved local path use `inspect`; for only an extension
+or ChatGPT Library link use format-only `providers` without pretending the Library URL is a local
+path. Prefer ready ArtCraft providers to generic installer searches; `file_edit` uses a separate
+new copy, discovered provider tools, explicit native installation/feature-loss consent and
+actual Computer Use for visible editing. Keep the detailed workflow in
+`docs/vault/03-mcp-connectors-and-tools.md`, not duplicated here.
+
 `file_action` (read-only: `inspect`, bounded `read`, format-only `providers`) and `file_edit` (changes) are the only Core
 file-broker tools on every chat route (ChatGPT, local Ollama/OpenRouter chats and workers). Built-in
 XLSX/DOCX/PDF/PPTX readers are the zero-install fallback; PDF.js runs in a killable worker. Results

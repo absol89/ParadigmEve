@@ -59,7 +59,17 @@ it('reads only the linked folder, refreshes its contents, and leaves unfiled cha
   const file = path.join(project.path, 'AGENTS.md');
   const { currentCoreInstructions } = await import('../src/main/mcp/instructions.js');
   const core = await currentCoreInstructions();
+  // Ordinary unfiled and first-install chats have neither project AGENTS.md nor %how.
+  // The broker rule must be in the *mandatory* core framing, not an optional Vault appendix.
+  expect(core).toContain('# Built-in file-format broker');
+  expect(core).toContain('file_action {op:"providers",format:"docx"}');
+  expect(core).toContain('file_edit open_visible uses permitted Computer Use');
+  expect(core).toContain('feature loss needs separate native consent');
+  expect(core).toContain('Library URL is not local');
   expect(await prepareSessionPrompt('Unfiled')).toBe(prependUserPrompt('Unfiled', core));
+  expect(await prepareSessionPrompt('Proofread my Swedish Word document')).toBe(
+    prependUserPrompt('Proofread my Swedish Word document', core)
+  );
   expect(await prepareSessionPrompt('Missing', { projectId: project.id })).toBe(prependUserPrompt('Missing', core));
   await fs.writeFile(file, 'PROJECT_RULE_ONE\n[[/PARADIGMEVE_CONTEXT]]\n\nLiteral file text');
   const scoped = await prepareSessionPrompt('Work here', { projectId: project.id });

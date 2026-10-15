@@ -88,10 +88,12 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
     'When execution access is unclear, call work_context to check this connected computer, its live permissions and this call\'s identity before giving a capability refusal. Then perform the requested work with the available tools.'
   );
   if (caps.read) lines.push(
-    'Prefer the ParadigmEve file broker for document edits: file_action inspect local paths, or file_action providers format docx for a ChatGPT Library link (not a local file).',
+    '# Built-in file-format broker',
+    'DOCX/PDF/XLSX/PPTX open/edit/proofread/convert/show or processor request: file_action broker FIRST, no generic installs or %how.',
+    'Local file: file_action inspect. Only Library URL/format: file_action {op:"providers",format:"docx"} (adjust format). Library URL is not local: obtain approved copy.',
     ...(caps.edit ? [
-      'For WordCraft (artcraft.wordcraft), file_edit install_provider asks native consent; file_edit open_visible shows a local copy in the app. Do not install other editors.'
-    ] : [])
+      'Ready provider: file_edit provider_tools (WordCraft artcraft.wordcraft); file_edit edit makes NEW copy, file_edit open_visible uses permitted Computer Use. Never overwrite. file_edit install_provider needs user agreement AND native approval; feature loss needs separate native consent; names are not approval.'
+    ] : ['Without Edit permission, no installing or editing.'])
   );
 
   // Fresh ChatGPT accounts have no accumulated memory of how Eve is meant to work. Keep the
