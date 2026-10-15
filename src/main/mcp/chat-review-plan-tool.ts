@@ -31,7 +31,7 @@ export function registerChatReviewPlanTool(reg: SurfaceRegistrar): void {
   reg.register('chat_review_plan', toolDeclaration('chat_review_plan', () => ({
     title: 'Acknowledge heartbeat Plan review',
     description:
-      'Internal lifecycle tool for ParadigmEve’s 22-minute recovery heartbeat. The assigned read-only heartbeat worker may only classify Plans from the exact batch; it must not provide completed_item_ids, mark checklist items done or archive anything. Legacy Prime-owned reviews retain their historical bounded mutation authority. Stale revisions, foreign batches, unrelated workers/helpers and nested/code-mode calls fail closed.',
+      'Classify a Plan in the exact heartbeat batch. Read-only workers must omit completed_item_ids and cannot mutate or archive Plans; only legacy Prime-owned reviews retain bounded mutation authority. Reject stale or foreign lifecycle calls.',
     inputSchema: z.object({
       key: z.string().min(1).max(512).describe('Exact durable review key printed by the current heartbeat prompt.'),
       plan_id: planIdSchema.describe('Exact Plan id from this heartbeat batch.'),

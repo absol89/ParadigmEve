@@ -1228,7 +1228,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     reg.register('chat_review_complete', toolDeclaration('chat_review_complete', () => ({
       title: 'Complete chat review heartbeat',
       description:
-        'Internal completion receipt for ParadigmEve’s 22-minute recovery heartbeat. The heartbeat is read/review only: identify whether Prime should act and on what, but do not execute, delegate, send, install, edit, browser-drive, or mutate user work. Pass the exact key and a bounded result: completed=no unfinished actionable work remained; dispatched=actionable findings are being returned to Prime without execution; blocked=the review could not safely determine a disposition; failed=the review itself failed. Every non-completed result requires a compact finding, which becomes a durable Eve-app handoff to Prime. Browser delivery, an ACK, or ordinary final prose do not complete a heartbeat.',
+        'Exact-key 22-minute heartbeat review receipt. Read/review only: no execution, delegation, sends, edits, installs or browser actions. completed=none actionable; dispatched=Prime should act on the finding; blocked=uncertain disposition; failed=review failure. Non-completed results require a provenance-bound finding for durable Eve-app handoff. Browser ACK/prose alone never closes the review.',
       inputSchema: z.object({
         key: z.string().min(1).max(512).describe('Exact durable review key printed by the current heartbeat prompt.'),
         result: z.enum(['completed', 'dispatched', 'blocked', 'failed']).optional().describe('Privacy-safe review outcome. Omitted by older heartbeat prompts means completed.'),
