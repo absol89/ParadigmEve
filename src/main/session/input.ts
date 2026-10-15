@@ -1601,6 +1601,29 @@ export function cancelInput(id: string): Promise<boolean> {
  * operation ineligible, including a cancelled ambiguous delivery. No assistant,
  * schedule, worker or ordinary enqueue payload can opt into this path.
  */
+/**
+ * What in this chat holds back a Force Send: a send the browser is already typing, whoever owns
+ * it, or another pending message of the user's own. App-owned items (heartbeat findings, peer and
+ * attention notes, a fresh-turn continue) wait for after the turn as before and do not block it:
+ * a queued heartbeat finding refused every Force Send in its chat (2026-10-16).
+ */
+function forceSendBlocker(row: InputEntry, current: readonly InputEntry[]): 'browser-busy' | 'user-pending' | null {
+  for (const entry of current) {
+    if (entry === row || entry.sessionId !== row.sessionId || entry.purpose === 'decision' || entry.purpose === 'schedule') continue;
+    if (entry.state === 'browser') return 'browser-busy';
+    if ((entry.purpose === undefined || entry.purpose === 'user') && (entry.state === 'queued' || entry.state === 'tool')) return 'user-pending';
+  }
+  return null;
+}
+/** A plain reason for a refused Force Send, or null when nothing in the queue explains it. */
+export async function forceSendRefusal(id: string): Promise<string | null> {
+  const current = await listInputs();
+  const row = current.find(entry => entry.id === id);
+  const blocker = row ? forceSendBlocker(row, current) : null;
+  if (blocker === 'browser-busy') return 'The browser is already sending another message in this chat. Try again once it has gone.';
+  if (blocker === 'user-pending') return 'Another message of yours is still waiting in this chat. Send or cancel that one first.';
+  return null;
+}
 export function forceBrowserInput(id: string): Promise<InputEntry | null> {
   return serial(async () => {
     const current = await load();
@@ -1619,11 +1642,8 @@ export function forceBrowserInput(id: string): Promise<InputEntry | null> {
       const session = await getSession(row.sessionId);
       if (!forceBrowserContextValid(row, session)) return null;
     }
-    // An unrelated chat never blocks a user's send, but a newer pending input in this
-    // exact composer does. Leave that newer input and any existing browser owner alone.
-    if (current.some(entry => entry !== row && entry.sessionId === row.sessionId &&
-        entry.purpose !== 'decision' && entry.purpose !== 'schedule' &&
-        ['queued', 'browser', 'tool'].includes(entry.state))) return null;
+    // An unrelated chat never blocks a user's send; see forceSendBlocker for this one.
+    if (forceSendBlocker(row, current)) return null;
     if (repeated) return { ...row }; // same attempt, after re-proving its conversation
     const now = Date.now();
     const { directTurn: _oldDirectTurn, ...original } = row;

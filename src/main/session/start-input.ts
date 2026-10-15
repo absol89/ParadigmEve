@@ -4,7 +4,7 @@ import { connect, getStatus, onStatusChange } from '../connection.js';
 import { startBridge } from '../bridge.js';
 import { wakeBrowserUrl, resetBrowserStartupForTests } from '../browser-startup.js';
 import { getConfig } from '../config.js';
-import { enqueueInput, cancelInput, forceBrowserInput, listInputs, noteInputStartupError, type InputArgs, type InputEntry } from './input.js';
+import { enqueueInput, cancelInput, forceBrowserInput, forceSendRefusal, listInputs, noteInputStartupError, type InputArgs, type InputEntry } from './input.js';
 import { deliverLocalInput } from './ollama-chat.js';
 import { compactingConversation } from './continuation.js';
 import { logWarn } from '../logger.js';
@@ -101,7 +101,11 @@ export function forceSendDesktopInput(id: string): Promise<InputEntry | null> {
     }
     await ready();
     const entry = await forceBrowserInput(id);
-    return entry ? deliver(entry, true) : null;
+    if (!entry) {
+      const why = await forceSendRefusal(id);
+      return why ? { ...candidate, error: why } : null;
+    }
+    return deliver(entry, true);
   })();
   forceStarting.set(id, attempt);
   void attempt.finally(() => { if (forceStarting.get(id) === attempt) forceStarting.delete(id); }).catch(() => undefined);

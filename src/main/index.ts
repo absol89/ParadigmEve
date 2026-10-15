@@ -953,10 +953,10 @@ void app.whenReady().then(async () => {
           } else if (result.staleIdentity) {
             // The heartbeat never guesses a chat. When the saved identity is what it cannot use,
             // say so plainly: that is the one thing a person can repair.
-            logWarn(
-              `chat review heartbeat waiting: ${reason}; the saved Eve/Eva identity names chat ${result.staleIdentity}, ` +
-                'whose session is closed (no open tab) or is not an ordinary chat. If Eve now works in another chat, ' +
-                'point the identity there. Durable review state was preserved'
+            logInfo(
+              `chat review heartbeat waiting for a live Eve chat: the saved identity names chat ${result.staleIdentity}, ` +
+                'which has no open tab or is not an ordinary chat. The review stays owed and runs as soon as Eve works ' +
+                'in a usable chat (or the identity is moved there)'
             );
           } else {
             logInfo(`chat review heartbeat waiting: ${reason}; durable review state was preserved`);
@@ -966,10 +966,13 @@ void app.whenReady().then(async () => {
         }
       },
       onError: (error) => {
-        // A backoff repeats every retry tick until the cadence passes; say it once.
+        // A backoff is the heartbeat working as designed, not a failure. It repeats every retry
+        // tick until the cadence passes, so say it once and say what it means.
         if (error.message.startsWith('HEARTBEAT_REVIEW_BACKOFF')) {
           if (error.message === lastHeartbeatBackoff) return;
           lastHeartbeatBackoff = error.message;
+          logInfo(`chat review heartbeat deferred: ${error.message.replace(/^HEARTBEAT_REVIEW_BACKOFF:\s*/, '')}`);
+          return;
         }
         logWarn(`chat review heartbeat could not run: ${error.message}`);
       }

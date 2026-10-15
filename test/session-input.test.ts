@@ -10,7 +10,7 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, forceSendRefusal
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -184,6 +184,20 @@ describe('durable user input ownership', () => {
       .toMatchObject({ id: row.id, state: 'browser', forceBrowser: true });
     expect(await authorizeBrowserInput(row.id, 'correct-browser', binding.conversationId)).toBe(true);
     expect(await forceBrowserInput(row.id)).toBeNull();
+  });
+
+  // 2026-10-16: a queued heartbeat finding in the same chat refused every Force Send there.
+  it("is not held back by app-owned queued items, only by the user's own pending message", async () => {
+    const finding = await seedLegacyInput(input({ text: '[[PARADIGMEVE-HEARTBEAT-FINDING:k]] finding', mode: 'after-turn' }));
+    await writeDurableNow('session-input', (await listInputs()).map(entry =>
+      entry.id === finding.id ? { ...entry, purpose: 'heartbeat-finding' as const } : entry));
+    resetInputForTests();
+    const mine = await seedLegacyInput(input({ text: 'testing a force send' }));
+    expect(await forceBrowserInput(mine.id)).toMatchObject({ id: mine.id, forceBrowser: true });
+
+    const other = await seedLegacyInput(input({ text: 'another message of mine' }));
+    expect(await forceBrowserInput(other.id)).toBeNull();
+    expect(await forceSendRefusal(other.id)).toBe('Another message of yours is still waiting in this chat. Send or cancel that one first.');
   });
 
   it('reoffers a proven unclaimed browser-pickup timeout with the same durable id and no duplicate', async () => {

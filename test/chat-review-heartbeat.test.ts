@@ -579,6 +579,42 @@ describe('chat review heartbeat', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  // 2026-10-15: Eve's Prime chat lost its stream, its last turn was recorded as failed, and the
+  // identity still named that same open chat. The worker lane waited for a human nudge although it
+  // reviews in its own chat. It now carries on; the lane that types into the owner still waits.
+  it('keeps the worker lane running for the same identity-named chat after its last turn failed', async () => {
+    const failedOwner = (pending: ChatReviewDebt) => session({
+      id: pending.sessionId,
+      conversationId: pending.conversationId,
+      lastToolCallAt: 900,
+      lastTurnOutcome: 'failed',
+      activeTurnId: null
+    });
+    const run = async (pending: ChatReviewDebt) => {
+      let state: ChatReviewHeartbeatState | null = { debt: pending };
+      const owner = failedOwner(pending);
+      const enqueue = vi.fn(async () => undefined);
+      const result = await runChatReviewHeartbeat(10_000, {
+        readState: async () => state,
+        writeState: vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; }),
+        sessions: async () => [owner],
+        uniqueSession: async (id) => id === pending.conversationId ? owner : null,
+        blocked: () => false,
+        enqueue,
+        agentConversation: () => pending.conversationId
+      });
+      return { result, enqueue };
+    };
+
+    const worker = await run(debt({ key: 'heartbeat:same-chat-worker', reviewLane: 'worker' }));
+    expect(worker.result).toMatchObject({ status: 'pending', sessionId: 'prime-session', conversationId });
+    expect(worker.enqueue).toHaveBeenCalledTimes(1);
+
+    const legacy = await run(debt({ key: 'heartbeat:same-chat-legacy' }));
+    expect(legacy.result).toMatchObject({ status: 'no-coordinator', reason: 'no-successor' });
+    expect(legacy.enqueue).not.toHaveBeenCalled();
+  });
+
   it('moves stale debt to a newly proven installation-agent identity even when the legacy owner still appears active', async () => {
     const pending = debt({ key: 'heartbeat:installation-rebound' });
     let state: ChatReviewHeartbeatState | null = { debt: pending };

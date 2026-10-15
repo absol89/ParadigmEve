@@ -1051,13 +1051,19 @@ export function runChatReviewHeartbeat(
         : null;
       const installationRebound = installationSuccessor !== null;
       let coordinator = owner.endedAt === null && !installationRebound ? owner : null;
+      // A failed or stalled last turn retires an owner only for the lane that types into it. The
+      // worker lane reviews in its own chat; while the installation identity still names this same
+      // open chat, there is no other owner to find, and waiting stalled the review until someone
+      // nudged Eve by hand (2026-10-15, a throttled Prime chat).
+      const identityKeepsOwner = debt.reviewLane === 'worker' && owner.endedAt === null &&
+        identityConversationId !== null && identityConversationId === owner.conversationId;
       // Positive durable retirement (`endedAt`) and a canonically stalled/failed turn are the
       // ordinary cross-session handoff triggers. A different exact installation-agent identity is
       // the one additional positive handoff signal; do not infer any handoff from elapsed time, a
       // hidden tab, display sleep, or lack of browser ACK. Durably move this same epoch/key first,
       // and reject any later receipt from the old owner. If no safe successor exists the debt
       // simply remains owed.
-      if (!coordinator || coordinatorTurnRetired(coordinator)) {
+      if (!coordinator || (coordinatorTurnRetired(coordinator) && !identityKeepsOwner)) {
         const successor = installationSuccessor ?? await newestCoordinator(await deps.sessions(), deps, debt.sessionId);
         if (!successor) return {
           status: 'no-coordinator',
