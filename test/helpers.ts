@@ -12,8 +12,8 @@ export async function makeTempDir(prefix = 'clf-'): Promise<string> {
   return await fs.realpath(dir);
 }
 
-export async function removeTempDir(dir: string): Promise<void> {
-  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
+export async function removeTempDir(dir: string, maxRetries = 5): Promise<void> {
+  await fs.rm(dir, { recursive: true, force: true, maxRetries });
 }
 
 /** Writes a map of "a/b.txt" -> contents, creating parent folders as needed. */
