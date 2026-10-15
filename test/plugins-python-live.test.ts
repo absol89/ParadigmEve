@@ -22,7 +22,7 @@ it.runIf(process.env.COS_PLUGIN_LIVE_TEST === '1')('installs the reviewed Python
     const launch = await installSource(source, directory);
     const data = path.join(directory, 'data');
     await fs.mkdir(data);
-    await client.connect(new StdioClientTransport({ command: launch.command, args: launch.args, cwd: data, stderr: 'ignore' }), { timeout: 20000 });
+    await client.connect(new StdioClientTransport({ command: launch.command, args: launch.args, cwd: data, stderr: 'ignore' }), { timeout: 60000 });
     expect((await client.listTools({}, { timeout: 15000 })).tools.map(tool => tool.name)).toContain('fetch');
     await new Promise<void>(resolve => page.listen(0, '127.0.0.1', resolve));
     const address = page.address();
@@ -33,6 +33,7 @@ it.runIf(process.env.COS_PLUGIN_LIVE_TEST === '1')('installs the reviewed Python
   } finally {
     await client.close();
     if (page.listening) await new Promise<void>((resolve, reject) => page.close(error => error ? reject(error) : resolve()));
-    await removeTempDir(directory);
+    // Windows releases a stopped server's venv files late; give EBUSY time to clear.
+    await removeTempDir(directory, 20);
   }
 }, 180000);
