@@ -1528,9 +1528,9 @@ THE SOFTWARE.
 
 
 ================================================================================
-@modelcontextprotocol/client@2.0.0
+@modelcontextprotocol/client@2.2.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.2.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -1752,9 +1752,9 @@ the full license text.
 
 
 ================================================================================
-@modelcontextprotocol/core@2.0.0
+@modelcontextprotocol/core@2.2.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/core/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/core/v/2.2.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -1976,9 +1976,9 @@ the full license text.
 
 
 ================================================================================
-@modelcontextprotocol/node@2.0.0
+@modelcontextprotocol/node@2.1.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/node/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/node/v/2.1.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -2200,9 +2200,9 @@ the full license text.
 
 
 ================================================================================
-@modelcontextprotocol/server@2.0.0
+@modelcontextprotocol/server@2.2.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.2.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -3430,9 +3430,9 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ================================================================================
-hono@4.13.2
+hono@4.13.13
 Declared license: MIT
-Package: https://www.npmjs.com/package/hono/v/4.13.2
+Package: https://www.npmjs.com/package/hono/v/4.13.13
 
 --- LICENSE ---
 MIT License
@@ -5362,8 +5362,8 @@ rebuilding and replacement. On macOS a modified application copy needs a new loc
 ad-hoc seal; no publisher key is required by this release.
 
 Electron/Chromium notices ship separately as `LICENSE.electron.txt` and
-`LICENSES.chromium.html` in application resources. Electron 43.4.1's source, dependency
-revisions and build scripts are at https://github.com/electron/electron/tree/v43.4.1
+`LICENSES.chromium.html` in application resources. Electron 43.7.11's source, dependency
+revisions and build scripts are at https://github.com/electron/electron/tree/v43.7.11
 (including its DEPS file). Tunnel and ripgrep retain their own notices.
 
 
