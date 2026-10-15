@@ -112,6 +112,7 @@ import { ensureDevToolchain } from '../toolchain.js';
 import {
   agentForCaller,
   currentRunId,
+  heartbeatReviewWorkerOwnsKey,
   noteAgentContextTokens,
   persistCriticalSwarmNow,
   PRIME_ID,
@@ -165,7 +166,7 @@ import {
 import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
 import { registerPinsTool } from './pins-tool.js';
 import { registerScheduleTool } from './schedule-tool.js';
-import { completeChatReviewHeartbeat, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
+import { chatReviewRequiresWorker, completeChatReviewHeartbeat, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
 import { currentCallMayUseEveAuthority, sharedEveOwnerForCurrentCall } from '../eve-access.js';
 import { lanPeerMessagingStatus, lanPeerRuntimeAvailable, sendLanPeerMessage } from '../lan-peer-runtime.js';
 import { ArtifactFetchError } from './artifact-fetch.js';
@@ -1227,38 +1228,58 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     reg.register('chat_review_complete', toolDeclaration('chat_review_complete', () => ({
       title: 'Complete chat review heartbeat',
       description:
-        'Internal completion receipt for ParadigmEve’s 22-minute recovery heartbeat. Call this directly only when a heartbeat prompt in this exact conversation told you to, and only after you have finished the entire semantic review, carried out any still-valid bounded work, and verified the result. Pass the exact key and a bounded result: completed=no unfinished actionable work remained; dispatched=actionable work was actually handed off/executed; blocked=safe execution could not proceed; failed=the review/execution ended with a real failure. Browser delivery, an ACK, or ordinary final prose do not complete a heartbeat.',
+        'Internal completion receipt for ParadigmEve’s 22-minute recovery heartbeat. The heartbeat is read/review only: identify whether Prime should act and on what, but do not execute, delegate, send, install, edit, browser-drive, or mutate user work. Pass the exact key and a bounded result: completed=no unfinished actionable work remained; dispatched=actionable findings are being returned to Prime without execution; blocked=the review could not safely determine a disposition; failed=the review itself failed. Every non-completed result requires a compact finding, which becomes a durable Eve-app handoff to Prime. Browser delivery, an ACK, or ordinary final prose do not complete a heartbeat.',
       inputSchema: z.object({
         key: z.string().min(1).max(512).describe('Exact durable review key printed by the current heartbeat prompt.'),
-        result: z.enum(['completed', 'dispatched', 'blocked', 'failed']).optional().describe('Privacy-safe review outcome. Omitted by older heartbeat prompts means completed.')
+        result: z.enum(['completed', 'dispatched', 'blocked', 'failed']).optional().describe('Privacy-safe review outcome. Omitted by older heartbeat prompts means completed.'),
+        finding: z.string().trim().min(1).max(6000).optional().describe('Compact provenance-bound finding for Prime. Required with dispatched; never include secrets or unrelated transcript text.')
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
-    })), async ({ key, result: reviewResult }) => guard('chat_review_complete', async () => {
+    })), async ({ key, result: reviewResult, finding }) => guard('chat_review_complete', async () => {
       if (!reg.sessionToolsLive) return reg.featureDisabled('Session recording', 'Settings → Chat');
       let caller = currentCaller();
       const call = currentCall();
+      const continuity = await resolveChatReviewContinuity(key);
+      const reviewWorker = Boolean(continuity && heartbeatReviewWorkerOwnsKey(caller, key, continuity.conversationId));
+      const workerRequired = await chatReviewRequiresWorker(key);
+      if (workerRequired && !reviewWorker) {
+        return fail('CHAT_REVIEW_WORKER_REQUIRED: this review epoch belongs to ParadigmEve’s read-only heartbeat worker. The Prime/legacy conversation cannot complete it.');
+      }
+      let receiptSessionId = caller.sessionId;
+      let receiptConversationId = caller.conversationId;
+      if (reviewWorker && continuity) {
+        receiptSessionId = continuity.sessionId;
+        receiptConversationId = continuity.conversationId;
+      }
       // A browser-authored heartbeat can later execute as a scheduled/headless turn with no
       // Companion page correlation. The opaque debt key is already a one-epoch capability tied
       // to one exact durable session/conversation, so let it recover that lineage rather than
       // leaving the semantic debt permanently stuck. Ordinary calls still need page proof.
-      if (call && caller.requestId && (!caller.sessionId || !caller.conversationId)) {
-        const continuity = await resolveChatReviewContinuity(key);
+      if (!reviewWorker && call && caller.requestId && (!caller.sessionId || !caller.conversationId)) {
         if (continuity) {
           call.caller.sessionId = continuity.sessionId;
           call.caller.conversationId = continuity.conversationId;
           caller = call.caller;
+          receiptSessionId = caller.sessionId;
+          receiptConversationId = caller.conversationId;
         }
       }
-      if (!caller.requestId || !caller.sessionId || !caller.conversationId || !call) {
+      if (!caller.requestId || !receiptSessionId || !receiptConversationId || !call) {
         return fail('CALLER_IDENTITY_REQUIRED: an exact Companion request, session and conversation are required to complete a chat review. No review debt was changed; retry after the Companion reconnects.');
+      }
+      const result = reviewResult ?? 'completed';
+      if (result !== 'completed' && !finding?.trim()) {
+        return fail('CHAT_REVIEW_FINDING_REQUIRED: every non-completed heartbeat result must return a compact provenance-bound finding to Prime. No review debt was changed.');
       }
       const receiptResult = await completeChatReviewHeartbeat({
         key,
-        sessionId: caller.sessionId,
-        conversationId: caller.conversationId,
+        sessionId: receiptSessionId,
+        conversationId: receiptConversationId,
         requestId: caller.requestId,
         completedAt: call.startedAt,
-        result: reviewResult ?? 'completed'
+        result,
+        ...(reviewWorker ? { reviewLane: 'worker' as const } : {}),
+        ...(finding ? { finding } : {})
       });
       if (receiptResult === 'rejected') {
         return fail('CHAT_REVIEW_RECEIPT_REJECTED: this call does not exactly match the current durable review debt. Leave the review pending; do not guess another key, chat or session.');

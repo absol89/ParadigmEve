@@ -20,7 +20,7 @@ import { logInfo, logWarn } from '../logger.js';
 import { noteChatOrigin, rebindConversation } from './recorder.js';
 import { compactingConversation } from './continuation.js';
 import { claimAgentConversation, currentAgentConversationId, replaceAgentConversation } from '../agent-identity.js';
-import { selectedBrokerOwnerConversationId } from '../agents.js';
+import { dispatchHeartbeatReviewWorker, selectedBrokerOwnerConversationId } from '../agents.js';
 import { isAstraModel, isProModel } from '../../shared/chat-models.js';
 import { inFlightToolCalls } from '../mcp/call-context.js';
 import { automaticFinishEnabled } from '../goal.js';
@@ -260,7 +260,7 @@ const entrySchema = inputArgsBase.extend({
   transportIntent: z.enum(['tool', 'browser']).optional(),
   text: z.string().min(1).max(240000),
   deliveryText: z.string().min(1).max(240000).optional(),
-  purpose: z.enum(['user', 'decision', 'attention', 'peer', 'schedule']).optional(),
+  purpose: z.enum(['user', 'decision', 'attention', 'heartbeat-finding', 'peer', 'schedule']).optional(),
   /** App-owned link back to one durable Eve schedule occurrence. Never accepted by inputArgs. */
   scheduleOccurrenceId: z.string().uuid().optional(),
   /** Frozen conversation-backed purpose for one app-owned scheduled run. */
@@ -930,7 +930,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
       // Peer knowledge is durable context, not a competing instruction. An explicit user message
       // in the same Eve/Eva conversation goes first, while the untouched peer text waits for the
       // exact completed user turn rather than being discarded after its sender already got an ACK.
-      if (row.purpose === 'peer' && row.sessionId === entry.sessionId && row.owner === null && row.offeredAt === undefined) {
+      if ((row.purpose === 'peer' || row.purpose === 'heartbeat-finding') && row.sessionId === entry.sessionId && row.owner === null && row.offeredAt === undefined) {
         return { ...row, mode: 'after-turn' as const, transportIntent: undefined };
       }
       return ((row.sessionId === entry.sessionId && row.finishOwner) || (row.purpose === 'attention' && row.owner === null && row.offeredAt === undefined))
@@ -1112,13 +1112,13 @@ function chatReviewPlanBatchText(review: ChatReviewAttention): string {
     'The snapshot is local review context for this exact coordinator; do not copy it into the privacy-safe heartbeat public status. ' +
     '`textTruncated:true` means only that checklist item display text was shortened to keep this heartbeat transport bounded; use Plan → Source for the full item text. ' +
     'For each Plan, follow Plan → Source before judging it: use ParadigmEve session search/read on its exact provenance first, then inspect current files/repository/tool history and distinguish stale checklist state from genuinely unfinished work. ' +
-    'Carry out or delegate bounded still-valid work when already authorized and safely executable; never duplicate work already running, invent completion, archive a human Plan, or silently resolve a user decision.\n' +
+    'Do not carry out, delegate, send, install, edit, archive, or otherwise mutate user work. Identify still-valid work only and return exact actionable findings to Prime; Prime remains the only coordinator that may act. Never duplicate work already running, invent completion, archive a human Plan, or silently resolve a user decision.\n' +
     `After reviewing each Plan, explicitly acknowledge that exact target by calling chat_review_plan directly with key ${JSON.stringify(review.key)}, the snapshot id as plan_id, the snapshot updatedAt as expected_updated_at, and one classification: ` +
-    '`ready-to-archive`, `tbd`, `blocked`, `superseded`, or `awaiting-user`. Include completed_item_ids only for checklist items whose completion is proven by current evidence. ' +
+    '`ready-to-archive`, `tbd`, `blocked`, `superseded`, or `awaiting-user`. This review-only worker must not include completed_item_ids or mutate/archive a Plan; it reports classification evidence only. ' +
     'For Eve/worker Plans, reporting or handing off to Prime is lifecycle evidence, not a Plan checklist step. Do not create or require a Report/Hand off to Prime item. If a legacy Plan still contains only such a trailing handoff item after its real work is complete, treat the last real task plus the archive boundary as the handoff when explicit report proof is unavailable; do not let report-only debt block cleanup. ' +
     'If the Plan revision/source changed or the acknowledgement is rejected, re-read and re-review that Plan before trying again. Every Plan above needs its own valid acknowledgement before the heartbeat receipt can succeed.';
 }
-function chatReviewAttentionText(review: ChatReviewAttention): string {
+export function chatReviewAttentionText(review: ChatReviewAttention): string {
   const agentName = getConfig().mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME;
   return `${CHAT_REVIEW_ATTENTION_HEADER}\nThis is ${agentName}'s 22-minute recovery heartbeat for the always-on assistant. ` +
     `Review recent ChatGPT work from ${new Date(review.sinceAt).toISOString()} through ${new Date(review.untilAt).toISOString()}. ` +
@@ -1126,14 +1126,103 @@ function chatReviewAttentionText(review: ChatReviewAttention): string {
     'Start with ParadigmEve session search/read so exact locally recorded conversation and message identity remains authoritative. ' +
     'Scope the recent-request review to locally recorded sessions and their exact provenance. Do not inspect ChatGPT browser history or use Computer Use for discovery during this heartbeat. Missing cross-device conversations are outside this review, not a blocker or a reason to guess their contents; do not use sidebar unread/blue-dot state as a completion signal.\n' +
     'Find user requests for real work (for example create, save, document, implement, fix, dispatch, check, or otherwise act) where the requested persistent/computer-side result was not actually completed. A prose answer, plan, or promise is not completion when the user asked for execution. ' +
-    'Before acting, inspect the source conversation and current files/repository/tool history so newer instructions, completed work, or an already-running turn are not duplicated or overridden. Preserve exact conversation/session provenance and fail closed on ambiguous ownership.\n' +
-    'Carry out bounded unworked requests now with the available tools/workers and verify concrete results. If the recent-request review finds no still-valid unworked request, make no substantive changes for that obligation.\n' +
+    'Before deciding, inspect the source conversation and current files/repository/tool history so newer instructions, completed work, or an already-running turn are not duplicated or overridden. Preserve exact conversation/session provenance and fail closed on ambiguous ownership.\n' +
+    'This is a read/review-only maintenance turn. Do not carry out or delegate user work, send messages, install anything, edit files, drive the browser, or mutate repositories. Decide act / do not act, and on what. Return actionable findings to Prime; Prime is the only coordinator that may act. If the recent-request review finds no still-valid unworked request, report no action for that obligation.\n' +
     chatReviewPlanBatchText(review) + '\n' +
-    `If this scheduled/headless heartbeat turn needs workers and agents reports missing Companion identity, pass this exact key as review_key on each agents call from this heartbeat only: ${JSON.stringify(review.key)}. Never use that key in an ordinary chat or after this review. ` +
+    'Do not call agents or spawn/delegate additional workers from this maintenance review; this worker is already the bounded review lane. ' +
     `Only after the recent-request review and every selected Plan target are complete, call chat_review_complete directly with key ${JSON.stringify(review.key)} and result: ` +
-    '`completed` if no unfinished actionable work remained, `dispatched` if you found actionable work and actually handed off/executed bounded work, `blocked` if safe execution could not proceed, or `failed` for a real review/execution failure. ' +
+    '`completed` if no unfinished actionable work remained, `dispatched` if actionable findings were durably returned to Prime without executing them, `blocked` if the review could not safely determine what Prime should do, or `failed` for a real review failure. ' +
+    'For dispatched, blocked, or failed, include one compact provenance-bound finding for Prime; only completed closes quietly with no finding. ' +
     'That explicit receipt is the only event that completes this heartbeat; browser delivery, an ACK, or ordinary final prose do not clear it. If the receipt is rejected, leave the review pending rather than guessing another chat, session, or key. ' +
-    'Continue coordination from this exact thread.';
+    'This review worker does not own Prime coordination. After the exact receipt, finish this review without opening a new Prime turn or taking any action.';
+}
+
+/** Dispatch this heartbeat into the app-owned worker broker, never into Prime's composer. */
+export async function dispatchChatReviewWorker(sessionId: string, review: ChatReviewAttention): Promise<unknown> {
+  const retired = await retireLegacyChatReviewAttention(review.key);
+  if (retired === 'ambiguous') {
+    throw new Error('A legacy heartbeat browser send may already have been authorized; worker review is deferred to avoid duplicating the same epoch.');
+  }
+  const session = await getSession(sessionId);
+  if (!session?.conversationId || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {
+    throw new Error('Heartbeat review requires one exact ordinary Prime session.');
+  }
+  return dispatchHeartbeatReviewWorker(session.conversationId, review.key, chatReviewAttentionText(review));
+}
+
+/**
+ * Upgrade fence for heartbeat debt created by builds that injected the review into Prime.
+ * A never-authorized browser claim is safe to cancel because the page must re-authorize Send
+ * against this durable row. Once Send was authorized, delivery is ambiguous and we must not
+ * start a second semantic review for the same key.
+ */
+export function retireLegacyChatReviewAttention(key: string): Promise<'retired' | 'none' | 'ambiguous'> {
+  return serial(async () => {
+    const current = await load();
+    // Terminal rows matter too: a previous build may have marked the browser message sent,
+    // failed, or cancelled after Send authorization. Ignoring terminal history would launch
+    // another semantic review for a key that Prime may already have reviewed.
+    const matches = current.filter(row => row.purpose === 'attention' && row.chatReview?.key === key);
+    if (matches.length === 0) return 'none';
+    if (matches.some(row => row.sendAuthorizedAt !== undefined || row.messageId || row.deliveredAt !== undefined ||
+        row.state === 'sent' ||
+        // Very old/native rows could be exposed to the page before the app gained the
+        // explicit authorization gate. A missing receipt is NOT proof they were unsent.
+        (row.offeredAt !== undefined && row.requiresAuthorization !== true))) {
+      return 'ambiguous';
+    }
+    const ids = new Set(matches.filter(row => !terminal(row)).map(row => row.id));
+    if (ids.size === 0) return 'retired';
+    await commit(current.map(row => ids.has(row.id)
+      ? { ...row, state: 'cancelled' as const, error: 'Retired before Send: heartbeat review moved to the read-only worker lane.' }
+      : row));
+    return 'retired';
+  });
+}
+
+/**
+ * Queue one compact review finding through Eve's durable app outbox.
+ *
+ * The review key is the idempotency key. Definite pre-Send failures are retried; an authorized
+ * or confirmed send is never replayed. User input only moves an untouched finding behind that
+ * turn, and live Voice/draft/browser custody remains enforced by the ordinary native-send path.
+ */
+export function enqueueChatReviewFinding(sessionId: string, key: string, text: string): Promise<InputEntry> {
+  return serial(async () => {
+    if (!key || key.length > 512 || !text.trim() || text.length > 6000) throw new Error('Heartbeat finding is invalid.');
+    const session = await getSession(sessionId);
+    if (!session?.conversationId || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {
+      throw new Error('Heartbeat finding requires one exact ordinary Prime session.');
+    }
+    const current = await load();
+    const tag = `[[PARADIGMEVE-HEARTBEAT-FINDING:${key}]]`;
+    const prior = [...current].reverse().find(row => row.purpose === 'heartbeat-finding' && row.text.startsWith(tag));
+    if (prior && !['failed', 'cancelled'].includes(prior.state)) return { ...prior };
+    if (prior && (prior.messageId || prior.deliveredAt !== undefined || prior.sendAuthorizedAt !== undefined)) return { ...prior };
+    const policy = await sessionInputPolicy(sessionId);
+    const anotherInputOwnsNextTurn = current.some(row => row.sessionId === sessionId &&
+      row.state !== 'sent' && row.state !== 'cancelled' && row.state !== 'failed');
+    const voiceOwnsConversation = deliveryHooks?.voiceActive?.(session.conversationId) === true;
+    const mode: InputArgs['mode'] = policy.browserAllowed && !anotherInputOwnsNextTurn && !voiceOwnsConversation ? 'auto' : 'after-turn';
+    const now = Date.now();
+    const entry = entrySchema.parse({
+      id: randomUUID(),
+      sessionId,
+      text: `${tag}\nHeartbeat review found something for Prime to decide or act on. This is a maintenance finding, not a new user instruction.\n${text.trim()}`,
+      mode,
+      dueAt: now,
+      model: null,
+      reasoningEffort: null,
+      purpose: 'heartbeat-finding',
+      ...(mode === 'auto' ? { transportIntent: 'browser' as const } : {}),
+      state: 'queued',
+      owner: null,
+      createdAt: now,
+      conversationId: session.conversationId
+    });
+    await commit(append(current, entry));
+    return { ...entry };
+  });
 }
 function attentionText(items: readonly WorkerAttentionItem[] | undefined, review: ChatReviewAttention | undefined): string {
   return [items?.length ? workerAttentionText(items) : '', review ? chatReviewAttentionText(review) : ''].filter(Boolean).join('\n\n');

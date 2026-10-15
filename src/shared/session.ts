@@ -770,6 +770,8 @@ export interface AgentInfo {
   primeConversationId?: string;
   id: string;
   role: AgentRole;
+  /** App-stamped broker principal; ordinary model-authored worker task text cannot set this. */
+  maintenanceKind?: 'heartbeat-review';
   label: string;
   task: string;
   /**

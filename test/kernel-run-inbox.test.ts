@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 const broker = vi.hoisted(() => ({
   offer: vi.fn(), ack: vi.fn(), bareOffer: vi.fn(), bareAck: vi.fn(), release: vi.fn(), alive: vi.fn(), record: vi.fn(), archive: vi.fn(),
-  awaitOrigin: vi.fn(), archiveAuthority: false
+  awaitOrigin: vi.fn(), archiveAuthority: false, heartbeatWorker: false
 }));
 vi.mock('../src/main/agents.js', async (original) => ({
   ...await original<typeof import('../src/main/agents.js')>(),
@@ -11,7 +11,8 @@ vi.mock('../src/main/agents.js', async (original) => ({
   offerMessages: broker.bareOffer, acknowledgeOffers: broker.bareAck,
   currentRunId: (conversationId?: string) => conversationId ? `run-${conversationId}` : null,
   releaseQuiescentRun: broker.release,
-  noteAgentAlive: broker.alive
+  noteAgentAlive: broker.alive,
+  isHeartbeatReviewWorkerCaller: () => broker.heartbeatWorker
 }));
 vi.mock('../src/main/session/recorder.js', async (original) => ({
   ...await original<typeof import('../src/main/session/recorder.js')>(),
@@ -50,6 +51,27 @@ beforeEach(() => {
   broker.ack.mockReturnValue(null);
   broker.bareOffer.mockReturnValue([{ id: 'foreign', from: 'prime', text: 'foreign-private', offers: 1 }]);
   broker.archiveAuthority = false;
+  broker.heartbeatWorker = false;
+});
+
+it('hard-fences a heartbeat maintenance worker to read/review tools before any mutation handler runs', async () => {
+  broker.heartbeatWorker = true;
+  let mutationRan = false;
+  const blocked = await dispatch('exec_command', {}, null, 'req-chat-a', 'core', async () => {
+    mutationRan = true;
+    return ok('should not run');
+  });
+  expect(blocked.isError).toBe(true);
+  expect(JSON.stringify(blocked)).toContain('HEARTBEAT_REVIEW_READ_ONLY');
+  expect(mutationRan).toBe(false);
+
+  let readRan = false;
+  const allowed = await dispatch('read', {}, null, 'req-chat-a', 'core', async () => {
+    readRan = true;
+    return ok('read-only evidence');
+  });
+  expect(allowed.isError).not.toBe(true);
+  expect(readRan).toBe(true);
 });
 it('records same-named worker liveness reports under the exact author conversation', async () => {
   broker.alive.mockImplementation((conversationId) => ({ report: { id: `report-${conversationId}`, from: 'worker-1', to: 'prime', text: 'active again' } }));

@@ -121,6 +121,7 @@ import {
   agentConversation,
   agentForConversation,
   agentInfoForOwnedConversation,
+  isHeartbeatReviewWorkerConversation,
   primeForOwnedConversation,
   agentForOwnedConversation,
   isWorkerConversation,
@@ -1555,6 +1556,9 @@ async function workerFinalAcrossBatches(
  * report stays queued for the next authenticated Prime tool call instead of guessing a chat.
  */
 async function queuePrimeWorkerAttention(workerConversationId: string, final: WorkerStableFinal): Promise<void> {
+  // Heartbeat review workers return findings through the durable Eve app handoff owned by the
+  // heartbeat receipt. Never turn their final answer into a second browser-authored Prime turn.
+  if (isHeartbeatReviewWorkerConversation(workerConversationId)) return;
   const worker = agentInfoForOwnedConversation(workerConversationId);
   const primeConversationId = primeForOwnedConversation(workerConversationId);
   if (!worker || worker.role !== 'worker' || !primeConversationId) return;

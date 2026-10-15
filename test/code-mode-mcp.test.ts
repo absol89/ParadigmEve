@@ -185,7 +185,7 @@ it('retires heartbeat debt only through the exact direct authenticated receipt a
   await writeDurableNow('chat-review-heartbeat', { debt });
 
   const declaration = (await rpc('tools/list', {})).result.tools.find((tool: any) => tool.name === 'chat_review_complete');
-  expect(Object.keys(declaration.inputSchema.properties)).toEqual(['key', 'result']);
+  expect(Object.keys(declaration.inputSchema.properties)).toEqual(['key', 'result', 'finding']);
   expect(declaration.inputSchema.required).toEqual(['key']);
   expect(declaration.inputSchema.additionalProperties).toBe(false);
 
@@ -217,12 +217,14 @@ it('retires heartbeat debt only through the exact direct authenticated receipt a
     tool: 'chat_review_complete',
     observedAt: Date.now()
   })).toBe('stored');
-  const completed = await rpc('tools/call', { name: 'chat_review_complete', arguments: { key, result: 'dispatched' } }, requestId);
+  const finding = 'Exact source session still has one authorized task for Prime; the heartbeat review did not execute it.';
+  const completed = await rpc('tools/call', { name: 'chat_review_complete', arguments: { key, result: 'dispatched', finding } }, requestId);
   expect(completed.result.isError).not.toBe(true);
   expect(text(completed)).toContain('Chat review completed');
   expect(await readDurable<any>('chat-review-heartbeat')).toMatchObject({
     lastCompletedAt: debt.untilAt,
-    lastReceipt: { key, sessionId: session.id, conversationId, requestId, result: 'dispatched' }
+    lastReceipt: { key, sessionId: session.id, conversationId, requestId, result: 'dispatched', finding },
+    pendingFinding: { key, sessionId: session.id, conversationId, text: finding }
   });
 
   const retryRequestId = `wfr_${randomUUID().replaceAll('-', '')}`;
@@ -237,6 +239,28 @@ it('retires heartbeat debt only through the exact direct authenticated receipt a
   const retry = await rpc('tools/call', { name: 'chat_review_complete', arguments: { key } }, retryRequestId);
   expect(retry.result.isError).not.toBe(true);
   expect(text(retry)).toContain('already completed');
+  await writeDurableNow('chat-review-heartbeat', null);
+});
+
+it('rejects an authenticated Prime receipt for a new worker-owned heartbeat epoch', async () => {
+  const conversationId = randomUUID();
+  const session = await createSession({ conversationId, title: 'Worker-owned heartbeat receipt' });
+  const key = 'heartbeat:worker-owned-integration';
+  const debt = { key, sinceAt: 100, untilAt: 200, sessionId: session.id, conversationId, reviewLane: 'worker' as const };
+  await writeDurableNow('chat-review-heartbeat', { debt });
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  expect(observeRequestCorrelation({
+    requestId,
+    conversationId,
+    sessionId: session.id,
+    messageId: randomUUID(),
+    tool: 'chat_review_complete',
+    observedAt: Date.now()
+  })).toBe('stored');
+  const rejected = await rpc('tools/call', { name: 'chat_review_complete', arguments: { key } }, requestId);
+  expect(rejected.result.isError).toBe(true);
+  expect(text(rejected)).toContain('CHAT_REVIEW_WORKER_REQUIRED');
+  expect(await readDurable('chat-review-heartbeat')).toEqual({ debt });
   await writeDurableNow('chat-review-heartbeat', null);
 });
 

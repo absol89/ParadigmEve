@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../src/shared/user-prompt.js';
 import { flushDurable, initDurableStore, readDurable, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import {
-  CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueChatReviewAttention, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
+  CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
   markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS
@@ -22,8 +22,11 @@ import { trackInFlight, emptyEvidence, type CallContext } from '../src/main/mcp/
 const offerToolInput = async (...args: Parameters<typeof offerToolInputBatch>) => (await offerToolInputBatch(...args)).messages;
 vi.mock('../src/main/session/recorder.js', () => ({ noteChatOrigin: vi.fn(async () => undefined) }));
 
-const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', pastConversations: [] as string[], blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, localOnly: false, provider: null as null | { id: 'ollama'; model: string }, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, pendingUserAt: null as number | null, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number } }));
-vi.mock('../src/main/agents.js', () => ({ selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner) }));
+const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', pastConversations: [] as string[], blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, localOnly: false, provider: null as null | { id: 'ollama'; model: string }, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, pendingUserAt: null as number | null, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number }, dispatchHeartbeatReviewWorker: vi.fn(async (_conversationId: string, _key: string, _reviewText: string) => ({ workerId: 'worker-1', runId: 'run-1', reused: false })) }));
+vi.mock('../src/main/agents.js', () => ({
+  selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner),
+  dispatchHeartbeatReviewWorker: binding.dispatchHeartbeatReviewWorker
+}));
 vi.mock('../src/main/session/store.js', () => ({
   listUsageSessions: vi.fn(async () => []),
   // Only this id stands for a chat whose folder was deleted.
@@ -82,6 +85,7 @@ async function seedLegacyInput(args: InputArgs): Promise<InputEntry> {
 }
 beforeEach(async () => {
   vi.mocked(noteChatOrigin).mockClear();
+  binding.dispatchHeartbeatReviewWorker.mockClear();
   resetInputForTests();
   resetAgentIdentityForTests();
   automate.mockReset();
@@ -1749,7 +1753,7 @@ it('keeps idle worker-final attention on browser transport and out of MCP tool r
   expect(claimed?.text).not.toContain('session_finish');
 });
 
-it('keeps the 22-minute chat-review heartbeat browser-only and coalesces it with unclaimed worker attention', async () => {
+it('keeps the legacy Prime heartbeat text review-only when reading an old queued attention row', async () => {
   binding.activeTurnId = null;
   binding.connectorName = 'Eva';
   binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'prime-idle', time: now - 1 };
@@ -1786,8 +1790,11 @@ it('keeps the 22-minute chat-review heartbeat browser-only and coalesces it with
   expect(review.text).toContain('"reportedToPrime":false');
   expect(review.text).toContain('Computer Use');
   expect(review.text).not.toContain('AI browser');
-  expect(review.text).toContain('available tools/workers');
-  expect(review.text).toContain('Continue coordination from this exact thread.');
+  expect(review.text).toContain('read/review-only maintenance turn');
+  expect(review.text).toContain('Prime is the only coordinator that may act');
+  expect(review.text).not.toContain('Carry out bounded unworked requests');
+  expect(review.text).toContain('This review worker does not own Prime coordination.');
+  expect(review.text).not.toContain('Continue coordination from this exact thread.');
   expect(review.text).not.toContain('Eve Browser');
   expect(review.text).not.toContain('available Eve tools/workers');
   expect(review.text).not.toContain('exact Eve thread');
@@ -1805,6 +1812,93 @@ it('keeps the 22-minute chat-review heartbeat browser-only and coalesces it with
   expect(worker.text).toContain('[[PARADIGMEVE-WORKER-FINAL:v1]]');
   expect(worker.text).toContain('[[PARADIGMEVE-CHAT-REVIEW:v1]]');
   expect((await listInputs()).filter(row => row.purpose === 'attention')).toHaveLength(1);
+});
+
+it('dispatches a heartbeat review to the app-owned worker without queueing anything into Prime', async () => {
+  const review = {
+    key: 'heartbeat:worker-lane',
+    sinceAt: 0,
+    untilAt: now,
+    plans: [reviewPlan({ title: 'Read-only target' })]
+  };
+  const legacy = await enqueueChatReviewAttention(sessionId, review);
+  expect(legacy).toMatchObject({ purpose: 'attention', state: 'queued' });
+  const result = await dispatchChatReviewWorker(sessionId, review);
+  expect(result).toMatchObject({ workerId: 'worker-1' });
+  expect(binding.dispatchHeartbeatReviewWorker).toHaveBeenCalledTimes(1);
+  const calls = binding.dispatchHeartbeatReviewWorker.mock.calls as unknown as Array<[string, string, string]>;
+  expect(calls[0]![0]).toBe(binding.conversationId);
+  expect(calls[0]![1]).toBe(review.key);
+  expect(calls[0]![2]).toContain('read/review-only maintenance turn');
+  expect(calls[0]![2]).not.toContain('Carry out bounded unworked requests');
+  expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({
+    state: 'cancelled',
+    error: expect.stringContaining('read-only worker lane')
+  });
+  expect(await pendingBrowserInputs()).toEqual([]);
+});
+
+it.each(['sent', 'failed', 'cancelled'] as const)(
+  'never starts a duplicate worker review when a legacy heartbeat outbox row is terminal %s after Send authorization',
+  async state => {
+    const review = { key: `heartbeat:terminal-${state}`, sinceAt: 0, untilAt: now };
+    const legacy = await enqueueChatReviewAttention(sessionId, review);
+    const next = (await listInputs()).map(row => row.id === legacy.id
+      ? { ...row, state, sendAuthorizedAt: now, ...(state === 'sent' ? { messageId: 'legacy-message' } : {}) }
+      : row);
+    await writeDurableNow('session-input', next);
+    resetInputForTests();
+
+    await expect(dispatchChatReviewWorker(sessionId, review)).rejects.toThrow('may already have been authorized');
+    expect(binding.dispatchHeartbeatReviewWorker).not.toHaveBeenCalled();
+    expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({ state, sendAuthorizedAt: now });
+  }
+);
+
+it('does not replay an old browser-exposed heartbeat when reload lost both the visible reply and a native authorization receipt', async () => {
+  const review = { key: 'heartbeat:older-browser-no-receipt', sinceAt: 0, untilAt: now };
+  const legacy = await enqueueChatReviewAttention(sessionId, review);
+  await writeDurableNow('session-input', (await listInputs()).map(row => row.id === legacy.id
+    ? { ...row, state: 'cancelled' as const, offeredAt: now, requiresAuthorization: false,
+        error: 'Lost visible reply after stopped thinking and page reload' }
+    : row));
+  resetInputForTests();
+  await expect(dispatchChatReviewWorker(sessionId, review)).rejects.toThrow('may already have been authorized');
+  expect(binding.dispatchHeartbeatReviewWorker).not.toHaveBeenCalled();
+});
+
+it('keeps a heartbeat finding durable behind active work and retries only definite pre-Send failure', async () => {
+  binding.activeTurnId = 'user-turn';
+  binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'user-turn', time: now - 1 };
+  const first = await enqueueChatReviewFinding(sessionId, 'heartbeat:finding', 'Source session A still needs Prime to apply the already-authorized fix.');
+  expect(first).toMatchObject({ purpose: 'heartbeat-finding', mode: 'after-turn', state: 'queued' });
+  expect(await pendingBrowserInputs()).toEqual([]);
+
+  await cancelInput(first.id);
+  binding.activeTurnId = null;
+  binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'user-turn', time: now + 1 };
+  const retry = await enqueueChatReviewFinding(sessionId, 'heartbeat:finding', 'Source session A still needs Prime to apply the already-authorized fix.');
+  expect(retry.id).not.toBe(first.id);
+  expect(retry).toMatchObject({ purpose: 'heartbeat-finding', mode: 'auto', state: 'queued' });
+
+  const claimed = await claimBrowserInput(retry.id, 'prime-page', binding.conversationId, true);
+  expect(claimed).not.toBeNull();
+  expect(await authorizeBrowserInput(retry.id, 'prime-page', binding.conversationId)).toBe(true);
+  await failBrowserInput(retry.id, 'prime-page', 'delivery receipt lost');
+  const noReplay = await enqueueChatReviewFinding(sessionId, 'heartbeat:finding', 'Source session A still needs Prime to apply the already-authorized fix.');
+  expect(noReplay.id).toBe(retry.id);
+  expect(noReplay.sendAuthorizedAt).toBeDefined();
+});
+
+it('does not offer a heartbeat finding to the browser while Voice owns the Prime conversation', async () => {
+  configureInputDelivery({
+    applyAutomation: automate,
+    changed,
+    voiceActive: conversationId => conversationId === binding.conversationId
+  });
+  const finding = await enqueueChatReviewFinding(sessionId, 'heartbeat:voice-finding', 'Prime has one source-proven action to consider after Voice releases the chat.');
+  expect(finding).toMatchObject({ purpose: 'heartbeat-finding', mode: 'after-turn' });
+  expect(await pendingBrowserInputs()).toEqual([]);
 });
 
 it('bounds heartbeat Plan snapshots and rejects private projection state instead of leaking it into browser copy', async () => {

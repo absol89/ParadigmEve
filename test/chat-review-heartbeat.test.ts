@@ -105,6 +105,7 @@ function receipt(review: ChatReviewDebt, overrides: Partial<ChatReviewCompletion
     requestId: 'review-complete-request',
     completedAt: review.untilAt + 5,
     result: 'completed',
+    ...(review.reviewLane === 'worker' ? { reviewLane: 'worker' as const } : {}),
     ...overrides
   };
 }
@@ -169,6 +170,7 @@ describe('chat review heartbeat', () => {
         untilAt: now,
         sessionId: installation.id,
         conversationId: installationConversation,
+        reviewLane: 'worker',
         planBatch: [],
         planAcks: []
       },
@@ -230,6 +232,7 @@ describe('chat review heartbeat', () => {
         untilAt: now,
         sessionId: resumed.id,
         conversationId: chatB,
+        reviewLane: 'worker',
         planBatch: [],
         planAcks: []
       },
@@ -299,6 +302,7 @@ describe('chat review heartbeat', () => {
         untilAt: now,
         sessionId: 'prime',
         conversationId,
+        reviewLane: 'worker',
         planBatch: [],
         planAcks: []
       },
@@ -668,7 +672,10 @@ describe('chat review heartbeat', () => {
   it('persists only a bounded privacy-safe completion result with the exact receipt', async () => {
     const pending = debt({ key: 'heartbeat:dispatched-result' });
     let state: ChatReviewHeartbeatState | null = { debt: pending };
-    const dispatched = receipt(pending, { result: 'dispatched' });
+    const dispatched = receipt(pending, {
+      result: 'dispatched',
+      finding: 'Source session source-1 still has one authorized implementation task for Prime; no action was executed by the heartbeat worker.'
+    });
     const coordinator = session({ id: pending.sessionId, conversationId: pending.conversationId });
     expect(await completeChatReviewHeartbeat(dispatched, {
       readState: async () => state,
@@ -676,10 +683,240 @@ describe('chat review heartbeat', () => {
       uniqueSession: async () => coordinator,
       blocked: () => false
     })).toBe('completed');
-    expect(state).toEqual({ lastCompletedAt: pending.untilAt, lastReceipt: dispatched });
+    expect(state).toEqual({
+      lastCompletedAt: pending.untilAt,
+      lastReceipt: dispatched,
+      pendingFinding: {
+        key: pending.key,
+        sessionId: pending.sessionId,
+        conversationId: pending.conversationId,
+        text: dispatched.finding,
+        createdAt: dispatched.completedAt
+      }
+    });
     expect(Object.keys((state as ChatReviewHeartbeatState).lastReceipt!).sort()).toEqual([
-      'completedAt', 'conversationId', 'key', 'requestId', 'result', 'sessionId'
+      'completedAt', 'conversationId', 'finding', 'key', 'requestId', 'result', 'sessionId'
     ]);
+  });
+
+  it('refuses dispatched completion without a durable Prime finding', async () => {
+    const pending = debt({ key: 'heartbeat:missing-finding' });
+    const coordinator = session({ id: pending.sessionId, conversationId: pending.conversationId });
+    expect(await completeChatReviewHeartbeat(receipt(pending, { result: 'dispatched' }), {
+      readState: async () => ({ debt: pending }),
+      writeState: async () => undefined,
+      uniqueSession: async () => coordinator,
+      blocked: () => false
+    })).toBe('rejected');
+  });
+
+  it('keeps a Prime finding durable across blocked/flaky app delivery and retires it only after a confirmed send', async () => {
+    const finding = {
+      key: 'heartbeat:durable-finding',
+      sessionId: 'prime-session',
+      conversationId,
+      text: 'Prime should continue the exact source task; the review worker did not execute it.',
+      createdAt: 3_000
+    };
+    let state: ChatReviewHeartbeatState | null = {
+      lastCompletedAt: 2_000,
+      pendingFinding: finding
+    };
+    const coordinator = session({ id: finding.sessionId, conversationId: finding.conversationId });
+    const enqueueFinding = vi.fn()
+      .mockResolvedValueOnce({ state: 'queued' })
+      .mockResolvedValueOnce({ state: 'sent' });
+    const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+    const deps = {
+      readState: async () => state,
+      writeState,
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      enqueueFinding
+    };
+
+    expect(await runChatReviewHeartbeat(4_000, deps)).toMatchObject({ status: 'not-due', nextAt: 4_000 + CHAT_REVIEW_RETRY_MS });
+    expect(state?.pendingFinding).toEqual(finding);
+    expect(await runChatReviewHeartbeat(5_000, deps)).toMatchObject({ status: 'not-due' });
+    expect(state?.pendingFinding).toBeUndefined();
+    expect(enqueueFinding).toHaveBeenCalledTimes(2);
+    expect(enqueueFinding).toHaveBeenNthCalledWith(1, finding.sessionId, finding.key, finding.text);
+    expect(enqueueFinding).toHaveBeenNthCalledWith(2, finding.sessionId, finding.key, finding.text);
+  });
+
+  it('does not let an unsent Prime finding freeze a due independent review epoch', async () => {
+    const owner = session({ id: 'prime-session', conversationId, lastToolCallAt: 1_000 });
+    const oldFinding = {
+      key: 'heartbeat:still-queued', sessionId: owner.id, conversationId,
+      text: 'Older actionable review stays queued while newer reviews continue', createdAt: 1_000
+    };
+    let state: ChatReviewHeartbeatState | null = {
+      lastCompletedAt: 2_000,
+      lastReceipt: receipt(debt({ untilAt: 2_000 }), { completedAt: 2_500 }),
+      pendingFinding: oldFinding
+    };
+    const now = 2_500 + CHAT_REVIEW_HEARTBEAT_MS;
+    const enqueue = vi.fn(async () => ({ workerId: 'worker-1' }));
+    const enqueueFinding = vi.fn(async () => ({ state: 'queued' }));
+    expect(await runChatReviewHeartbeat(now, {
+      readState: async () => state,
+      writeState: async (next) => { state = next; },
+      sessions: async () => [owner],
+      uniqueSession: async () => owner,
+      blocked: () => false,
+      enqueue,
+      enqueueFinding,
+      plans: emptyPlans,
+      agentConversation: () => conversationId,
+      makeKey: () => 'heartbeat:next-independent-review'
+    })).toMatchObject({ status: 'queued' });
+    expect(state?.pendingFinding).toEqual(oldFinding);
+    expect(state?.debt?.key).toBe('heartbeat:next-independent-review');
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueueFinding).toHaveBeenCalledExactlyOnceWith(owner.id, oldFinding.key, oldFinding.text);
+  });
+
+  it('continues a due worker review when Eve app finding delivery throws instead of losing the durable finding', async () => {
+    const owner = session({ id: 'prime-session', conversationId, lastToolCallAt: 1_000 });
+    const stillPending = {
+      key: 'heartbeat:send-failed', sessionId: owner.id, conversationId,
+      text: 'Eve delivery failed, review still owes Prime this finding', createdAt: 2_000
+    };
+    const due = 2_500 + CHAT_REVIEW_HEARTBEAT_MS;
+    let state: ChatReviewHeartbeatState | null = {
+      lastCompletedAt: 2_000,
+      lastReceipt: receipt(debt({ untilAt: 2_000 }), { completedAt: 2_500 }),
+      pendingFinding: stillPending
+    };
+    const enqueue = vi.fn(async () => ({ workerId: 'worker-1' }));
+    const result = await runChatReviewHeartbeat(due, {
+      readState: async () => state,
+      writeState: async next => { state = next; },
+      sessions: async () => [owner],
+      uniqueSession: async () => owner,
+      blocked: () => false,
+      enqueue,
+      enqueueFinding: async () => { throw new Error('Eve chat route is temporarily unavailable'); },
+      plans: emptyPlans,
+      agentConversation: () => conversationId,
+      makeKey: () => 'heartbeat:still-runs'
+    });
+    expect(result.status).toBe('queued');
+    expect(state?.pendingFinding).toEqual(stillPending);
+    expect(state?.debt?.key).toBe('heartbeat:still-runs');
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('fsyncs the older pending finding into a replay-safe spool slot before accepting a newer receipt', async () => {
+    const active = debt({
+      key: 'heartbeat:newer', reviewLane: 'worker', planBatch: [], planAcks: []
+    });
+    const previous = {
+      key: 'heartbeat:previous', sessionId: active.sessionId, conversationId,
+      text: 'An older finding still lacks a confirmed Send', createdAt: 100
+    };
+    let state: ChatReviewHeartbeatState | null = {
+      debt: active, planSweep: { remainingPlanIds: [] }, pendingFinding: previous
+    };
+    const owner = session({ id: active.sessionId, conversationId });
+    const writePendingSpool = vi.fn().mockRejectedValueOnce(new Error('spool fsync failed'))
+      .mockResolvedValueOnce(undefined);
+    const args = {
+      readState: async () => state,
+      writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      uniqueSession: async () => owner,
+      blocked: () => false,
+      plans: emptyPlans,
+      planFence: openPlanFence,
+      writePendingSpool
+    };
+    const completion = receipt(active, { result: 'dispatched',
+      finding: 'Prime should act on the new evidence; worker changed no files.' });
+    await expect(completeChatReviewHeartbeat(completion, args)).rejects.toThrow('spool fsync failed');
+    expect(state?.debt).toEqual(active);
+    expect(state?.pendingFinding).toEqual(previous);
+    expect(await completeChatReviewHeartbeat(completion, args)).toBe('completed');
+    expect(writePendingSpool).toHaveBeenNthCalledWith(1, 0, previous);
+    expect(writePendingSpool).toHaveBeenNthCalledWith(2, 0, previous);
+    expect(state?.findingSpoolRead).toBe(0);
+    expect(state?.findingSpoolWrite).toBe(1);
+    expect(state?.pendingFinding?.key).toBe(active.key);
+  });
+
+  it('records an authorized-but-unconfirmed finding as delivery-uncertain without resending or freezing later reviews', async () => {
+    const finding = {
+      key: 'heartbeat:uncertain-finding',
+      sessionId: 'prime-session',
+      conversationId,
+      text: 'Prime may already have received this exact finding; never send it twice.',
+      createdAt: 3_000
+    };
+    let state: ChatReviewHeartbeatState | null = {
+      lastCompletedAt: 2_000,
+      lastReceipt: receipt(debt({ untilAt: 2_000 }), { completedAt: 2_500 }),
+      pendingFinding: finding
+    };
+    const coordinator = session({ id: finding.sessionId, conversationId: finding.conversationId });
+    const enqueueFinding = vi.fn(async () => ({ state: 'cancelled', sendAuthorizedAt: 3_500 }));
+    const result = await runChatReviewHeartbeat(4_000, {
+      readState: async () => state,
+      writeState: async next => { state = next; },
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      enqueueFinding,
+      sessions: async () => [coordinator]
+    });
+    expect(result.status).toBe('not-due');
+    expect(state?.pendingFinding).toBeUndefined();
+    expect(state?.uncertainFindings).toEqual([finding]);
+    expect(enqueueFinding).toHaveBeenCalledTimes(1);
+  });
+
+  it('archives the ninth uncertain finding before shrinking the recent window, and retries failed archive fsync without dropping evidence', async () => {
+    const findings = Array.from({ length: 8 }, (_, index) => ({
+      key: `heartbeat:older-${index}`,
+      sessionId: 'prime-session',
+      conversationId,
+      text: `Prior authorized-but-uncertain finding ${index}`,
+      createdAt: 100 + index
+    }));
+    const newest = {
+      key: 'heartbeat:ninth',
+      sessionId: 'prime-session',
+      conversationId,
+      text: 'Ninth authorized-but-uncertain finding must not erase the first',
+      createdAt: 3_000
+    };
+    let state: ChatReviewHeartbeatState | null = {
+      lastCompletedAt: 2_000,
+      lastReceipt: receipt(debt({ untilAt: 2_000 }), { completedAt: 2_500 }),
+      uncertainFindings: findings,
+      pendingFinding: newest
+    };
+    const coordinator = session({ id: newest.sessionId, conversationId });
+    const enqueueFinding = vi.fn(async () => ({ state: 'failed', sendAuthorizedAt: 3_100 }));
+    const archiveUncertainFinding = vi.fn()
+      .mockRejectedValueOnce(new Error('archive disk failure'))
+      .mockResolvedValueOnce(undefined);
+    const deps = {
+      readState: async () => state,
+      writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      enqueueFinding,
+      archiveUncertainFinding
+    };
+
+    await expect(runChatReviewHeartbeat(4_000, deps)).rejects.toThrow('archive disk failure');
+    expect(state?.pendingFinding).toEqual(newest);
+    expect(state?.uncertainFindings).toEqual(findings);
+    expect(await runChatReviewHeartbeat(4_000, deps)).toMatchObject({ status: 'not-due' });
+    expect(archiveUncertainFinding).toHaveBeenNthCalledWith(1, 0, findings[0]);
+    expect(archiveUncertainFinding).toHaveBeenNthCalledWith(2, 0, findings[0]);
+    expect(state?.pendingFinding).toBeUndefined();
+    expect(state?.uncertainArchiveCount).toBe(1);
+    expect(state?.uncertainFindings).toEqual([...findings.slice(1), newest]);
+    expect(enqueueFinding).toHaveBeenCalledTimes(2);
   });
 
   it('keeps debt when receipt persistence fails and accepts the same exact receipt on retry', async () => {
@@ -1336,7 +1573,7 @@ describe('chat review heartbeat', () => {
       planSweep: { remainingPlanIds: [] },
       debt: {
         key: 'heartbeat:opaque-next-token', sinceAt: lastCompletedAt, untilAt: now,
-        sessionId: 'prime', conversationId, planBatch: [], planAcks: []
+        sessionId: 'prime', conversationId, reviewLane: 'worker', planBatch: [], planAcks: []
       }
     });
     expect(enqueue).toHaveBeenCalledWith('prime', {

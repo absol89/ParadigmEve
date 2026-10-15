@@ -984,8 +984,9 @@ function runForCaller(caller: Caller): Run | null {
 
 /** Attribution for an ordinary tool call: only ever a binding, never a claim. */
 export function agentForCaller(caller: Caller): string | null {
-  if (!getConfig().multiAgent.enabled) return null;
-  return resolve(caller)?.info.id ?? null;
+  const agent = resolve(caller);
+  if (!getConfig().multiAgent.enabled && agent?.info.maintenanceKind !== 'heartbeat-review') return null;
+  return agent?.info.id ?? null;
 }
 
 /**
@@ -1364,6 +1365,8 @@ interface SpawnOptions {
   deferDelivery?: boolean;
   /** Internal half of stageSpawn(): hide new topology from ordinary publication until commit. */
   stageTopology?: boolean;
+  /** App-owned maintenance may use the worker broker even when the user-facing multi-agent UI is off. */
+  internalMaintenance?: boolean;
 }
 
 function settleSpawnStage(stage: SpawnStageState, accepted: boolean): void {
@@ -1546,6 +1549,133 @@ export function stageSpawn(input: SpawnInput): StagedSpawn {
   };
 }
 
+const HEARTBEAT_REVIEW_WORKER_MARKER = '[[PARADIGMEVE-HEARTBEAT-REVIEW-WORKER:v1]]';
+const heartbeatReviewEpochMarker = (key: string): string => `[[PARADIGMEVE-HEARTBEAT-REVIEW:${key}]]`;
+const heartbeatReviewAgent = (agent: Agent): boolean =>
+  agent.info.role === 'worker' && agent.info.maintenanceKind === 'heartbeat-review';
+
+function heartbeatReviewWorker(owner: Run | DormantRun | null | undefined): Agent | null {
+  if (!owner) return null;
+  return [...owner.agents.values()].find((agent) =>
+    heartbeatReviewAgent(agent) &&
+    !isOver(agent.info.state)
+  ) ?? null;
+}
+
+/** Exact app-owned heartbeat reviewer identity. This grants no authority by itself. */
+export function heartbeatReviewWorkerOwnsKey(
+  caller: Caller,
+  key: string,
+  primeConversationId: string
+): boolean {
+  if (!key || !primeConversationId) return false;
+  const agent = resolve(caller);
+  const run = agent ? runForAgent(agent) : null;
+  if (!agent || !run || run.primeConversationId !== primeConversationId || !heartbeatReviewAgent(agent)) return false;
+  const marker = heartbeatReviewEpochMarker(key);
+  return agent.info.task.includes(marker) || agent.queue.some((message) => message.from === PRIME_ID && message.text.includes(marker));
+}
+
+/** Hard execution-policy predicate for the app-owned maintenance worker. */
+export function isHeartbeatReviewWorkerCaller(caller: Caller): boolean {
+  const agent = resolve(caller);
+  return Boolean(agent && heartbeatReviewAgent(agent));
+}
+
+/** Used by the bridge to keep maintenance-worker finals out of Prime's browser-attention lane. */
+export function isHeartbeatReviewWorkerConversation(conversationId: string): boolean {
+  const info = agentInfoForOwnedConversation(conversationId);
+  return Boolean(info?.role === 'worker' && info.maintenanceKind === 'heartbeat-review');
+}
+
+export interface HeartbeatReviewDispatchResult {
+  workerId: string;
+  runId: string;
+  reused: boolean;
+}
+
+/**
+ * Queue one review-only heartbeat epoch to a worker owned by the exact Prime conversation.
+ *
+ * The broker revision crosses the same immediate durability barrier as ordinary agent control
+ * before any worker tab is opened/woken. A retry while that exact epoch is already running is a
+ * no-op, so the one-minute heartbeat retry cannot duplicate semantic review work.
+ */
+export async function dispatchHeartbeatReviewWorker(
+  primeConversationId: string,
+  key: string,
+  reviewText: string
+): Promise<HeartbeatReviewDispatchResult> {
+  if (!primeConversationId || !key || !reviewText.trim()) throw new AgentError('Heartbeat review dispatch is incomplete.');
+  const marker = heartbeatReviewEpochMarker(key);
+  const task = `${HEARTBEAT_REVIEW_WORKER_MARKER}\n${marker}\n${reviewText}`;
+  let owner = runForConversation(primeConversationId);
+  const dormant = owner ? null : dormantRunForPrime(primeConversationId);
+  const existing = heartbeatReviewWorker(owner ?? dormant);
+
+  if (existing) {
+    const alreadyRunningThisEpoch = occupiesSlot(existing.info.state) &&
+      (existing.info.task.includes(marker) || existing.queue.some((message) => message.text.includes(marker)));
+    if (alreadyRunningThisEpoch) {
+      const runId = owner?.runId;
+      if (!runId) throw new AgentError('Heartbeat review worker has no durable run owner.');
+      return { workerId: existing.info.id, runId, reused: true };
+    }
+    if (occupiesSlot(existing.info.state)) {
+      throw new AgentError('The heartbeat review worker is still finishing its previous epoch; the new review remains pending.');
+    }
+    const previousTask = existing.info.task;
+    // Rotate the opaque epoch capability into durable worker identity before the message barrier.
+    // Broker delivery may acknowledge/remove the queue row on the worker's first read-only call;
+    // later lifecycle calls in the same turn must still prove this exact key belongs to this worker.
+    existing.info.task = task;
+    const staged = stageMessages({ conversationId: primeConversationId }, [{ to: existing.info.id, text: `${marker}\n${reviewText}` }]);
+    let accepted = false;
+    try {
+      if (!(await persistCriticalSwarmNow())) throw new AgentError('Heartbeat review could not cross its durable worker-message barrier.');
+      staged.commit();
+      accepted = true;
+    } finally {
+      if (!accepted) {
+        existing.info.task = previousTask;
+        staged.rollback();
+      }
+    }
+    owner = runForConversation(primeConversationId);
+    const runId = owner?.runId;
+    if (!runId) throw new AgentError('Heartbeat review worker lost its owner after durable queueing.');
+    if (staged.waking.length) requestWorkerRevivals(staged.waking, runId);
+    requestActiveWorkerMessageDelivery([existing.info.id], runId);
+    return { workerId: existing.info.id, runId, reused: true };
+  }
+
+  const staged = spawn({
+    caller: { conversationId: primeConversationId },
+    workers: [{ label: 'Heartbeat review', task }]
+  }, { deferDelivery: true, stageTopology: true, internalMaintenance: true });
+  let accepted = false;
+  try {
+    if (!(await persistCriticalSwarmNow())) throw new AgentError('Heartbeat review could not cross its durable worker-spawn barrier.');
+    const created = staged.created[0];
+    if (!created) throw new AgentError('Heartbeat review worker was not created.');
+    // `spawn(...stageTopology)` returns the public result, while settleSpawnStage owns publication.
+    // Reuse the same settlement path as stageSpawn without exposing a second browser side effect.
+    const run = runForConversation(primeConversationId);
+    const pendingStage = run ? activeSpawnStages.get(run) : undefined;
+    if (!pendingStage) throw new AgentError('Heartbeat review worker spawn lost its staged topology.');
+    settleSpawnStage(pendingStage, true);
+    accepted = true;
+  } finally {
+    if (!accepted) {
+      const run = runForConversation(primeConversationId);
+      const pendingStage = run ? activeSpawnStages.get(run) : undefined;
+      if (pendingStage) settleSpawnStage(pendingStage, false);
+    }
+  }
+  requestWorkerBootstraps(staged.created.map((worker) => worker.id), staged.runId);
+  return { workerId: staged.created[0]!.id, runId: staged.runId, reused: false };
+}
+
 /**
  * Publishes browser bootstraps only for worker ids that are still genuinely invited.
  *
@@ -1627,7 +1757,7 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
  * becomes prime as a by-product of some other outcome.
  */
 export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResult {
-  requireEnabled();
+  if (!options.internalMaintenance) requireEnabled();
   const execution = requireSpawnExecutionBackends();
   let run = runForConversation(input.caller.conversationId);
   if (run && activeSpawnStages.has(run)) {
@@ -1787,6 +1917,9 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   for (const [index, worker] of planned.entries()) {
     const id = ids[index] as string;
     const agent = makeWorker(id, worker.label || id, worker.task, worker.backend, worker.model, worker.reasoningEffort);
+    // Only this app-internal spawn path can stamp the reviewer principal. The marker in
+    // ordinary task text is display context, not a trusted tool-authorization signal.
+    if (options.internalMaintenance) agent.info.maintenanceKind = 'heartbeat-review';
     activeRun.agents.set(id, agent);
     stampOwner(activeRun);
     // A worker starts in the folder the prime was working in, so its first call can use the
@@ -2525,10 +2658,14 @@ function publishFinish(agent: Agent, info: AgentInfo, report: AgentMessage, dura
   // id is the whole of what a later revival needs to reopen the chat and type into it.
   const prime = primeForOwnedAgent(agent);
   if (!prime) throw new AgentError(`Cannot find the ${configuredAgentName()} conversation that owns ${agent.info.id}.`);
-  // Over the queue limit on purpose: the worker is about to stop calling tools and has no way
-  // to retry its own report.
-  prime.queue.push(report);
-  recount(prime);
+  // Heartbeat review workers hand their one semantic result through the heartbeat receipt/outbox.
+  // A second generic worker-finished report would duplicate that finding in Prime.
+  if (!heartbeatReviewAgent(agent)) {
+    // Over the queue limit on purpose: the worker is about to stop calling tools and has no way
+    // to retry its own report.
+    prime.queue.push(report);
+    recount(prime);
+  }
   logInfo(`multi-agent: ${agent.info.id} ${info.state === 'finished' ? 'finished for good' : 'is sleeping'}`);
   changed(durability);
 }
@@ -2653,6 +2790,14 @@ export function finishWorkerConversation(conversationId: string, result: string)
   if (!run || !conversationId) return null;
   const agent = agentForConversationId(conversationId);
   if (!agent || agent.info.role !== 'worker' || !canStop(agent.info.state)) return null;
+  // App-owned heartbeat maintenance is intentionally independent of the visible multi-agent
+  // toggle. Its browser-owned settled-answer path must therefore be able to release the slot
+  // even while ordinary model-issued agents lifecycle calls remain disabled.
+  if (heartbeatReviewAgent(agent) && !getConfig().multiAgent.enabled) {
+    const planned = planFinish(agent, result);
+    publishFinish(agent, planned.info, planned.report, 'critical');
+    return { info: { ...agent.info }, report: { ...planned.report }, repeat: false };
+  }
   return finishAgent({ conversationId }, result);
 }
 
@@ -2716,9 +2861,11 @@ export function failAgent(
       `[${id} failed] Its ChatGPT tab never came up: ${agent.info.result}. It will not report. Do that part of the ` +
         'work yourself or spawn a replacement worker.'
   );
-  const prime = primeAgent(run);
-  prime.queue.push(report);
-  recount(prime);
+  if (!heartbeatReviewAgent(agent)) {
+    const prime = primeAgent(run);
+    prime.queue.push(report);
+    recount(prime);
+  }
   logWarn(`multi-agent: ${id} failed — ${reason}`);
   changed();
   return { info: { ...agent.info }, report: { ...report }, repeat: false };
@@ -2765,9 +2912,11 @@ function sleepAgent(agent: Agent, reason: string): FinishResult | null {
       : `[${agent.info.id} is sleeping] ${reason} Its worker slot is free and its chat is intact — wake it with ` +
         `agents action=message to="${agent.info.id}" when you have more for it, rather than spawning a new worker.`
   );
-  const prime = primeAgent(run);
-  prime.queue.push(report);
-  recount(prime);
+  if (!heartbeatReviewAgent(agent)) {
+    const prime = primeAgent(run);
+    prime.queue.push(report);
+    recount(prime);
+  }
   logInfo(`multi-agent: ${agent.info.id} ${terminal ? 'finished for good' : 'is sleeping'} — ${reason}`);
   changed();
   return { info: { ...agent.info }, report: { ...report }, repeat: false };
@@ -3599,9 +3748,13 @@ export function noteAgentAlive(
           `stopped — it just ${how}. It is working, it holds its slot again, and its result will arrive the ` +
           'ordinary way. You do not need to wake it.'
     );
-    const prime = primeAgent(run);
-    prime.queue.push(report);
-    recount(prime);
+    if (!heartbeatReviewAgent(agent)) {
+      const prime = primeAgent(run);
+      prime.queue.push(report);
+      recount(prime);
+    } else {
+      report = null;
+    }
   }
   logInfo(`multi-agent: ${agent.info.id} revived from ${was} — conversation ${conversationId} is still alive (${source})`);
   changed();

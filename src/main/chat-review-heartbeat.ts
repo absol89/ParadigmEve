@@ -2,16 +2,16 @@
  * Durable semantic heartbeat for user work that fell through the gap between ChatGPT prose and
  * ParadigmEve execution.
  *
- * This does not scrape or classify the user's transcript itself. Every 22 minutes it wakes one
- * exact, previously tool-proven Eve conversation and asks that model turn to review local session
- * recordings only. That keeps intent/relevance decisions with the
- * model while exact browser/session ownership and delivery remain in the existing durable outbox.
+ * This does not scrape or classify the user's transcript itself. Every 22 minutes it dispatches
+ * one review-only maintenance worker owned by the exact, previously tool-proven Prime conversation.
+ * The worker decides whether anything needs action and returns that finding to Prime; it never
+ * executes user work itself and never commandeers Prime's foreground browser turn.
  */
 import { randomUUID } from 'node:crypto';
 import { PLAN_CATALOG_MAX, planIdSchema, type PlanLibrary, type PlanView } from '../shared/plans.js';
 import type { SessionSummary } from '../shared/session.js';
 import { currentAgentConversationId } from './agent-identity.js';
-import { readDurable, writeDurableNow } from './durable.js';
+import { readDurable, readDurableStrict, writeDurableNow } from './durable.js';
 import {
   listPlans,
   withPlanReviewValidationFence,
@@ -19,7 +19,8 @@ import {
 } from './plans.js';
 import { isChatBlocked } from './session/blocked-chats.js';
 import {
-  enqueueChatReviewAttention,
+  dispatchChatReviewWorker,
+  enqueueChatReviewFinding,
   type ChatReviewAttention,
   type ChatReviewPlanSnapshot
 } from './session/input.js';
@@ -67,6 +68,8 @@ export interface ChatReviewPlanSweep {
 export interface ChatReviewDebt extends ChatReviewAttention {
   sessionId: string;
   conversationId: string;
+  /** New epochs run only in the app-owned read/review worker. Absent on legacy Prime-owned debt. */
+  reviewLane?: 'worker';
   /** Absent only on receipt-backed debt written before durable Plan review shipped. */
   planBatch?: ChatReviewPlanTarget[];
   /** Absent only together with planBatch on legacy debt. */
@@ -76,9 +79,9 @@ export interface ChatReviewDebt extends ChatReviewAttention {
  * Privacy-safe semantic result of one fully completed review epoch.
  *
  * This is deliberately an enum, never authored prose. `dispatched` means the review found
- * actionable unfinished work and actually handed bounded work to Eve/a worker before the exact
- * receipt was written. `blocked`/`failed` are completed reviews whose requested execution could
- * not safely finish; the next heartbeat still starts from this completed review boundary.
+ * actionable unfinished work and durably returned that finding to Prime before the exact receipt
+ * was written. It never means that the heartbeat worker executed the work. `blocked`/`failed` are
+ * completed reviews that could not safely determine a disposition.
  */
 export const CHAT_REVIEW_COMPLETION_RESULTS = ['completed', 'dispatched', 'blocked', 'failed'] as const;
 export type ChatReviewCompletionResult = (typeof CHAT_REVIEW_COMPLETION_RESULTS)[number];
@@ -89,12 +92,31 @@ export interface ChatReviewCompletionReceipt {
   requestId: string;
   completedAt: number;
   result: ChatReviewCompletionResult;
+  /** App-owned proof added by the lifecycle tool; never accepted from model arguments. */
+  reviewLane?: 'worker';
+  /** Compact provenance-bound handoff for Prime. Required when result=dispatched. */
+  finding?: string;
+}
+export interface ChatReviewPrimeFinding {
+  key: string;
+  sessionId: string;
+  conversationId: string;
+  text: string;
+  createdAt: number;
 }
 export interface ChatReviewHeartbeatState {
   lastCompletedAt?: number;
   debt?: ChatReviewDebt;
   lastReceipt?: ChatReviewCompletionReceipt;
   planSweep?: ChatReviewPlanSweep;
+  pendingFinding?: ChatReviewPrimeFinding;
+  /** Overflow custody for previous still-pending findings; file per index, not a lossy ring. */
+  findingSpoolRead?: number;
+  findingSpoolWrite?: number;
+  /** Findings whose native Send was authorized but confirmation was lost. Never auto-resend. */
+  uncertainFindings?: ChatReviewPrimeFinding[];
+  /** Older uncertain findings are preserved in numbered durable archive slots. */
+  uncertainArchiveCount?: number;
 }
 export type ChatReviewHeartbeatResult = {
   status: 'queued' | 'pending' | 'not-due' | 'no-coordinator';
@@ -116,6 +138,16 @@ type Dependencies = {
   uniqueSession: (conversationId: string) => Promise<SessionSummary | null>;
   blocked: (conversationId: string) => boolean;
   enqueue: (sessionId: string, review: ChatReviewAttention) => Promise<unknown>;
+  enqueueFinding: (sessionId: string, key: string, text: string) => Promise<{
+    state?: string;
+    sendAuthorizedAt?: number;
+    deliveredAt?: number;
+    messageId?: string;
+  }>;
+  /** fsync an older uncertain finding before removing it from the recent bounded state. */
+  archiveUncertainFinding: (index: number, finding: ChatReviewPrimeFinding) => Promise<void>;
+  writePendingSpool: (index: number, finding: ChatReviewPrimeFinding) => Promise<void>;
+  readPendingSpool: (index: number) => Promise<ChatReviewPrimeFinding | null>;
   plans: () => Promise<PlanLibrary>;
   planFence: <T>(targets: readonly PlanReviewExpectation[], commit: () => Promise<T>) => Promise<T>;
   makeKey: () => string;
@@ -196,7 +228,8 @@ function parseDebt(value: unknown): ChatReviewDebt | null {
   if (!(typeof row.key === 'string' && row.key.length > 0 && row.key.length <= 512 &&
     safeTime(row.sinceAt) && safeTime(row.untilAt) && row.untilAt >= row.sinceAt &&
     typeof row.sessionId === 'string' && row.sessionId.length >= 8 && row.sessionId.length <= 64 &&
-    typeof row.conversationId === 'string' && row.conversationId.length >= 8 && row.conversationId.length <= 256)) return null;
+    typeof row.conversationId === 'string' && row.conversationId.length >= 8 && row.conversationId.length <= 256 &&
+    (row.reviewLane === undefined || row.reviewLane === 'worker'))) return null;
   const legacyPlanDebt = row.planBatch === undefined && row.planAcks === undefined;
   if ((row.planBatch === undefined) !== (row.planAcks === undefined)) return null;
   let planBatch: ChatReviewPlanTarget[] | undefined;
@@ -218,6 +251,7 @@ function parseDebt(value: unknown): ChatReviewDebt | null {
     untilAt: row.untilAt,
     sessionId: row.sessionId,
     conversationId: row.conversationId,
+    ...(row.reviewLane === 'worker' ? { reviewLane: 'worker' as const } : {}),
     ...(planBatch === undefined ? {} : { planBatch, planAcks: planAcks! })
   };
 }
@@ -230,6 +264,8 @@ function parseReceipt(value: unknown): ChatReviewCompletionReceipt | null {
     typeof row.conversationId === 'string' && row.conversationId.length >= 8 && row.conversationId.length <= 256 &&
     typeof row.requestId === 'string' && row.requestId.length > 0 && row.requestId.length <= 256 &&
     safeTime(row.completedAt) &&
+    (row.reviewLane === undefined || row.reviewLane === 'worker') &&
+    (row.finding === undefined || (typeof row.finding === 'string' && row.finding.trim().length > 0 && row.finding.length <= 6000)) &&
     (row.result === undefined || (typeof row.result === 'string' && (CHAT_REVIEW_COMPLETION_RESULTS as readonly string[]).includes(row.result)))
     ? {
         key: row.key,
@@ -239,8 +275,21 @@ function parseReceipt(value: unknown): ChatReviewCompletionReceipt | null {
         completedAt: row.completedAt,
         // Receipts written before the result enum existed semantically meant only "review
         // completed". Preserve that exact meaning rather than rejecting old durable state.
-        result: (row.result ?? 'completed') as ChatReviewCompletionResult
+        result: (row.result ?? 'completed') as ChatReviewCompletionResult,
+        ...(row.reviewLane === 'worker' ? { reviewLane: 'worker' as const } : {}),
+        ...(row.finding === undefined ? {} : { finding: row.finding })
       }
+    : null;
+}
+
+function parsePendingFinding(value: unknown): ChatReviewPrimeFinding | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  return typeof row.key === 'string' && row.key.length > 0 && row.key.length <= 512 &&
+    typeof row.sessionId === 'string' && row.sessionId.length >= 8 && row.sessionId.length <= 64 &&
+    typeof row.conversationId === 'string' && row.conversationId.length >= 8 && row.conversationId.length <= 256 &&
+    typeof row.text === 'string' && row.text.trim().length > 0 && row.text.length <= 6000 && safeTime(row.createdAt)
+    ? { key: row.key, sessionId: row.sessionId, conversationId: row.conversationId, text: row.text, createdAt: row.createdAt }
     : null;
 }
 
@@ -275,6 +324,31 @@ const defaults: Dependencies = {
       if (!planSweep) throw new Error('The durable chat review Plan sweep is invalid');
       state.planSweep = planSweep;
     }
+    if (value.pendingFinding !== undefined) {
+      const pendingFinding = parsePendingFinding(value.pendingFinding);
+      if (!pendingFinding) throw new Error('The durable chat review Prime finding is invalid');
+      state.pendingFinding = pendingFinding;
+    }
+    if (value.findingSpoolRead !== undefined || value.findingSpoolWrite !== undefined) {
+      if (!safeTime(value.findingSpoolRead) || !safeTime(value.findingSpoolWrite) ||
+          value.findingSpoolRead > value.findingSpoolWrite) {
+        throw new Error('The durable chat review finding spool cursor is invalid');
+      }
+      state.findingSpoolRead = value.findingSpoolRead;
+      state.findingSpoolWrite = value.findingSpoolWrite;
+    }
+    if (value.uncertainFindings !== undefined) {
+      if (!Array.isArray(value.uncertainFindings) || value.uncertainFindings.length > 8) {
+        throw new Error('The durable chat review uncertain findings are invalid');
+      }
+      const findings = value.uncertainFindings.map(parsePendingFinding);
+      if (findings.some(finding => finding === null)) throw new Error('The durable chat review uncertain findings are invalid');
+      state.uncertainFindings = findings as ChatReviewPrimeFinding[];
+    }
+    if (value.uncertainArchiveCount !== undefined) {
+      if (!safeTime(value.uncertainArchiveCount)) throw new Error('The durable chat review uncertain archive cursor is invalid');
+      state.uncertainArchiveCount = value.uncertainArchiveCount;
+    }
     if (state.debt?.planBatch !== undefined && !state.planSweep) {
       throw new Error('The durable chat review Plan debt has no sweep cursor');
     }
@@ -297,9 +371,19 @@ const defaults: Dependencies = {
   // executable conversation to agree before transport or completion authority moves to B.
   uniqueSession: (conversationId) => findSessionByConversation(conversationId, { includeHistorical: true, requireUnique: true }),
   blocked: isChatBlocked,
-  // Keep transport recovery responsive without re-spending a model turn every local retry.
-  // The durable input owner may re-present a confirmed send only after the normal heartbeat cadence.
-  enqueue: (sessionId, review) => enqueueChatReviewAttention(sessionId, review, CHAT_REVIEW_HEARTBEAT_MS),
+  // Prime remains the durable debt owner while review executes in an app-owned worker lane.
+  enqueue: (sessionId, review) => dispatchChatReviewWorker(sessionId, review),
+  enqueueFinding: (sessionId, key, text) => enqueueChatReviewFinding(sessionId, key, text),
+  archiveUncertainFinding: (index, finding) =>
+    writeDurableNow(`chat-review-uncertain-${index.toString(36)}`, finding),
+  writePendingSpool: (index, finding) =>
+    writeDurableNow(`chat-review-finding-${index.toString(36)}`, finding),
+  async readPendingSpool(index) {
+    const row = await readDurableStrict<unknown>(`chat-review-finding-${index.toString(36)}`);
+    const finding = parsePendingFinding(row);
+    if (!finding) throw new Error('A durable chat review finding spool entry is missing or invalid');
+    return finding;
+  },
   plans: listPlans,
   planFence: withPlanReviewValidationFence,
   makeKey: () => `heartbeat:${randomUUID()}`,
@@ -386,6 +470,10 @@ function stateWithDebt(state: ChatReviewHeartbeatState | null, debt: ChatReviewD
     ...(state?.lastCompletedAt === undefined ? {} : { lastCompletedAt: state.lastCompletedAt }),
     ...(state?.lastReceipt ? { lastReceipt: state.lastReceipt } : {}),
     ...(state?.planSweep ? { planSweep: state.planSweep } : {}),
+    ...(state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
+    ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
+    ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
+    ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
     debt
   };
 }
@@ -526,6 +614,17 @@ export async function resolveChatReviewContinuity(
   const coordinator = await exactCoordinator(debt, deps);
   if (!coordinator) return null;
   return { sessionId: coordinator.id, conversationId: coordinator.conversationId };
+}
+
+/** New heartbeat epochs are worker-owned; legacy durable debt remains Prime-compatible. */
+export async function chatReviewRequiresWorker(
+  key: string,
+  dependencies: Partial<Dependencies> = {}
+): Promise<boolean> {
+  if (!key || key.length > 512) return false;
+  const deps = { ...defaults, ...dependencies };
+  const state = await deps.readState();
+  return state?.debt?.key === key && state.debt.reviewLane === 'worker';
 }
 
 /** New exact ordinary coordinator for a fresh epoch or a canonical retired/stalled-owner transfer. */
@@ -684,6 +783,7 @@ export function acknowledgeChatReviewPlan(
  */
 export interface ChatReviewHeartbeatPublicStatus {
   pendingUntilAt?: number;
+  uncertainFindingCount?: number;
   lastCompletedAt?: number;
   lastCompletionAt?: number;
   lastCompletionResult?: ChatReviewCompletionResult;
@@ -694,6 +794,9 @@ const publicStatusListeners = new Set<(status: ChatReviewHeartbeatPublicStatus) 
 function publicStatusFromState(state: ChatReviewHeartbeatState | null): ChatReviewHeartbeatPublicStatus {
   return {
     ...(state?.debt ? { pendingUntilAt: state.debt.untilAt } : {}),
+    ...((state?.uncertainFindings?.length ?? 0) + (state?.uncertainArchiveCount ?? 0) > 0
+      ? { uncertainFindingCount: (state?.uncertainFindings?.length ?? 0) + (state?.uncertainArchiveCount ?? 0) }
+      : {}),
     ...(state?.lastCompletedAt === undefined ? {} : { lastCompletedAt: state.lastCompletedAt }),
     ...(state?.lastReceipt ? {
       lastCompletionAt: state.lastReceipt.completedAt,
@@ -736,7 +839,11 @@ export function completeChatReviewHeartbeat(
   return serialHeartbeat(async () => {
     const deps = { ...defaults, ...dependencies };
     if (!receipt.key || receipt.key.length > 512 || !receipt.sessionId || !receipt.conversationId ||
-        !receipt.requestId || receipt.requestId.length > 256 || !safeTime(receipt.completedAt)) return 'rejected';
+        !receipt.requestId || receipt.requestId.length > 256 || !safeTime(receipt.completedAt) ||
+        !(CHAT_REVIEW_COMPLETION_RESULTS as readonly string[]).includes(receipt.result) ||
+        (receipt.reviewLane !== undefined && receipt.reviewLane !== 'worker') ||
+        (receipt.finding !== undefined && (!receipt.finding.trim() || receipt.finding.length > 6000)) ||
+        (receipt.result !== 'completed' && !receipt.finding?.trim())) return 'rejected';
     const state = await deps.readState();
     const debt = state?.debt;
     if (!debt) {
@@ -744,6 +851,7 @@ export function completeChatReviewHeartbeat(
       return previous?.key === receipt.key && previous.sessionId === receipt.sessionId &&
         previous.conversationId === receipt.conversationId ? 'already-completed' : 'rejected';
     }
+    if (debt.reviewLane === 'worker' && receipt.reviewLane !== 'worker') return 'rejected';
     const coordinator = await exactCoordinator(debt, deps);
     if (!coordinator || !receiptMatchesDebt(receipt, debt, coordinator) || !planBatchBelongsToSweep(state, debt)) return 'rejected';
     let planSweep = state?.planSweep;
@@ -773,8 +881,30 @@ export function completeChatReviewHeartbeat(
     const nextState: ChatReviewHeartbeatState = {
       lastCompletedAt: debt.untilAt,
       lastReceipt: receipt,
-      ...(planSweep ? { planSweep } : {})
+      ...(planSweep ? { planSweep } : {}),
+      ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
+      ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
+      ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
+      ...(!receipt.finding && state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
+      ...(receipt.finding ? {
+        pendingFinding: {
+          key: debt.key,
+          sessionId: debt.sessionId,
+          conversationId: coordinator.conversationId,
+          text: receipt.finding.trim(),
+          createdAt: receipt.completedAt
+        }
+      } : {})
     };
+    if (receipt.finding && state?.pendingFinding) {
+      const writeIndex = state.findingSpoolWrite ?? 0;
+      if (!Number.isSafeInteger(writeIndex + 1)) throw new Error('The finding spool index is exhausted');
+      // Transactional intent goes to its own durable slot *before* replacing the single
+      // recent finding. A crash before the state commit replays the same slot, not a new one.
+      await deps.writePendingSpool(writeIndex, state.pendingFinding);
+      nextState.findingSpoolRead = state.findingSpoolRead ?? 0;
+      nextState.findingSpoolWrite = writeIndex + 1;
+    }
     if (debt.planBatch === undefined) {
       await deps.writeState(nextState);
     } else {
@@ -799,7 +929,78 @@ export function runChatReviewHeartbeat(
 ): Promise<ChatReviewHeartbeatResult> {
   return serialHeartbeat(async () => {
     const deps = { ...defaults, ...dependencies };
-    const state = await deps.readState();
+    let state = await deps.readState();
+    // Older still-pending findings live in individually fsynced spool slots, not in the
+    // single current-review state field. Attempt the oldest once per tick, independently
+    // of the 22-minute review clock. Native Send authorization is never retried.
+    const readIndex = state?.findingSpoolRead ?? 0;
+    if (state && readIndex < (state.findingSpoolWrite ?? 0)) {
+      const finding = await deps.readPendingSpool(readIndex);
+      if (!finding) throw new Error('The durable heartbeat finding spool entry is missing');
+      const owner = await deps.uniqueSession(finding.conversationId);
+      if (owner && owner.id === finding.sessionId && owner.conversationId &&
+          owner.chatIds.includes(finding.conversationId) && owner.chatIds.includes(owner.conversationId) &&
+          owner.origin?.kind !== 'worker' && owner.origin?.kind !== 'helper' && !deps.blocked(owner.conversationId)) {
+        // App-chat transport failure is NOT heartbeat review failure. The spool slot remains
+        // durable and can be retried while an independent review becomes due.
+        const delivery = await deps.enqueueFinding(finding.sessionId, finding.key, finding.text).catch(() => null);
+        const ambiguous = delivery !== null && (delivery.state === 'failed' || delivery.state === 'cancelled') &&
+          (delivery.sendAuthorizedAt !== undefined || delivery.deliveredAt !== undefined || Boolean(delivery.messageId));
+        if (delivery?.state === 'sent' || ambiguous) {
+          const next = { ...state, findingSpoolRead: readIndex + 1 };
+          if (ambiguous) {
+            const uncertain = [...(next.uncertainFindings ?? []).filter(item => item.key !== finding.key), finding];
+            if (uncertain.length > 8) {
+              const archiveIndex = next.uncertainArchiveCount ?? 0;
+              if (!Number.isSafeInteger(archiveIndex + 1)) throw new Error('The uncertain finding archive index is exhausted');
+              await deps.archiveUncertainFinding(archiveIndex, uncertain[0]!);
+              next.uncertainArchiveCount = archiveIndex + 1;
+              uncertain.shift();
+            }
+            next.uncertainFindings = uncertain;
+          }
+          await deps.writeState(next);
+          state = next;
+        }
+      }
+    }
+    if (state?.pendingFinding) {
+      let finding = state.pendingFinding;
+      const owner = await deps.uniqueSession(finding.conversationId);
+      if (owner && owner.id === finding.sessionId && owner.conversationId &&
+          owner.chatIds.includes(finding.conversationId) && owner.chatIds.includes(owner.conversationId) &&
+          owner.origin?.kind !== 'worker' && owner.origin?.kind !== 'helper' && !deps.blocked(owner.conversationId)) {
+        if (owner.conversationId !== finding.conversationId) {
+          finding = { ...finding, conversationId: owner.conversationId };
+          state = { ...state, pendingFinding: finding };
+          await deps.writeState(state);
+        }
+        const delivery = await deps.enqueueFinding(finding.sessionId, finding.key, finding.text).catch(() => null);
+        if (delivery?.state === 'sent') {
+          const { pendingFinding: _delivered, ...deliveredState } = state;
+          await deps.writeState(deliveredState);
+          state = deliveredState;
+        } else if (delivery && (delivery.state === 'failed' || delivery.state === 'cancelled') &&
+            (delivery.sendAuthorizedAt !== undefined || delivery.deliveredAt !== undefined || Boolean(delivery.messageId))) {
+          const uncertain = [...(state.uncertainFindings ?? []).filter(item => item.key !== finding.key), finding];
+          let archiveCount = state.uncertainArchiveCount ?? 0;
+          if (uncertain.length > 8) {
+            if (!Number.isSafeInteger(archiveCount + 1)) throw new Error('The uncertain finding archive has reached its safe index limit');
+            // Crash after this fsync but before state commit repeats the identical slot.
+            await deps.archiveUncertainFinding(archiveCount, uncertain[0]!);
+            archiveCount += 1;
+            uncertain.shift();
+          }
+          const { pendingFinding: _uncertain, ...withoutPending } = state;
+          const nextState = { ...withoutPending, uncertainFindings: uncertain,
+            ...(archiveCount ? { uncertainArchiveCount: archiveCount } : {}) };
+          await deps.writeState(nextState);
+          state = nextState;
+        }
+      }
+      // A queued / deferred / unreachable finding remains durable, but cannot monopolize
+      // the independent review clock. A later completed receipt spools it before replacement.
+    }
     if (state?.debt) {
       let debt = state.debt;
       if (!planBatchBelongsToSweep(state, debt)) {
@@ -878,7 +1079,9 @@ export function runChatReviewHeartbeat(
     // receipt after the jump resets the time cursor from a conservative lookback window.
     const clockReset = cadenceAnchor !== null && cadenceAnchor > now + CHAT_REVIEW_HEARTBEAT_MS;
     const dueAt = cadenceAnchor === null || clockReset ? now : cadenceAnchor + CHAT_REVIEW_HEARTBEAT_MS;
-    if (now < dueAt) return { status: 'not-due', nextAt: dueAt };
+    if (now < dueAt) return { status: 'not-due', nextAt:
+      state?.pendingFinding || (state?.findingSpoolRead ?? 0) < (state?.findingSpoolWrite ?? 0)
+        ? Math.min(dueAt, now + CHAT_REVIEW_RETRY_MS) : dueAt };
 
     const unique = await newestCoordinator(await deps.sessions(), deps);
     if (unique) {
@@ -901,6 +1104,7 @@ export function runChatReviewHeartbeat(
         ...review,
         sessionId: unique.id,
         conversationId,
+        reviewLane: 'worker',
         planBatch: planReview.targets,
         planAcks: []
       };
@@ -910,6 +1114,10 @@ export function runChatReviewHeartbeat(
       await deps.writeState({
         ...(lastCompletedAt === null ? {} : { lastCompletedAt }),
         ...(state?.lastReceipt ? { lastReceipt: state.lastReceipt } : {}),
+        ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
+        ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
+        ...(state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
+        ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
         planSweep: planReview.sweep,
         debt
       });

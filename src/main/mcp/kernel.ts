@@ -55,6 +55,7 @@ import {
   agentForCaller,
   agentForFinishCaller,
   hasRetiredWorkerLeases,
+  isHeartbeatReviewWorkerCaller,
   offerMessagesForConversation,
   persistCriticalSwarmNow,
   requestWorkerRevivals,
@@ -697,6 +698,8 @@ async function dispatchTracked(
     : null;
   const localCallerRejected = Boolean(context.caller.localPrincipal) && !localCaller;
   if (localCaller) context.agent = localCaller;
+  const heartbeatReviewWorker = isHeartbeatReviewWorkerCaller(context.caller);
+  const heartbeatReviewToolAllowed = new Set(['session', 'read', 'search', 'view_image', 'chat_review_plan', 'chat_review_complete']);
   const allowUnattributed = getConfig().multiAgent.allowUnattributedCalls;
   const sharedEveAccess = sharedEveOwnerForCurrentCall() !== null;
   const retiredLeaseAmbiguous =
@@ -727,6 +730,8 @@ async function dispatchTracked(
         ? Promise.resolve(fail(BLOCKED_CHAT_REFUSAL))
         : localCallerRejected
         ? Promise.resolve(fail('LOCAL_AGENT_CALLER_REJECTED: this local worker is no longer active in its broker run. No local tool was run.'))
+        : heartbeatReviewWorker && !heartbeatReviewToolAllowed.has(name)
+        ? Promise.resolve(fail('HEARTBEAT_REVIEW_READ_ONLY: this maintenance worker may only read/review local evidence and acknowledge the exact heartbeat. Return actionable findings to Prime; no user work or mutation was run.'))
         : compacting
         ? Promise.resolve(fail(COMPACTION_IN_PROGRESS_REFUSAL))
         : supersededConversation

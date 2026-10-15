@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { PRIME_ID } from '../agents.js';
+import { PRIME_ID, heartbeatReviewWorkerOwnsKey } from '../agents.js';
 import {
   acknowledgeChatReviewPlan,
   CHAT_REVIEW_PLAN_CLASSIFICATIONS,
+  chatReviewRequiresWorker,
   resolveChatReviewContinuity
 } from '../chat-review-heartbeat.js';
 import { archivePlan, completePlanItemsForReview, listPlans } from '../plans.js';
@@ -30,13 +31,13 @@ export function registerChatReviewPlanTool(reg: SurfaceRegistrar): void {
   reg.register('chat_review_plan', toolDeclaration('chat_review_plan', () => ({
     title: 'Acknowledge heartbeat Plan review',
     description:
-      'Internal lifecycle tool for ParadigmEve’s 22-minute recovery heartbeat. Call it directly only for a Plan in the exact heartbeat batch after reviewing that Plan’s exact source and current state. It can mark only explicitly supplied, evidence-backed open checklist items done. When a reviewed Eve-owned Plan is ready to archive and the user has enabled Eve archive authority, the same acknowledgement archives that Plan; human Plans are never auto-archived. Stale revisions, foreign batches, workers/helpers and nested/code-mode calls fail closed.',
+      'Internal lifecycle tool for ParadigmEve’s 22-minute recovery heartbeat. The assigned read-only heartbeat worker may only classify Plans from the exact batch; it must not provide completed_item_ids, mark checklist items done or archive anything. Legacy Prime-owned reviews retain their historical bounded mutation authority. Stale revisions, foreign batches, unrelated workers/helpers and nested/code-mode calls fail closed.',
     inputSchema: z.object({
       key: z.string().min(1).max(512).describe('Exact durable review key printed by the current heartbeat prompt.'),
       plan_id: planIdSchema.describe('Exact Plan id from this heartbeat batch.'),
       expected_updated_at: timestampSchema.describe('Exact Plan updatedAt revision you reviewed.'),
       classification: z.enum(CHAT_REVIEW_PLAN_CLASSIFICATIONS).describe('Current disposition after reviewing this exact Plan.'),
-      completed_item_ids: completedItemIdsSchema.optional().describe('Exact currently-open Plan item ids whose completion you verified. Only these items may move to done.')
+      completed_item_ids: completedItemIdsSchema.optional().describe('Legacy Prime-owned heartbeat debt only: exact evidence-backed open items. Never supply this for a read-only heartbeat worker.')
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   })), async ({ key, plan_id: planId, expected_updated_at: expectedUpdatedAt, classification, completed_item_ids: completedItemIds }) =>
@@ -46,41 +47,54 @@ export function registerChatReviewPlanTool(reg: SurfaceRegistrar): void {
       let caller = currentCaller();
       const call = currentCall();
       const agent = currentAgent();
-      if (caller.localPrincipal || (agent !== null && agent !== PRIME_ID)) {
-        return fail('CHAT_REVIEW_PLAN_CALLER_REJECTED: workers and helpers cannot acknowledge heartbeat Plan reviews. Return this review to the exact ordinary coordinator that owns the heartbeat.');
+      const continuity = await resolveChatReviewContinuity(key);
+      const reviewWorker = Boolean(continuity && heartbeatReviewWorkerOwnsKey(caller, key, continuity.conversationId));
+      const workerRequired = await chatReviewRequiresWorker(key);
+      if (workerRequired && !reviewWorker) {
+        return fail('CHAT_REVIEW_WORKER_REQUIRED: this Plan review belongs to ParadigmEve’s read-only heartbeat worker. Prime/legacy callers cannot acknowledge it.');
+      }
+      let reviewSessionId = caller.sessionId;
+      let reviewConversationId = caller.conversationId;
+      if (!reviewWorker && (caller.localPrincipal || (agent !== null && agent !== PRIME_ID))) {
+        return fail('CHAT_REVIEW_PLAN_CALLER_REJECTED: only the exact ordinary coordinator or its app-owned heartbeat review worker may acknowledge this heartbeat Plan review.');
+      }
+      if (reviewWorker && completedItemIds !== undefined) {
+        return fail('CHAT_REVIEW_PLAN_READ_ONLY: the heartbeat worker may classify reviewed Plans but cannot complete checklist items, archive Plans, or perform any mutation. Return actionable work to Prime instead.');
       }
 
       // Scheduled/headless heartbeat turns can lack page correlation while retaining the opaque
       // one-epoch key. Recover only the already-durable coordinator lineage, exactly as the final
       // heartbeat receipt does; never choose a chat from title, recency or model arguments.
-      if (call && caller.requestId && (!caller.sessionId || !caller.conversationId)) {
-        const continuity = await resolveChatReviewContinuity(key);
-        if (continuity) {
-          call.caller.sessionId = continuity.sessionId;
-          call.caller.conversationId = continuity.conversationId;
-          caller = call.caller;
-        }
+      if (reviewWorker && continuity) {
+        reviewSessionId = continuity.sessionId;
+        reviewConversationId = continuity.conversationId;
+      } else if (call && caller.requestId && (!caller.sessionId || !caller.conversationId) && continuity) {
+        call.caller.sessionId = continuity.sessionId;
+        call.caller.conversationId = continuity.conversationId;
+        caller = call.caller;
+        reviewSessionId = caller.sessionId;
+        reviewConversationId = caller.conversationId;
       }
-      if (!caller.requestId || !caller.sessionId || !caller.conversationId || !call) {
+      if (!caller.requestId || !reviewSessionId || !reviewConversationId || !call) {
         return fail('CALLER_IDENTITY_REQUIRED: an exact Companion request, session and conversation are required to acknowledge a heartbeat Plan review. No Plan or heartbeat state was changed; retry from the exact heartbeat coordinator.');
       }
 
-      const session = await getSession(caller.sessionId);
-      if (!session || session.conversationId !== caller.conversationId ||
+      const session = await getSession(reviewSessionId);
+      if (!session || session.conversationId !== reviewConversationId ||
           session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {
         return fail('CHAT_REVIEW_PLAN_CALLER_REJECTED: this call is not the exact ordinary coordinator session for the heartbeat. No Plan or heartbeat state was changed.');
       }
 
       try {
-        const archiveReviewedEvePlan =
+        const archiveReviewedEvePlan = !reviewWorker &&
           classification === 'ready-to-archive' &&
           getConfig().eveAuthority?.archiveCompletedWork === true;
         const mutationItemIds = completedItemIds ?? [];
         const needsMutation = completedItemIds !== undefined || archiveReviewedEvePlan;
         const acknowledgement = await acknowledgeChatReviewPlan({
           key,
-          sessionId: caller.sessionId,
-          conversationId: caller.conversationId,
+          sessionId: reviewSessionId,
+          conversationId: reviewConversationId,
           planId,
           expectedUpdatedAt,
           classification,

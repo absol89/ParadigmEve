@@ -5,6 +5,7 @@ const ITEM_ID = '22222222-2222-4222-8222-222222222222';
 
 const fixture = vi.hoisted(() => ({
   agent: null as string | null,
+  reviewWorker: false,
   caller: {
     transportKey: null as string | null,
     requestId: 'wfr_review',
@@ -29,6 +30,7 @@ const fixture = vi.hoisted(() => ({
   },
   acknowledgement: 'acknowledged' as 'acknowledged' | 'already-acknowledged' | 'rejected',
   archiveAuthority: true,
+  workerRequired: false,
   reviewedPlan: {
     id: '11111111-1111-4111-8111-111111111111',
     audience: 'human' as 'human' | 'eve',
@@ -49,7 +51,10 @@ const fixture = vi.hoisted(() => ({
   resolveContinuity: vi.fn(async () => fixture.continuity)
 }));
 
-vi.mock('../src/main/agents.js', () => ({ PRIME_ID: 'prime' }));
+vi.mock('../src/main/agents.js', () => ({
+  PRIME_ID: 'prime',
+  heartbeatReviewWorkerOwnsKey: () => fixture.reviewWorker
+}));
 
 vi.mock('../src/main/mcp/call-context.js', () => ({
   currentAgent: () => fixture.agent,
@@ -60,6 +65,7 @@ vi.mock('../src/main/mcp/call-context.js', () => ({
 vi.mock('../src/main/chat-review-heartbeat.js', () => ({
   CHAT_REVIEW_PLAN_CLASSIFICATIONS: ['ready-to-archive', 'tbd', 'blocked', 'superseded', 'awaiting-user'],
   acknowledgeChatReviewPlan: fixture.acknowledge,
+  chatReviewRequiresWorker: vi.fn(async () => fixture.workerRequired),
   resolveChatReviewContinuity: fixture.resolveContinuity
 }));
 
@@ -113,6 +119,7 @@ const input = {
 describe('chat_review_plan lifecycle tool', () => {
   beforeEach(() => {
     fixture.agent = null;
+    fixture.reviewWorker = false;
     fixture.caller = {
       transportKey: null,
       requestId: 'wfr_review',
@@ -142,6 +149,7 @@ describe('chat_review_plan lifecycle tool', () => {
     };
     fixture.acknowledgement = 'acknowledged';
     fixture.archiveAuthority = true;
+    fixture.workerRequired = false;
     fixture.reviewedPlan = {
       id: PLAN_ID,
       audience: 'human',
@@ -254,6 +262,43 @@ describe('chat_review_plan lifecycle tool', () => {
     reply = await registered().handler(input);
     expect(reply.isError).toBe(true);
     expect(reply.content[0].text).toContain('CHAT_REVIEW_PLAN_CALLER_REJECTED');
+    expect(fixture.acknowledge).not.toHaveBeenCalled();
+  });
+
+  it('allows only the exact app-owned heartbeat worker to classify without mutating the Plan', async () => {
+    fixture.agent = 'worker-5';
+    fixture.reviewWorker = true;
+    fixture.workerRequired = true;
+    fixture.caller = {
+      transportKey: null,
+      requestId: 'wfr_worker_review',
+      sessionId: 'worker-session',
+      conversationId: 'worker-conversation',
+      localPrincipal: null
+    };
+    fixture.call = { startedAt: 123, caller: fixture.caller };
+
+    const reply = await registered().handler(input);
+    expect(reply.isError).not.toBe(true);
+    expect(fixture.acknowledge.mock.calls[0]![0]).toMatchObject({
+      sessionId: 'session-prime',
+      conversationId: 'conversation-prime',
+      classification: 'tbd'
+    });
+    expect(fixture.acknowledge.mock.calls[0]![0]).not.toHaveProperty('requestId');
+    expect(fixture.completeItems).not.toHaveBeenCalled();
+    expect(fixture.archivePlan).not.toHaveBeenCalled();
+
+    const mutation = await registered().handler({ ...input, completed_item_ids: [ITEM_ID] });
+    expect(mutation.isError).toBe(true);
+    expect(mutation.content[0].text).toContain('CHAT_REVIEW_PLAN_READ_ONLY');
+  });
+
+  it('rejects Prime on a new worker-owned heartbeat Plan epoch', async () => {
+    fixture.workerRequired = true;
+    const reply = await registered().handler(input);
+    expect(reply.isError).toBe(true);
+    expect(reply.content[0].text).toContain('CHAT_REVIEW_WORKER_REQUIRED');
     expect(fixture.acknowledge).not.toHaveBeenCalled();
   });
 
