@@ -452,7 +452,7 @@ describe('file_edit open_visible ("show me")', () => {
   const workspace = () => path.join(dir, 'workspace');
   afterEach(() => setVisibleLauncherForTests(null));
 
-  it('opens a new copy in the app window for Computer use and leaves the original alone', async () => {
+  it('opens a new copy when the installed bundle has a host desktop app; otherwise leaves the original alone', async () => {
     publish('gridcraft', '0.6.1');
     expect(await consent.requestFileProviderInstall('artcraft.gridcraft', async () => 'install')).toMatchObject({ status: 'installed' });
     const source = path.join(workspace(), 'book.xlsx');
@@ -460,11 +460,23 @@ describe('file_edit open_visible ("show me")', () => {
     const launched: Array<[string, string]> = [];
     setVisibleLauncherForTests(async (exe, file) => { launched.push([exe, file]); });
     const result = await registrar({ create: true }).invokeNested('file_edit', { op: 'open_visible', provider: 'artcraft.gridcraft', path: '/workspace/book.xlsx' }, caller());
-    expect(textOf(result)).toContain("OPENED: /workspace/book (Eve edit).xlsx is open in GridCraft's window. The original /workspace/book.xlsx was not changed.");
-    expect(launched).toHaveLength(1);
-    expect(path.basename(launched[0]![0])).toBe('gridcraft.exe');
-    expect(launched[0]![1]).toBe(path.join(workspace(), 'book (Eve edit).xlsx'));
-    expect(await fs.readFile(path.join(workspace(), 'book (Eve edit).xlsx'), 'utf8')).toBe('original bytes');
+    const copy = path.join(workspace(), 'book (Eve edit).xlsx');
+    // The test installs a mock Windows portable archive on every CI host. It contains
+    // gridcraft.exe, but no native Linux/macOS desktop binary; a visible launch must
+    // fail closed on those hosts before creating a copy or invoking the launcher.
+    if (process.platform === 'win32') {
+      expect(result.isError).not.toBe(true);
+      expect(textOf(result)).toContain("OPENED: /workspace/book (Eve edit).xlsx is open in GridCraft's window. The original /workspace/book.xlsx was not changed.");
+      expect(launched).toHaveLength(1);
+      expect(path.basename(launched[0]![0])).toBe('gridcraft.exe');
+      expect(launched[0]![1]).toBe(copy);
+      expect(await fs.readFile(copy, 'utf8')).toBe('original bytes');
+    } else {
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/VISIBLE_UNAVAILABLE: only GridCraft's headless tool is installed/);
+      expect(launched).toHaveLength(0);
+      expect(await fs.stat(copy).then(() => true, () => false)).toBe(false);
+    }
     expect(await fs.readFile(source, 'utf8')).toBe('original bytes');
   });
 

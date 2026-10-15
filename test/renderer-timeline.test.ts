@@ -2688,7 +2688,10 @@ it('finds in the open chat with Cmd/Ctrl+F, steps through matches and closes wit
   api.findInChat = find;
   const bar = w.document.getElementById('chatFind')!;
   expect(bar.hidden).toBe(true);
-  const mac = /mac/i.test(w.navigator.platform || w.navigator.userAgent);
+  // chat-find.ts reads the global navigator, not the jsdom window navigator.
+  // On macOS CI these may identify different platforms, so derive the test
+  // shortcut from the same source as the renderer listener.
+  const mac = /mac/i.test(navigator.platform || navigator.userAgent);
   // Both modifiers at once is neither shortcut.
   w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
   expect(bar.hidden).toBe(true);

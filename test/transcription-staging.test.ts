@@ -31,7 +31,9 @@ describe('portable transcription runtime staging', () => {
   });
 });
 
-describe('GPU (Vulkan) transcription build inputs', () => {
+// Vulkan GPU validation is manual/local only. CI must not execute Vulkan tests.
+// Opt in locally with EVE_TEST_VULKAN=1; CI still skips even if that is set.
+describe.runIf(!process.env.CI && process.env.EVE_TEST_VULKAN === '1')('GPU (Vulkan) transcription build inputs', () => {
   it('ships the vendored Vulkan build tools unmodified and hash-verified', async () => {
     // @ts-expect-error Build scripts are intentionally plain ESM JavaScript.
     const { verifyVendoredTools } = await import('../scripts/build-whisper-vulkan.mjs');
