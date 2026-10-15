@@ -1601,9 +1601,23 @@ export interface HeartbeatReviewDispatchResult {
  * before any worker tab is opened/woken. A retry while that exact epoch is already running is a
  * no-op, so the one-minute heartbeat retry cannot duplicate semantic review work.
  */
+/** A heartbeat worker with no tool call or turn end for this long is not reviewing anything. */
+export const HEARTBEAT_WORKER_STALE_MS = 10 * 60_000;
+/**
+ * A worker that ended its turn for an epoch without a receipt is not handed that same epoch again
+ * before the next heartbeat cadence. Without this, an open debt (re-enqueued about once a minute)
+ * woke the worker every minute, and each wake reported the same blocker to Prime (c23, 2026-10-15:
+ * 33 wakes in 33 minutes). A new epoch, or the first hand-over after an app restart, goes at once.
+ */
+export const HEARTBEAT_REHAND_MS = 22 * 60_000;
+/** When each heartbeat worker was last handed which epoch: a fresh revival counts as work, not silence. */
+const heartbeatHanded = new Map<string, { at: number; key: string }>();
+
 export async function dispatchHeartbeatReviewWorker(
   primeConversationId: string,
-  key: string
+  key: string,
+  /** When the worker chat last made a tool call or ended a turn (its session record); null when unknown. */
+  lastWorkAt: (conversationId: string) => Promise<number | null> = async () => null
 ): Promise<HeartbeatReviewDispatchResult> {
   if (!primeConversationId || !key) throw new AgentError('Heartbeat review dispatch is incomplete.');
   const marker = heartbeatReviewEpochMarker(key);
@@ -1614,8 +1628,23 @@ export async function dispatchHeartbeatReviewWorker(
     `For every selected Plan, follow its exact source with session search/read before calling chat_review_plan with the debt key, plan id, expected updatedAt and a review classification. ` +
     `After the recent-request review and every selected Plan acknowledgement, call chat_review_complete with this exact key and the proper result/finding. ` +
     `Do not execute or delegate user work, send messages, edit/install, drive the browser, or mutate Plans. ` +
-    `Prime alone owns execution; finish only after the exact heartbeat lifecycle receipt.`;
+    `Prime alone owns execution; finish after the exact heartbeat lifecycle receipt. ` +
+    `If you are blocked before that receipt, report the blocker to Prime and finish anyway: the review stays pending for the next heartbeat.`;
   let owner = runForConversation(primeConversationId);
+  // A heartbeat worker can stay `active` after its chat stopped: c19 refused its reads and its
+  // finish, its turn ended, and nothing ever slept it. Every later epoch was then queued to that
+  // silent chat, which only receives messages through its next tool call, so reviews stalled for
+  // hours (worker-2/-3, 2026-10-15). Sleep such a worker first; the epoch below then goes to it as a
+  // real revival, which reopens the chat and types the task.
+  if (owner) {
+    for (const agent of [...owner.agents.values()]) {
+      if (!heartbeatReviewAgent(agent) || !occupiesSlot(agent.info.state) || !agent.info.conversationId) continue;
+      const workedAt = Math.max(await lastWorkAt(agent.info.conversationId) ?? 0, agent.info.activatedAt ?? 0,
+        agent.info.createdAt, heartbeatHanded.get(agent.info.id)?.at ?? 0);
+      if (Date.now() - workedAt < HEARTBEAT_WORKER_STALE_MS) continue;
+      sleepAgent(agent, `Heartbeat review went silent for ${Math.round((Date.now() - workedAt) / 60_000)} minutes; the review stays pending for a fresh attempt.`);
+    }
+  }
   const dormant = owner ? null : dormantRunForPrime(primeConversationId);
   const existing = heartbeatReviewWorker(owner ?? dormant);
 
@@ -1630,6 +1659,11 @@ export async function dispatchHeartbeatReviewWorker(
       (existing.info.task.includes(marker) || existing.queue.some((message) => message.text.includes(marker)));
     if (occupiesSlot(existing.info.state) && !sameEpochNeedsUpdatedBootstrap) {
       throw new AgentError('The heartbeat review worker is still finishing its previous epoch; the new review remains pending.');
+    }
+    const handed = heartbeatHanded.get(existing.info.id);
+    if (!occupiesSlot(existing.info.state) && handed?.key === key && Date.now() - handed.at < HEARTBEAT_REHAND_MS) {
+      throw new AgentError(`HEARTBEAT_REVIEW_BACKOFF: ${existing.info.id} already ended this review without a receipt at ` +
+        `${new Date(handed.at).toISOString().slice(11, 16)} UTC; it is handed out again after the ${HEARTBEAT_REHAND_MS / 60_000}-minute cadence.`);
     }
     const previousTask = existing.info.task;
     // Rotate the opaque epoch capability into durable worker identity before the message barrier.
@@ -1653,6 +1687,8 @@ export async function dispatchHeartbeatReviewWorker(
     if (!runId) throw new AgentError('Heartbeat review worker lost its owner after durable queueing.');
     if (staged.waking.length) requestWorkerRevivals(staged.waking, runId);
     requestActiveWorkerMessageDelivery([existing.info.id], runId);
+    heartbeatHanded.set(existing.info.id, { at: Date.now(), key });
+    logInfo(`multi-agent: heartbeat review handed to ${existing.info.id} (${staged.waking.length ? 'waking it' : 'already active'})`);
     return { workerId: existing.info.id, runId, reused: true };
   }
 
@@ -4989,6 +5025,7 @@ function deserializeAgents(entries: readonly SerializedAgent[], savedAt: number)
 
 /** Test seam: forgets everything without touching disk. */
 export function resetAgentsForTests(): void {
+  heartbeatHanded.clear();
   clearLocalWorkerPrincipals();
   runs.clear();
   dormantRuns.clear();

@@ -146,6 +146,8 @@ export interface UiPrefs {
   planBackend?: 'chatgpt' | 'api';
   finishAction?: 'notify' | 'goal';
   finishLeadMinutes?: number;
+  /** After this many minutes of one turn, the next tool result starts a fresh turn with an automatic continue (0 = off). Missing means 30. */
+  rotateTurnMinutes?: number;
   developerMode?: boolean;
   minimizeToTray: boolean;
   autoConnect: boolean;

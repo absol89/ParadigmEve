@@ -114,6 +114,7 @@ import {
   currentRunId,
   heartbeatReviewWorkerOwnsKey,
   isHeartbeatReviewWorkerCaller,
+  noteAgentAlive,
   noteAgentContextTokens,
   persistCriticalSwarmNow,
   PRIME_ID,
@@ -167,7 +168,7 @@ import {
 import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
 import { registerPinsTool } from './pins-tool.js';
 import { registerScheduleTool } from './schedule-tool.js';
-import { chatReviewRequiresWorker, completeChatReviewHeartbeat, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
+import { chatReviewRequiresWorker, completeChatReviewHeartbeat, currentChatReviewPlanEvidence, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
 import { currentCallMayUseEveAuthority, sharedEveOwnerForCurrentCall } from '../eve-access.js';
 import { lanPeerMessagingStatus, lanPeerRuntimeAvailable, sendLanPeerMessage } from '../lan-peer-runtime.js';
 import { ArtifactFetchError } from './artifact-fetch.js';
@@ -302,6 +303,28 @@ function requestedManagedSelfRoot(requested: string, roots: readonly Root[]): bo
 
 const SELF_INSPECTION_TOOLS = new Set(['read', 'find', 'view_image']);
 
+/** Exact managed files that an app-owned heartbeat worker may read without Eve authority.
+ * Keep this spelling identical for root admission and scoped Plan projection. The sandbox
+ * accepts some equivalent spellings (notably trailing separators), so normalizing only in
+ * one of those decisions would expose the raw, unrelated Plans catalog to a reviewer.
+ */
+function heartbeatReviewReadPath(requested: string): 'debt' | 'plans' | null {
+  if (requested === '/appdata/state/chat-review-heartbeat.json') return 'debt';
+  if (requested === '/appdata/state/plans.json') return 'plans';
+  return null;
+}
+
+/** A maintenance role alone is not read authority for another epoch's global debt. */
+async function heartbeatReviewerOwnsCurrentDebt(): Promise<boolean> {
+  if (!isHeartbeatReviewWorkerCaller(currentCaller())) return false;
+  try {
+    const evidence = await currentChatReviewPlanEvidence();
+    const continuity = evidence && await resolveChatReviewContinuity(evidence.key);
+    return Boolean(evidence && continuity &&
+      heartbeatReviewWorkerOwnsKey(currentCaller(), evidence.key, continuity.conversationId));
+  } catch { return false; }
+}
+
 /**
  * AppData and the installed app directory are self-maintenance roots, not ambient approved roots.
  * They are visible to filesystem tools only for the exact installation-owner conversation after
@@ -320,15 +343,17 @@ async function rootsForSelfMaintenance(
   if (requestedManaged.length === 0) {
     return [...ordinaryRoots];
   }
-  const heartbeatReviewStateRead = tool === 'read' &&
+  // The worker is recognised by its conversation, which a call may not carry until page evidence
+  // attributes it. Check before and after that attribution: checking only before refused the
+  // heartbeat worker's very first state read as SELF_MAINTENANCE_IDENTITY_REQUIRED.
+  const heartbeatReviewStateRead = async (): Promise<boolean> => tool === 'read' &&
     isHeartbeatReviewWorkerCaller(currentCaller()) &&
     requestedManaged.every((root) => root.name === 'appdata') &&
-    requestedPaths.every((requested) => {
-      const normalized = requested.replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
-      return normalized === '/appdata/state/chat-review-heartbeat.json' || normalized === '/appdata/state/plans.json';
-    });
-  if (heartbeatReviewStateRead) return [...ordinaryRoots, ...requestedManaged];
+    requestedPaths.every((requested) => heartbeatReviewReadPath(requested) !== null) &&
+    await heartbeatReviewerOwnsCurrentDebt();
+  if (await heartbeatReviewStateRead()) return [...ordinaryRoots, ...requestedManaged];
   if (!currentCallMayUseEveAuthority()) await exactToolConversation(tool);
+  if (await heartbeatReviewStateRead()) return [...ordinaryRoots, ...requestedManaged];
   if (!currentCallMayUseEveAuthority()) {
     throw new SandboxError('SELF_MAINTENANCE_IDENTITY_REQUIRED: only this installation’s current Eve/Eva conversation may use ParadigmEve self-maintenance paths.');
   }
@@ -414,12 +439,13 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             );
           }
           const requestedPaths = paths.map((item) => splitLineRange(item).path);
-          const workspace = currentWorkspace();
-          const roots = await rootsForSelfMaintenance(
-            'read',
-            ctx.roots,
-            workspace ? [...requestedPaths, workspace.virtual] : requestedPaths
-          );
+          // Authorization must inspect only the paths this call actually requested.
+          // A heartbeat reviewer may inherit/learn Prime's ordinary project cwd between its
+          // debt read and its Plans read. Including that unrelated workspace as an extra
+          // "requested" path made the exact app-owned read-only exception fail on the
+          // second call, even with the same proven conversation/request ID. Relative path
+          // resolution remains separately confined to the approved roots in readOne.
+          const roots = await rootsForSelfMaintenance('read', ctx.roots, requestedPaths);
           const targets: ReadTarget[] = [];
           const notes: string[] = [];
           for (const item of paths) {
@@ -498,15 +524,52 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               break;
             }
             try {
-              const section = await readOne(target.path, {
-                roots,
-                canRead: caps.read,
-                canBrowse: caps.browse,
-                startLine: target.range ? target.range.start : start_line,
-                endLine: target.range ? target.range.end : end_line,
-                maxBytes: Math.min(max_bytes ?? DEFAULT_READ_BYTES, remaining),
-                aggregateBytes: remaining
-              });
+              // Between root admission and returning the bytes, a formerly-current worker
+              // may retire or the debt may rotate. Never expose a newer epoch's raw state.
+              if (heartbeatReviewReadPath(target.path) === 'debt' && !currentCallMayUseEveAuthority() &&
+                  !(await heartbeatReviewerOwnsCurrentDebt())) {
+                throw new SandboxError('HEARTBEAT_REVIEW_SCOPE_REQUIRED: this worker does not own the current review debt.');
+              }
+              // A worker can retire after root admission while a multi-path read is in flight.
+              // Once granted only the narrow maintenance exception, losing its agent identity
+              // cannot turn a scoped Plans read back into the raw-file branch.
+              const isHeartbeatPlansRead = heartbeatReviewReadPath(target.path) === 'plans' &&
+                (isHeartbeatReviewWorkerCaller(currentCaller()) || !currentCallMayUseEveAuthority());
+              // The raw Plans catalog is a single >130KB JSON line on real installations.
+              // Even an authorized worker cannot reliably inspect its 4-Plan heartbeat batch
+              // from a truncated tool result. Only an exact app-owned worker gets the live
+              // scoped snapshot; ordinary reads retain their literal-file semantics.
+              let section: Awaited<ReturnType<typeof readOne>>;
+              if (isHeartbeatPlansRead) {
+                if (!caps.read) throw new SandboxError('TOOL_DISABLED: reading Plan contents is disabled.');
+                if (target.range || start_line !== undefined || end_line !== undefined) {
+                  throw new SandboxError('HEARTBEAT_REVIEW_BATCH_NOT_LINE_RANGED: the exact current Plan batch is a bounded projection, not lines of the raw Plans file. Read it without line ranges.');
+                }
+                const evidence = await currentChatReviewPlanEvidence();
+                const continuity = evidence && await resolveChatReviewContinuity(evidence.key);
+                if (!evidence || !continuity ||
+                    !heartbeatReviewWorkerOwnsKey(currentCaller(), evidence.key, continuity.conversationId)) {
+                  throw new SandboxError('HEARTBEAT_REVIEW_SCOPE_REQUIRED: no exact active Plan batch belongs to this worker.');
+                }
+                const text = `--- ${target.path} — current heartbeat Plan batch only (${evidence.plans.length} unacknowledged) ---\n` +
+                  JSON.stringify(evidence, null, 2) +
+                  '\nThe full Plans catalog is intentionally not included. Follow each listed Plan source with session search/read before acknowledging it.';
+                const bytes = Buffer.byteLength(text, 'utf8');
+                if (bytes > Math.min(max_bytes ?? DEFAULT_READ_BYTES, remaining)) {
+                  throw new SandboxError('HEARTBEAT_REVIEW_BATCH_TOO_LARGE: the bounded Plan review exceeds this read budget; increase max_bytes within the read tool limit.');
+                }
+                section = { text, bytes };
+              } else {
+                section = await readOne(target.path, {
+                  roots,
+                  canRead: caps.read,
+                  canBrowse: caps.browse,
+                  startLine: target.range ? target.range.start : start_line,
+                  endLine: target.range ? target.range.end : end_line,
+                  maxBytes: Math.min(max_bytes ?? DEFAULT_READ_BYTES, remaining),
+                  aggregateBytes: remaining
+                });
+              }
               remaining -= section.bytes;
               successes++;
               sections.push(section.text);
@@ -1291,7 +1354,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
         ...(finding ? { finding } : {})
       });
       if (receiptResult === 'rejected') {
-        return fail('CHAT_REVIEW_RECEIPT_REJECTED: this call does not exactly match the current durable review debt. Leave the review pending; do not guess another key, chat or session.');
+        return fail('CHAT_REVIEW_RECEIPT_REJECTED: this call does not exactly match the current durable review debt, or a Plan in its batch has no chat_review_plan acknowledgement yet. Leave the review pending; do not guess another key, chat or session. A heartbeat worker that cannot finish the review reports the blocker to Prime and finishes.');
       }
       return ok(receiptResult === 'completed' ? 'Chat review completed.' : 'Chat review was already completed.');
     }));
@@ -1978,6 +2041,14 @@ async function callerNow(
     if (call) {
       call.caller.conversationId = exactResolved;
       if (heartbeatContinuity) call.caller.sessionId = heartbeatContinuity.sessionId;
+    }
+    // The kernel's liveness step ran before this call had a chat, so it proved nothing. Run it now:
+    // a woken worker's first call is often `finish`, and without this the worker stayed `waking`,
+    // its finish was dropped as a repeat, and the revival timed out as "did not report back in
+    // time" five minutes after it had answered (worker-10, 2026-10-15).
+    if (!base.conversationId) {
+      const alive = noteAgentAlive(exactResolved);
+      if (alive?.report) await recordAgentMessage(alive.report, 'sent', exactResolved);
     }
     // A pre-fix Compact & Resume can leave this exact app-opened replacement chat with its own
     // shadow session while the reusable-worker run is still bound to the source chat. Repair

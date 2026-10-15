@@ -35,6 +35,8 @@ import {
   writeOverflowText
 } from '../src/main/session/store.js';
 import { resetWorkspaces, setWorkspaceFor } from '../src/main/workspace.js';
+import { bindConversation, dispatchHeartbeatReviewWorker, onSwarmPersistNow, resetAgentsForTests } from '../src/main/agents.js';
+import { initDurableStore, writeDurableNow } from '../src/main/durable.js';
 import { DEFAULT_CAPABILITIES, DESKTOP_CAPABILITIES, type Capabilities, type Root } from '../src/shared/types.js';
 import type { ToolOutcome } from '../src/shared/session.js';
 import { emptyEvidence, noteExec, noteExecStart, noteOutcome, runInCallContext, type CallContext } from '../src/main/mcp/call-context.js';
@@ -1302,6 +1304,142 @@ describe('self-maintenance settings authority', () => {
     expect(failed(patch)).toBe(true);
     expect(textOf(patch)).toContain('SELF_MAINTENANCE_DISABLED');
     await expect(fs.access(path.join(managedAppData(), 'blocked.txt'))).rejects.toBeDefined();
+  });
+
+  it('keeps heartbeat worker read authority when its exact chat learns a separate project workspace', async () => {
+    await saveConfig(defaultConfig());
+    ctx.readOnly = false;
+    ctx.caps = withCaps({ read: true, browse: true, metadata: true });
+    resetAgentsForTests();
+    onSwarmPersistNow(async () => undefined);
+    try {
+      const worker = await dispatchHeartbeatReviewWorker(ownerConversation, 'heartbeat:workspace-regression');
+      const workerChat = 'conv-exact-heartbeat-workspace';
+      expect(bindConversation(worker.workerId, workerChat)).toBe(true);
+      const stateDir = path.join(managedAppData(), 'state');
+      await fs.mkdir(stateDir, { recursive: true });
+      await fs.writeFile(path.join(stateDir, 'chat-review-heartbeat.json'), '{"debt":{"key":"heartbeat:workspace-regression"}}');
+      // The raw catalog carries data outside this epoch's batch. A spelling that escapes the
+      // scoped projection would leak this sentinel, even if the regular batch assertion passed.
+      const unrelatedRawPlan = 'foreign-plan-contents-must-never-reach-heartbeat-worker';
+      await fs.writeFile(path.join(stateDir, 'plans.json'), JSON.stringify({ plans: [
+        { id: 'expected-reviewed-plan' }, { id: 'unrelated-private-plan', title: unrelatedRawPlan }
+      ] }));
+      // The scoped projection uses the validated state/Plan owners, not arbitrary JSON
+      // from the managed file. Set up matching durable fixtures under this test's own temp dir.
+      initDurableStore(base);
+      const coordinator = await createSession({ title: 'Heartbeat source', conversationId: ownerConversation });
+      const planId = 'aaaa1111-aaaa-4111-8111-aaaaaaaa1111';
+      const unrelatedId = 'bbbb2222-bbbb-4222-8222-bbbbbbbb2222';
+      const planRecord = (id: string, title: string) => ({
+        id, title, createdAt: 1000, updatedAt: 1000, archivedAt: null,
+        items: [{ id: 'cccc3333-cccc-4333-8333-cccccccc3333', text: 'Follow source and classify', status: 'todo' as const }],
+        provenance: { kind: 'manual' as const, sessionId: coordinator.id, conversationId: ownerConversation }
+      });
+      await writeDurableNow('plans', { version: 1, plans: [
+        planRecord(planId, 'expected-reviewed-plan'), planRecord(unrelatedId, 'unrelated-private-plan')
+      ] });
+      await writeDurableNow('chat-review-heartbeat', {
+        lastCompletedAt: 900,
+        planSweep: { remainingPlanIds: [planId] },
+        debt: {
+          key: 'heartbeat:workspace-regression', sinceAt: 900, untilAt: 1000,
+          sessionId: coordinator.id, conversationId: ownerConversation,
+          planBatch: [{ planId, updatedAt: 1000 }], planAcks: []
+        }
+      });
+
+      expect(prove('wfr_heartbeat_debt_before_workspace', workerChat, 'read')).toBe('stored');
+      const first = await modern('tools/call', {
+        name: 'read', arguments: { paths: ['/appdata/state/chat-review-heartbeat.json'] }
+      }, { 'x-request-id': 'wfr_heartbeat_debt_before_workspace/att1' });
+      expect(failed(first)).toBe(false);
+
+      // Live failure: after the worker has learned a project cwd, its next explicit
+      // /appdata read was refused because that unrelated cwd was treated as a requested path.
+      setWorkspaceFor(`chat:${workerChat}`, { virtual: '/workspace', real: approved });
+      expect(prove('wfr_heartbeat_plans_after_workspace', workerChat, 'read')).toBe('stored');
+      const second = await modern('tools/call', {
+        name: 'read', arguments: { paths: ['/appdata/state/plans.json'] }
+      }, { 'x-request-id': 'wfr_heartbeat_plans_after_workspace/att1' });
+      expect(failed(second)).toBe(false);
+      expect(textOf(second)).toContain('expected-reviewed-plan');
+      expect(textOf(second)).toContain('current heartbeat Plan batch only');
+      expect(textOf(second)).not.toContain('unrelated-private-plan');
+
+      // The sandbox strips trailing separators before resolving the file. The heartbeat read
+      // exception and the scoped projection must classify those spellings identically; a raw
+      // fallback would disclose unrelated Plans, including with a per-path line range.
+      for (const [index, alternate] of [
+        '/appdata/state/plans.json/',
+        '/appdata/state/plans.json\\',
+        '/APPDATA/STATE/PLANS.JSON',
+        '/appdata/state/plans*.json',
+        '/appdata/state/plans%2Ejson',
+        '/appdata/state/plans.json/:1'
+      ].entries()) {
+        const id = `wfr_heartbeat_nonexact_plan_${index}`;
+        expect(prove(id, workerChat, 'read')).toBe('stored');
+        const response = await modern('tools/call', {
+          name: 'read', arguments: { paths: [alternate] }
+        }, { 'x-request-id': `${id}/att1` });
+        expect(failed(response), `Nonexact path ${alternate} must be rejected`).toBe(true);
+        expect(textOf(response)).not.toContain(unrelatedRawPlan);
+        expect(textOf(response)).not.toContain('unrelated-private-plan');
+      }
+
+      expect(prove('wfr_heartbeat_range_refused', workerChat, 'read')).toBe('stored');
+      const ranged = await modern('tools/call', {
+        name: 'read', arguments: { paths: ['/appdata/state/plans.json'], start_line: 2 }
+      }, { 'x-request-id': 'wfr_heartbeat_range_refused/att1' });
+      expect(failed(ranged)).toBe(true);
+      expect(textOf(ranged)).toContain('HEARTBEAT_REVIEW_BATCH_NOT_LINE_RANGED');
+
+      ctx.caps = withCaps({ read: false, browse: true, metadata: true });
+      // The MCP endpoint snapshots exposed permissions when it is created. Reconnect
+      // rather than mutating the fixture mid-connection to exercise a truly disabled read.
+      await endpoint.stop();
+      endpoint = await startMcpServer(() => ctx);
+      expect(prove('wfr_heartbeat_read_disabled', workerChat, 'read')).toBe('stored');
+      const withoutContentPermission = await modern('tools/call', {
+        name: 'read', arguments: { paths: ['/appdata/state/plans.json'] }
+      }, { 'x-request-id': 'wfr_heartbeat_read_disabled/att1' });
+      expect(failed(withoutContentPermission)).toBe(true);
+      expect(textOf(withoutContentPermission)).toContain('reading Plan contents is disabled');
+      ctx.caps = withCaps({ read: true, browse: true, metadata: true });
+
+      expect(prove('wfr_heartbeat_unrelated_appdata', workerChat, 'read')).toBe('stored');
+      const outsideReviewScope = await modern('tools/call', {
+        name: 'read', arguments: { paths: ['/appdata/owned.txt'] }
+      }, { 'x-request-id': 'wfr_heartbeat_unrelated_appdata/att1' });
+      expect(failed(outsideReviewScope)).toBe(true);
+      expect(textOf(outsideReviewScope)).toContain('SELF_MAINTENANCE_IDENTITY_REQUIRED');
+
+      // An old maintenance worker can remain identifiable long after the debt has
+      // rotated. Its role alone must not reveal the next epoch's global debt or findings.
+      await endpoint.stop();
+      endpoint = await startMcpServer(() => ctx);
+      const newerKey = 'heartbeat:next-owner-regression';
+      const foreignFinding = 'next-review-private-finding-must-not-leak';
+      await fs.writeFile(path.join(stateDir, 'chat-review-heartbeat.json'), JSON.stringify({
+        debt: { key: newerKey }, pendingFinding: { text: foreignFinding }
+      }));
+      await writeDurableNow('chat-review-heartbeat', {
+        lastCompletedAt: 900, planSweep: { remainingPlanIds: [planId] },
+        debt: { key: newerKey, sinceAt: 900, untilAt: 1000,
+          sessionId: coordinator.id, conversationId: ownerConversation,
+          planBatch: [{ planId, updatedAt: 1000 }], planAcks: [] }
+      });
+      expect(prove('wfr_heartbeat_stale_worker_debt', workerChat, 'read')).toBe('stored');
+      const staleDebt = await modern('tools/call', {
+        name: 'read', arguments: { paths: ['/appdata/state/chat-review-heartbeat.json'] }
+      }, { 'x-request-id': 'wfr_heartbeat_stale_worker_debt/att1' });
+      expect(failed(staleDebt)).toBe(true);
+      expect(textOf(staleDebt)).not.toContain(foreignFinding);
+      expect(textOf(staleDebt)).not.toContain(newerKey);
+    } finally {
+      resetAgentsForTests();
+    }
   });
 });
 

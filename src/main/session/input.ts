@@ -19,6 +19,7 @@ import { wakeBrowserWork } from '../browser-wake.js';
 import { logInfo, logWarn } from '../logger.js';
 import { noteChatOrigin, rebindConversation } from './recorder.js';
 import { compactingConversation } from './continuation.js';
+import { ROTATION_MESSAGE } from '../turn-rotation.js';
 import { claimAgentConversation, currentAgentConversationId, replaceAgentConversation } from '../agent-identity.js';
 import { dispatchHeartbeatReviewWorker, selectedBrokerOwnerConversationId } from '../agents.js';
 import { isAstraModel, isProModel } from '../../shared/chat-models.js';
@@ -260,7 +261,8 @@ const entrySchema = inputArgsBase.extend({
   transportIntent: z.enum(['tool', 'browser']).optional(),
   text: z.string().min(1).max(240000),
   deliveryText: z.string().min(1).max(240000).optional(),
-  purpose: z.enum(['user', 'decision', 'attention', 'heartbeat-finding', 'peer', 'schedule']).optional(),
+  /** `rotation`: the app's automatic continue that gives a long running turn a fresh one (turn-rotation.ts). */
+  purpose: z.enum(['user', 'decision', 'attention', 'heartbeat-finding', 'peer', 'schedule', 'rotation']).optional(),
   /** App-owned link back to one durable Eve schedule occurrence. Never accepted by inputArgs. */
   scheduleOccurrenceId: z.string().uuid().optional(),
   /** Frozen conversation-backed purpose for one app-owned scheduled run. */
@@ -371,9 +373,21 @@ function forceBrowserContextValid(entry: InputEntry, session: SessionSummary | n
       isChatBlocked(conversationId) || compactingConversation(conversationId)) return false;
   if (entry.model !== null) {
     const selected = session.selectedModel?.conversationId === conversationId ? session.selectedModel : null;
-    if (!selected || selected.model !== entry.model || selected.reasoningEffort !== entry.reasoningEffort) return false;
+    if (!selected || !sameModelFamily(selected.model, entry.model) || selected.reasoningEffort !== entry.reasoningEffort) return false;
   }
   return true;
+}
+/**
+ * One picker choice may be observed under its lane slug: "GPT-6 · High" is chosen as `gpt-6` and
+ * the page reports `gpt-6-thinking` (one family, fiber.js; observed 2026-10-07). Comparing slugs
+ * exactly refused every GPT-6 Force Send (2026-10-15). The effort still has to match exactly.
+ */
+export function sameModelFamily(observed: string | null | undefined, chosen: string | null | undefined): boolean {
+  if (!observed || !chosen) return false;
+  if (observed === chosen) return true;
+  const [shorter, longer] = observed.length < chosen.length ? [observed, chosen] : [chosen, observed];
+  // Only the lane suffixes of one family; `gpt-5` and `gpt-5-mini` are different models.
+  return /\d/.test(shorter) && (longer === `${shorter}-thinking` || longer === `${shorter}-instant`);
 }
 /** One delivery policy for composer presentation, admission and the final send fence. */
 /** How long a recorded user message may fence browser delivery while its provider turn has not started. */
@@ -480,6 +494,16 @@ async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
     // different/newer lifecycle boundary above is intentionally not eligible: stale restart
     // work must never wake up after the user has already continued the conversation.
     return boundary.kind === 'turn_end' && session.activeTurnId === null && policy.browserAllowed;
+  }
+  // A fresh-turn continue may stop a turn that has used tools: that is its whole job. Only for its
+  // exact running turn, between tool calls; the Companion still proves the page and stops the
+  // answer before it sends (the same path as any direct-turn send).
+  if (entry.purpose === 'rotation') {
+    const session = await getSession(entry.sessionId);
+    const conversationId = session?.conversationId;
+    return !!entry.directTurn && !!conversationId && conversationId === entry.conversationId &&
+      session.activeTurnId === entry.directTurn.id && inFlightToolCalls(conversationId) === 0 &&
+      deliveryHooks?.voiceActive?.(conversationId) !== true;
   }
   if (entry.directTurn) {
     const session = await getSession(entry.sessionId);
@@ -646,6 +670,14 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     if (row.finishOwner && !terminal(row) && !(await finishInputCurrent(row)))
       return { ...row, state: 'cancelled', error: 'Automatic follow-up cancelled because its active turn or setting changed.' };
     if (row.purpose === 'decision') return row;
+    // A fresh-turn continue that its turn outlived, or that the page did not take, is not anyone's
+    // message: drop it quietly instead of leaving it to block the next user send or rotation.
+    if (row.purpose === 'rotation' && !terminal(row) && row.sendAuthorizedAt === undefined) {
+      const session = row.sessionId ? await getSession(row.sessionId) : null;
+      if (!session || session.activeTurnId !== row.directTurn?.id || Date.now() - row.createdAt >= ROTATION_UNTAKEN_MS)
+        return { ...row, state: 'cancelled', error: 'Fresh turn not started: the running turn changed or the page did not take it.' };
+      return row;
+    }
     if (row.recoveryTurnId && row.sessionId && !terminal(row)) {
       const session = await getSession(row.sessionId);
       const [boundary] = await readRecentEvents(row.sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
@@ -839,6 +871,32 @@ async function finishInputCurrent(entry: InputEntry): Promise<boolean> {
     session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
     (entry.finishOwner.userRequested === true || automaticFinishEnabled(session.conversationId));
 }
+/** How long a filed fresh-turn continue may wait for the page before it is dropped. */
+const ROTATION_UNTAKEN_MS = 4 * 60_000;
+/**
+ * Files the app's automatic continue for a long running turn (turn-rotation.ts).
+ *
+ * The row is a direct-turn message for exactly that turn, marked `rotation`: browser-only, never a
+ * tool-result injection, never kept for after the turn, and replaced by any message of the user's
+ * own. Filed only for the exact running turn, never beside another pending message of this chat,
+ * never for a blocked or compacting chat.
+ */
+export function fileRotationInput(sessionId: string, turnId: string, startedAt: number): Promise<InputEntry | null> {
+  return serial(async () => {
+    const current = await load();
+    if (current.some(row => row.sessionId === sessionId && !terminal(row))) return null;
+    const session = await getSession(sessionId);
+    if (!session?.conversationId || session.endedAt !== null || session.activeTurnId !== turnId ||
+        isChatBlocked(session.conversationId) || compactingConversation(session.conversationId)) return null;
+    const now = Date.now();
+    const entry: InputEntry = { id: randomUUID(), sessionId, text: ROTATION_MESSAGE, mode: 'auto', dueAt: now,
+      model: null, reasoningEffort: null, purpose: 'rotation', directTurn: { id: turnId, startedAt },
+      transportIntent: 'browser', state: 'queued', owner: null, createdAt: now, conversationId: session.conversationId };
+    await commit(append(current, entry));
+    return { ...entry };
+  });
+}
+
 export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwner'], internal?: { restartWake: true }): Promise<InputEntry> {
   return serial(async () => {
     const input = inputArgs.parse(raw);
@@ -933,7 +991,8 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
       if ((row.purpose === 'peer' || row.purpose === 'heartbeat-finding') && row.sessionId === entry.sessionId && row.owner === null && row.offeredAt === undefined) {
         return { ...row, mode: 'after-turn' as const, transportIntent: undefined };
       }
-      return ((row.sessionId === entry.sessionId && row.finishOwner) || (row.purpose === 'attention' && row.owner === null && row.offeredAt === undefined))
+      return ((row.sessionId === entry.sessionId && row.finishOwner) || (row.purpose === 'attention' && row.owner === null && row.offeredAt === undefined) ||
+        (row.purpose === 'rotation' && row.sessionId === entry.sessionId && !terminal(row) && row.sendAuthorizedAt === undefined))
         ? { ...row, state: 'cancelled' as const, error: 'Replaced by your new instruction before delivery.' }
         : row;
     }) : current;
@@ -1147,7 +1206,12 @@ export async function dispatchChatReviewWorker(sessionId: string, review: ChatRe
   if (!session?.conversationId || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {
     throw new Error('Heartbeat review requires one exact ordinary Prime session.');
   }
-  return dispatchHeartbeatReviewWorker(session.conversationId, review.key);
+  return dispatchHeartbeatReviewWorker(session.conversationId, review.key, async (conversationId) => {
+    const worker = await findSessionByConversation(conversationId);
+    if (!worker) return null;
+    const full = await getSession(worker.id);
+    return Math.max(full?.lastToolCallAt ?? 0, full?.lastTurnEndAt ?? 0) || null;
+  });
 }
 
 /**
@@ -2002,7 +2066,8 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
     let payloadFull = false;
     const prepareEntry = async (entry: InputEntry): Promise<InputEntry> => {
       if (entry.sessionId !== sessionId || entry.dueAt > Date.now()) return entry;
-      if (entry.purpose === 'attention' || entry.purpose === 'peer' || isLocalProviderInput(entry)) return entry;
+      // A fresh-turn continue exists only to end the turn natively; inside a tool result it would not.
+      if (entry.purpose === 'attention' || entry.purpose === 'peer' || entry.purpose === 'rotation' || isLocalProviderInput(entry)) return entry;
       if (entry.attachments?.length) return entry;
       // A human explicitly reclaimed this untouched row for the native browser.
       // A late tool call must not silently take it back (including on Pro models).

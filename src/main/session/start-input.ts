@@ -6,6 +6,7 @@ import { wakeBrowserUrl, resetBrowserStartupForTests } from '../browser-startup.
 import { getConfig } from '../config.js';
 import { enqueueInput, cancelInput, forceBrowserInput, listInputs, noteInputStartupError, type InputArgs, type InputEntry } from './input.js';
 import { deliverLocalInput } from './ollama-chat.js';
+import { compactingConversation } from './continuation.js';
 import { logWarn } from '../logger.js';
 
 function wakeBrowser(entry: InputEntry, retry = false): Promise<void> {
@@ -94,6 +95,10 @@ export function forceSendDesktopInput(id: string): Promise<InputEntry | null> {
     if (!candidate || !(candidate.state === 'queued' || candidate.state === 'failed') ||
         candidate.owner !== null || candidate.offeredAt !== undefined ||
         candidate.sendAuthorizedAt !== undefined || candidate.deliveredAt !== undefined || candidate.messageId) return null;
+    // Say why instead of the catch-all "changed or not available": the queued message is kept.
+    if (compactingConversation(candidate.conversationId)) {
+      return { ...candidate, error: 'Eve is compacting this chat. Your message stays queued and follows the chat to its successor once the handoff lands.' };
+    }
     await ready();
     const entry = await forceBrowserInput(id);
     return entry ? deliver(entry, true) : null;

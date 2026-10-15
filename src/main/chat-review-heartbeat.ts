@@ -530,6 +530,33 @@ async function attentionForDebt(
   return { ...base, plans: snapshots.map(plan => planSnapshot(plan!)) };
 }
 
+/**
+ * A bounded, read-only projection for the app-owned reviewer to inspect instead of the full,
+ * single-line plans.json catalog. The caller must separately prove exact heartbeat-worker
+ * ownership before exposing this result; this helper never grants permission to read it.
+ * Revisions and provenance are sourced from the live Plan library, not inferred from the debt.
+ */
+export async function currentChatReviewPlanEvidence(
+  dependencies: Partial<Dependencies> = {}
+): Promise<{
+  key: string;
+  targets: ChatReviewPlanTarget[];
+  acknowledgedPlanIds: string[];
+  plans: ChatReviewPlanSnapshot[];
+} | null> {
+  const deps = { ...defaults, ...dependencies };
+  const state = await deps.readState();
+  const debt = state?.debt;
+  if (!debt?.planBatch || !debt.planAcks) return null;
+  const attention = await attentionForDebt(debt, deps);
+  return {
+    key: debt.key,
+    targets: debt.planBatch,
+    acknowledgedPlanIds: debt.planAcks.map(ack => ack.planId),
+    plans: attention.plans ?? []
+  };
+}
+
 /** Newest exact non-worker conversation that has positively used Eve's connector. */
 export function chatReviewCoordinatorCandidates(sessions: readonly SessionSummary[]): SessionSummary[] {
   return sessions

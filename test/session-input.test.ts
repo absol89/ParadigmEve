@@ -10,7 +10,7 @@ import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -121,6 +121,50 @@ afterEach(async () => {
   resetAgentIdentityForTests();
   resetDurableForTests();
   await fs.rm(directory, { recursive: true, force: true });
+});
+
+describe('fresh-turn continue (turn rotation)', () => {
+  it('reaches the browser only for its exact running turn, never a tool result, and is dropped when the turn ends', async () => {
+    const startedAt = now - 31 * 60_000;
+    binding.activeTurnId = 'long-turn';
+    binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'long-turn', time: startedAt };
+    binding.lastToolCallAt = now - 1_000;
+    const row = await fileRotationInput(sessionId, 'long-turn', startedAt);
+    expect(row).toMatchObject({ purpose: 'rotation', transportIntent: 'browser', directTurn: { id: 'long-turn', startedAt } });
+    // One pending message per chat: a second filing is refused.
+    expect(await fileRotationInput(sessionId, 'long-turn', startedAt)).toBeNull();
+    // A tool result never carries it: inside the turn it would not end the turn.
+    expect(await offerToolInput(sessionId, binding.conversationId, 'tool-call', now + 1)).toEqual([]);
+    expect(await pendingBrowserInputs()).toEqual([expect.objectContaining({ id: row!.id, conversationId: binding.conversationId })]);
+    // The turn ended some other way: the continue is no longer anyone's message.
+    binding.activeTurnId = 'next-turn';
+    expect(await pendingBrowserInputs()).toEqual([]);
+    expect((await listInputs()).find(entry => entry.id === row!.id)).toMatchObject({ state: 'cancelled' });
+  });
+
+  it("is never filed for another turn, and yields to a message of the user's own", async () => {
+    const startedAt = now - 31 * 60_000;
+    binding.activeTurnId = 'long-turn';
+    binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'long-turn', time: startedAt };
+    expect(await fileRotationInput(sessionId, 'older-turn', startedAt)).toBeNull();
+    const row = await fileRotationInput(sessionId, 'long-turn', startedAt);
+    expect(row).not.toBeNull();
+    await enqueueInput(input({ text: 'My own next step' }));
+    expect((await listInputs()).find(entry => entry.id === row!.id))
+      .toMatchObject({ state: 'cancelled', error: 'Replaced by your new instruction before delivery.' });
+  });
+});
+
+describe('Force Send model check', () => {
+  it('treats one picker choice observed under its lane slug as the same model, and nothing broader', () => {
+    expect(sameModelFamily('gpt-6-thinking', 'gpt-6')).toBe(true);
+    expect(sameModelFamily('gpt-6', 'gpt-6-instant')).toBe(true);
+    expect(sameModelFamily('gpt-5.6', 'gpt-5.6')).toBe(true);
+    expect(sameModelFamily('gpt-5-mini', 'gpt-5')).toBe(false);
+    expect(sameModelFamily('gpt-6-pro', 'gpt-6')).toBe(false);
+    expect(sameModelFamily('gpt-6-thinking', 'gpt-5.6')).toBe(false);
+    expect(sameModelFamily(null, 'gpt-6')).toBe(false);
+  });
 });
 
 describe('durable user input ownership', () => {
@@ -1826,10 +1870,13 @@ it('dispatches a heartbeat review to the app-owned worker without queueing anyth
   const result = await dispatchChatReviewWorker(sessionId, review);
   expect(result).toMatchObject({ workerId: 'worker-1' });
   expect(binding.dispatchHeartbeatReviewWorker).toHaveBeenCalledTimes(1);
-  const calls = binding.dispatchHeartbeatReviewWorker.mock.calls as unknown as Array<[string, string]>;
+  const calls = binding.dispatchHeartbeatReviewWorker.mock.calls as unknown as Array<[string, string, unknown]>;
   expect(calls[0]![0]).toBe(binding.conversationId);
   expect(calls[0]![1]).toBe(review.key);
-  expect(calls[0]).toHaveLength(2);
+  // No review text travels to the worker: only the key, plus the activity lookup that lets the
+  // dispatcher sleep a silent heartbeat worker before handing it a new epoch.
+  expect(calls[0]).toHaveLength(3);
+  expect(typeof calls[0]![2]).toBe('function');
   expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({
     state: 'cancelled',
     error: expect.stringContaining('read-only worker lane')

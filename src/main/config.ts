@@ -382,6 +382,8 @@ const configSchema = z.object({
     planBackend: z.enum(['chatgpt', 'api']).optional(),
     finishAction: z.enum(['notify', 'goal']).optional(),
     finishLeadMinutes: z.number().int().min(3).max(5).optional(),
+    // A fresh turn after this many minutes of one (0 = off; turn-rotation.ts). A malformed value keeps the default.
+    rotateTurnMinutes: z.number().int().min(0).max(120).optional().default(30).catch(30),
     backgroundChats: z.boolean().optional().default(true),
     browserOnly: z.boolean().optional().default(false),
     autoRefreshPlugins: z.boolean().optional().default(true),

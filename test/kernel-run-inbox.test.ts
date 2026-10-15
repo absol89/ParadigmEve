@@ -73,6 +73,25 @@ it('hard-fences a heartbeat maintenance worker to read/review tools before any m
   expect(allowed.isError).not.toBe(true);
   expect(readRan).toBe(true);
 });
+it('lets a blocked heartbeat worker report to Prime and finish, but never spawn', async () => {
+  broker.heartbeatWorker = true;
+  for (const action of ['message', 'finish', 'status']) {
+    let ran = false;
+    const result = await dispatch('agents', { action }, null, 'req-chat-a', 'core', async () => {
+      ran = true;
+      return ok(action);
+    });
+    expect(result.isError, action).not.toBe(true);
+    expect(ran, action).toBe(true);
+  }
+  let spawned = false;
+  const blocked = await dispatch('agents', { action: 'spawn' }, null, 'req-chat-a', 'core', async () => {
+    spawned = true;
+    return ok('spawned');
+  });
+  expect(JSON.stringify(blocked)).toContain('HEARTBEAT_REVIEW_READ_ONLY');
+  expect(spawned).toBe(false);
+});
 it('records same-named worker liveness reports under the exact author conversation', async () => {
   broker.alive.mockImplementation((conversationId) => ({ report: { id: `report-${conversationId}`, from: 'worker-1', to: 'prime', text: 'active again' } }));
   const call = handler();

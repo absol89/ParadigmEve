@@ -177,6 +177,48 @@ describe('app-owned heartbeat review worker', () => {
       'heartbeat:forged', PRIME_CHAT)).toBe(false);
     expect(isHeartbeatReviewWorkerCaller({ conversationId: 'c-ordinary-quoted-worker' })).toBe(false);
   });
+  // c21, 2026-10-15: an "active" heartbeat worker whose chat went silent kept every later epoch queued
+  // to a chat that never called a tool again. Past the stale window it is slept, and the new epoch goes
+  // to it as a real revival instead of failing as "still finishing its previous epoch".
+  it('sleeps a silent heartbeat worker and hands the next epoch to it as a revival', async () => {
+    const spawned: Array<{ id: string; task: string }> = [];
+    onSpawnRequest((workers) => spawned.push(...workers));
+    const first = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:silent-1');
+    expect(bindConversation(first.workerId, 'c-heartbeat-silent')).toBe(true);
+    await expect(dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:silent-2', async () => Date.now()))
+      .rejects.toThrow('still finishing its previous epoch');
+
+    vi.useFakeTimers({ now: Date.now() + 11 * 60_000, toFake: ['Date'] });
+    try {
+      const handed = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:silent-2', async () => null);
+      expect(handed).toMatchObject({ workerId: first.workerId, reused: true });
+      expect(swarmState().agents.find((agent) => agent.id === first.workerId)?.state).toMatch(/sleeping|waking/);
+      expect(pendingWorkerRevivals().map((revival) => revival.id)).toContain(first.workerId);
+      // A freshly handed epoch counts as work: the next tick does not sleep it again.
+      expect(await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:silent-2', async () => null))
+        .toMatchObject({ workerId: first.workerId, reused: true });
+
+      // c23, 2026-10-15: the woken worker reported its blocker and finished, and the open debt woke
+      // it again every minute (33 times). The same epoch now waits for the next cadence.
+      const revival = pendingWorkerRevivals().find((row) => row.id === first.workerId)!;
+      expect(claimWorkerRevival(first.workerId, 'c-heartbeat-silent')).toBe(true);
+      expect(noteWorkerRevived(first.workerId, 'c-heartbeat-silent', revival.messageIds)).toBe(true);
+      expect(noteAgentAlive('c-heartbeat-silent')).toMatchObject({ revived: true });
+      expect(finishWorkerConversation('c-heartbeat-silent', 'Blocked: reported to Prime.')?.info.state).toBe('sleeping');
+      await expect(dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:silent-2', async () => null))
+        .rejects.toThrow('HEARTBEAT_REVIEW_BACKOFF');
+      expect(pendingWorkerRevivals()).toEqual([]);
+      // After the cadence the same epoch is handed out again, so a woken-later worker still reviews.
+      vi.setSystemTime(Date.now() + 23 * 60_000);
+      expect(await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:silent-2', async () => null))
+        .toMatchObject({ workerId: first.workerId, reused: true });
+      expect(pendingWorkerRevivals().map((row) => row.id)).toContain(first.workerId);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(spawned).toHaveLength(1);
+  });
+
   it('dispatches durably even with visible multi-agent mode off and dedupes the live epoch', async () => {
     await setEnabled(false);
     try {
@@ -1307,6 +1349,25 @@ describe('a worker that is sleeping', () => {
       state: 'active',
       sleptAt: null
     });
+    expect(pendingWorkerRevivals()).toEqual([]);
+  });
+
+  // worker-10, 2026-10-15: the woken worker's first call was `finish`, attributed only inside the
+  // agents tool. The liveness step must run for it there, or the finish is dropped as a repeat
+  // and the revival times out minutes after the worker answered.
+  it("lets a delivered wake end on a late-attributed call, so the worker's first finish counts", () => {
+    startSwarm(1);
+    const worker = startWorker('worker-1');
+    finishAgent(worker.caller, 'first piece done');
+    stageMessages(prime, [{ to: 'worker-1', text: 'second piece' }]).commit();
+    const revival = pendingWorkerRevivals()[0]!;
+    expect(claimWorkerRevival('worker-1', 'c-worker-1')).toBe(true);
+    expect(noteWorkerRevived('worker-1', 'c-worker-1', revival.messageIds)).toBe(true);
+    expect(swarmState().agents.find((agent) => agent.id === 'worker-1')?.state).toBe('waking');
+
+    expect(noteAgentAlive('c-worker-1')).toMatchObject({ revived: true });
+    finishAgent(worker.caller, 'blocked: reported to prime');
+    expect(swarmState().agents.find((agent) => agent.id === 'worker-1')).toMatchObject({ state: 'sleeping' });
     expect(pendingWorkerRevivals()).toEqual([]);
   });
 

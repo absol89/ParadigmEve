@@ -931,6 +931,7 @@ void app.whenReady().then(async () => {
   if (lanRunning) logInfo(`LAN discovery enabled for ${getConfig().mcp.connectorName}`);
   else if (getConfig().lan.enabled) logWarn('LAN discovery is enabled but no valid secure LAN group key is available; no socket was opened');
   let lastChatReviewHeartbeatStatus = '';
+  let lastHeartbeatBackoff = '';
   const startReviewHeartbeatMaintenance = () => {
     if (stopChatReviewHeartbeat) return;
     logInfo('chat review heartbeat maintenance started; semantic cadence is 22 minutes');
@@ -964,7 +965,14 @@ void app.whenReady().then(async () => {
           logInfo(`chat review heartbeat resumed with status ${result.status}`);
         }
       },
-      onError: (error) => logWarn(`chat review heartbeat could not run: ${error.message}`)
+      onError: (error) => {
+        // A backoff repeats every retry tick until the cadence passes; say it once.
+        if (error.message.startsWith('HEARTBEAT_REVIEW_BACKOFF')) {
+          if (error.message === lastHeartbeatBackoff) return;
+          lastHeartbeatBackoff = error.message;
+        }
+        logWarn(`chat review heartbeat could not run: ${error.message}`);
+      }
     });
   };
 

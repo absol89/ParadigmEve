@@ -9,6 +9,7 @@ import { pendingChatModelRequest, observeChatModels, requestChatModels } from '.
 import { completeCompanionSetupStep, configureSetupAutomation, pendingCompanionSetupStep } from './setup-automation.js';
 import { isProModel } from '../shared/chat-models.js';
 import type { SessionSummary } from '../shared/session.js';
+import { considerTurnRotation, type RotationDeps } from './turn-rotation.js';
 import { publishBrowserDecision, authorizeBrowserInput, noteBrowserReady, noteBrowserInputsOffered, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
 import { pendingPluginRefreshes, claimPluginRefresh, requireManualPluginRefresh, completePluginRefresh, failPluginRefresh } from './plugin-refresh.js';
 import { attachBrowserWake, wakeBrowserWork } from './browser-wake.js';
@@ -20,7 +21,7 @@ export { setBrowserWorkArea } from './browser-window-layout.js';
 import { pendingBrowserPreferenceRequest, acknowledgeBrowserPreferences } from './browser-preferences.js';
 import { sessionFinishHeld, releaseSessionFinish, getSessionFinishDraft, sessionFinishWaiting } from './session/finish.js';
 import { observeUsage } from './session/usage.js';
-import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting } from './session/input.js';
+import { fileRotationInput, pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting } from './session/input.js';
 import { syncEvecronOccurrenceStart } from './evecron-runner.js';
 /**
  * The local bridge between the Chrome extension and this app.
@@ -7889,6 +7890,25 @@ function retireSpentRepairs(): void {
  * out is kept until exactly this line runs, so that a reload which did not help is not repeated
  * — see `retireSpentRepairs`. This call is the proof that it did help.
  */
+/** When each running turn started, read once per turn from its own `turn_start`. */
+const turnStarts = new Map<string, number>();
+const turnRotationDeps: RotationDeps = {
+  now: () => Date.now(),
+  minutes: () => getConfig().ui.rotateTurnMinutes ?? 30,
+  turnStartedAt: async (sessionId, turnId) => {
+    const key = `${sessionId} ${turnId}`;
+    const known = turnStarts.get(key);
+    if (known !== undefined) return known;
+    const [start] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start'] });
+    if (start?.turnId !== turnId) return null;
+    turnStarts.set(key, start.time);
+    if (turnStarts.size > 500) turnStarts.delete(turnStarts.keys().next().value!);
+    return start.time;
+  },
+  file: (sessionId, turnId, startedAt) => fileRotationInput(sessionId, turnId, startedAt),
+  log: message => logInfo(message)
+};
+
 function noteCallAttribution(
   conversationId: string | null,
   sessionId: string,
@@ -7966,6 +7986,16 @@ function noteCallAttribution(
       pro ? { turnId: filedSession?.activeTurnId ?? filedSession?.finishTurn?.turnId ?? null, model: 'pro' } : undefined);
     noteRecoveryActivity(conversationId);
     noteGoalWatchActivity(conversationId);
+    // A long turn continues in a fresh one, right after this tool result (turn-rotation.ts). Pro
+    // thinks long on purpose; a worker's or helper's turn end is its report; Goal/Loop decide on
+    // turn ends; a local provider turn is not a ChatGPT stream.
+    const rotatingTurn = filedSession?.activeTurnId ?? null;
+    if (!pro && rotatingTurn && filedSession?.id === sessionId && filedSession.conversationId === conversationId &&
+        !filedSession.provider && filedSession.origin?.kind !== 'worker' && filedSession.origin?.kind !== 'helper' &&
+        !isWorkerConversation(conversationId) && !goalArmedFor(conversationId)) {
+      void considerTurnRotation(conversationId, sessionId, rotatingTurn, turnRotationDeps)
+        .catch(error => logWarn(`turn rotation: ${String(error)}`));
+    }
     // Scoped to the repair this fact is evidence about. An attributed call proves the request-id
     // join, which is the whole of what an `unattributed` repair exists to restore. It proves
     // nothing about the answer stream a page lost, and the live trace is why that distinction is
