@@ -25,6 +25,13 @@ beforeEach(async () => {
   await write('docs/licenses/codex/LICENSE', 'Codex license fixture\n');
   await write('docs/licenses/codex/NOTICE', 'Codex notice fixture\n');
   for (const name of ['README.md', 'COMPONENT-NOTICES.txt', 'LGPL-3.0.txt', 'GPL-3.0.txt', 'MPL-2.0.txt']) await write(`docs/licenses/native/${name}`, `Fixture ${name}\n`);
+  // The real notice generator also includes these non-npm Windows transcription
+  // licenses. Mirror those required inputs in every isolated test fixture so the
+  // fixture tests reach the behavior they are intended to exercise.
+  for (const name of ['LICENSE.whisper-cpp.txt', 'LICENSE.local-diarization.txt',
+    'LICENSE.sherpa-onnx-core.txt', 'LICENSE.onnxruntime.txt']) {
+    await write(`transcription-engine/${name}`, `Fixture ${name}\n`);
+  }
 });
 afterEach(async () => { await removeTempDir(root); });
 
@@ -35,9 +42,20 @@ it('preserves license and NOTICE text; check mode leaves the shipped inventory u
   expect(notice).toContain('Fixture attribution\n');
   expect(notice).toContain('Codex license fixture\n');
   expect(notice).toContain('Codex notice fixture\n');
+  expect(notice).toContain('Fixture LICENSE.whisper-cpp.txt\n');
+  expect(notice).toContain('Fixture LICENSE.sherpa-onnx-core.txt\n');
+  expect(notice).toContain('Fixture LICENSE.onnxruntime.txt\n');
   await write('THIRD-PARTY-NOTICES.txt', 'other platform inventory');
   expect(generate('--check').status).toBe(0);
   expect(await fs.readFile(path.join(root, 'THIRD-PARTY-NOTICES.txt'), 'utf8')).toBe('other platform inventory');
+});
+
+it('refuses to generate notices if a required transcription license is missing', async () => {
+  await fs.unlink(path.join(root, 'transcription-engine/LICENSE.whisper-cpp.txt'));
+  const result = generate();
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain('LICENSE.whisper-cpp.txt');
+  await expect(fs.stat(path.join(root, 'THIRD-PARTY-NOTICES.txt'))).rejects.toThrow();
 });
 
 it('rejects a manifest license label with no license or NOTICE material', async () => {
