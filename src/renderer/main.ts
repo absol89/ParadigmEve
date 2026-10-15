@@ -860,6 +860,7 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark' } = {}): Prom
       planBackend: $<HTMLSelectElement>('planBackend').value as 'chatgpt' | 'api',
       finishAction: $<HTMLSelectElement>('finishAction').value as 'notify' | 'goal',
       finishLeadMinutes: Number($<HTMLSelectElement>('finishLeadMinutes').value),
+      rotateTurnMinutes: Number($<HTMLSelectElement>('rotateTurnMinutes').value),
       backgroundChats: $<HTMLInputElement>('backgroundChats').checked,
       browserOnly: $<HTMLInputElement>('browserOnly').checked,
       autoRefreshPlugins: $<HTMLInputElement>('autoRefreshPlugins').checked,
@@ -1567,6 +1568,21 @@ function apply(next: AppState): void {
   applyChecked($<HTMLInputElement>('finishTool'), config.ui.finishTool === true, previousState?.config.ui.finishTool);
   applyValue($<HTMLSelectElement>('finishAction'), config.ui.finishAction ?? 'notify', previousState?.config.ui.finishAction);
   applyValue($<HTMLSelectElement>('finishLeadMinutes'), String(config.ui.finishLeadMinutes ?? 5), String(previousState?.config.ui.finishLeadMinutes ?? 5));
+  // A stored interval outside the menu needs an option or an unrelated Settings save reads an
+  // empty select and silently turns fresh turns Off. Preserve any focused, unsaved selection.
+  const rotate = $<HTMLSelectElement>('rotateTurnMinutes');
+  const rotateMinutes = String(config.ui.rotateTurnMinutes ?? 30);
+  if (![...rotate.options].some((option) => option.value === rotateMinutes)) {
+    const option = document.createElement('option');
+    option.value = rotateMinutes;
+    option.textContent = t('{0} min', [rotateMinutes]);
+    option.dataset.configured = '';
+    rotate.add(option);
+  }
+  applyValue(rotate, rotateMinutes, String(previousState?.config.ui.rotateTurnMinutes ?? 30));
+  for (const option of rotate.querySelectorAll<HTMLOptionElement>('option[data-configured]')) {
+    if (option.value !== rotateMinutes && option.value !== rotate.value) option.remove();
+  }
   applyChecked($<HTMLInputElement>('backgroundChats'), config.ui.backgroundChats === true, previousState?.config.ui.backgroundChats);
   applyChecked($<HTMLInputElement>('browserOnly'), config.ui.browserOnly === true, previousState?.config.ui.browserOnly);
   applyChecked($<HTMLInputElement>('autoRefreshPlugins'), config.ui.autoRefreshPlugins === true, previousState?.config.ui.autoRefreshPlugins);

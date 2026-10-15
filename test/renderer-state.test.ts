@@ -1803,6 +1803,65 @@ it('preserves native Desktop permissions when saving unrelated settings on Linux
   });
 });
 
+it('preserves uncommon fresh-turn intervals through Settings saves and removes obsolete custom options', async () => {
+  const mounted = await mountChat();
+  const w = mounted.window;
+  const rotate = w.document.getElementById('rotateTurnMinutes') as HTMLSelectElement;
+  const withOneMinute = structuredClone(mounted.state);
+  withOneMinute.config.ui.rotateTurnMinutes = 1;
+  mounted.push(withOneMinute);
+
+  expect(rotate.value).toBe('1');
+  expect(rotate.selectedOptions[0]?.textContent).toBe('1 min');
+  expect(rotate.querySelector('option[data-configured]')?.getAttribute('value')).toBe('1');
+
+  const autoConnect = w.document.getElementById('autoConnect') as HTMLInputElement;
+  autoConnect.checked = true;
+  autoConnect.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await settle();
+  expect(mounted.calls.at(-1)?.ui.rotateTurnMinutes).toBe(1);
+  expect(rotate.value).toBe('1');
+
+  const withTwoMinutes = structuredClone(mounted.state);
+  withTwoMinutes.config.ui.rotateTurnMinutes = 2;
+  mounted.push(withTwoMinutes);
+  expect(rotate.value).toBe('2');
+  expect(rotate.querySelectorAll('option[data-configured]')).toHaveLength(1);
+
+  const withPreset = structuredClone(withTwoMinutes);
+  withPreset.config.ui.rotateTurnMinutes = 45;
+  mounted.push(withPreset);
+  expect(rotate.value).toBe('45');
+  expect(rotate.querySelector('option[data-configured]')).toBeNull();
+  expect(rotate.options.length).toBe(5);
+});
+
+it('restores an uncommon fresh-turn interval on reload without changing model or reasoning settings', async () => {
+  const initial = await mountChat();
+  const stored = structuredClone(initial.state.config);
+  stored.ui.rotateTurnMinutes = 7;
+  stored.ui.chatModel = 'gpt-6';
+  stored.ui.chatReasoning = 'high';
+
+  initial.window.close();
+  vi.resetModules();
+  const reopened = await mountChat({ config: stored });
+  const w = reopened.window;
+  const rotate = w.document.getElementById('rotateTurnMinutes') as HTMLSelectElement;
+  expect(rotate.value).toBe('7');
+  expect(rotate.selectedOptions[0]?.textContent).toBe('7 min');
+
+  const autoConnect = w.document.getElementById('autoConnect') as HTMLInputElement;
+  autoConnect.checked = true;
+  autoConnect.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await settle();
+  expect(reopened.calls.at(-1)?.ui).toMatchObject({
+    rotateTurnMinutes: 7,
+    chatModel: 'gpt-6',
+    chatReasoning: 'high'
+  });
+});
+
 it('uses native menu-bar/Dock wording on macOS instead of Windows tray copy', async () => {
   const mounted = await mountChat({
     platform: { family: 'macos', name: 'macOS', desktopAutomation: true }

@@ -124,6 +124,8 @@ let loadedOlderSessions = false;
 let activeId: string | null = null;
 let selectedId: string | null = null;
 let chatFind: ReturnType<typeof initChatFind> | null = null;
+/** Shows the scrollbar-end buttons (first / latest message); installed by initChat once the history pane exists. */
+let syncChatEdges: () => void = () => undefined;
 let newChatSelected = true;
 /** True only for the explicit owner-replacement New Chat surface while identity is fail-closed. */
 let newChatAgentClaim = false;
@@ -1330,6 +1332,7 @@ async function navigateHistory(before: number | null, prepend = false): Promise<
   await loading;
   if (selectedId !== selected || selectionGeneration !== selection || detailLoadGeneration !== generation) return;
   if (!prepend) $('chatBody').scrollTop = before === null ? $('chatBody').scrollHeight : 0;
+  syncChatEdges();
 }
 async function loadDetail(navigate = false, prepend = false, newerFrom?: number): Promise<void> {
   const wanted = selectedId;
@@ -2595,6 +2598,7 @@ function groupToolRows(rows: HTMLElement[], scope = selectedId, groups = toolGro
 }
 
 function paintDetail(followBottom = true): void {
+  window.requestAnimationFrame(() => syncChatEdges());
   paintStateLine();
   const summary = sessions.find((s) => s.id === selectedId) ?? null;
   const selectedProject = selectedId === null && selectedProjectId
@@ -3547,7 +3551,7 @@ const CHAT_INPUTS = [
   'chatBrowser',
   'goalIncludeToolCalls',
   'planBackend',
-  'finishTool', 'finishAction', 'finishLeadMinutes', 'workerModel', 'workerReasoning', 'backgroundChats', 'browserOnly', 'autoRefreshPlugins',
+  'finishTool', 'finishAction', 'finishLeadMinutes', 'rotateTurnMinutes', 'workerModel', 'workerReasoning', 'backgroundChats', 'browserOnly', 'autoRefreshPlugins',
   'goalBackend',
   'loopBackend',
   'helperModel', 'helperReasoning',
@@ -3861,7 +3865,7 @@ async function refreshInputQueue(): Promise<void> {
   // Active unbound sends still occupy the global admission limit after New Chat or
   // restart. Show that existing outbox authority, without reviving terminal drafts.
   const unbound = (entry: InputEntry) => selectedId === null && !entry.sessionId && !entry.deliveredSessionId && entry.purpose !== 'decision' && ['queued', 'browser'].includes(entry.state);
-  const notice = (entry: InputEntry) => (belongsToSelection(entry) || (selectedId === null && !entry.sessionId && !entry.deliveredSessionId)) && entry.purpose !== 'decision' &&
+  const notice = (entry: InputEntry) => (belongsToSelection(entry) || (selectedId === null && !entry.sessionId && !entry.deliveredSessionId)) && entry.purpose !== 'decision' && entry.purpose !== 'rotation' &&
     ['failed', 'cancelled'].includes(entry.state) && !!entry.error && !dismissedInputNotices.has(entry.id);
   const rows = all.filter((entry) => !dismissedInputNotices.has(entry.id) && !(entry.state === 'tool' && entry.historyRecorded) && !(queuedFollowup(entry) && ['queued', 'tool', 'browser'].includes(entry.state)) && (belongsToSelection(entry) || unbound(entry) || notice(entry)) &&
     (notice(entry) || unbound(entry) || selectedId !== null || projectGroup(entry.projectId) === selectedProjectId) &&
@@ -4167,6 +4171,7 @@ export function openChatView(name: string): void {
 }
 
 function showView(name: string): void {
+  window.requestAnimationFrame(() => syncChatEdges());
   const openingSettings = name === 'settings' && document.querySelector<HTMLElement>('#chatBody > .view[data-view="settings"]')?.hidden !== false;
   $('composer').hidden = name === 'settings';
   $('composerDock').hidden = name === 'settings';
@@ -4626,7 +4631,67 @@ export function initChat(next: Deps): void {
     historyDirection = ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ? -1 : ['ArrowDown', 'PageDown', 'End'].includes(event.key) ? 1 : 0;
     loadAtEdge();
   });
+  // Find in chat and Pin sources open a bounded historical page, and newer rows then page in one
+  // window at a time only at the bottom edge: there was no way back to the live end (2026-10-15).
+  // Two buttons at the ends of the scrollbar go to the first message and to the live end in one step.
+  const edgeIcon = (path: string) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${path}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const edges = document.createElement('div');
+  edges.className = 'chat-edges';
+  edges.hidden = true;
+  const toStart = document.createElement('button');
+  const toEnd = document.createElement('button');
+  toStart.type = toEnd.type = 'button';
+  toStart.className = toEnd.className = 'chat-edge';
+  toStart.innerHTML = edgeIcon('M6 4h12M12 20V8M7 13l5-5 5 5');
+  toEnd.innerHTML = edgeIcon('M6 20h12M12 4v12M7 11l5 5 5-5');
+  ui(toStart, 'title', () => t('Go to the first message'));
+  ui(toStart, 'aria-label', () => t('Go to the first message'));
+  ui(toEnd, 'title', () => t('Go to the latest message'));
+  ui(toEnd, 'aria-label', () => t('Go to the latest message'));
+  edges.append(toStart, toEnd);
+  historyPane.after(edges);
+  // The dock floats over the chat's end; pad the chat by its live height so nothing hides under it,
+  // and keep a reader who was at the end still at the end when the dock grows or shrinks.
+  const dock = $('composerDock');
+  let atEnd = true;
   historyPane.addEventListener('scroll', () => {
+    atEnd = historyPane.scrollHeight - historyPane.clientHeight - historyPane.scrollTop <= 4;
+  }, { passive: true });
+  // Absent only without a layout engine (the jsdom tests); there is nothing to measure there.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => {
+    const height = dock.hidden ? 0 : dock.getBoundingClientRect().height;
+    historyPane.style.setProperty('--dock-h', `${Math.round(height)}px`);
+    if (atEnd) historyPane.scrollTop = historyPane.scrollHeight;
+    syncChatEdges();
+  }).observe(dock);
+  // `before` is exclusive and sequence numbers start at 1, so this page is the chat's opening rows.
+  const FIRST_PAGE_BEFORE = MAX_TIMELINE_ROWS + 1;
+  const showsChatStart = () => historyBefore === FIRST_PAGE_BEFORE ||
+    (events.length > 0 && Math.min(...events.map(event => event.seq)) <= 1);
+  toStart.onclick = () => {
+    if (!selectedId) return;
+    if (showsChatStart()) historyPane.scrollTo({ top: 0 });
+    else void navigateHistory(FIRST_PAGE_BEFORE);
+  };
+  toEnd.onclick = () => {
+    if (!selectedId) return;
+    if (historyBefore === null) historyPane.scrollTo({ top: historyPane.scrollHeight });
+    else void navigateHistory(null);
+  };
+  syncChatEdges = () => {
+    const timelineShown = document.querySelector<HTMLElement>('#chatBody > .view[data-view="timeline"]')?.hidden === false;
+    const historical = historyBefore !== null && historyFor === selectedId;
+    const overflowing = historyPane.scrollHeight > historyPane.clientHeight + 4;
+    edges.hidden = !selectedId || detailFor !== selectedId || !timelineShown || !(historical || overflowing);
+    if (edges.hidden) return;
+    // Centre the arrows on the scrollbar itself, whatever width this system draws it at.
+    const scrollbarWidth = historyPane.offsetWidth - historyPane.clientWidth;
+    if (scrollbarWidth > 0) edges.style.width = `${scrollbarWidth}px`;
+    toStart.disabled = historyPane.scrollTop <= 2 && showsChatStart();
+    toEnd.disabled = !historical && historyPane.scrollHeight - historyPane.clientHeight - historyPane.scrollTop <= 2;
+  };
+  historyPane.addEventListener('scroll', () => {
+    syncChatEdges();
     if (pointerScrollTop !== null) {
       historyDirection = Math.sign(historyPane.scrollTop - pointerScrollTop);
       pointerScrollTop = historyPane.scrollTop;

@@ -1962,5 +1962,13 @@
   "When Eve works with a file that a free ArtCraft app can edit, she can offer to install that app. Nothing is installed unless you click Install in ParadigmEve’s own prompt; only the official build for this computer is downloaded and checked against its published SHA-256. Installed apps appear in the list above and can be removed there.": "Cuando Eve trabaja con un archivo que una app gratuita de ArtCraft puede editar, puede ofrecerte instalar esa app. No se instala nada a menos que hagas clic en Instalar en el aviso propio de ParadigmEve; solo se descarga la compilación oficial para esta computadora y se verifica con su SHA-256 publicado. Las apps instaladas aparecen en la lista de arriba y puedes quitarlas desde ahí.",
   "Ask again about apps I declined": "Volver a preguntar por las apps que rechacé",
   "Declined: {0}": "Rechazadas: {0}",
-  "You have not declined any file app.": "No has rechazado ninguna app de archivos."
+  "You have not declined any file app.": "No has rechazado ninguna app de archivos.",
+  "Start a fresh turn after": "Iniciar un turno nuevo después de",
+  "Long work continues in a new turn with an automatic Continue, right after a tool result. Shorter turns break less often. Not used with Pro models, Goal, Loop or workers.": "El trabajo largo continúa en un turno nuevo con un Continuar automático, justo después de un resultado de herramienta. Los turnos más cortos fallan con menos frecuencia. No se usa con modelos Pro, Objetivo, Bucle ni trabajadores.",
+  "20 minutes": "20 minutos",
+  "30 minutes": "30 minutos",
+  "45 minutes": "45 minutos",
+  "60 minutes": "60 minutos",
+  "Go to the first message": "Ir al primer mensaje",
+  "Go to the latest message": "Ir al mensaje más reciente"
 }

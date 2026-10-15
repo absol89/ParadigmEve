@@ -86,6 +86,11 @@ it('renders the accepted two-lane Today view with first-class overlap and eviden
   expect(host.querySelector('.schedule-title-block')?.textContent).not.toContain('#schedule');
   expect([...host.querySelectorAll<HTMLButtonElement>('.schedule-chat-pill')].map(button => button.textContent))
     .toEqual(['#schedule', '#myweek', '#routines']);
+  const chatSection = host.querySelector('.schedule-chat-about')!;
+  expect([...chatSection.children].map(child => child.className))
+    .toEqual(['schedule-chat-about-label', 'schedule-chat-pills']);
+  expect(chatSection.querySelector('.schedule-chat-about-label')?.textContent).toBe('Chat about');
+  expect(chatSection.querySelectorAll('.schedule-chat-pills > .schedule-chat-pill')).toHaveLength(3);
   const chatButtons = [...host.querySelectorAll<HTMLButtonElement>('.schedule-chat-pill')];
   chatButtons.forEach(button => button.click());
   expect(onChatAbout.mock.calls.map(call => call[0])).toEqual(['#schedule', '#myweek', '#routines']);
@@ -94,6 +99,11 @@ it('renders the accepted two-lane Today view with first-class overlap and eviden
   editAvailability.click();
   editEve.click();
   expect(onEditSchedule.mock.calls.map(call => call[0])).toEqual(['user', 'eve']);
+  expect(scheduleCss).toContain('.schedule-chat-about { display: grid; justify-items: start;');
+  expect(scheduleCss).toContain('.schedule-chat-pills { display: flex; flex-wrap: wrap;');
+  expect(scheduleCss).toContain('container: schedule-layout / inline-size;');
+  expect(scheduleCss).toContain('@container schedule-layout (max-width: 940px)');
+  expect(scheduleCss).toContain('.schedule-edit-actions { flex-direction: column; align-items: stretch; }');
   expect(host.querySelectorAll('.schedule-desktop-day .schedule-overlap')).toHaveLength(2);
   expect(host.querySelector("[data-entry-id='eve-review'] .schedule-status")?.textContent).toContain('Done');
   expect(host.querySelector("[data-entry-id='eve-review']")?.getAttribute('aria-label')).toBe('Morning review');
@@ -167,9 +177,50 @@ it('keeps view changes controlled by the owner and renders weekly versus next-7-
 
   controller.update(view({ activeMode: 'next7' }));
   expect(host.querySelector('.schedule-week-grid')?.textContent).toContain('1 change');
-  const secondDay = host.querySelectorAll<HTMLButtonElement>('button.schedule-day-card')[1]!;
+  const secondDay = host.querySelector<HTMLButtonElement>('.schedule-week-grid button.schedule-day-card')!;
   secondDay.click();
   expect(onSelectDay).toHaveBeenCalledWith('2026-09-19');
+});
+
+it('puts Today alongside the shared-free hero and the next six days in the three-column grid', () => {
+  const host = document.getElementById('host')!;
+  const onSelectDay = vi.fn();
+  const days = [day(), ...Array.from({ length: 6 }, (_, index) => day({
+    dateKey: `2026-09-${String(index + 19).padStart(2, '0')}`,
+    weekday: (index + 6) % 7,
+    isToday: false,
+    entries: [],
+    overlaps: []
+  }))];
+  createScheduleSurface({ host, view: view({ activeMode: 'next7', next7Days: days }), onSelectDay });
+
+  const overview = host.querySelector('.schedule-next7-overview')!;
+  expect([...overview.children].map(child => child.classList[0]))
+    .toEqual(['schedule-overlap-hero', 'schedule-day-card']);
+  expect(overview.querySelectorAll('.schedule-day-card.is-today')).toHaveLength(1);
+  const laterDays = [...host.querySelectorAll<HTMLElement>('.schedule-week-grid.is-next7 > .schedule-day-card')];
+  expect(laterDays).toHaveLength(6);
+  expect(laterDays.every(card => !card.classList.contains('is-today'))).toBe(true);
+  expect(host.querySelectorAll('.schedule-day-card')).toHaveLength(7);
+
+  overview.querySelector<HTMLButtonElement>('button.schedule-day-card')!.click();
+  expect(onSelectDay).toHaveBeenCalledWith('2026-09-18');
+  expect(scheduleCss).toContain('container-type: inline-size');
+  expect(scheduleCss).toContain('.schedule-week-grid.is-next7 { grid-template-columns: repeat(3, minmax(0, 1fr)); }');
+  expect(scheduleCss).toContain('@container (max-width: 720px)');
+  expect(scheduleCss).toContain('.schedule-next7-overview { grid-template-columns: minmax(0, 1fr); }');
+});
+
+it('keeps every day in the seven-day grid if no day is identified as Today', () => {
+  const host = document.getElementById('host')!;
+  createScheduleSurface({ host, view: view({
+    activeMode: 'next7',
+    next7Days: [day({ isToday: false }), day({ dateKey: '2026-09-19', isToday: false })]
+  }) });
+
+  expect(host.querySelector('.schedule-next7-overview')).toBeNull();
+  expect(host.querySelectorAll('.schedule-week-grid.is-next7 .schedule-day-card')).toHaveLength(2);
+  expect(host.querySelector('.schedule-overlap-hero')).not.toBeNull();
 });
 
 it('renders compact/mobile rows chronologically and keeps overlap a full-width semantic row', () => {

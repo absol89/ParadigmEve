@@ -467,36 +467,39 @@ function overlapSummary(day: ScheduleDayView, status: ScheduleOverlapStatus | un
   return day.overlaps.slice(0, 2).map(overlap => spanLabel(overlap.startMinute, overlap.endMinute)).join(' · ');
 }
 
+function weekCard(day: ScheduleDayView, mode: ScheduleViewMode, callbacks: ScheduleSurfaceCallbacks, overlapStatus?: ScheduleOverlapStatus): HTMLElement {
+  const card = document.createElement(day.dateKey && callbacks.onSelectDay ? 'button' : 'article');
+  card.className = `schedule-day-card${day.isToday ? ' is-today' : ''}`;
+  if (card instanceof HTMLButtonElement) {
+    card.type = 'button';
+    card.addEventListener('click', () => callbacks.onSelectDay?.(day.dateKey!));
+    ui(card, 'aria-label', () => t('Open {0}', [dayHeading(day)]));
+  }
+  const head = el('div', 'schedule-day-card-head');
+  head.append(el('strong', '', () => dayHeading(day)));
+  const count = day.temporaryChangeCount ?? day.entries.filter(entry => entry.temporary).length;
+  if (mode === 'next7' && count) head.append(el('span', 'schedule-change-count', () => count === 1 ? t('1 change') : t('{0} changes', [count])));
+  card.append(head);
+  const user = el('div', 'schedule-day-summary');
+  user.append(el('span', 'schedule-day-owner', () => t('You')), el('span', '', () => summaryTimes(day, 'user')));
+  const eve = el('div', 'schedule-day-summary');
+  eve.append(el('span', 'schedule-day-owner', () => t('Eve')), el('span', '', () => summaryTimes(day, 'eve')));
+  const both = el('div', 'schedule-day-summary is-overlap');
+  const dayOverlapStatus = day.overlapStatus ?? overlapStatus ?? 'resolved';
+  both.append(
+    el('span', 'schedule-day-owner', () => t(dayOverlapStatus === 'resolved' ? 'Both free' : 'Overlap time')),
+    el('span', '', () => overlapSummary(day, dayOverlapStatus))
+  );
+  card.append(user, eve, both);
+  if (day.backToUsualLabel && mode === 'next7') card.append(el('span', 'schedule-day-resume', () => t('Back to usual {0}.', [day.backToUsualLabel!])))
+  return card;
+}
+
 function weekView(days: readonly ScheduleDayView[], mode: ScheduleViewMode, callbacks: ScheduleSurfaceCallbacks, overlapStatus?: ScheduleOverlapStatus): HTMLElement {
   const grid = el('section', 'schedule-week-grid');
+  if (mode === 'next7') grid.classList.add('is-next7');
   ui(grid, 'aria-label', () => t(mode === 'week' ? 'Usual week' : 'Next 7 days'));
-  for (const day of days) {
-    const card = document.createElement(day.dateKey && callbacks.onSelectDay ? 'button' : 'article');
-    card.className = `schedule-day-card${day.isToday ? ' is-today' : ''}`;
-    if (card instanceof HTMLButtonElement) {
-      card.type = 'button';
-      card.addEventListener('click', () => callbacks.onSelectDay?.(day.dateKey!));
-      ui(card, 'aria-label', () => t('Open {0}', [dayHeading(day)]));
-    }
-    const head = el('div', 'schedule-day-card-head');
-    head.append(el('strong', '', () => dayHeading(day)));
-    const count = day.temporaryChangeCount ?? day.entries.filter(entry => entry.temporary).length;
-    if (mode === 'next7' && count) head.append(el('span', 'schedule-change-count', () => count === 1 ? t('1 change') : t('{0} changes', [count])));
-    card.append(head);
-    const user = el('div', 'schedule-day-summary');
-    user.append(el('span', 'schedule-day-owner', () => t('You')), el('span', '', () => summaryTimes(day, 'user')));
-    const eve = el('div', 'schedule-day-summary');
-    eve.append(el('span', 'schedule-day-owner', () => t('Eve')), el('span', '', () => summaryTimes(day, 'eve')));
-    const both = el('div', 'schedule-day-summary is-overlap');
-    const dayOverlapStatus = day.overlapStatus ?? overlapStatus ?? 'resolved';
-    both.append(
-      el('span', 'schedule-day-owner', () => t(dayOverlapStatus === 'resolved' ? 'Both free' : 'Overlap time')),
-      el('span', '', () => overlapSummary(day, dayOverlapStatus))
-    );
-    card.append(user, eve, both);
-    if (day.backToUsualLabel && mode === 'next7') card.append(el('span', 'schedule-day-resume', () => t('Back to usual {0}.', [day.backToUsualLabel!])))
-    grid.append(card);
-  }
+  for (const day of days) grid.append(weekCard(day, mode, callbacks, overlapStatus));
   if (!days.length) grid.append(el('p', 'schedule-empty', () => t('No schedule days to show yet.')));
   return grid;
 }
@@ -538,15 +541,27 @@ function paint(root: HTMLElement, view: ScheduleViewData, callbacks: ScheduleSur
   if (callbacks.onChatAbout) {
     const chat = el('div', 'schedule-chat-about');
     chat.append(el('span', 'schedule-chat-about-label', () => t('Chat about')));
+    const pills = el('div', 'schedule-chat-pills');
     for (const reference of ['#schedule', '#myweek', '#routines'] as const) {
-      chat.append(appButton('schedule-chat-pill', () => t(reference), () => callbacks.onChatAbout?.(reference)));
+      pills.append(appButton('schedule-chat-pill', () => t(reference), () => callbacks.onChatAbout?.(reference)));
     }
+    chat.append(pills);
     toolbar.append(chat);
   }
 
   const body = el('div', 'schedule-body');
-  body.append(overlapHero(view, callbacks));
-  if (view.activeMode === 'today') {
+  if (view.activeMode === 'next7') {
+    const todayIndex = view.next7Days.findIndex(day => day.isToday);
+    if (todayIndex >= 0) {
+      const overview = el('div', 'schedule-next7-overview');
+      overview.append(overlapHero(view, callbacks), weekCard(view.next7Days[todayIndex]!, 'next7', callbacks, view.overlapStatus));
+      body.append(overview);
+      body.append(weekView(view.next7Days.filter((_, index) => index !== todayIndex), 'next7', callbacks, view.overlapStatus));
+    } else {
+      body.append(overlapHero(view, callbacks), weekView(view.next7Days, 'next7', callbacks, view.overlapStatus));
+    }
+  } else if (view.activeMode === 'today') {
+    body.append(overlapHero(view, callbacks));
     const dayHead = el('div', 'schedule-day-heading');
     dayHead.append(el('h2', '', () => dayHeading(view.detailDay)));
     const note = temporarySummary(view.detailDay);
@@ -554,7 +569,7 @@ function paint(root: HTMLElement, view: ScheduleViewData, callbacks: ScheduleSur
     if (note) body.append(note);
     body.append(desktopTimeline(view.detailDay, callbacks), compactTimeline(view.detailDay, callbacks));
   } else {
-    body.append(weekView(view.activeMode === 'week' ? view.usualWeek : view.next7Days, view.activeMode, callbacks, view.overlapStatus));
+    body.append(overlapHero(view, callbacks), weekView(view.usualWeek, 'week', callbacks, view.overlapStatus));
   }
   root.replaceChildren(head, toolbar, body);
 }
