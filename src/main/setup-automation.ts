@@ -99,6 +99,21 @@ async function elementById(window: number, automationId: string, role?: string):
     (!role || element.role.toLowerCase().includes(role))) ?? null;
 }
 
+async function elementByName(window: number, name: string, role?: string): Promise<UiElementInfo | null> {
+  const found = await findUi({ window, query: name, ...(role ? { role } : {}), maxResults: 25 });
+  const expected = name.trim().toLowerCase();
+  return found.elements.find(element => element.enabled && element.name.trim().toLowerCase() === expected &&
+    (!role || element.role.toLowerCase().includes(role))) ?? null;
+}
+
+/** Chrome WebUI normally exposes these DOM ids through UIA, but current Chromium builds can
+ * publish only the accessible control name. Keep the id as the language-neutral first choice and
+ * fall back to the exact visible name instead of treating that UIA projection difference as a
+ * missing Extensions page. */
+async function extensionControl(window: number, automationId: string, name: string, role?: string): Promise<UiElementInfo | null> {
+  return await elementById(window, automationId, role) ?? await elementByName(window, name, role);
+}
+
 /**
  * Loads the unpacked Companion on the extensions page of the dedicated browser, with the desktop
  * helper: Developer mode on (`#devMode`), Load unpacked (`#loadUnpacked`), then the folder in the
@@ -112,20 +127,25 @@ export async function loadUnpackedCompanion(options: {
 }): Promise<boolean> {
   if (process.platform !== 'win32') return false;
   const timeoutMs = options.timeoutMs ?? 20_000;
-  // The extensions page is the dedicated browser's window whose page carries the devMode toggle.
+  // The extensions page is the dedicated browser window that exposes either of its setup controls.
+  // Developer mode may already be enabled, and Chrome does not consistently project WebUI DOM ids
+  // into Windows UIA, so Load unpacked by itself is sufficient evidence of the right page.
   const page = await waitFor(async () => {
     const { windows } = await listWindows();
     for (const window of windows.filter(options.isEveBrowserWindow)) {
-      const toggle = await elementById(window.id, 'devMode');
-      if (toggle) return { window: window.id, toggle };
+      const load = await extensionControl(window.id, 'loadUnpacked', 'Load unpacked', 'button');
+      if (load) return { window: window.id, load, toggle: null };
+      const toggle = await extensionControl(window.id, 'devMode', 'Developer mode');
+      if (toggle) return { window: window.id, load: null, toggle };
     }
     return null;
   }, timeoutMs);
   if (!page) return false;
-  let load = await elementById(page.window, 'loadUnpacked', 'button');
+  let load = page.load;
   if (!load) {
+    if (!page.toggle) return false;
     await act([{ type: 'focus', window: page.window }, { type: 'click_ref', ref: page.toggle.ref }], { window: page.window });
-    load = await waitFor(() => elementById(page.window, 'loadUnpacked', 'button'), 8_000);
+    load = await waitFor(() => extensionControl(page.window, 'loadUnpacked', 'Load unpacked', 'button'), 8_000);
     if (!load) return false;
   }
   await act([{ type: 'focus', window: page.window }, { type: 'click_ref', ref: load.ref }], { window: page.window });
@@ -137,7 +157,15 @@ export async function loadUnpackedCompanion(options: {
     return box ? { window: window.id, box } : null;
   }, 10_000);
   if (!dialog) return false;
-  await act([{ type: 'set_value', ref: dialog.box.ref, text: options.extensionPath }], { window: dialog.window });
+  // The Windows folder picker exposes control 1152 as the keyboard-editable folder field, but
+  // some current builds do not expose UIA ValuePattern on that wrapper. `set_value` therefore
+  // fails before changing anything with UI_VALUE_UNSUPPORTED. Focus the exact observed control,
+  // then replace its text through the normal keyboard path instead of requiring ValuePattern.
+  await act([
+    { type: 'ui_action', ref: dialog.box.ref, action: 'focus' },
+    { type: 'keypress', keys: ['ctrl', 'a'] },
+    { type: 'type', text: options.extensionPath },
+  ], { window: dialog.window });
   const select = await elementById(dialog.window, '1', 'button');
   if (!select) return false;
   await act([{ type: 'click_ref', ref: select.ref }], { window: dialog.window });

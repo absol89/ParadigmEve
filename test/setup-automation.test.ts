@@ -79,4 +79,51 @@ describe('automatic setup request ownership', () => {
     })).resolves.toBe(false);
     expect(computer.act).not.toHaveBeenCalled();
   });
+
+  it('loads the Companion when Chrome omits WebUI ids and the folder field has no ValuePattern', async () => {
+    const screen = { x: 0, y: 0, width: 1920, height: 1080 };
+    const browserWindow = { id: 7, app: 'Chrome.setupbrowserprofile.Default', process: 'chrome' };
+    const pickerWindow = { id: 19, app: 'chrome-folder-picker', process: 'chrome' };
+    let pickerOpen = false;
+
+    computer.listWindows.mockResolvedValue({ windows: [browserWindow], screen });
+    computer.activeWindow.mockImplementation(async () => ({
+      window: pickerOpen ? pickerWindow : browserWindow,
+      screen,
+    }));
+    computer.findUi.mockImplementation(async ({ window, query }: { window?: number; query?: string }) => ({
+      window: window ?? 7,
+      snapshotId: 1,
+      elements: window === 7 && query === 'Load unpacked'
+        ? [{ ref: 'load-ref', name: 'Load unpacked', role: 'Button', automationId: '', enabled: true }]
+        : window === 19 && query === '1152'
+          ? [{ ref: 'path-ref', name: 'Folder:', role: 'Edit', automationId: '1152', enabled: true }]
+          : window === 19 && query === '1'
+            ? [{ ref: 'select-ref', name: 'Select Folder', role: 'Button', automationId: '1', enabled: true }]
+            : [],
+    }));
+    computer.act.mockImplementation(async (steps: Array<{ type?: string; ref?: string }>) => {
+      if (steps.some(step => step.type === 'set_value')) {
+        throw new Error('PARTIAL_BATCH: completed_count=0 failed_index=0 routes=none. UI_VALUE_UNSUPPORTED: the referenced element does not expose ValuePattern');
+      }
+      if (steps.some(step => step.ref === 'load-ref')) pickerOpen = true;
+      if (steps.some(step => step.ref === 'select-ref')) pickerOpen = false;
+      return { cursor: null, clipboard: [], completedCount: steps.length, routes: [] };
+    });
+
+    await expect(loadUnpackedCompanion({
+      extensionPath: 'C:\\Program Files\\ParadigmEve\\extension',
+      isEveBrowserWindow: window => window.id === 7,
+      timeoutMs: 1,
+    })).resolves.toBe(true);
+    expect(computer.act).toHaveBeenCalledWith([
+      { type: 'focus', window: 7 },
+      { type: 'click_ref', ref: 'load-ref' },
+    ], { window: 7 });
+    expect(computer.act).toHaveBeenCalledWith([
+      { type: 'ui_action', ref: 'path-ref', action: 'focus' },
+      { type: 'keypress', keys: ['ctrl', 'a'] },
+      { type: 'type', text: 'C:\\Program Files\\ParadigmEve\\extension' },
+    ], { window: 19 });
+  });
 });
