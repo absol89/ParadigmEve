@@ -18,13 +18,19 @@ import {
   requestCompanionSetupStep,
 } from '../src/main/setup-automation.js';
 
+// Automatic Companion loading is Windows-only (loadUnpackedCompanion returns false elsewhere), so
+// these tests present Windows on every CI host instead of passing only on a Windows runner.
+const hostPlatform = process.platform;
+
 beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   cancelCompanionSetupStep();
   vi.clearAllMocks();
 });
 
 afterEach(() => {
   cancelCompanionSetupStep();
+  Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true });
 });
 
 describe('automatic setup request ownership', () => {
