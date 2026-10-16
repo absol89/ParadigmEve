@@ -59,7 +59,9 @@ export async function buildWhisperVulkan() {
   await verifyVendoredTools();
   const { dir: source, lock } = await pinnedWhisperSource();
   // Short build path: MSBuild tlogs of ggml's vulkan-shaders-gen ExternalProject exceed MAX_PATH otherwise.
-  const build = path.join(os.homedir(), '.eve-wvk');
+  // One per checkout: CMake refuses a cache generated from another checkout's source folder.
+  const checkout = createHash('sha256').update(root.toLowerCase()).digest('hex').slice(0, 8);
+  const build = path.join(os.homedir(), `.eve-wvk-${checkout}`);
   const win = path.join(tools, 'win32-x64');
   const cmake = cmakePath();
   execFileSync(cmake, ['-S', path.join(engine, 'native'), '-B', build, '-G', 'Visual Studio 17 2022', '-A', 'x64',
