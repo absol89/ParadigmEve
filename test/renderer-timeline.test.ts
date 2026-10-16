@@ -198,6 +198,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     beforeListInputs: null as null | (() => void | Promise<void>)
   };
   let sessionListener: () => void = () => undefined;
+  const planListeners = new Set<() => void>();
   const taskProgressListeners = new Set<(progress: any) => void>();
   const api: any = new Proxy(
     {
@@ -219,6 +220,10 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
       onSessionChanged: (fn: any) => {
         sessionListener = fn;
         return () => undefined;
+      },
+      onPlansChanged: (fn: () => void) => {
+        planListeners.add(fn);
+        return () => planListeners.delete(fn);
       },
       listSessions: () => ok({ sessions: options.sessions ?? [{ ...summary(live.events), ...(options.origin ? { origin: options.origin } : {}), ...(projects[0] ? { projectId: projects[0].id } : {}) }], activeId: summary(live.events).id, pressure: [] }),
       listProjects: () => ok(projects),
@@ -277,6 +282,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     w,
     live,
     notifySession: () => sessionListener(),
+    notifyPlans: () => { for (const listener of planListeners) listener(); },
     progress: (value: any) => { for (const listener of taskProgressListeners) listener(value); },
     async append(more: SessionEvent[]) {
       live.events.push(...more);
@@ -341,6 +347,38 @@ it.each(['compaction', 'blocked', 'worker'])('retires %s control status when lea
   expect(status.textContent).toBe('');
   release({ ok: true, data: controls }); await settle();
   expect(status.textContent).not.toBe('');
+});
+
+it('keeps the Plan archive confirmation visible when a Plans refresh selects a chat without a recorded conversation', async () => {
+  const unbound = { ...summary([]), conversationId: null, selectedModel: undefined };
+  const { w, notifyPlans } = await boot([], true, [], [], { sessions: [unbound] });
+  const api = (w as any).api;
+  const controls = vi.fn(async () => ({ ok: false, error: 'session_not_recorded' }));
+  api.getSessionControls = controls;
+  const { toast } = await import('../src/renderer/dom.js');
+  toast('Plan archived as finished');
+
+  // The Plan catalog emits plans:changed, which also reloads the selected chat. It must not
+  // attempt browser-only controls for a durable session without a browser conversation.
+  notifyPlans();
+  await settle(550);
+  expect(controls).not.toHaveBeenCalled();
+  expect(w.document.querySelector('.toast')?.textContent).toBe('Plan archived as finished');
+  expect(w.document.getElementById('sessionControls')!.hidden).toBe(true);
+});
+
+it('ignores only missing-session control lookups during a Plans refresh, not unrelated control errors', async () => {
+  const { w, notifyPlans } = await boot([]);
+  const api = (w as any).api;
+  api.getSessionControls = async () => ({ ok: false, error: 'session_not_recorded' });
+  notifyPlans();
+  await settle(550);
+  expect(w.document.querySelector('.toast')?.textContent).not.toBe('session_not_recorded');
+
+  api.getSessionControls = async () => ({ ok: false, error: 'conversation_superseded' });
+  notifyPlans();
+  await settle(550);
+  expect(w.document.querySelector('.toast')?.textContent).toBe('conversation_superseded');
 });
 
 it('clears control projections on an existing-session switch and fences A to B to A responses', async () => {

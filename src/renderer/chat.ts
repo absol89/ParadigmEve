@@ -1279,7 +1279,14 @@ async function refreshSessionControls(): Promise<void> {
     paintTaskActions();
     for (const action of ['compactSession', 'cancelCompaction']) $(action).hidden = true;
     return; }
-  const controls = await run(api.getSessionControls(id));
+  // Plans updates also refresh the selected chat. Older/local sessions can exist in Eve's
+  // recorded catalog without a current ChatGPT conversation, so browser-only controls are
+  // unavailable. That is not a failed Plan archive: don't replace the successful archive
+  // toast with the unrelated `session_not_recorded` controls error.
+  const session = sessions.find(row => row.id === id);
+  const reply = session && !session.conversationId ? null : await api.getSessionControls(id);
+  if (reply && !reply.ok && reply.error !== 'session_not_recorded') toast(reply.error);
+  const controls = reply?.ok ? reply.data : null;
   // Monotonic, not latest-request-only: a newer read for the same selection may be issued while
   // this one is in flight (session-list refresh, navigation). Dropping this result then left the
   // status blank until the newer read landed. Never apply a result older than one already shown,
