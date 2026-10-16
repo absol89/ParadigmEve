@@ -2943,6 +2943,8 @@ nav button:hover, nav button.is-sel { background: var(--hover); color: var(--ink
 
 /* The missing-key notice is a whole sentence and the one thing on the row worth reading, so
    it is allowed to wrap where every other setting hint is clipped to a line. */
+.transcription-gpu-recheck { display: block; margin-top: 6px; padding: 3px 10px; font-size: 12px; }
+.transcription-gpu-recheck[hidden] { display: none; }
 .setting-text em.is-warn {
   color: var(--red);
   font-weight: 600;

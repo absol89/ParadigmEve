@@ -84,10 +84,15 @@ export function applyTranscriptionSettings(next: AppState): void {
   ui($('transcriptionGpuState'), 'textContent', () => gpuUsable
     ? t('Uses {0} through Vulkan. Audio stays on this computer.', [gpu?.device ?? 'GPU'])
     : gpu?.status === 'cpu-only-build'
-      ? t('Not available: this installation has no GPU engine.')
+      ? t('This installation was built without the GPU engine. Install a GPU-enabled ParadigmEve build; it needs only your graphics driver, no Vulkan SDK, CUDA or Visual Studio.')
       : gpu?.status === 'device-unavailable'
-        ? t('Not available on this computer: {0}', [gpu.reason ?? ''])
-        : t('Checking this computer\'s graphics card…'));
+        ? t('No usable GPU found: {0}. A current graphics driver with Vulkan support is all it needs; update it and check again.', [gpu.reason ?? ''])
+        : gpu?.status === 'unknown' && gpu.reason
+          ? t('The GPU check did not finish: {0}', [gpu.reason])
+          : t('Checking this computer\'s graphics card…'));
+  // Detection can be repeated at any time (after a driver update, for example); checking is
+  // read-only and never switches the GPU on by itself.
+  $('transcriptionGpuRecheck').hidden = gpuUsable || gpu === undefined || (gpu.status === 'unknown' && !gpu.reason);
   $<HTMLSelectElement>('transcriptionCloudProvider').value = settings.cloud.provider;
   const pane = $('transcriptionPane');
   const editing = pane.contains(document.activeElement);
@@ -120,6 +125,13 @@ export function initTranscriptionSettings(apply: (next: AppState) => void): void
   onState = apply;
   // Probe once per app run; the main process caches the result and re-checks on request.
   void run(window.api.transcriptionGpuProbe()).then((next) => { if (next) onState(next); });
+  const recheck = $<HTMLButtonElement>('transcriptionGpuRecheck');
+  recheck.addEventListener('click', () => {
+    recheck.disabled = true;
+    ui($('transcriptionGpuState'), 'textContent', () => t('Checking this computer\'s graphics card…'));
+    void run(window.api.transcriptionGpuProbe()).then((next) => { if (next) onState(next); })
+      .finally(() => { recheck.disabled = false; });
+  });
   $('transcriptionCloudProvider').addEventListener('change', () => { void save(); });
   for (const avenue of TRANSCRIPTION_AVENUES) {
     $(IDS[avenue].enabled).addEventListener('change', () => { void save(); });

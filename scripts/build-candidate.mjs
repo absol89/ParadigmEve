@@ -3,7 +3,11 @@
 // current branch: no extra worktree, no build branch, no commit. Dogfood the candidate, then commit what
 // passed or revert what broke, so nothing broken gets committed.
 //
-//   node scripts/build-candidate.mjs c11 [--skip-verify] [--remote NAME] [--dry-run]
+//   node scripts/build-candidate.mjs c11 [--skip-verify] [--cpu-only] [--remote NAME] [--dry-run]
+//
+// Windows x64 candidates include the Vulkan GPU transcription engine (EVE_PACKAGE_VULKAN=1) so
+// Settings > Transcription can detect and enable the GPU; --cpu-only leaves it out. CI release
+// packaging is unaffected: prepare-transcription-runtime never includes Vulkan under CI.
 //
 // Output goes to <installers>/<version>/<label>, where installers is PARADIGMEVE_INSTALLERS or
 // `git config paradigmeve.installers` (default: ParadigmEve-installers next to this checkout): the installer, blockmap, .sha256, COMMIT.txt and, when files were
@@ -17,9 +21,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { aheadBehind, compareWithRemote, dirtyLines, fail, git, localSetting, parseFlags } from './release-checkout.mjs';
 
-const { flags, positional } = parseFlags(process.argv.slice(2), { remote: 'string', 'skip-verify': 'boolean', 'dry-run': 'boolean' });
+const { flags, positional } = parseFlags(process.argv.slice(2), { remote: 'string', 'skip-verify': 'boolean', 'cpu-only': 'boolean', 'dry-run': 'boolean' });
 const label = positional[0];
-if (!/^c\d+(?:-r\d+)?$/.test(label ?? '')) fail('usage: node scripts/build-candidate.mjs c<N> [--skip-verify] [--remote NAME] [--dry-run]');
+if (!/^c\d+(?:-r\d+)?$/.test(label ?? '')) fail('usage: node scripts/build-candidate.mjs c<N> [--skip-verify] [--cpu-only] [--remote NAME] [--dry-run]');
 
 const root = git(process.cwd(), ['rev-parse', '--show-toplevel']).stdout;
 const remote = flags.remote ?? localSetting(root, 'remote', 'PARADIGMEVE_REMOTE', 'origin');
@@ -63,6 +67,9 @@ if (flags['dry-run']) process.exit(0);
 const env = { ...process.env };
 const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
 if (process.platform === 'win32') env[pathKey] = `${path.join(env.SystemRoot ?? 'C:\\Windows', 'System32')};${env[pathKey]}`;
+// Every Windows x64 candidate carries the GPU engine unless asked not to (see the header).
+const withGpu = process.platform === 'win32' && !flags['cpu-only'];
+if (withGpu) env.EVE_PACKAGE_VULKAN = '1';
 
 function step(name, command) {
   console.log(`\n== ${name}: ${command}`);
@@ -80,6 +87,10 @@ const packageSeconds = step('package', `node scripts/package.mjs --platform win3
 const exe = 'ParadigmEve-Windows-x64-debug.exe';
 const built = path.join(root, 'release', exe);
 if (!existsSync(built)) fail(`${built} was not produced.`);
+// Prove the packaged app really carries the GPU engine, not only that staging was asked for it.
+const gpuProbe = path.join(root, 'release', 'win-unpacked', 'resources', 'transcription-engine', '.vendor', 'whisper.cpp',
+  'build-vulkan', 'bin', 'Release', 'ggml-probe.exe');
+if (withGpu && !existsSync(gpuProbe)) fail(`the GPU transcription engine is missing from the packaged app (${gpuProbe}).`);
 mkdirSync(dest, { recursive: true });
 for (const name of [exe, `${exe}.blockmap`]) copyFileSync(path.join(root, 'release', name), path.join(dest, name));
 const sha256 = createHash('sha256').update(readFileSync(path.join(dest, exe))).digest('hex').toUpperCase();
@@ -95,6 +106,7 @@ writeFileSync(path.join(dest, 'COMMIT.txt'), [
   `Built: ${builtAt} in ${root}`,
   `Verify: ${verifyNote}`,
   `Package: win32 x64 passed (${packageSeconds}s)`,
+  `GPU transcription engine: ${withGpu ? 'included (Vulkan whisper.cpp)' : 'not included (--cpu-only)'}`,
   `Installer SHA256: ${sha256}`,
   'Not a public release. Not installed.', ''
 ].join('\n'));

@@ -1970,5 +1970,9 @@
   "45 minutes": "45 minutos",
   "60 minutes": "60 minutos",
   "Go to the first message": "Ir al primer mensaje",
-  "Go to the latest message": "Ir al mensaje más reciente"
+  "Go to the latest message": "Ir al mensaje más reciente",
+  "This installation was built without the GPU engine. Install a GPU-enabled ParadigmEve build; it needs only your graphics driver, no Vulkan SDK, CUDA or Visual Studio.": "Esta instalación se compiló sin el motor de GPU. Instala una versión de ParadigmEve con GPU; solo necesita tu controlador gráfico, sin Vulkan SDK, CUDA ni Visual Studio.",
+  "No usable GPU found: {0}. A current graphics driver with Vulkan support is all it needs; update it and check again.": "No se encontró una GPU utilizable: {0}. Solo necesita un controlador gráfico actualizado con soporte para Vulkan; actualízalo y vuelve a comprobar.",
+  "The GPU check did not finish: {0}": "La comprobación de la GPU no terminó: {0}",
+  "Check again": "Comprobar de nuevo"
 }
