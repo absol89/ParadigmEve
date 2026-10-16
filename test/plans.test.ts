@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
-import { archivePlan, backfillSessionPlans, cancelPlan, claimPlanItem, createPlan, listPlans, releasePlanItemClaim, resetPlansForTests, sendPlanRevision, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
+import { RECOVERED_FROM_REPORTS, archiveFinishedPlansForSession, archivePlan, recoverWorkerReportPlans, backfillSessionPlans, cancelPlan, claimPlanItem, createPlan, listPlans, releasePlanItemClaim, resetPlansForTests, sendPlanRevision, setPlanThreadSource, syncSessionAgentPlan, updatePlan } from '../src/main/plans.js';
 import { appendEvent, createSession, initSessionStore, readSessionPlan, rebindSession, resetSessionStoreForTests, updateSessionPlan } from '../src/main/session/store.js';
 
 let directory: string;
@@ -116,6 +116,59 @@ it('fails closed when Plans provenance is ambiguous and never guesses the curren
   expect(changed.items[0]!.status).toBe('done');
   expect((await readSessionPlan(session.id))?.plan[0]?.status)
     .toBe('in_progress');
+});
+
+// 2026-10-14/15: workers reported their results but never wrote a Plan, so Eve activity had no
+// record of them. One archived Plan is rebuilt from each such worker's own delivered reports.
+it("recovers an archived Eve-activity Plan from a worker session's delivered finish reports, once", async () => {
+  const worker = {
+    id: 'worker-session-a', title: 'worker-9 · Fix broker publication', updatedAt: 3_000,
+    origin: { kind: 'worker' }, workerFinishReports: [{ messageId: 'm1', sentAt: 1_000 }, { messageId: 'm2', sentAt: 2_000 }]
+  };
+  const events = async () => [
+    { kind: 'agent_message', time: 1_000, messageId: 'm1', message: { text: '[worker-9 reported] RESULT: Fixed false PUBLISH_FAILED.\nCHANGES: one line.' } },
+    { kind: 'agent_message', time: 1_500, messageId: 'progress', message: { text: 'Still working' } },
+    { kind: 'agent_message', time: 2_000, messageId: 'm2', message: { text: 'RESULT: Verified on c9.' } }
+  ];
+  const sessions = [worker, { id: 'prime-session', title: 'Prime', updatedAt: 3_000, origin: null, workerFinishReports: [] }] as any;
+  expect(await recoverWorkerReportPlans(sessions, events as any)).toBe(1);
+  const library = await listPlans();
+  const recovered = library.done.find(plan => plan.provenance?.sessionId === 'worker-session-a')!;
+  expect(recovered.provenance?.label).toBe(RECOVERED_FROM_REPORTS);
+  expect(recovered.items.map(item => [item.text, item.status])).toEqual([
+    ['Fixed false PUBLISH_FAILED.', 'done'],
+    ['Verified on c9.', 'done']
+  ]);
+  expect(recovered.items[0]!.details).toContain('CHANGES: one line.');
+  expect(recovered.archivedAt).toBe(2_000);
+  // A session that already has a Plan, recovered or authored, is never given another.
+  expect(await recoverWorkerReportPlans(sessions, events as any)).toBe(0);
+  expect((await listPlans()).done.filter(plan => plan.provenance?.sessionId === 'worker-session-a')).toHaveLength(1);
+});
+
+// A heartbeat review worker has no delivered finish report, so its receipt archives its own
+// finished Plan instead. Only that session's finished Plans move to Done.
+it('archives only the finished Plans of one session for a heartbeat receipt', async () => {
+  const reviewer = await createSession({ title: 'Heartbeat review', conversationId: 'review-chat' });
+  const finished = { plan: [{ step: 'Review the batch', status: 'completed' as const, details: 'Four Plans checked.' }] };
+  expect(await updateSessionPlan(reviewer.id, 'review-chat', finished, Date.now())).toBe(true);
+  const own = await syncSessionAgentPlan(reviewer.id, 'review-chat', reviewer.title, finished);
+
+  const other = await createSession({ title: 'Other worker', conversationId: 'other-chat' });
+  const otherDone = { plan: [{ step: 'Unrelated', status: 'completed' as const, details: 'Done elsewhere.' }] };
+  expect(await updateSessionPlan(other.id, 'other-chat', otherDone, Date.now())).toBe(true);
+  const unrelated = await syncSessionAgentPlan(other.id, 'other-chat', other.title, otherDone);
+
+  expect(await archiveFinishedPlansForSession(reviewer.id)).toBe(1);
+  const library = await listPlans();
+  expect(library.done.map(plan => plan.id)).toEqual([own!.id]);
+  expect(library.live.map(plan => plan.id)).toContain(unrelated!.id);
+
+  const busy = await createSession({ title: 'Unfinished review', conversationId: 'busy-chat' });
+  const open = { plan: [{ step: 'Still reviewing', status: 'in_progress' as const, details: 'Not done.' }] };
+  expect(await updateSessionPlan(busy.id, 'busy-chat', open, Date.now())).toBe(true);
+  await syncSessionAgentPlan(busy.id, 'busy-chat', busy.title, open);
+  expect(await archiveFinishedPlansForSession(busy.id)).toBe(0);
 });
 
 it('clears the exact source chat when a shared Plan is cancelled or archived', async () => {

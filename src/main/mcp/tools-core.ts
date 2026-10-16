@@ -30,6 +30,7 @@ import {
   viewImage
 } from '../codex/view-image.js';
 import { logInfo, logWarn } from '../logger.js';
+import { archiveFinishedPlansForSession } from '../plans.js';
 import { SandboxError, isNativeWindowsPath, resolvePath, strayVirtualPath } from '../sandbox.js';
 import { currentWorkspace } from '../workspace.js';
 import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities, type Root } from '../../shared/types.js';
@@ -1355,6 +1356,13 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
       });
       if (receiptResult === 'rejected') {
         return fail('CHAT_REVIEW_RECEIPT_REJECTED: this call does not exactly match the current durable review debt, or a Plan in its batch has no chat_review_plan acknowledgement yet. Leave the review pending; do not guess another key, chat or session. A heartbeat worker that cannot finish the review reports the blocker to Prime and finishes.');
+      }
+      // The worker's own finished Plan (its Eve-activity action list) moves to Done with the receipt,
+      // only while the user lets Eve archive completed work. Revoking that leaves it under Live.
+      if (receiptResult === 'completed' && reviewWorker && caller.sessionId &&
+          getConfig().eveAuthority?.archiveCompletedWork === true) {
+        await archiveFinishedPlansForSession(caller.sessionId).catch((error: unknown) =>
+          logWarn(`heartbeat review could not archive its finished Plan: ${error instanceof Error ? error.message : String(error)}`));
       }
       return ok(receiptResult === 'completed' ? 'Chat review completed.' : 'Chat review was already completed.');
     }));

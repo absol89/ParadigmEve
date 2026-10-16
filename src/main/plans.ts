@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { getConfig } from './config.js';
 import { readDurableStrict, writeDurableNow } from './durable.js';
 import { agentPlanUpdateSchema, type AgentPlanUpdate } from '../shared/agent-plan.js';
-import { indexedSessions, readSessionPlan, updateSessionPlan } from './session/store.js';
+import { indexedSessions, readRecentEvents, readSessionPlan, updateSessionPlan } from './session/store.js';
 import {
   PLAN_CATALOG_MAX,
   planCatalogSchema,
@@ -453,12 +453,71 @@ export function backfillSessionPlans(): Promise<void> {
         plan: plan.plan
       }, { importOnly: true });
     }
+    await recoverWorkerReportPlans(sessions);
   })();
   sessionBackfill = work.catch((error) => {
     sessionBackfill = null;
     throw error;
   });
   return sessionBackfill;
+}
+
+/** Marks a Plan rebuilt from a worker's finish reports, never one the worker authored. */
+export const RECOVERED_FROM_REPORTS = 'Recovered from finish reports (no Plan was written)';
+const RECOVERED_REPORTS_MAX = 20;
+
+/**
+ * Workers that never called update_plan left no Eve-activity record, although their finish
+ * reports were delivered (2026-10-14/15: ten workers, hundreds of calls, zero Plans). Give each
+ * such worker session one archived Plan built only from its own delivered reports: one done item
+ * per report, its first line as the headline and the report as details. A session with any Plan
+ * (authored or recovered) is left alone, so this runs once per session and invents nothing.
+ */
+export async function recoverWorkerReportPlans(
+  sessions: Awaited<ReturnType<typeof indexedSessions>>,
+  readEvents: typeof readRecentEvents = readRecentEvents
+): Promise<number> {
+  const candidates = sessions.filter(session => session.origin?.kind === 'worker' && (session.workerFinishReports?.length ?? 0) > 0);
+  if (!candidates.length) return 0;
+  let recovered = 0;
+  for (const session of candidates) {
+    const wanted = new Map((session.workerFinishReports ?? []).map(report => [report.messageId, report.sentAt]));
+    const events = await readEvents(session.id, 400, { kinds: ['agent_message'] });
+    const reports = events
+      .filter(event => event.kind === 'agent_message' && wanted.has(String((event as { messageId?: unknown }).messageId)))
+      .map(event => {
+        const text = String((event as { message?: { text?: unknown } }).message?.text ?? '').trim();
+        return { text, at: wanted.get(String((event as { messageId?: unknown }).messageId)) ?? event.time };
+      })
+      .filter(report => report.text)
+      .sort((a, b) => a.at - b.at)
+      .slice(-RECOVERED_REPORTS_MAX);
+    if (!reports.length) continue;
+    const made = await queueMutation(async () => {
+      const plans = await readRecords();
+      if (plans.some(plan => plan.provenance?.sessionId === session.id)) return false;
+      const room = withRoomForPlan(plans);
+      const headline = (text: string) => (text.replace(/^\[[^\]]+ reported\]\s*/, '').replace(/^RESULT:\s*/, '')
+        .split(/\r?\n/)[0] || 'Reported result').slice(0, 1_000);
+      const first = reports[0]!.at;
+      const last = reports[reports.length - 1]!.at;
+      const created: PlanRecord = {
+        id: randomUUID(),
+        title: (session.title || 'Worker').slice(0, 160),
+        items: reports.map(report => ({ id: randomUUID(), text: headline(report.text), status: 'done', details: report.text.slice(0, 2_000) })),
+        revision: 1,
+        provenance: { kind: 'plan', sessionId: session.id, label: RECOVERED_FROM_REPORTS },
+        createdAt: first,
+        updatedAt: last,
+        archivedAt: last,
+        agentRevision: last
+      };
+      await writeRecords([...room, created]);
+      return true;
+    });
+    if (made) recovered++;
+  }
+  return recovered;
 }
 
 /** Ensure one session's already-durable plan has a first-class Plans projection on demand. */
@@ -1061,6 +1120,18 @@ export async function archiveWorkerPlansForDeliveredReport(messageId: string): P
     plan.worker.reportMessageId === messageId &&
     plan.readyToArchive
   );
+  for (const plan of matches) await archivePlan(plan.id);
+  return matches.length;
+}
+
+/**
+ * Archives the finished Plans one session wrote. A heartbeat review worker reports through its
+ * review receipt, not an ordinary finish report, so the delivered-report path above never
+ * archives its Eve-activity Plan; the receipt does instead. Unfinished Plans are never archived.
+ */
+export async function archiveFinishedPlansForSession(sessionId: string): Promise<number> {
+  const library = await listPlans();
+  const matches = library.live.filter(plan => plan.provenance?.sessionId === sessionId && plan.readyToArchive);
   for (const plan of matches) await archivePlan(plan.id);
   return matches.length;
 }
