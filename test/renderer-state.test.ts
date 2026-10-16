@@ -878,6 +878,41 @@ it('moves the configured agent sticker to New Chat when no owner exists and mark
   }));
 });
 
+it('arms the pristine startup composer as Eve when a heartbeat worker exists but no durable owner does', async () => {
+  const sendInput = vi.fn(async (input: any) => ({ ok: false as const, error: `stop:${input.id}` }));
+  const mounted = await mountChat({}, [], {
+    getSwarm: async () => ({ ok: true, data: {
+      enabled: true, running: true, currentAgentConversationId: null, retainedHistory: true,
+      agents: [{
+        id: 'worker-1', role: 'worker', label: 'Heartbeat review', task: 'Read-only heartbeat review',
+        model: null, reasoningEffort: null, state: 'active', createdAt: 1, activatedAt: 1, finishedAt: null,
+        result: null, pending: 0, awaitingAck: 0, delivered: 0, conversationId: 'heartbeat-worker-conversation',
+        detachedAt: null, lastSeenAt: 3, revivable: false, sleptAt: null, contextTokens: 0
+      }]
+    } }),
+    sendInput,
+    getChatModels: async () => ({ ok: true, data: {
+      state: 'ready', requestedAt: 1, observedAt: Date.now(),
+      models: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', efforts: ['none', 'high'] }]
+    } })
+  });
+  const doc = mounted.window.document;
+  (doc.getElementById('backToChat') as HTMLButtonElement).click();
+  await settle();
+
+  const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
+  expect(input.value).toBe('@Eve ');
+  input.value += 'try a tool call';
+  doc.getElementById('composer')!.dispatchEvent(new mounted.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+
+  expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({
+    sessionId: null,
+    text: '@Eve try a tool call',
+    claimAgentIdentity: true
+  }));
+});
+
 it('arms exact replacement only when top-level New Chat sees one ended current Eve owner', async () => {
   const owner = {
     id: 'ended-eve-session', title: 'Old Eve chat', conversationId: 'ended-eve-conversation', chatIds: ['ended-eve-conversation'],
@@ -921,8 +956,7 @@ it('arms exact replacement only when top-level New Chat sees one ended current E
   expect(sendInput).toHaveBeenCalledWith(expect.not.objectContaining({ claimAgentIdentity: true }));
 });
 
-// 2026-10-12: a never-chosen paid composer sends on Sol 5.6 Medium, never ChatGPT's own GPT-6 default.
-it('starts a paid fresh Eve composer on Sol 5.6 Medium until the user chooses otherwise', async () => {
+it('starts an unselected paid fresh Eve composer on provider default until the user chooses otherwise', async () => {
   const sendInput = vi.fn(async (input: any) => ({ ok: false as const, error: `stop:${input.id}` }));
   const mounted = await mountChat({}, [], {
     sendInput,
@@ -938,7 +972,7 @@ it('starts a paid fresh Eve composer on Sol 5.6 Medium until the user chooses ot
   (doc.getElementById('newChat') as HTMLButtonElement).click();
   await settle();
 
-  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
+  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
 
   const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = '@Eve use the selected model';
@@ -948,8 +982,8 @@ it('starts a paid fresh Eve composer on Sol 5.6 Medium until the user chooses ot
   expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({
     sessionId: null,
     text: '@Eve use the selected model',
-    model: '5.6',
-    reasoningEffort: 'medium'
+    model: null,
+    reasoningEffort: null
   }));
 });
 
@@ -1001,12 +1035,12 @@ it('starts the organize tutorial from its card without models and preserves its 
   const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
   expect(input.value).toBe('Help me get started with %organize.');
   expect(doc.getElementById('chatTitle')!.textContent).toBe('New chat · %organize');
-  // Unknown models: the never-chosen default is Sol 5.6 Medium; a Free page sends on its own default.
-  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
+  // Unknown models cannot authorize an automatic paid-model choice.
+  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
   doc.getElementById('composer')!.dispatchEvent(new mounted.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle();
   expect(sent).toHaveLength(1);
-  expect(sent[0]).toMatchObject({ sessionId: null, contextQuiltId: id, text: 'Help me get started with %organize.', model: '5.6', reasoningEffort: 'medium' });
+  expect(sent[0]).toMatchObject({ sessionId: null, contextQuiltId: id, text: 'Help me get started with %organize.', model: null, reasoningEffort: null });
   expect(requestChatModels).not.toHaveBeenCalled();
   input.value = 'Organize my Downloads by project.';
   navigateWorkspace({ screen: 'chat' });

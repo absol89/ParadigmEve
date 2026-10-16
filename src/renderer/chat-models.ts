@@ -552,13 +552,13 @@ export function applyChatModels(config: Config, previous?: Config): void {
   const preferenceChanged = previous && (config.ui?.chatModel !== previous.ui?.chatModel || config.ui?.chatReasoning !== previous.ui?.chatReasoning);
   if (!composerPreferenceLoaded || preferenceChanged) {
     composerPreferenceLoaded = true;
-    // Never chosen (undefined) means Sol 5.6 Medium, so ChatGPT's own GPT-6 default does not take
-    // over Eve's chats. An explicit "ChatGPT default" is saved as null and stays native.
-    defaultComposerChoice = config.ui?.chatModel === undefined && config.ui?.chatReasoning === undefined
-      ? { model: CHATGPT_SOL_MODEL_ID, reasoningEffort: 'medium', editedAt: 0 }
-      : config.ui?.chatModel && config.ui?.chatReasoning
-        ? { model: configuredChatSettingsModel(config.ui.chatModel), reasoningEffort: config.ui.chatReasoning, editedAt: 0 }
-        : null;
+    // A never-chosen composer has no authority to change the ChatGPT account's native model.
+    // In particular, a new Free/Go account can open before discovery identifies its native-only
+    // picker; manufacturing Sol Medium here made first-run messages request a paid model. Keep
+    // genuine saved user choices, including an explicit null/native-default preference.
+    defaultComposerChoice = config.ui?.chatModel && config.ui?.chatReasoning
+      ? { model: configuredChatSettingsModel(config.ui.chatModel), reasoningEffort: config.ui.chatReasoning, editedAt: 0 }
+      : null;
   }
   if (!composerContext) applyComposerSessionModel(null, null);
   // Any chat without exact provider state (fresh or established) shows the saved current-chat pair

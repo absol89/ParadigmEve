@@ -2882,6 +2882,28 @@ function paintSwarm(state: SwarmState): void {
   newChatBadge.hidden = !replacementOwner;
   ui(newChatBadge, 'textContent', () => replacementOwner ? configuredAgentName() : '');
   ui(newChatBadge, 'aria-label', () => replacementOwner ? configuredAgentName() : '');
+  // On a fresh install the initial composer already represents the top-level New Chat surface,
+  // so there is no reason to make the user click New Chat once merely to establish Eve's first
+  // exact owner. currentAgentConversationId is the ownership authority; a heartbeat or other
+  // worker conversation in state.agents cannot take this path. Reuse the same claim path as the
+  // explicit New Chat action, limited to the untouched startup selection so navigation back to
+  // an ordinary draft never silently changes its ownership intent.
+  if (
+    replacementOwner &&
+    selectionGeneration === 0 &&
+    newChatSelected &&
+    selectedId === null &&
+    selectedProjectId === null &&
+    selectedContextQuiltId === null &&
+    pendingNewInput === null
+  ) {
+    newChatAgentClaim = true;
+    const input = $<HTMLTextAreaElement>('chatInput');
+    if (input.value.trim() === '') {
+      input.value = `@${configuredAgentName()} `;
+      paintDeliveryControls();
+    }
+  }
   paintStateLine();
   // Session rows borrow their live badge from the swarm, so a worker that just went to sleep
   // must not keep saying "active" until some unrelated session update repaints the list.
