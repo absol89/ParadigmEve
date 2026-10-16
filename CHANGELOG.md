@@ -15,8 +15,8 @@ operation.
 
 ## [2.4.1] — Smoother first run
 
-**Status:** `release/2.4.1`, built on `v2.4.0`. The `v2.4.1` tag is set after the Windows x64
-candidate passes self-testing.
+**Status (2026-10-17):** tagged `v2.4.1` on `main` and `release/2.4.1`, built on `v2.4.0`. A
+Windows x64 candidate of this line passed installed self-testing before the tag.
 
 ### Fixed
 
@@ -28,6 +28,11 @@ candidate passes self-testing.
   ids. The folder is the app's per-user copy (`%APPDATA%\paradigmeve\extension` on Windows).
 - **First Eve chat.** A fresh install's first chat claims Eve without clicking New Chat first, even
   when the heartbeat review already has a chat. The prefilled `@Eve ` is offered once.
+- **Plan bar width.** The Plan and queue bar above the input box now has the input box's full width
+  and runs straight into it.
+- **Clearer "Not sent" messages.** A heartbeat finding that met a busy chat now says the heartbeat
+  sends it again (it always did), and a restart wake into a chat that was already working says it
+  was not needed, instead of both reading as a lost message.
 - **Heartbeat review chat name.** The app-owned heartbeat review chat is shown as **Heartbeat
   review** instead of ChatGPT's "Coding agent collaboration" title, which made a read/review-only
   chat look like a working coding agent.

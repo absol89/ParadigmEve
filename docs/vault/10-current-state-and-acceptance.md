@@ -9,10 +9,9 @@ installer and a live acceptance run are different evidence levels.
 
 ## Current product state
 
-- Current source: **2.4.1** on `release/2.4.1`, onboarding fixes on top of the `v2.4.0` tag.
-  `v2.4.1` is tagged after its Windows x64 candidate passes self-testing.
-- Latest tag: **`v2.4.0`**, the final 2.4.0 head of `release/2.4.0` and public `main`
-  (2026-10-16; the GitHub release page shows the tagged commit).
+- Current tagged source: **`v2.4.1`** on public `main` and `release/2.4.1` (2026-10-17; the
+  GitHub release page shows the tagged commit): onboarding fixes on top of `v2.4.0`. A Windows
+  x64 candidate passed installed self-testing before the tag.
 - Package version, `APP_VERSION` and Companion manifest all declare **2.4.1**.
 - Bridge protocol: **15**.
 - The locally installed **Windows x64 debug self-test build** was produced from

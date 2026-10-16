@@ -177,7 +177,7 @@ On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso a
 
 ## v2.4.1: smoother first run
 
-The app and Companion source currently declare **2.4.1** on `release/2.4.1`. It fixes onboarding problems a new user met in 2.4.0: automatic Companion loading on Windows, the first message going out without a model choice, the first Eve chat not being claimed, and a heartbeat side chat named like a coding agent. The `v2.4.1` tag is set after the Windows x64 candidate passes self-testing. Read the [v2.4.1 release notes](docs/release-notes/v2.4.1.md).
+The app and Companion source currently declare **2.4.1**, tagged `v2.4.1` on `main`. It fixes onboarding problems a new user met in 2.4.0: automatic Companion loading on Windows, the first message going out without a model choice, the first Eve chat not being claimed, and a heartbeat side chat named like a coding agent. A Windows x64 candidate passed installed self-testing before the `v2.4.1` tag. Read the [v2.4.1 release notes](docs/release-notes/v2.4.1.md).
 
 ## v2.4.0: GitHub tag, installed self-testing, published downloads
 
