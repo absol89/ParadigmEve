@@ -25,6 +25,8 @@ sessions/<session-id>/
 - `meta.json` — durable summary/checkpoint projection.
 - `assets/` — large text/screenshots/binaries that should not bloat the journal.
 - `handoffs/` — Compact & Resume briefs.
+- `plan.json` — the exact session's current `update_plan` checklist when it has one; the
+  app-wide first-class catalog is projected only after an accepted plan update.
 
 The store never decides two messages are the same because their text looks alike. Stable identity comes from the page/Fiber producer.
 
@@ -58,7 +60,7 @@ An entry tracks more than text:
 - stable message id / delivery receipt;
 - images and native attachments;
 - Goal/finish ownership;
-- internal attention payloads such as worker reports or heartbeat review.
+- internal attention payloads such as worker reports and Prime findings returned by heartbeat review.
 
 ### Delivery states are intentionally distinct
 
@@ -74,6 +76,26 @@ Critical retry rule:
 - **browser send claimed but missing ACK** is ambiguous and is **not** automatically resent because ChatGPT may already have accepted it.
 
 The outbox is written through `writeDurableNow` before publication to live state.
+
+### Exact request identity and the send boundary
+
+`src/main/session/input.ts`, `src/main/session/start-input.ts` and the Companion keep an authored
+outbox row's stable id, session, exact ChatGPT conversation/lineage and owner through browser/tool
+handoff. A queue offer, browser claim, Send authorization and provider acceptance are separate
+evidence boundaries. A page may claim an offered message only for the same valid target and
+current page state; model/reasoning selection, blocked/superseded status and local-only restrictions
+still apply. A send that may have reached ChatGPT is **not** automatically replayed because a
+reply or browser ACK was lost.
+
+The user's **Force Send** control is a narrow recovery of the **same original, unclaimed user
+row**, typically when a restart left a stale open-turn inference. It does not manufacture another
+message id or grant a second Send after a browser/tool offer, claim, Send authorization or delivery
+receipt. `forceBrowserInput` requires current session ownership, a valid exact target (including a
+proven Compact & Resume successor), unchanged selected model family **and reasoning effort** if
+specified, and no competing user input or browser Send in that session. Internal app attention,
+such as a queued heartbeat finding, is not by itself a Force Send blocker. A changed model, draft
+or voice ownership can still refuse the browser's final Send. The UI can display a refusal reason;
+the queued original remains reviewable. See the [Force Send playbook](11-debugging-playbooks.md).
 
 Direct-send admission belongs to each durable session. A queued restart wake or ambiguous receipt
 in another conversation cannot occupy Eve's composer. New-chat openings with no session retain
@@ -94,16 +116,20 @@ Those choices are evidence based. A stale durable `activeTurnId` after restart i
 If ChatGPT does not accept a worker's bootstrap Send, the command fails without replaying a possible
 click. The Companion clears only its own unchanged bootstrap draft; any text the user changed stays.
 
-## Heartbeat attention transport
+## Heartbeat worker findings and Prime attention
 
-Semantic heartbeat debt has one stable key, but transport idempotency is scoped to the **exact session + conversation target**, not globally to that key.
+The current 22-minute heartbeat sends its **review work to a bounded worker** tied to an exact
+Prime session; it no longer delivers the review prompt into Prime's browser composer. That worker
+may read locally recorded sessions and Plan sources, classify them, and send a provenance-bound
+finding to Prime. It cannot perform the user's requested work or mutate a user Plan. Its review
+epoch closes only on an accepted direct `chat_review_complete` receipt, after direct
+`chat_review_plan` acknowledgements for every selected Plan.
 
-That matters when:
-
-- Compact & Resume moves the same session from conversation A to B;
-- a canonically stalled coordinator transfers the same review debt to a new exact coordinator.
-
-A confirmed browser send can also be re-presented after its exact coordinator positively completes a turn without the semantic `chat_review_complete` receipt. Active/ambiguous sends remain deduped.
+Returning a finding is a separate durable delivery to Prime's own outbox. Exact session and
+conversation ownership still govern that handoff across A → B Compact & Resume and coordinator
+changes. A browser Send authorization with missing receipt stays ambiguous; the heartbeat stores
+bounded `uncertainFindings`/pending delivery evidence instead of replaying a possibly accepted
+message or holding up future reviews. See [runtime heartbeat](02-runtime-browser-recovery.md).
 
 ## Compact & Resume
 
@@ -131,6 +157,17 @@ The sequence is deliberately ordered:
 
 The model handoff brief is context only. It is never used as application state reconstruction.
 
+### What remains attached across the handoff
+
+The transaction carries durable **session, project, chat lineage, outbox, checkpoint and worker
+garden** identity; old chat A becomes a readable historical frontend, and new chat B receives
+the current authority only after the commit. A queued exact restart wake or Prime finding follows
+the session's proven successor. Nothing authorizes typing it back into superseded A. A worker
+cannot self-compact; source code rejects worker Compact & Resume and applies eligibility checks
+before automatic compaction. The reported c28 candidate dogfood included a successful Compact &
+Resume path, which is useful acceptance evidence for that candidate, but does not prove every
+interrupted-send or crash boundary or the bytes of a different installed/public build.
+
 ## Send checkpoints
 
 Continuation prompts use a four-position checkpoint model:
@@ -148,10 +185,18 @@ the page can prove the armed draft disappeared while the replacement still has n
 `destinationLost` releases that claim so the same handoff can be offered to a fresh replacement chat.
 Once dispatch may have happened, ambiguity remains fenced instead of retyping the brief.
 
+Manual Force Send is not a shortcut around these continuation checkpoints: it only re-offers an
+eligible, untouched original user outbox row and still follows the exact current chat lineage.
+
 The tab opened for a continuation is owned by that continuation while it carries the app command marker.
 It is not eligible for ordinary chat reuse even before `destinationAttempt`; reusing it could move the
 page away and strand the handoff. The same ownership also blocks incompatible Companion reloads once a
 destination attempt has begun.
+
+The Companion must preserve an actively used ChatGPT page: do not retarget an unrelated tab,
+overwrite a user-edited draft, silently change the model, steal focus from a focused ChatGPT
+window or create duplicate sends to recover an uncertain handoff. Browser maintenance uses
+exact route/marker and fresh interaction evidence; see [runtime browser safety](02-runtime-browser-recovery.md).
 
 Automatic compaction gives an already-running local tool call up to **six minutes** to settle after the
 turn is stopped. A call still running beyond that bound causes the automatic source handoff to be

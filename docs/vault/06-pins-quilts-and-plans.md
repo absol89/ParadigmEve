@@ -13,7 +13,7 @@ Concepts = promptless zero-Pin labels/objects
 Instructions = prompted zero-Pin shortcuts
 Threads = one-or-more-Pin work/context fabrics and mandatory homes for Pins
 Quilts = broad thematic/context organization of Threads, addressed with #quilt
-Plans = live first-class work objects independent of the source chat
+Plans = durable first-class work objects independent of the source chat
 ```
 
 ## Workspace navigation
@@ -285,6 +285,9 @@ Schema validation also rejects orphan Pins, duplicate ids and invalid Quilt memb
 ## Plans
 
 `src/main/plans.ts` + `src/shared/plans.ts` own first-class Plans.
+In **2.4.0** (`v2.4.0` source at `aac7643b`), the Plans screen separates
+human-facing **Plans** from **Eve activity**. This is one durable catalog with
+two audience projections, not two independent Plan databases.
 
 A Plan contains:
 
@@ -311,14 +314,37 @@ the real three-step durable Plan immediately. If `%plans` is activated some othe
 outcome, the prompt may still ask one short question. A true editable Plans Create form remains
 deferred beyond this source line.
 
+## Plans versus Eve activity
+
+The default **Plans** tab holds human-facing work and Prime-owned milestones.
+**Eve activity** holds execution Plans whose exact originating session has a
+`worker` or `helper` origin. Origin is followed through Compact & Resume; a
+worker label, title, last visible chat, or a generated sentence cannot establish
+that audience. A Prime `update_plan` stays in Plans, even when Prime is
+coordinating several workers. A worker's own `update_plan` belongs to Eve
+activity. Both tabs have Live and Done sections with their own counts.
+
+The human Plans tab also includes compact, expandable **Verified work** summaries
+for the Eve activity Plans, while the full worker checklists live under Eve
+activity. Worker status/provenance and delivered finish reports are projected
+from durable session evidence. Reporting to Prime is a lifecycle action, not a
+checklist step, and cannot block a worker Plan from becoming Ready to archive.
+
 ## Live and Done are lifecycle sections
 
 There are exactly two product sections:
 
 - **Live** — all unarchived Plans, including a Plan whose checklist is 100% done;
-- **Done** — explicitly archived Plans.
+- **Done** — archived Plans (human-initiated archive/cancel or a verified worker-report archive).
 
-Finishing every checkbox only makes a Plan **ready to archive**. It stays Live until the user/Eve explicitly archives it. That prevents “the checklist completed itself and vanished” from being treated as workflow completion.
+Finishing every checkbox makes a Plan **Ready to archive**. A human/Prime Plan
+stays Live until explicitly archived as finished; cancellation may instead move
+an incomplete Plan to Done while preserving its actual checklist progress. A
+completed worker Plan can **automatically archive after its own current finish
+report has a verified delivery receipt at Prime**. That acknowledgement is the
+boundary for moving worker activity from Live to Done; finishing a checklist,
+closing a worker window or merely queueing a report is insufficient. No
+unrelated worker Plans are swept into Done by a different worker's receipt.
 
 ## Revision fence
 
@@ -343,6 +369,10 @@ project to first-class Plan
 ```
 
 The first-class library does not become an alternate way around session ownership.
+Use distinct stable Plan step keys in each worker's own `update_plan`, record
+actual steps and finish them truthfully. A worker's separate `agents finish`
+report and its recipient-side delivery evidence control reporting/automatic
+archival; neither should be invented as an extra checklist item.
 
 ## Session-plan import and restart safety
 
@@ -359,6 +389,13 @@ Current behavior:
   source provenance.
 
 If an archived/done checklist later reappears as active todo/in-progress work, it becomes a new Live projection instead of being hidden behind the existing Done object.
+
+**Evidence level:** the audience, worker-report and receipt-based archive rules
+above are confirmed in tagged 2.4.0 source (`src/main/plans.ts` and
+`src/renderer/plans-library.ts`). An installed c28 may carry the compiled
+features demonstrated during local dogfood, but a public Git tag alone does
+not prove any particular installer or live screen state. Check the installed
+candidate and durable sessions to investigate missing Eve activity rows.
 
 ## Renderer ownership
 

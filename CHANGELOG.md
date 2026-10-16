@@ -13,21 +13,50 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
-## [2.4.0] — Windows preview, resilient wakes and transcription
+## [2.4.0] — Source checkpoint, resilient wakes and transcription
 
-### In development: built-in file-format broker (not yet shipped)
+**Public source checkpoint (2026-10-16):** `main`, `release/2.4.0` and
+`v2.4.0` point to `aac7643b`. The local privacy/typecheck/notices and
+5,882 + 20 + 2 automated tests passed, along with six Python source-aware
+tests. GitHub CI passed all four Windows/macOS/Linux/Swedish-locale jobs on
+both release and main. This **source tag does not publish installers**;
+the public release-assets workflow is separate and manual.
 
-- Upcoming 2.4.0 source instructions make Eve discover and use its **built-in file-format broker** whenever a user asks to open, edit, proofread, convert or otherwise work with a Word document (DOCX), PDF, spreadsheet or slide presentation. This guidance is intended to be available automatically in fresh conversations without a special command or earlier chat context.
+### File-format broker included in tagged source
+
+- 2.4.0 source instructions make Eve discover and use its **built-in file-format broker** whenever a user asks to open, edit, proofread, convert or otherwise work with a Word document (DOCX), PDF, spreadsheet or slide presentation. The guidance is available in fresh conversations without a special command or earlier chat context.
 - Resolve supported file providers and broker capabilities **before** suggesting an unrelated external editor installation. Provider availability is checked rather than assumed; missing capabilities must be reported honestly.
 - Preserve the original file: edits use a separate local working copy, with fidelity or feature-loss risks identified before proceeding. Native application installation, opening a visible editor, and other consent-sensitive actions remain subject to explicit user approval and existing safety checks.
-- These changes describe the **development source path for a future 2.4.0 candidate**. They are not a claim that the feature is present in any already-installed c7/c8/c9/c10 candidate or publicly released installer.
+- The user reported opening WordCraft and GridCraft in installed c28. Actual editor features, install availability, format fidelity and cross-platform behavior still depend on provider capabilities, and are not implied by the source tag.
+
+### c28-era reliability and workflow improvements
+
+- Heartbeat now uses a bounded, read-only worker with exact debt/Prime lineage,
+  source-backed Plan review, durable completion receipts and actionable findings
+  for Prime. It does not browse ChatGPT history or execute discovered user tasks.
+- Workers are instructed to use their own `update_plan` so new execution Plans
+  project to **Plans → Eve activity**; delivered and archived worker Plans remain
+  visible under Done. Historical workers without authored Plans are not silently
+  backfilled, and unidentified connector traffic is not guessed into a worker.
+- Keep wake, Compact & Resume and Force Send tied to exact conversation/input
+  identity. Recover provider stream failures and preserve drafts, voice sessions,
+  model choice and active tabs rather than resending ambiguous instructions.
+- Windows c28 was installed and dogfooded for heartbeat, wake, compaction,
+  transcription, diarization, WordCraft/GridCraft opening, and Force Send.
+  The Vulkan probe was usable on the test GPU. The candidate's recorded dirty
+  source patch already included track-separated mic/system transcription, echo
+  suppression, overlapping-speech flags, and narrow-width Pins navigation; those
+  features need their own live behavior acceptance, not a claim that they were
+  absent from the installer. Worker/heartbeat Plan-prompt updates were committed
+  after c28 was built and are source-only until another candidate is packaged.
 
 Windows x64 **preview accepted locally** (2026-10-14): the c7 installer built from `1ac504221d15`, passed 5,766 automated tests (42 skipped), installed with no visible command-window popup, and delivered one confirmed restart wake to the exact Eve chat without any pending duplicate. The +1/+2-minute fallback has test coverage but has not been live-tested against a deliberate pickup failure. Other operating systems and Windows ARM64 have not received live acceptance. The public preview tag and publication are separate actions.
 
 - Settings → Transcription: GPU (priority 1), Local (2) and Cloud via Groq (3), each with a switch
   and a whole-number priority. The lowest enabled number runs first; unavailable options are skipped.
-- Cloud is off by default and can only be enabled while its own Groq key is stored in the OS
-  credential store. Removing the key turns Cloud off.
+- Cloud is off by default and uses only the selected provider's stored key:
+  Groq's dedicated transcription key or the existing OpenAI API key for OpenAI.
+  Diarization remains local; neither credential is a ChatGPT login token.
 - GPU transcription on Windows x64 through Vulkan. The GPU switch stays disabled until Eve has
   tested the graphics card, and every job records the backend and device that really ran.
 - Safe restart wake recovery at one and two minutes after boot preserves the original message ID, exact conversation, draft/Voice safeguards and send authority; confirmed sent wakes retire untouched same-chat duplicates.

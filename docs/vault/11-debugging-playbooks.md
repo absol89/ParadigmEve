@@ -25,6 +25,11 @@ Inspect:
 
 Do **not** select the intended chat from title, newest timestamp or visible foreground tab.
 
+Before any repair/reload, prove the target is still the same registered document and not a
+focused human ChatGPT tab with an active draft, voice, typing or pending navigation. A pinned
+or newly retargeted tab is not disposable recovery capacity. See
+[browser repair custody](02-runtime-browser-recovery.md).
+
 ## Message was duplicated, lost or appeared in the wrong transport
 
 Start with the durable `session-input` row, not the browser composer.
@@ -37,9 +42,32 @@ Questions:
 - Is there a stable `messageId` / `deliveredAt`?
 - Was a later exact request seen that proves tool receipt?
 - Did a positive terminal turn allow route transition?
-- Is the entry user input, Goal/finish debt, worker attention or heartbeat attention?
+- Is the entry a user instruction, Goal/finish debt, worker/Prime finding, restart wake or
+  legacy heartbeat attention? The current 22-minute review itself runs in a worker.
 
 Never automatically replay an ambiguous browser send.
+
+### Force Send seems unavailable or refuses to send
+
+Check `src/main/session/input.ts::forceBrowserInput`, `forceSendRefusal`,
+`forceBrowserContextValid` and `src/main/session/start-input.ts::forceSendDesktopInput`:
+
+1. Locate the **original** durable user row by id. Confirm it is queued or has the specific
+   pre-pickup browser-start failure, with no tool/browser owner, offer, Send authorization,
+   delivered message id or receipt. A cancelled ambiguous send is ineligible.
+2. Check exact local session and conversation lineage after Compact & Resume, Block/privacy
+   status, and any selected model **family and reasoning effort**. A `-thinking`/`-instant`
+   observed lane suffix may be equivalent to its selected model family; distinct models are not.
+3. Identify a same-session competing **user** queue row or browser Send. **Queued** app-owned
+   findings and attention rows alone must not block the author's untouched row; a different chat's
+   pending wake likewise must not occupy this composer.
+4. At final browser admission, inspect current target route, human draft/voice activity and
+   native Send evidence. A successful Force Send is still one attempted transport, not proof
+   ChatGPT accepted it; never manually type a duplicate to make the queue look empty.
+
+The 2026-10-16 source includes regression tests for same-session blocker filtering and the
+exact GPT-6 model-family comparison (`test/session-input.test.ts`). A local acceptance result
+for one forced message does not prove every privacy/duplicate edge has been exercised.
 
 ## Worker appears dead
 
@@ -54,6 +82,10 @@ Check broker state before opening/replacing anything:
 
 A closed tab only proves **detached**, not finished. A browser revival ACK only proves message acceptance, not active worker liveness.
 
+For a heartbeat review worker, inspect the app-owned debt key and broker's actual assigned
+review task before reviving it. A silent review worker can be slept and reused with bounded
+backoff, but its missing `chat_review_complete` receipt means the epoch is still pending.
+
 ## Plan went backward after restart
 
 Compare:
@@ -66,6 +98,32 @@ Compare:
 Current contract: session-plan data is import-only once a matching first-class Plan exists. If a stale
 session projection overwrites newer first-class progress, that is a regression in `plans.ts`, not a
 reason to manually edit AppData.
+
+## Worker completed work but Eve activity shows only one Done Plan
+
+Separate **worker run history**, **session-local Plan** and **first-class Plan catalog** before
+changing filters. In order:
+
+1. Inspect the worker broker's exact run/worker conversation and its recorded `update_plan`
+   calls. If a worker never called `update_plan`, there is no worker Plan to display; tool activity,
+   completion prose and `agents action=finish` do not create a backfilled checklist.
+2. If a Plan exists, follow `provenance.sessionId` through `origin.kind=worker` (or the
+   `resume.fromSessionId` chain); `plans.ts::planAudience` assigns it to Eve activity from this
+   **durable ancestry**, not the worker name or sidebar title. A missing/ambiguous source cannot
+   safely be guessed into the worker category.
+3. Check the first-class `plans` catalog, session `plan.json` revision, and section (`live` or
+   `done`). A completed checklist can be Live/Ready to archive before its actual archive. For
+   worker Plans, exact delivered finish-report evidence can trigger automatic archive; inspect
+   `archiveWorkerPlansForDeliveredReport` and worker `reportMessageId` when a completed Plan is
+   unexpectedly still Live. Human Plans require the user's archive action.
+4. Compare Eve activity and human-facing Plans/Verified work projections with these same
+   source records. A missing visible Plan after a proven worker `update_plan` is a projection/
+   attribution issue; a missing Plan without such a call is a worker workflow gap. A trailing
+   "Report to Prime" checkbox on an older worker Plan is not substantive unfinished work.
+
+The current broker asks the **heartbeat review worker** explicitly to create its own Plan.
+For other multi-step workers, provide that requirement in the assignment and verify the real
+`update_plan` receipt; do not describe historical workers as though they all have Plans.
 
 ## Pin points to the wrong recorded source conversation
 
@@ -112,6 +170,11 @@ for ten minutes", and queued app messages wait behind a turn that never ends.
    and report only structure, never text.
 4. Build the regression fixture from that probed shape, and run the shipped `fiber.js` + `content.js`
    together end to end; hand-written descriptors hid this class of break twice.
+
+If ChatGPT instead displays a bare transport-error notice without a native Retry control or
+alert role, inspect `extension/chatgpt-dom.js` error detection before diagnosing the whole
+assistant stream as empty. Read current source and build a fixture for the exact rendered shape;
+do not reload a healthy, actively generating page just to collect evidence.
 
 ## Stale "Still working" request toasts
 
@@ -173,16 +236,39 @@ Then verify the path still passes `sandbox.ts` realpath containment; workspace c
 
 ## Heartbeat keeps reappearing
 
-Look at durable `chat-review-heartbeat` debt and the exact target's session input rows.
+Inspect the bounded durable `state/chat-review-heartbeat.json` debt, its `reviewLane`, exact
+key, `planBatch`/`planAcks`, the worker broker task and its source session records. Read only
+the debt's locally recorded session window and selected Plan provenance. **Do not inspect
+ChatGPT browser history** to fill a missing source. The worker's permitted review calls and
+Prime delivery are separate timelines.
 
 Ask:
 
-- was the semantic `chat_review_complete({key})` receipt ever accepted?
-- did the target move A -> B via Compact & Resume?
-- did the owner canonically stall and transfer?
-- did a confirmed send finish a turn without the receipt?
+- Did the authorized **worker**, with this exact key, record direct `chat_review_plan`
+  acknowledgements for every selected Plan and an accepted `chat_review_complete` receipt?
+- Did the Prime source session move A → B via Compact & Resume or an exact owner transfer?
+  Check lineage rather than assigning by recency.
+- Did a worker turn end without that receipt? Check stale-worker revival/backoff before
+  sending another identical task every minute.
+- Was the finding sent to Prime, still pending, or preserved in `uncertainFindings` because
+  a browser Send may already have happened? Never resend an ambiguous finding.
 
-Repeated presentation after a completed turn with no semantic receipt can be intentional. Repeated concurrent/ambiguous browser sends are not.
+The review worker is **read-only** and can report a still-valid task; Prime decides whether to
+execute it. A completed review does not imply that Prime executed any finding. The current
+code tests worker-key authority, Plan revision fences, uncertain finding custody and broker
+backoff; failed or blocked review remains reportable and may keep a durable debt.
+
+## Compact & Resume or restart wake targets the wrong chat
+
+Compare the exact session id, `chatIds` lineage, source A and successor B, pending recovery
+input id/turn id, and continuation WAL stage before attempting any delivery. A durable startup
+wake belongs to one interrupted turn and cannot be copied to a new guessed conversation; the
+active Compact & Resume transaction prevents ordinary messages entering superseded A.
+Destination `attempt` and `dispatch` checkpoints are distinct. A click with no acceptance
+receipt may already have sent the handoff, so preserve its ambiguity. Browser repair must not
+reuse the continuation command tab or overwrite a human-edited draft. Inspect
+`src/main/session/recovery-memory.ts`, `src/main/session/continuation.ts`,
+`extension/background.js` and `extension/content.js` before any corrective navigation.
 
 ## A failure after a tool/browser side effect
 

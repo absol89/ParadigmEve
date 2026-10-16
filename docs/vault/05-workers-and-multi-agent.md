@@ -23,6 +23,35 @@ report their results back to her.
 
 Friendly ids like `worker-2` are local to one run and are never global ownership keys.
 
+## Worker Plans and Eve activity
+
+An assigned worker with several meaningful steps should create **its own real `update_plan`**
+near the start and keep it updated with the implementation and checks actually performed. A
+Markdown checklist or a Prime-authored overview is not that worker's Plan. The broker does
+**not** silently synthesize Plans from every historical worker or tool call: a worker without
+a recorded `update_plan` may have completed real work but will have **no Plan card** in Eve
+activity. This is a known coverage limit, not evidence that the worker did nothing.
+
+`src/main/mcp/plan-tool.ts` writes the worker's plan into its exact local session, then
+`src/main/plans.ts` projects an accepted revision into the first-class Plans catalog. Audience
+comes from **durable source-session provenance**: a worker/helper `origin.kind`, or that
+origin reached through the `resume.fromSessionId` chain, is shown under **Eve activity**;
+ordinary Prime/user Plans remain in the human-facing Plans view. The manager can also show
+worker work in a collapsed **Verified work** summary. Only Plans with durable origin evidence
+are attributed this way; a worker-friendly label is not ownership proof.
+
+A completed worker checklist is **Ready to archive** from its substantive work items. Reporting
+or handing off to Prime is a lifecycle result, not a fourth checkbox or an archive blocker;
+legacy report-only trailing steps do not keep an otherwise completed worker Plan artificially
+Live. `agents action=finish` submits the worker result separately, and delivered-report evidence
+is tracked by message id and session ancestry. Eligible completed worker Plans can **auto-archive
+when that exact report delivery is proved** and then remain visible in Eve activity → Done. A
+completed ordinary human Plan instead stays Live until its user archives it. Do not equate
+"all checklist items done", "reported", "archive accepted" or "worker sleeping".
+
+See [Plans and provenance](06-pins-quilts-and-plans.md) and
+[debugging a missing worker Plan](11-debugging-playbooks.md).
+
 ## The configured agent is the human-facing owner
 
 The worker broker is the persistent harness. The model/runtime used for the owning agent and the
@@ -128,6 +157,23 @@ When the agent messages a sleeping worker:
 
 Two consecutive failed wake attempts are reported instead of retrying forever.
 
+## App-owned heartbeat review worker
+
+The 22-minute semantic heartbeat uses a special **bounded review-only worker**, managed by the
+same broker but tied to one exact Prime lineage and debt key. It must record its own review
+checklist via `update_plan`, which appears in Eve activity. It may read the exact locally recorded
+session/selected-Plan sources, call `chat_review_plan` and `chat_review_complete` with the current
+key, and report an actionable finding to Prime. It may **not** inspect ChatGPT browser history,
+execute or delegate user work, mutate user Plans, open the browser, install, send user messages or
+claim another worker's work. The MCP kernel also enforces this restricted tool lane; Prime owns
+decisions and any later execution.
+
+`dispatchHeartbeatReviewWorker` persists the review identity before reviving/spawning. Active
+workers that have gone silent are not assumed to be executing forever: the broker has bounded
+stale-worker recovery and backoff so an unreceipted epoch does not repeatedly wake/report each
+minute. A worker's chat finishing without the exact heartbeat receipt leaves the review debt
+pending. See [heartbeat semantics](02-runtime-browser-recovery.md).
+
 ## Dormant families
 
 Closing the owner's chat tab does not automatically destroy reusable workers. A garden with sleeping
@@ -146,6 +192,9 @@ Owner transfer is not a separate heuristic. `session/continuation.ts` freezes th
 durable A -> B rebind succeeds.
 
 That preserves one authority: the continuation transaction.
+
+The worker Plan's source follows its **session provenance** through any subsequent continuation;
+do not reclassify it as a user Plan because its current ChatGPT conversation changed.
 
 ## Workspace inheritance
 

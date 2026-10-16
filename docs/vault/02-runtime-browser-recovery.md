@@ -4,6 +4,11 @@ Back to [vault index](README.md).
 
 This subsystem is where “the app is running” is deliberately separated from “Chrome exists”, “the Companion is paired”, “a current ChatGPT document checked in”, and “this exact chat may be reloaded.”
 
+The public **v2.4.0** source checkpoint (`aac7643b`) and an installed **c28** candidate are
+different evidence levels. A source contract or candidate dogfood observation does not prove
+an installed machine is running those exact bytes; verify its Companion build and recovery
+readiness before claiming installed behavior.
+
 ## Process lifetime
 
 `src/main/index.ts` owns the Electron lifetime.
@@ -49,7 +54,9 @@ Persisted pairing from yesterday cannot satisfy post-install recovery readiness 
 
 ## Browser repair authority
 
-The current 2.3.7 source line uses **bridge protocol 15**.
+The checked 2.4.0 source uses **bridge protocol 15**. That protocol number establishes an
+app/Companion handshake contract; the source version alone cannot prove which bytes are installed
+or which Companion generation Chrome is actually running.
 Model discovery excludes command-marked handover and worker tabs. The page also refuses discovery
 while it has a command marker, active command attempt or command journal gate, so opening the model
 picker cannot replace the composer owned by that command. Background-window reconciliation leaves
@@ -92,7 +99,8 @@ Important rules:
 - Silence is measured from durable activity evidence, not from browser visibility.
 - A browser lifecycle event does not erase the semantic fact that a turn is still owed.
 - A confirmed repair gets a cooldown / observation window; repeated reloads are bounded.
-- A background tab can be raised when required because Chromium throttling can otherwise freeze long recovery work.
+- Browser attention may be required for throttled background work, but changing the foreground tab
+  needs its own current focus, page and human-interaction checks.
 
 - An **unattributed-activity** repair first asks the page whether ChatGPT is streaming
   (`clf-page-status` → `streaming`). A streaming page is alive: the repair stands down, reports the handout
@@ -101,6 +109,19 @@ Important rules:
   exist for pages that look busy and are not.
 
 Known broad silence windows in current code: ordinary work uses the standard two-minute silence concept; known Pro work gets a longer window. Exact constants and special Goal/compaction schedules live in `bridge.ts` and should be read before changing recovery timing.
+
+### Protect an actively used ChatGPT page
+
+`extension/background.js` separates tab ownership from the permission to focus, relocate, reload
+or reuse a tab. A pinned tab, pending navigation, active human draft, typing/voice state or changed
+document is not an expendable recovery target. Foreground-window tab switches can steal keyboard
+focus even without raising a Windows window, so the Companion checks both the actual window focus
+and whether the exact target is already active. Background-window maintenance has its own proof.
+
+App-owned command pages carry explicit markers, and browser repair rechecks the exact request at
+the last claim before acting. If the current tab or composer no longer matches, leave it alone;
+do not open a second copy of an active conversation or resend an uncertain message. See
+[session delivery and continuation](04-sessions-outbox-and-continuation.md) for send ownership.
 
 ## Page evidence on ChatGPT's current renderer and stream
 
@@ -225,26 +246,43 @@ equal to the installed one:
 
 ## 22-minute semantic review heartbeat
 
-`src/main/chat-review-heartbeat.ts` is a separate kind of recovery: it recovers **user intent that received prose but not the requested local execution**, and it prevents older durable Plan commitments from disappearing merely because they aged out of the recent-chat window.
+`src/main/chat-review-heartbeat.ts` persists a review of **locally recorded requests that may
+have received an answer without the requested action**, plus old Live Plans that still need a
+source-backed status review. This is separate from the authenticated socket's transport wake.
+The current 2.4.0 lane dispatches an **app-owned, read/review-only worker** through
+`src/main/agents.ts`, tied to the exact proven ordinary Prime session/conversation and the
+epoch's opaque debt key. It does not type the review into Prime's composer.
 
-Every 22 minutes, one exact non-worker/non-helper connector-proven conversation can receive one durable epoch with two obligations:
+Each due epoch has two bounded obligations:
 
-- review the recent request window using locally recorded sessions only; missing cross-device conversations are outside this heartbeat's scope and do not block its completion; and
-- review a rotating batch of at most four durable Live Plans, following each exact Plan → Source before classifying or acting.
+- Review recent **locally recorded sessions** between the exact debt `sinceAt` and `untilAt`.
+  **Do not inspect ChatGPT browser history or use Computer Use to discover other conversations.**
+  Unrecorded phone/cross-device chats are unknown, outside this pass and not grounds to guess.
+- Review up to **four** selected Live Plans, following each exact Plan id, revision and source
+  session before classifying it. A truncated checklist label is display-only; the Plan's durable
+  provenance and ids are retained.
 
-Each selected Plan requires direct `chat_review_plan` acknowledgement. Evidence-backed checklist reconciliation may mark only exact open items done; the Plans owner atomically fences revision plus full source provenance. Human Plans are never auto-archived. Partial acknowledgements survive restart/owner transfer, and retries omit already-acknowledged Plan snapshots so bounded unattended work is not duplicated.
+The worker may read local/session evidence, record its **own** `update_plan` checklist in Eve
+activity, acknowledge each selected Plan with direct `chat_review_plan`, send a bounded finding
+to Prime, and finish. `src/main/mcp/kernel.ts` blocks ordinary mutation, execution, delegation,
+file editing, installation and browser driving in this lane. It cannot change a user's Plan
+checklist or archive it. `chat_review_plan` reports `ready-to-archive`, `tbd`, `blocked`,
+`superseded` or `awaiting-user`, with exact revision/source revalidation. **Prime decides**
+whether a reported unfinished request should actually be executed.
 
-The Plan snapshot is display-bounded against the real 96k browser-message cap by shortening only item display text; ids, statuses, revision and provenance stay exact. Final completion revalidates all live Plan targets under the Plans-owner validation fence while the heartbeat receipt is committed.
+Only an accepted direct `chat_review_complete` call bearing this worker's exact key, lineage,
+classification and required per-Plan acknowledgements retires the epoch. A browser ACK, final
+model prose or worker finish is not that receipt. New debts use `reviewLane=worker`; legacy
+Prime receipts cannot complete them. Partial acknowledgements and the bounded Plan batch survive
+restart and exact Compact & Resume rebind. Broker retries are fenced by worker/key/Prime identity;
+a silent worker can be put to sleep for a real revival, and repeated no-receipt wakes are bounded.
 
-Completion requires explicit `chat_review_complete({key})`. Browser send/final text is not enough.
-
-Pending debt survives:
-
-- restart;
-- exact Compact & Resume rebind from conversation A to B;
-- canonical `turn_end: stalled` transfer to another proven ordinary coordinator.
-
-The fixed Plan batch and partial acknowledgements move with that same epoch/key. A selected Plan that changes revision or provenance is re-reviewed; a later authoritative archive is accepted; malformed or missing Plan state fails closed.
+An accepted finding destined for Prime is tracked independently from the review clock. If the
+finding's browser Send was authorized but its delivery is ambiguous, the durable
+`uncertainFindings` trail retains that uncertainty rather than replaying the send or freezing
+every later heartbeat. A later verified finding reaches Prime through the normal outbox. This
+is a **review and handoff mechanism**, not proof that every due heartbeat acted or that any
+unrecorded user request was discovered.
 
 See the detailed design in [`docs/chat-review-heartbeat-implementation.md`](../chat-review-heartbeat-implementation.md).
 

@@ -27,9 +27,11 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-10-14**, including current working-tree changes. App/extension **2.4.0 development**,
+Source alignment: **2026-10-16**, public 2.4.0 source checkpoint `aac7643b` plus any
+subsequent explicitly reviewed changes. App/extension **2.4.0**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
-`extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
+`extension/manifest.json`). The public Git tag is source provenance, not proof of
+downloadable release assets, installation or live Chrome behavior.
 
 ## 1. What the whole app is meant to do
 
@@ -74,12 +76,11 @@ losing the project, history, workers or queued instructions when a chat grows to
 6. **Continue across time and surfaces.** Workers sleep for reuse. Compact & Resume moves the same
    local session from old ChatGPT chat A to new chat B. History remains readable; queued work and
    project identity remain attached to the session. Ordinary ChatGPT conversations are not local
-   project silos: a 22-minute semantic review heartbeat can wake one exact proven installation-agent coordinator
-   to look for still-valid user work that received only prose instead of the requested local
-   execution. Exact locally recorded history is primary; the coordinator may inspect ChatGPT's
-   live web history with Computer Use for cross-device conversations that this always-on assistant has not yet
-   recorded. The heartbeat is review authority, not permission to mutate a guessed source chat;
-   newer instructions, active work, ambiguous ownership and already-completed results win.
+   project silos: a 22-minute semantic review heartbeat sends a scoped, read-only worker to
+   inspect locally recorded user work and unfinished durable Plans. It does **not** inspect
+   ChatGPT browser history or infer missing cross-device conversations. Its verified findings
+   go to Prime for a separate decision; the reviewer cannot execute or delegate user work.
+   Newer instructions, active work, ambiguous ownership and completed results win.
 
 ### Feature vocabulary — keep these distinctions
 
@@ -99,7 +100,7 @@ losing the project, history, workers or queued instructions when a chat grows to
 | Goal objective | The requested finish line for one chat. It persists independently of a provider attempt. |
 | Goal / Loop | Mutually exclusive modes of one driver. Goal can decide no further message is needed; Loop continues within scope. |
 | Generated workflow / checkpoints | User instructions owned by the outbox; delivered at real finish/completion boundaries. |
-| Chat review heartbeat | One durable 22-minute semantic review obligation that wakes the exact installation-agent coordinator to find still-valid execution requests that fell through as prose. It is not a completion detector, source-chat owner, or blanket action grant. |
+| Chat review heartbeat | A durable 22-minute review obligation assigned to a bounded worker for exact local sessions and selected Plans. The worker may report a finding to Prime, not execute user work, infer unrecorded history, or seize source-chat authority. |
 | `update_plan` | The agent's displayed progress plan. It does not execute or consume queue entries. |
 | `session_finish` | Astra's explicit near-finish hold/notice boundary; does not mean the whole task is already verified. |
 | Prime / worker | One owning conversation and its reusable subordinate chats. Several prime families may run independently. |
@@ -305,7 +306,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Transcript execution/artifact | `transcription-runner.ts` + packaged engine output, then session/archive attachment/event pathways | Actual backend/device/fallback/model/privacy provenance comes from the completed runtime result, never a requested setting alone. Audio/transcript statements are evidence, not authorization to execute unrelated actions. |
 | App Plans catalog | `plans.ts` / `state/plans.json` | Strict read and serialized mutation; accepted session plans project only after the session stale-call fence, renderer edits carry an expected revision, and only explicit archive moves a completed Plan from Live to Done; explicit cancel moves any Live Plan to Done with `cancelledAt` equal to `archivedAt` and its checklist unchanged (the one archived state allowed to be incomplete). The catalog holds 5,000 Plans, live and archived together; archived Plans are the user's history and are never removed automatically. A full catalog refuses new Plans with `Plan catalog limit reached`. It is one file rewritten per change and the Plans surface renders every archived card, so growing past this needs per-Plan storage and paging, not a larger constant. |
 | Input and checkpoints | `input.ts` / `state/session-input.json` | Serialized acceptance, frozen payload, exclusive claim and receipt; stages belong here. |
-| Chat-review heartbeat debt | `chat-review-heartbeat.ts` / `state/chat-review-heartbeat.json` | Persist the exact review debt before browser transport. Advance `lastCompletedAt` and clear debt only after direct `chat_review_complete` from that exact ordinary coordinator/session/conversation. Browser ACK/final prose never closes debt. Missing/corrupt auxiliary state may repeat review, but cannot grant source identity or bypass action checks. |
+| Chat-review heartbeat debt | `chat-review-heartbeat.ts` / `state/chat-review-heartbeat.json` | Persist the exact review debt before worker dispatch. Advance `lastCompletedAt` and clear debt only after direct `chat_review_complete` by the authorized exact review-lane worker with matching debt key and lineage. Browser ACK/final prose never closes debt. Missing/corrupt auxiliary state cannot grant source identity or bypass review-lane checks. |
 | Native upload originals | `input-attachments.ts` / `input-attachments/` | Immutable bytes, opaque ids; outbox owns membership and retention. |
 | Project catalog | `projects.ts` / `state/projects.json` | Serialized catalog mutation; session metadata owns association. |
 | Expenses canonical records | linked project `data/ledger.json` via `expenses-ledger.ts` | Structured records remain authoritative; exact source provenance and audited corrections are preserved. `expenses_read` only reads and never binds a session or activates the write playbook. The separate `expenses` mutation surface may bind an unbound exact chat through its explicit `%expenses` reference; Start-from-Thread binds through normal input preparation. A fresh unbound send containing plain `#expenses` binds the chat to the canonical Expenses project (so the conversation can later record or correct entries without restarting as `%expenses` and losing context) but never activates the Thread prompt/playbook; it never rebinds an already-bound chat and yields to a real same-name Quilt. Existing bound continuations retain their authority; workers/helpers cannot mutate. Raw receipt copies are optional user-chosen evidence, and Thread/chat summaries are never a second ledger. |
@@ -883,11 +884,14 @@ with the same fingerprint and retries only classified pre-delivery failures with
   Only after that session authority accepts the update does `plans.ts` project it into the
   app-wide Plans catalog. The renderer derives audience from durable session ancestry: ordinary
   Prime/user work stays in the manager-facing Plans view, while worker execution plans are grouped
-  under Eve activity. The human Plans view still rolls those worker plans up as collapsed
+  under Eve activity. A worker must call its own `update_plan` for an actual worker checklist
+  to appear there; historical worker tool calls alone do not synthesize a Plan. Archived worker
+  Plans remain in Eve activity → Done rather than being discarded. The human Plans view still rolls those worker plans up as collapsed
   **Verified work**, preserving their completed audit/checklist evidence without giving every
   execution plan equal visual weight with the user's goals. This is a presentation split over the
   same durable catalog, so grouping a worker plan never deletes its history. The inline card can dismiss after
-  completion, while the first-class Plan remains in Live as ready to archive until the user explicitly moves it to Done. Prepared
+  completion, while a first-class Prime Plan remains in Live until the user archives it. A completed
+  worker Plan may instead auto-archive after its exact finish report is delivered, when that policy applies. Prepared
   handoffs include an exact-session notice to inspect the saved plan. Neither representation
   delivers instructions nor completes/deletes queued checkpoints.
 
@@ -923,19 +927,15 @@ replacement invalidates the old attempt. Progress uses the existing mutable time
 notifications are scoped to that exact turn and may be suppressed when the app is open.
 Old periodic **finish/checkpoint generation** rows remain retired. The one deliberate periodic
 exception is the 22-minute **chat-review heartbeat** owned by `chat-review-heartbeat.ts`. It does
-not generate continuation work from a stale turn and never injects through MCP results. Instead it
-durably queues/coalesces one browser-only internal attention message to the newest uniquely owned,
-non-worker installation-agent conversation that has positively used the connector. That model turn reviews exact
-local session history first and may inspect the signed-in ChatGPT web history with Computer Use for
-phone/app/web conversations the always-on assistant has not recorded. The model must verify the source request,
-newer instructions, current repository/files and existing/running work before acting. Ambiguous or
-blocked ownership fails closed. The review obligation is separate from its cancellable browser
-transport: persist one exact debt before enqueue, let explicit user input supersede an unclaimed
-attention row, and reissue that same debt only after positive non-delivery or restart. Each debt
-gets an opaque random receipt key that is revealed in the heartbeat prompt rather than derived from
-the clock. A proven same-session Compact & Resume rebind may move that pending debt from historical
-chat A to the session's current chat B; title/recency/nearby-chat guesses may not. A browser
-send ACK, sidebar state, assistant final, or ordinary prose response is never semantic completion.
+not generate continuation work from a stale turn or inject through MCP results. It persists one
+bounded review debt and dispatches it through the app-owned **read/review-only heartbeat worker**
+lane. That worker reads exact locally recorded sessions and source-backed Plan snapshots, never
+ChatGPT browser history or speculative cross-device work. Its own `update_plan` is allowed only
+for recording the worker's review checklist under Eve activity; no user Plan may be mutated by
+that permission. The worker may not execute, delegate, install, send user work, or navigate the
+browser. Unfinished findings are reported durably to Prime, which decides independently whether
+the underlying request still needs execution. Each debt has a distinct key and exact Prime/worker
+lineage. A browser send ACK, assistant final, or worker prose is not a heartbeat completion receipt.
 
 Every **new** heartbeat epoch also owns a durable Live-Plan pass. Select from `listPlans()` in stable
 Live order, human-facing Plans first, and freeze at most **four** exact targets. Keep those selected ids
@@ -947,10 +947,10 @@ stored checklist state is stale or work is still TBD.
 
 Each selected Plan requires direct `chat_review_plan` before `chat_review_complete`. The lifecycle
 classification is one of `ready-to-archive`, `tbd`, `blocked`, `superseded`, `awaiting-user`. Optional
-`completed_item_ids` may change only exact still-open items to `done`; heartbeat authority is checked
-first, then the Plans owner atomically revalidates expected revision **and full durable provenance** in
-its own mutation serializer. Human Plans are never auto-archived. Exact mutating transport replay is
-idempotent from durable acknowledgement metadata; changed request/classification/item sets fail closed.
+`completed_item_ids` is not authorized in the read-only heartbeat review lane. The Plans owner
+revalidates exact revision and **full durable provenance** before accepting a classification;
+this review cannot complete items or archive human Plans. Replayed acknowledgements are
+idempotent for the same exact classification; changed inputs fail closed.
 For Eve/worker Plans, reporting or handing off to Prime is lifecycle evidence, not a Plan checklist
 step. Do not create `Report to Prime`, `Hand off to Prime`, or equivalent handoff-only Plan items.
 For legacy Plans that still contain one trailing report-only item after the substantive work is done,
@@ -959,19 +959,17 @@ unavailable; do not let report-only debt keep completed Eve Activity live. Expli
 remains useful metadata when it is available, but it is not an archive prerequisite.
 Retries/transfer preserve partial acks and omit already-acknowledged snapshots so unattended work is
 not duplicated. A changed live revision/source clears that Plan's stale ack and requires re-review.
-If the exact owner has a canonical terminal `stalled` turn and no newer active turn, the same
-epoch/key may be transferred to another exact ordinary connector-proven coordinator. Elapsed time
-or a quiet/background tab alone is never enough to transfer ownership, and a resumed active turn
-keeps its debt. Once transferred, the old owner cannot receipt the epoch.
-Only after inspection, any still-valid bounded execution, and verification are complete may that
-exact coordinator call direct `chat_review_complete` with the durable review key. The tool takes
-session/conversation/request identity from authenticated call context, rejects workers/helpers,
-wrong keys and ambiguous ownership, and only then advances `lastCompletedAt` to the debt boundary.
+If the review worker stalls, the broker may retry/reassign only under its bounded, exact
+debt-key/Prime-lineage rules, never from recency, title or a quiet browser tab. Only after the
+read-only recent-request review and exact selected-Plan acknowledgements may the **authorized
+heartbeat worker** call direct `chat_review_complete` with the current key. The tool derives
+authenticated worker/Prime lineage from caller context, rejecting legacy Prime/other worker
+receipts and ambiguous ownership. It reports `completed` for no remaining actionable work,
+or `dispatched`/`blocked`/`failed` with a concrete finding for Prime where warranted.
 For Plan-bearing debt, final receipt requires one current ack per target and revalidates live targets
 under a Plans-owner fence held through the heartbeat-state commit (lock order heartbeat → Plans); a
 later authoritative archive is acceptable. The receipt is idempotent and cannot be called through
-code mode. A heartbeat with nothing still
-owed performs no substantive work; it is not license to treat every recent conversation as a task.
+code mode. A heartbeat with nothing still owed closes without invented work or findings.
 
 ## 12. Recording, history, context and usage
 
@@ -1966,22 +1964,27 @@ renderer, so changing a runtime environment variable cannot unlock a driver excl
 installed build. Non-shipping packages append `-debug` or `-dev` to their artifact name; shipping
 keeps the canonical public filenames used by release/update flows.
 
-For the current local **2.3.7** Windows self-test line, the laptop builds **x64 debug
-only** so the implemented GPT Chat agent lane remains available. Preserve prior release and installer
-evidence; do not overwrite archived evidence while qualifying 2.3.7. A private Angel display copy may omit `-debug`
+For the locally tested **2.4.0 c28** Windows candidate, the laptop builds **x64 debug**
+so the GPT Chat agent lane remains available. The public v2.4.0 source tag and green
+cross-platform source CI do not mean downloadable installers have been published. Preserve
+prior candidate/installer evidence. c28's recorded dirty source snapshot **did**
+include track-separated transcription and responsive Pins files; inclusion is
+not proof that their harder live multi-speaker/overlap cases were accepted.
+Worker/heartbeat Plan-prompt edits made after c28 packaging remain source-only.
+A private Angel display copy may omit `-debug`
 only when its filename remains visibly non-canonical (for example
 `ParadigmEve-2.2.4-x64-Angel-<hash>.exe`) and its recorded provenance still says the compiled
 flavor is debug. Never rename those bytes to the canonical shipping/update filename.
 Public arm64 artifacts are a separate release workflow and must never be substituted for
 the local debug artifact.
 
-The **2.3.7 line is cumulative over the public 2.3.6 release**. Git provenance must say that plainly. Before
-packaging or claiming a 2.3.7 candidate, inspect
+The **2.4.0 source checkpoint is cumulative over earlier public releases**. Git provenance
+must say that plainly. Before packaging or claiming a 2.4.0 candidate, inspect
 `git branch --show-current`, `git status`, recent history and the tracked release notes. A final
-release checkpoint must contain the accepted cumulative 2.3.7 work over that ancestry; package/version
+release checkpoint must contain the accepted cumulative 2.4.0 work over that ancestry; package/version
 declarations or a stale directory name do not prove ancestry. Do not create/switch a release
 branch from stale HEAD while leaving the real cumulative work only in the working tree.
-`docs/release-notes/v2.3.7.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
+`docs/release-notes/v2.4.0.md` belongs in that cumulative checkpoint. If source changes after a package is built, rebuild before calling the later artifact
 current. A dirty worktree is allowed during active integration, but it is not immutable release
 evidence and must be described honestly until checkpointed. `scripts/package.mjs` enforces this by
 default: packaging requires a clean target-version branch (or exact version tag) and tracked current

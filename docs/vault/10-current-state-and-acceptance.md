@@ -2,19 +2,26 @@
 
 Back to [vault index](README.md).
 
-This page is the current development operating checkpoint. It records what must be true in the
-2.4.0 development source line and the acceptance gates to use before packaging, installing, or calling a change
-complete. Public release or installed-runtime status needs its own release/runtime evidence; source
-version alone does not prove either one.
+This page is the **2.4.0 source checkpoint and acceptance guide**. It records
+verified source, local candidate evidence and the checks still needed before
+calling a feature installed or a downloadable release ready. A Git tag, a local
+installer and a live acceptance run are different evidence levels.
 
 ## Current product state
 
-- Current source package/app line: **2.4.0 development**.
-- The earlier **App + Companion 2.2.2** Angel checkpoint remains historical release context.
+- Current tagged source: **`v2.4.0` at `aac7643b`** on `release/2.4.0`,
+  synchronized with public `main` at the checkpoint inspected 2026-10-16.
+- Package version, `APP_VERSION` and Companion manifest all declare **2.4.0**.
 - Bridge protocol: **15**.
-- A 2.4.0 package is not coherent until `package.json`, `APP_VERSION`, and the Companion manifest
-  agree; do not mistake a dirty development tree for a shipped 2.4.0 runtime.
-- Laptop builds are **debug** builds unless the release policy explicitly changes.
+- The **c28 Windows x64 debug** local candidate was built from earlier commit
+  `7b30cc22` with a recorded source patch. Its build/packaging checks passed;
+  it was subsequently installed and exercised locally. Installed app/asar and
+  Vulkan engine/probe bytes were checked against that candidate. This does
+  not establish that later tagged source changes were installed.
+- The `v2.4.0` tag is source provenance. Public installers/downloads depend on
+  separate CI packaging, checksums and publication; the tag alone proves none
+  of those completed, and local Windows acceptance does not cover other OSes.
+- Windows candidate builds here use **debug** flavor unless release policy changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
 
@@ -48,7 +55,15 @@ version alone does not prove either one.
 - Threads own editable standing prompts, distinct from Prompt Pins.
 - Current authored user text remains the final instruction boundary.
 - Plans are first-class durable objects. Completing checklist items does not archive a Plan;
-  explicit archive moves it from Live to Done.
+  human/Prime Plans remain Live until explicit archive moves them to Done.
+- **Plans** defaults to human-facing work (including Prime-authored Plans).
+  **Eve activity** contains Plans from exact worker/helper-origin sessions, with
+  worker execution checklists and Live/Done sections. The human Plans tab also
+  displays expandable Verified work summaries of Eve activity.
+- A completed worker Plan becomes Ready to archive after its actual work is
+  done; it can auto-archive when the worker's current finish report is proven
+  delivered to Prime. A mere sent/queued report cannot close it. An explicit
+  cancellation preserves any incomplete checklist as cancelled history.
 - Pins → Create is a local unsaved editor, not a chat. Save requires a non-empty unique name and the
   object kind follows content: Pins → Thread, prompt without Pins → Instruction, no prompt/Pins → Concept.
   Link and description do not classify the object.
@@ -79,11 +94,40 @@ version alone does not prove either one.
   and versioned through the Skills owner surface.
 - The prompt carries compact metadata only. Full procedures remain lazy so a growing installed skill
   library does not consume the normal conversation budget.
+- Availability depends on actually installed Skill packages and a model/client
+  with the `skills` tool; an empty or filtered catalog does not establish that
+  any particular request used a Skill. Source implements list/view and controlled
+  Eve-owned create/update, not unrestricted rewriting of imported procedures.
+
+## File-format broker and optional editors
+
+- Fresh Core tool instructions direct document (DOCX), spreadsheet (XLSX), PDF
+  and slide (PPTX) requests to built-in `file_action` discovery first. Local
+  `inspect`/`read` works on bounded approved files without installing an editor;
+  `providers` takes a **format only** when the file is a Library link or otherwise
+  not available locally. It never fetches Library URLs.
+- The registry advertises optional in-development **WordCraft**
+  (`artcraft.wordcraft`, word documents) and **GridCraft**
+  (`artcraft.gridcraft`, spreadsheets) by supported format. Discovery does not
+  prove installed availability. The user must request installation and approve
+  Eve's separate **native** confirmation; the official platform build is
+  checked before use. Decline/Not now are honored.
+- With an installed ready provider, `file_edit provider_tools` discovers
+  supported operations; `edit` validates a **new copy**, and `open_visible`
+  opens a copy only when a GUI and permitted Computer Use are available.
+  Detected DOCX or XLSX/XLSM features that would be lost require an additional
+  native feature-loss consent before broker editing. The original is never
+  overwritten by this workflow.
+- These contracts predate and are included in the c28 source/build line.
+  Provider opening reported during c28 local dogfood is narrower evidence
+  than file-edit fidelity or a published release. See
+  [MCP and tools](03-mcp-connectors-and-tools.md#file-broker-inspect-offer-edit-or-show).
 
 ## Local transcription and diarization
 
-- Windows packages can include the local transcription engine, embedded Python runtime, pinned
-  Whisper/diarization components and a packaged `whisper.cpp` build.
+- The installed c28 Windows x64 candidate includes the local transcription
+  engine, embedded Python runtime and CPU/Vulkan `whisper.cpp` binaries;
+  local verification matched the Vulkan binaries and probe to the c28 package.
 - First use may fetch pinned, verified FFmpeg and model payloads into the managed transcription
   runtime. After those are present, local transcription and speaker diarization run offline.
 - GPU transcription is capability-driven, not assumed. `gpu-probe` distinguishes a compiled/usable
@@ -99,6 +143,18 @@ version alone does not prove either one.
 - A combined track can still be produced for compatibility, but production evidence fusion should
   prefer the clearer per-span source using ASR confidence, acoustic quality, timing agreement and
   diarization evidence rather than treating one track as globally authoritative.
+- The c28 recorded source patch and tagged source provide a more specific
+  first path: for a recorded `mix.wav` with audible mic + system tracks and
+  automatic speaker count, it
+  transcribes/diarizes each track independently, keeps track-specific speaker
+  identities, flags simultaneous speech, and suppresses likely playback echo.
+  Unit tests cover the merge contract; full automatic **three-voice overlap**
+  and accurate speaker discovery in live recording remain **unverified**.
+  The source-aware code was checkpointed after the c28 build, which already
+  contained an earlier recorded patch; its installed pipeline/CLI/settings
+  matched the tagged source on inspection, while the `sources.py` difference
+  was confined to a comment. See
+  [Dynamic Skills and local transcription](17-dynamic-skills-and-local-transcription.md#source-aware-pipeline-in-the-tagged-240-source).
 - Completed transcript artifacts preserve local-processing/privacy and execution provenance. Native
   paths and credentials must not leak through renderer/browser-facing transcript metadata.
 
@@ -245,6 +301,10 @@ Prove the installed package contains the current main/renderer bundle and packag
   new object, blank/duplicate names keep Save disabled, and content determines Concept/Instruction/Thread.
 - Plans → Create resolves the durable Plans starter and opens a fresh conversational Plan-creation chat
   whose authored onboarding message is `Make me a 3 step plan to get started with %plans`.
+- Prime `update_plan` appears under Plans, while worker/helper-origin
+  `update_plan` projects under Eve activity. Confirm the worker's own checklist
+  is visible there, and that only the matching delivered finish report can
+  auto-archive a Ready worker Plan into Eve activity → Done.
 - `%thread` and `#quilt` resolve according to the current model;
 - pristine installs have the current starter Threads, and an eligible older custom-only Pins library
   receives the current starter generation without overwriting user Threads;
@@ -260,12 +320,21 @@ Prove the installed package contains the current main/renderer bundle and packag
   installed catalog stays bounded without truncating the authored request;
 - a packaged transcription runtime reports its real CPU/GPU capability, and a GPU proof records the
   actual backend/device/fallback state rather than inferring it from CLI flags;
+- one consented real local transcription proves Whisper actually used the
+  requested backend and that the completed output reports the same backend;
 - mic + system-audio recording preserves separate tracks, allowing headphone-safe capture and later
   per-span comparison/fusion before or instead of mixing;
+- an automatic source-aware recording identifies three genuine speakers,
+  retains overlapping voices, and distinguishes playback echo from a separate
+  speaker in the merged, speaker-labelled transcript;
+- `file_action` correctly inspects an approved local DOCX/XLSX or reports
+  providers by format for a Library link; any WordCraft/GridCraft install gets
+  native confirmation, any fidelity-risk edit gets a separate native decision,
+  and edits/open-visible operate on copies;
 - Pin → Unpin repaints immediately and removal survives restart;
 - duplicate Pin protection;
 - a multi-item Plan's progress survives restart;
-- completed checklist stays Live until Archive;
+- a completed human checklist stays Live until Archive;
 - archived Plan lands in Done;
 - no obsolete settings-refresh flow steals the active chat;
 - exact recovery returns Chrome to the owed ChatGPT conversation.
@@ -299,7 +368,8 @@ For a fuller evidence-first checklist, see [Debugging playbooks](11-debugging-pl
 
 - Chat is a harvesting/review surface, not the durable home of Plans.
 - Every Pin chooses one Thread destination.
-- Plans remain Live until explicit archive.
+- Human/Prime Plans remain Live until explicit archive; a verified worker
+  finish-report delivery can archive the matching Ready Eve activity Plan.
 - Browser visibility is not ownership.
 - Transport ACK is not semantic completion.
 - Compact & Resume moves one durable session; it does not create a new job.

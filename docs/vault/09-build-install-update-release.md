@@ -12,12 +12,31 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current app source line is **2.3.7**. The earlier **App + Companion 2.2.2** Angel checkpoint remains
-part of the release history, and the current bridge protocol is **15**. A 2.3.7 package is not coherent
+The current public source line is **2.4.0** (checkpoint `aac7643b`, tagged `v2.4.0`
+on 2026-10-16). The earlier **App + Companion 2.2.2** Angel checkpoint remains
+part of the release history, and the current bridge protocol is **15**. A 2.4.0 package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
-authorities and must not be inferred from each other.
+authorities and must not be inferred from each other. This tagged *source* checkpoint is not
+itself a published installer or proof of live operation on every target platform.
 
 ## Git provenance for cumulative release lines
+
+At the 2026-10-16 checkpoint, public `main`, `release/2.4.0`, and `v2.4.0` all
+resolved to `aac7643b`. The `release/2.4.0` and `main` GitHub CI matrices each
+passed Windows x64, macOS arm64, Linux x64, and Linux with Swedish locale on
+that exact commit. This is source verification; it does **not** build and publish
+the release assets or prove real installation on all those platforms. The public
+GitHub Release/publish workflow is separately and manually dispatched at a tag.
+
+The user installed the earlier **c28 Windows x64 debug candidate** and reported
+successful heartbeat, Compact & Resume, wake, transcription/diarization,
+WordCraft/GridCraft opening, and controlled Force Send. The c28 `COMMIT.txt` and
+`uncommitted.patch` explicitly include the track-separated transcription and
+responsive Pins source files **in the packaged candidate**. Their automatic
+multi-speaker/overlapping-voice behavior still needs specific live acceptance;
+packaging evidence alone cannot establish that. Later worker/heartbeat Plan
+prompt edits were checkpointed in source after c28 packaging and require a new
+installer to reach installed users. See [2.4.0 release notes](../release-notes/v2.4.0.md).
 
 Version metadata is not ancestry proof. For a cumulative candidate such as 2.2.2 carrying the full
 2.2.1 baseline, inspect the current branch, working-tree status, recent history and tracked release

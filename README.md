@@ -10,14 +10,14 @@ Give ChatGPT a place to help with the practical work on your computer: the folde
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download ParadigmEve</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.4.0.md">2.4.0 preview &amp; release notes</a>
+  <a href="docs/release-notes/v2.4.0.md">2.4.0 status &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
   <a href="docs/setup.md">Setup reference</a>
 </p>
 
-> **Beta software.** Get an actual published download from the releases page; a version mentioned in the source tree may still be a release candidate. The builds are not publisher-signed, so Windows or macOS may warn during installation.
+> **Beta software.** Get an actual published download from the [Releases page](https://github.com/absol89/ParadigmEve/releases). A source version/tag, a locally installed development candidate, and a downloadable installer are three different things. Builds are not publisher-signed, so Windows or macOS may warn during installation.
 
 ## Meet Eve
 
@@ -35,6 +35,7 @@ Eve can:
 - run commands and tests on your computer;
 - keep a Plan attached while work moves across many ChatGPT turns;
 - ask reusable helper chats to work on separate parts of a bigger job;
+- transcribe recordings and separate speakers locally when the packaged engine and needed models are available;
 - save useful messages and context for later;
 - recover the same local session after a restart;
 - move a long session into a fresh ChatGPT chat with **Compact & Resume**;
@@ -48,7 +49,7 @@ Ask Eve to open, proofread, edit or show you work on a DOCX, XLSX, PDF or PPTX f
 
 If the file is in a folder you approved, `file_action` can inspect the actual file and discover suitable editing providers. If you only have a **ChatGPT Library link**, Eve can still ask `file_action` which provider handles a known extension, such as `docx`, but that lookup does **not** open or download the Library file. Actual editing requires an accessible local copy in an approved folder (for example, a native attachment saved there when available). A Library URL alone is not a local file path.
 
-For Word documents, the broker can offer **WordCraft** (`artcraft.wordcraft`), a separate in-development file app rather than a preinstalled office suite. `file_edit` can discover an installed provider's tools, edit a **new copy**, or open that copy visibly when the provider has a desktop app for your system. Installing WordCraft requires your confirmation in ParadigmEve's native dialog, and broker-managed edits that would drop detected features require separate approval. Eve leaves the original file unchanged. Offers and visible editing depend on available builds, your permissions and the connected tools; no app is silently installed.
+For Word documents, the broker can offer **WordCraft** (`artcraft.wordcraft`); for spreadsheets, **GridCraft** (`artcraft.gridcraft`). These are separate in-development apps, **not** preinstalled office suites or guarantees of complete DOCX/XLSX fidelity. With a compatible available provider, `file_edit` can discover its tools, edit a **new copy**, or open that copy visibly when the desktop app and permissions allow it. Installation requires your agreement and confirmation in ParadigmEve's native dialog; detected feature loss requires separate approval. The original file remains untouched by broker-managed edits. The 2.4.0 source—including c28's build baseline—teaches Eve to discover the broker in fresh chats; that does not guarantee any particular provider is available, installed, or able to edit a given document.
 
 See the [file-broker workflow in the engineering manual](docs/vault/03-mcp-connectors-and-tools.md#file-broker-inspect-offer-edit-or-show) for the exact operations.
 
@@ -61,7 +62,7 @@ See the [file-broker workflow in the engineering manual](docs/vault/03-mcp-conne
 5. Go to **[chatgpt.com/plugins](https://chatgpt.com/plugins)**, press the **Add** button at the top right, choose **Add custom MCP server**, and add Eve. After saving it, open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
-For current changes, permissions and upgrade notes, read the **[2.3.9 release notes and setup guidance](docs/release-notes/v2.3.9.md)**. The [2.3.8 guide](docs/release-notes/v2.3.8.md) has a fuller first-use walkthrough and screenshots for the same basic setup path.
+For this source line's current features, caveats and upgrade status, read the **[2.4.0 release notes](docs/release-notes/v2.4.0.md)**. The [setup reference](docs/setup.md) has connection and troubleshooting details; the [2.3.8 first-use guide](docs/release-notes/v2.3.8.md) remains a historical walkthrough.
 
 ## Safe first, then convenient
 
@@ -82,7 +83,7 @@ One convenience is already enabled: **Allow Eve in other ChatGPT chats and devic
 
 ## A smooth everyday setup
 
-Once the basic connection works, the setup I like is:
+Once the basic connection works, a practical optional setup is to:
 
 - approve the few folders Eve genuinely needs;
 - turn on Computer use if you want help across desktop apps;
@@ -90,19 +91,19 @@ Once the basic connection works, the setup I like is:
 - under **Eve authority**, allow the things you want Eve to maintain for herself;
 - let Eve use a few workers for bigger jobs instead of doing every step serially.
 
-My own setup uses four worker slots. Two is the fresh-install default and is friendlier to accounts that hit ChatGPT rate limits quickly.
+Two worker slots are the fresh-install default; you can raise that for larger tasks if your ChatGPT account has capacity.
 
-The exact switches, paths, and the more permissive options are explained in the **[2.3.8 first-user guide](docs/release-notes/v2.3.8.md)**; see [2.3.9 release notes](docs/release-notes/v2.3.9.md) for the latest reliability changes.
+The exact switches, paths, and permissions are explained in the **[setup reference](docs/setup.md)** and [2.4.0 notes](docs/release-notes/v2.4.0.md). Older [2.3.8](docs/release-notes/v2.3.8.md) and [2.3.9](docs/release-notes/v2.3.9.md) notes document previous releases, not the latest source behavior.
 
 ## Plans stay with the work
 
-Plans are ordinary checklists that Eve can keep attached to a job while the work moves through chats, helpers, restarts, and long sessions.
+Plans are durable checklists that Eve can keep attached to work across chats, helpers, restarts, and long sessions.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/988a1b0d-1fd4-4aaf-8049-76b3df5144ad" width="900" alt="ParadigmEve Plans view" />
 </p>
 
-You can see what is done, what is still open, and where the Plan came from. Eve and workers can finish their own work, but your own Plans stay yours to archive.
+The **Plans** tab keeps your commitments and Plans created in the main Eve/Prime chat. **Eve activity** shows execution Plans whose recorded source belongs to a worker or helper chat, including completed work in **Done** after archiving. An Eve-written Plan does **not** move into Eve activity just because Eve wrote it: the originating session decides. Steps can be completed without archiving the whole Plan; you can inspect its source and decide when it belongs in Done. Workers report to Prime, but a report/handoff is not a separate checklist step.
 
 ## Save the things you want to reuse
 
@@ -126,6 +127,16 @@ Eve can open helper chats for separate pieces of a larger job — for example on
 The helpers report back to Eve. They are not separate owners of your project, and they cannot start their own swarms of helpers.
 
 This matters most on the jobs where a single ChatGPT conversation would otherwise go quiet for several minutes doing everything one step at a time.
+
+## Transcribe recordings and separate speakers
+
+On supported Windows x64 builds, use **Attach → Transcribe recording…** to work with an audio file. Local Whisper speech recognition and local speaker diarization can produce speaker-labelled text; the first run may need to download verified speech, speaker and audio-tool components. Speakers and overlapping speech are not always identified correctly, so review important transcripts.
+
+**Settings → Transcription** lets you prioritize CPU/local speech recognition, a GPU route when its actual Vulkan compute probe passes, or explicitly selected Groq/OpenAI cloud speech recognition. The speaker separation remains local. Cloud transcription sends audio to the selected provider; purely local processing does not. An installed GPU-capable engine and a usable driver are both required—having a GPU does not mean every installer includes that engine. See the [2.4.0 transcription details](docs/release-notes/v2.4.0.md#new-settings--transcription).
+
+## A review heartbeat, not an autopilot
+
+About every 22 minutes, an app-owned **read/review-only worker** can check locally recorded requests and a small batch of Live Plans for unfinished, still-relevant work. It uses the exact source and newer instructions, not ChatGPT browser-history browsing. The worker records classifications and can return findings to Prime; **Prime remains responsible for doing the work**, and a browser send receipt or a reassuring chat reply does not count as a completed review. If identity or evidence is missing, the review stays pending rather than guessing.
 
 ## Keep going when a chat gets too long
 
@@ -164,21 +175,13 @@ Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Ch
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
 
-## 2.4.0 Windows preview
+## 2.4.0: tagged source, installed candidate, published download
 
-2.4.0 is a **beta preview** with locally verified Windows x64 installation. The c7 candidate passed 5,766 automated checks (42 skipped), the installer no longer showed the previously reported command-window popup, and the first restart wake reached the right Eve chat with a confirmed delivery receipt and no queued duplicate. The guarded one- and two-minute recovery path is covered by tests but was not exercised against a real failed pickup. macOS, Linux and Windows ARM64 have not received matching live installation acceptance. Check the [2.4.0 release notes](docs/release-notes/v2.4.0.md) for required prerequisites, platform caveats, and exact provenance. A source tag is not proof of published installers.
+The app and Companion source currently declare **2.4.0**, and the public `v2.4.0` source tag points to commit `aac7643b`. That is a **source checkpoint**, not confirmation that every platform installer exists on GitHub Releases.
 
-## What's changing in 2.3.9
+Separately, the **c28 Windows x64 development candidate** was installed and dogfooded locally. Reported successful checks include heartbeat, Compact & Resume, restart wake, transcription/diarization, a usable GPU compute probe, opening WordCraft/GridCraft, and controlled Force Send. Its recorded build includes source-aware microphone/system-audio processing and narrow-screen Pins improvements; those being packaged is **not** proof that automatic speaker discovery, overlapping speakers, or merged source-aware output passed live acceptance. Fresh-chat broker discovery also predates c28, although opening an editor does not prove end-to-end document fidelity. Later worker-Plan prompting changes in tagged source must not automatically be attributed to the installed candidate.
 
-2.3.9 concentrates on **reliable conversation delivery and keeping Prime Eve's work together**:
-
-- **Force send for stuck messages:** a new outbox action lets you explicitly re-offer an original message that was never claimed by the browser, even if a restart left stale turn activity behind. It uses the same message ID and cannot replay a claimed or ambiguous Send. The browser must still prove the correct chat, idle composer, draft and Voice safety.
-- **Fresh-chat pickup recovery:** the Companion recognizes marked new chats entering a linked ChatGPT Project and allows a newly elected tab to finish its brief `about:blank` startup before offering the message. It does not gain permission to close normal conversation tabs.
-- **Faster Compact & Resume binding:** first-answer stream observations now recognize the fresh-chat `resume_conversation_token` and nested delta identity fields, rather than assuming first turns contain `stream_handoff` and `input_message`. Conflicting identities still fail closed.
-- **More reliable replies and model choices:** GPT-6 answer recovery, current-chat model display, and restart recovery retain the actual conversation's selected provider/model; a model change still requires your confirmation in the picker.
-- **Clearer diagnostics and setup:** Activity's optional timing toggle and the custom ChatGPT app setup instructions are localized alongside delivery feedback.
-
-The Windows x64 c11 **development candidate** passed focused automated tests and package smoke checks; live installed Force Send and normal/Project fresh-chat acceptance remain open. Source tags and candidate binaries are **not** evidence that an installer is published or automatically installed. See the **[2.3.9 release notes](docs/release-notes/v2.3.9.md)** and **[CHANGELOG](CHANGELOG.md)** for details; the [2.3.8 first-use guide](docs/release-notes/v2.3.8.md) remains available.
+For a fresh install, use only the binaries actually listed under **[GitHub Releases](https://github.com/absol89/ParadigmEve/releases)** and verify the matching release notes and checksums. A local candidate directory, installed c28, Git tag, and CI build are not interchangeable evidence of a downloadable release. macOS, Linux and Windows ARM64 have not received equivalent live c28 acceptance. Read the [2.4.0 release notes](docs/release-notes/v2.4.0.md) for the detailed provenance.
 
 ## Requirements
 
@@ -221,6 +224,6 @@ Thanks to everyone testing the awkward edge cases, reporting what breaks, and he
 
 ---
 
-**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.3.9 guide & release notes](docs/release-notes/v2.3.9.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
+**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.4.0 status & release notes](docs/release-notes/v2.4.0.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
 
 <p align="center"><sub>ParadigmEve is not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>
