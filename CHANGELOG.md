@@ -15,8 +15,8 @@ operation.
 
 ## [2.4.0] — Source checkpoint, resilient wakes and transcription
 
-**Public source checkpoint (2026-10-16):** `main`, `release/2.4.0` and
-`v2.4.0` point to `aac7643b`. The local privacy/typecheck/notices and
+**Public source checkpoint (2026-10-16):** the `v2.4.0` tag points to
+`aac7643b`; later commits on `main` and `release/2.4.0` change documentation only. The local privacy/typecheck/notices and
 5,882 + 20 + 2 automated tests passed, along with six Python source-aware
 tests. GitHub CI passed all four Windows/macOS/Linux/Swedish-locale jobs on
 both release and main. This **source tag does not publish installers**;

@@ -45,7 +45,8 @@ or handing off to Prime is a lifecycle result, not a fourth checkbox or an archi
 legacy report-only trailing steps do not keep an otherwise completed worker Plan artificially
 Live. `agents action=finish` submits the worker result separately, and delivered-report evidence
 is tracked by message id and session ancestry. Eligible completed worker Plans can **auto-archive
-when that exact report delivery is proved** and then remain visible in Eve activity → Done. A
+when that exact report delivery is proved**, only while **Allow Eve to archive completed Eve work**
+is on, and then remain visible in Eve activity → Done. A
 completed ordinary human Plan instead stays Live until its user archives it. Do not equate
 "all checklist items done", "reported", "archive accepted" or "worker sleeping".
 

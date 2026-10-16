@@ -2,8 +2,9 @@
 
 An operator-run experiment harness, not app surface. It lets several independent candidate fixes
 for the same bug be compared against one frozen, hash-pinned acceptance contract, and produces a
-reviewable promotion proposal without changing any checkout. Design background:
-[Vault 17](../../docs/vault/17-candidate-eval-and-skill-learning.md) (when present).
+reviewable promotion proposal without changing any checkout. The
+[2.3.8 release notes](../../docs/release-notes/v2.3.8.md) describe the harness; its design notes are not
+part of this repository.
 
 Nothing here is imported by `src/`. Delete the folder to abandon the approach.
 
