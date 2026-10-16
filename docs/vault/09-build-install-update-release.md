@@ -12,9 +12,10 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current public source line is **2.4.0** (tagged `v2.4.0` on 2026-10-16;
-the GitHub release page shows the tagged commit). The earlier **App + Companion 2.2.2** Angel checkpoint remains
-part of the release history, and the current bridge protocol is **15**. A 2.4.0 package is not coherent
+The current source line is **2.4.1** on `release/2.4.1`, built on the `v2.4.0` tag
+(2026-10-16; the GitHub release page shows each tag's commit). `v2.4.1` is tagged only after its
+Windows x64 candidate passes self-testing. The earlier **App + Companion 2.2.2** Angel checkpoint remains
+part of the release history, and the current bridge protocol is **15**. A package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other. This tagged *source* checkpoint is not
 itself a published installer or proof of live operation on every target platform.

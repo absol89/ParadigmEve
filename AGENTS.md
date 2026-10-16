@@ -27,8 +27,8 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-10-16**, the final `v2.4.0` tag (built on source checkpoint `aac7643b`
-plus reviewed fixes). App/extension **2.4.0**,
+Source alignment: **2026-10-16**, `release/2.4.1` on top of the final `v2.4.0` tag (built on
+source checkpoint `aac7643b` plus reviewed fixes). App/extension **2.4.1**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). The public Git tag is source provenance, not proof of
 downloadable release assets, installation or live Chrome behavior.
@@ -1166,11 +1166,16 @@ Opening Eve's model menu refreshes a catalog last observed over 24 hours ago wit
 a browser at startup. A stale catalog remains readable through refresh failures, which surface
 the error and the full last-observed date rather than silently replacing the user's choice;
 automatic retries back off for ten minutes. Explicit Refresh remains available immediately.
-An unselected fresh composer with no catalog sends `model=null` and `reasoningEffort=null`,
-leaving ChatGPT's native choice untouched even if catalog discovery is pending or failed. This
-does not claim model availability or a successful Send. Explicit model choices and existing-session
-model observations must not silently become this default; native composer readiness, ownership,
-submission and receipt checks still govern delivery.
+A user who has never chosen a composer model (`ui.chatModel` and `ui.chatReasoning` both
+undefined, unlike an explicit null "ChatGPT default") is asked to choose once before the first
+send in a chat with no observed model (since 2.4.1): Send, Enter and Start goal open the model
+menu and keep the draft, and nothing is sent with a manufactured or browser-leftover model. The
+menu recommends, from the discovered catalog only, GPT-6.1 High when the account offers Pro and
+lists that step, else Sol 5.6 Medium when offered, else ChatGPT default; the recommendation is
+never applied without the user's click. A ready native-default (Free/Go) catalog is never held and
+sends `model=null` / `reasoningEffort=null`. The saved choice applies to later new chats. Explicit
+model choices and existing-session model observations must not silently become a default; native
+composer readiness, ownership, submission and receipt checks still govern delivery.
 
 Discovery elects an existing visible composer. An explicitly authorized helper may transfer
 its still-empty document and opening authority to the first user input, rather than opening a

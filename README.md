@@ -10,7 +10,7 @@ Give ChatGPT a place to help with the practical work on your computer: the folde
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Download ParadigmEve</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.4.0.md">2.4.0 status &amp; release notes</a>
+  <a href="docs/release-notes/v2.4.1.md">2.4.1 status &amp; release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -62,7 +62,7 @@ See the [file-broker workflow in the engineering manual](docs/vault/03-mcp-conne
 5. Go to **[chatgpt.com/plugins](https://chatgpt.com/plugins)**, press the **Add** button at the top right, choose **Add custom MCP server**, and add Eve. After saving it, open **ChatGPT → Settings → Plugins → Eve → Permissions** and start with **Allow low risk actions**.
 6. Give Eve a real job.
 
-For this source line's current features, caveats and upgrade status, read the **[2.4.0 release notes](docs/release-notes/v2.4.0.md)**. The [setup reference](docs/setup.md) has connection and troubleshooting details; the [2.3.8 first-use guide](docs/release-notes/v2.3.8.md) remains a historical walkthrough.
+For this source line's current features, caveats and upgrade status, read the **[2.4.1 release notes](docs/release-notes/v2.4.1.md)** and the [2.4.0 notes](docs/release-notes/v2.4.0.md) they build on. The [setup reference](docs/setup.md) has connection and troubleshooting details; the [2.3.8 first-use guide](docs/release-notes/v2.3.8.md) remains a historical walkthrough.
 
 ## Safe first, then convenient
 
@@ -93,7 +93,7 @@ Once the basic connection works, a practical optional setup is to:
 
 Two worker slots are the fresh-install default; you can raise that for larger tasks if your ChatGPT account has capacity.
 
-The exact switches, paths, and permissions are explained in the **[setup reference](docs/setup.md)** and [2.4.0 notes](docs/release-notes/v2.4.0.md). Older [2.3.8](docs/release-notes/v2.3.8.md) and [2.3.9](docs/release-notes/v2.3.9.md) notes document previous releases, not the latest source behavior.
+The exact switches, paths, and permissions are explained in the **[setup reference](docs/setup.md)** and [2.4.1](docs/release-notes/v2.4.1.md) and [2.4.0](docs/release-notes/v2.4.0.md) notes. Older [2.3.8](docs/release-notes/v2.3.8.md) and [2.3.9](docs/release-notes/v2.3.9.md) notes document previous releases, not the latest source behavior.
 
 ## Plans stay with the work
 
@@ -175,9 +175,13 @@ Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Ch
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
 
+## v2.4.1: smoother first run
+
+The app and Companion source currently declare **2.4.1** on `release/2.4.1`. It fixes onboarding problems a new user met in 2.4.0: automatic Companion loading on Windows, the first message going out without a model choice, the first Eve chat not being claimed, and a heartbeat side chat named like a coding agent. The `v2.4.1` tag is set after the Windows x64 candidate passes self-testing. Read the [v2.4.1 release notes](docs/release-notes/v2.4.1.md).
+
 ## v2.4.0: GitHub tag, installed self-testing, published downloads
 
-The app and Companion source currently declare **2.4.0**, and the public `v2.4.0` source tag marks the final 2.4.0 commit on `main`. That is a **source checkpoint**, not confirmation that every platform installer exists on GitHub Releases.
+The public `v2.4.0` source tag marks the final 2.4.0 commit on `main`. That is a **source checkpoint**, not confirmation that every platform installer exists on GitHub Releases.
 
 Separately, **Windows x64 installed self-testing** used a local 2.4.0 development build assembled before the final GitHub tag. Reported successful checks include heartbeat, Compact & Resume, restart wake, transcription/diarization, a usable GPU compute probe, opening WordCraft/GridCraft, and controlled Force Send. Its recorded build includes source-aware microphone/system-audio processing and narrow-screen Pins improvements; those being packaged is **not** proof that automatic speaker discovery, overlapping speakers, or merged source-aware output passed live self-testing. Fresh-chat broker discovery was also present in that installed build, although opening an editor does not prove end-to-end document fidelity. Later worker-Plan prompting changes in the tagged source must not automatically be attributed to the installed build.
 
@@ -224,6 +228,6 @@ Thanks to everyone testing the awkward edge cases, reporting what breaks, and he
 
 ---
 
-**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.4.0 status & release notes](docs/release-notes/v2.4.0.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
+**[Download ParadigmEve](https://github.com/absol89/ParadigmEve/releases)** · **[2.4.1 status & release notes](docs/release-notes/v2.4.1.md)** · **[Changelog](CHANGELOG.md)** · **[Security](SECURITY.md)** · **[MIT License](LICENSE)**
 
 <p align="center"><sub>ParadigmEve is not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>

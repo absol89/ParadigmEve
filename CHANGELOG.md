@@ -13,6 +13,35 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.1] — Smoother first run
+
+**Status:** `release/2.4.1`, built on `v2.4.0`. The `v2.4.1` tag is set after the Windows x64
+candidate passes self-testing.
+
+### Fixed
+
+- **Automatic Companion loading on Windows.** The Windows folder picker's folder field exposes no
+  UI Automation value pattern on current Windows builds, so automatic setup stopped at step 2 with
+  `UI_VALUE_UNSUPPORTED`. Setup now enters the folder from the keyboard (select, type, or paste if
+  typing is rejected) and accepts with Select Folder or Enter. The Extensions page is also found by
+  the visible **Load unpacked** / **Developer mode** names when Chrome does not expose its control
+  ids. The folder is the app's per-user copy (`%APPDATA%\paradigmeve\extension` on Windows).
+- **First Eve chat.** A fresh install's first chat claims Eve without clicking New Chat first, even
+  when the heartbeat review already has a chat. The prefilled `@Eve ` is offered once.
+- **Heartbeat review chat name.** The app-owned heartbeat review chat is shown as **Heartbeat
+  review** instead of ChatGPT's "Coding agent collaboration" title, which made a read/review-only
+  chat look like a working coding agent.
+
+### Changed
+
+- **Choose a model once before the first message.** A user who never chose a model is asked to,
+  instead of the first message going out with Sol 5.6 Medium or whatever ChatGPT had selected.
+  Enter, Send and Start goal open the model menu and keep the draft. The menu recommends Sol 5.6
+  Medium on Plus and GPT-6.1 High on Pro when the account offers it; the user's click decides.
+  Free and Go accounts, which have no model picker, are never asked. The choice is saved.
+
+See [docs/release-notes/v2.4.1.md](docs/release-notes/v2.4.1.md).
+
 ## [2.4.0] — Source checkpoint, resilient wakes and transcription
 
 **Public source (2026-10-16):** the annotated `v2.4.0` tag marks the final

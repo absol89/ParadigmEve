@@ -3,7 +3,7 @@
 > Not in an engineering mood? Start with the local [Eve HTML tour](../readme/index.html):
 > human problems first, tiny interactive demos, technical details only when you ask for them.
 
-> **Current source/manual line:** 2.4.0 — `v2.4.0` source tag (`release/2.4.0`)
+> **Current source/manual line:** 2.4.1 — `release/2.4.1`, built on the `v2.4.0` source tag
 > **Bridge protocol:** 15
 > **Release evidence:** the installed Windows x64 debug build has separate local self-testing evidence; only assets actually listed on [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) are public downloads.
 
@@ -16,9 +16,10 @@ Vault is the canonical human-readable operational manual. [`AGENTS.md`](../../AG
 bootstrap and implementation contracts. These notes explain **who owns what, how data moves, where
 state lives, and what to check when something breaks**. See [Self-reliant AI and the manual](12-self-reliant-ai-and-the-manual.md).
 
-## 2.4.0 snapshot — know which evidence you are reading
+## 2.4.1 snapshot — know which evidence you are reading
 
-- **Tagged source:** `package.json` and the Companion manifest declare `2.4.0`; tag `v2.4.0` marks the final 2.4.0 commit. This identifies source, **not** the state of a user's installed application or a published installer.
+- **2.4.1 source:** `package.json` and the Companion manifest declare `2.4.1` on `release/2.4.1`: onboarding fixes on top of 2.4.0 (see [2.4.1 notes](../release-notes/v2.4.1.md)). Its tag is set after Windows x64 self-testing; until then the latest tag is `v2.4.0`.
+- **Tagged source:** tag `v2.4.0` marks the final 2.4.0 commit. This identifies source, **not** the state of a user's installed application or a published installer.
 - **Installed Windows self-testing:** the locally installed x64 debug build was checked for heartbeat, Compact & Resume and wake, controlled Force Send, transcription and diarization, a usable Vulkan compute probe, and opening WordCraft/GridCraft. That build came from an earlier 2.4.0 source commit **plus a recorded patch** including source-aware microphone/system-audio processing and narrow-screen Pins CSS. Those changes were packaged, but reliable automatic speaker discovery, overlapping speech and the merged output still require specific live acceptance. Fresh-chat broker discovery is in that build's source baseline; later worker-Plan prompting changes included in the `v2.4.0` tag are not automatically present in the installed build. Successful editor opening does not establish document fidelity.
 - **Public downloads:** publishing is a separate workflow; inspect the [release assets](https://github.com/absol89/ParadigmEve/releases) and their checksums rather than treating a GitHub version tag, CI artifact, or local self-test build as a published installer. Platform packages and tests do not imply equal live acceptance on macOS, Linux or Windows ARM64. See [2.4.0 release evidence](../release-notes/v2.4.0.md).
 

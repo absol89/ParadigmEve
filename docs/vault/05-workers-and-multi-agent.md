@@ -178,6 +178,10 @@ stale-worker recovery and backoff so an unreceipted epoch does not repeatedly wa
 minute. A worker's chat finishing without the exact heartbeat receipt leaves the review debt
 pending. See [heartbeat semantics](02-runtime-browser-recovery.md).
 
+The app names this chat **Heartbeat review** with a **Heartbeat** label, recognised from the task
+text the app itself wrote (`isHeartbeatReviewOrigin`). ChatGPT's own title for it comes from the
+connector's coding-agent instructions and wrongly suggests a chat that can edit and run things.
+
 ## Dormant families
 
 Closing the owner's chat tab does not automatically destroy reusable workers. A garden with sleeping

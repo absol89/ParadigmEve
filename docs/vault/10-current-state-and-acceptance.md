@@ -2,16 +2,18 @@
 
 Back to [vault index](README.md).
 
-This page is the **2.4.0 source checkpoint and acceptance guide**. It records
+This page is the **2.4.1 source and acceptance guide** (2.4.1 builds on the 2.4.0 checkpoint). It records
 verified source, local candidate evidence and the checks still needed before
 calling a feature installed or a downloadable release ready. A Git tag, a local
 installer and a live acceptance run are different evidence levels.
 
 ## Current product state
 
-- Current tagged source: **`v2.4.0`**, the final 2.4.0 head of `release/2.4.0` and
-  public `main` (2026-10-16; the GitHub release page shows the tagged commit).
-- Package version, `APP_VERSION` and Companion manifest all declare **2.4.0**.
+- Current source: **2.4.1** on `release/2.4.1`, onboarding fixes on top of the `v2.4.0` tag.
+  `v2.4.1` is tagged after its Windows x64 candidate passes self-testing.
+- Latest tag: **`v2.4.0`**, the final 2.4.0 head of `release/2.4.0` and public `main`
+  (2026-10-16; the GitHub release page shows the tagged commit).
+- Package version, `APP_VERSION` and Companion manifest all declare **2.4.1**.
 - Bridge protocol: **15**.
 - The locally installed **Windows x64 debug self-test build** was produced from
   an earlier 2.4.0 source commit with a recorded patch. Its build/packaging
@@ -227,8 +229,8 @@ for the mechanics.
 
 ## Current development gates
 
-- A genuinely fresh unselected ChatGPT chat may keep `model=null` and `reasoningEffort=null`; Eve
-  must not invent a paid model identity when the account catalogue is absent or stale. Provider-native
+- A user who never chose a model chooses once before the first send (2.4.1); Eve must not
+  invent a paid model identity, and a recommendation is never applied without the user's click. Provider-native
   Free/Go surfaces expose only **ChatGPT Default** in Eve: the thinking-effort slider is hidden and
   no Free-account Think mode is offered by the app.
 - Connector request/discovery and recognized tool invocation are separate evidence. Durable onboarding
