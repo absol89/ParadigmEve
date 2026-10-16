@@ -335,6 +335,44 @@ describe('durable user input ownership', () => {
       error: 'Not sent: browser preparation timed out. This attempt was cancelled.'
     });
   });
+  it('says a timed-out finding will be retried and a wake into a working chat was not needed', async () => {
+    const claimed = (extra: Partial<InputEntry>): InputEntry => ({
+      ...input(), state: 'browser', owner: 'native-page', conversationId: binding.conversationId,
+      offeredAt: now, requiresAuthorization: true, createdAt: now, ...extra
+    });
+    const finding = claimed({ purpose: 'heartbeat-finding', text: '[[PARADIGMEVE-HEARTBEAT-FINDING:heartbeat:k]]\nfinding' });
+    const wake = claimed({ restartWake: true, text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' });
+    await writeDurableNow('session-input', [finding, wake]);
+    resetInputForTests();
+    // Eve started a turn after the wake was created, so the page could not send either one.
+    binding.activeTurnId = 'eve-turn';
+    binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'eve-turn', time: now + 5 };
+
+    vi.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+    const rows = await listInputs();
+    expect(rows.find(row => row.id === finding.id)).toMatchObject({
+      state: 'cancelled', error: 'Not sent yet: Eve’s chat was busy. The heartbeat sends this finding again after the current turn.'
+    });
+    expect(rows.find(row => row.id === wake.id)).toMatchObject({
+      state: 'cancelled', error: 'Not needed: Eve’s chat was already working after the restart, so this wake was not sent.'
+    });
+  });
+
+  it('keeps the plain timeout message for a wake into an idle chat', async () => {
+    const wake: InputEntry = { ...input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' }), restartWake: true,
+      state: 'browser', owner: 'native-page', conversationId: binding.conversationId,
+      offeredAt: now, requiresAuthorization: true, createdAt: now };
+    await writeDurableNow('session-input', [wake]);
+    resetInputForTests();
+    binding.activeTurnId = null;
+    binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'old-turn', time: now - 5 };
+
+    vi.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+    expect((await listInputs()).find(row => row.id === wake.id)).toMatchObject({
+      state: 'cancelled', error: 'Not sent: browser preparation timed out. This attempt was cancelled.'
+    });
+  });
+
   it.each(['queued', 'browser', 'tool'] as const)('isolates a legacy %s delivery from another session across restart', async state => {
     const legacy: InputEntry = { ...input({ sessionId: 'session-two', text: 'Older restart wake' }),
       state, owner: state === 'queued' ? null : 'old-document', createdAt: now,

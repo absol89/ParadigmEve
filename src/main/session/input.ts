@@ -665,6 +665,28 @@ function pickupOverdue(row: InputEntry, now = Date.now()): boolean {
 function dueForBrowser(entry: InputEntry, now = Date.now()): boolean {
   return entry.dueAt <= now || entry.restartWake === true || entry.recoveryTurnId !== undefined;
 }
+/**
+ * Why a never-authorized browser attempt was not sent, in words that match what happens next.
+ *
+ * The page refuses Send while Eve's chat is answering, so both app messages below usually time
+ * out because the chat is busy. A heartbeat finding keeps its durable debt and is queued again
+ * by the heartbeat (enqueueChatReviewFinding), and a restart wake is obsolete once the chat is
+ * working. "Not sent" alone read as a lost message although the retry was delivered (2.4.1).
+ */
+async function unsentPreparationError(row: InputEntry): Promise<string> {
+  if (row.purpose === 'heartbeat-finding') {
+    return 'Not sent yet: Eve’s chat was busy. The heartbeat sends this finding again after the current turn.';
+  }
+  if (row.restartWake && row.sessionId) {
+    const session = await getSession(row.sessionId);
+    const [boundary] = await readRecentEvents(row.sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
+    if (session?.activeTurnId || (boundary && boundary.time > row.createdAt)) {
+      return 'Not needed: Eve’s chat was already working after the restart, so this wake was not sent.';
+    }
+  }
+  return 'Not sent: browser preparation timed out. This attempt was cancelled.';
+}
+
 async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
   const next = await Promise.all(current.map(async (row): Promise<InputEntry> => {
     if (row.finishOwner && !terminal(row) && !(await finishInputCurrent(row)))
@@ -719,7 +741,7 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
           error: 'Kept for after the running answer: ChatGPT could not take it into the answer.' };
       }
       return { ...row, state: 'cancelled', error: row.requiresAuthorization && row.sendAuthorizedAt === undefined
-        ? 'Not sent: browser preparation timed out. This attempt was cancelled.'
+        ? await unsentPreparationError(row)
         : 'Stopped waiting for delivery confirmation. The message may already have been sent; it will not be resent.' };
     }
     return row;
