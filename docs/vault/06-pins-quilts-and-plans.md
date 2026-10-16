@@ -16,6 +16,10 @@ Quilts = broad thematic/context organization of Threads, addressed with #quilt
 Plans = durable first-class work objects independent of the source chat
 ```
 
+The Pins **`%instructions`** category contains prompted zero-Pin Threads.
+`%instructions` names the category here; it is not a promised built-in Thread
+alias. Open a specific saved instruction with its exact `%ThreadName`.
+
 ## Workspace navigation
 
 The renderer presents **View / Pins / Plans** as peers and keeps the same session sidebar visible. The user can review work without remembering which source chat contains it.
@@ -392,10 +396,10 @@ If an archived/done checklist later reappears as active todo/in-progress work, i
 
 **Evidence level:** the audience, worker-report and receipt-based archive rules
 above are confirmed in tagged 2.4.0 source (`src/main/plans.ts` and
-`src/renderer/plans-library.ts`). An installed c28 may carry the compiled
-features demonstrated during local dogfood, but a public Git tag alone does
-not prove any particular installer or live screen state. Check the installed
-candidate and durable sessions to investigate missing Eve activity rows.
+`src/renderer/plans-library.ts`). The locally installed Windows debug build
+has its own self-testing evidence, while the GitHub `v2.4.0` source tag alone
+does not prove any particular installer or live screen state. Check the installed
+application and durable sessions to investigate missing Eve activity rows.
 
 ## Renderer ownership
 

@@ -3,8 +3,8 @@
 Back to [vault index](README.md).
 
 This describes the **2.4.0 source checkpoint** (`v2.4.0`, `aac7643b`). The
-file-format broker implementation predates local c28, but a provider in its
-registry is a discoverable capability, not proof that the optional editor
+file-format broker implementation predates the installed Windows self-test
+build, but a provider in its registry is a discoverable capability, not proof that the optional editor
 executable is installed, healthy, or included in a published installer.
 
 ## Connection topology

@@ -19,7 +19,7 @@ Internal product documentation and truth boundary:
 - [AGENTS.md](../../../AGENTS.md): product responsibilities and model/provider boundaries; intended behavior is **not** proof of live release functionality.
 - [Marketing positioning](../marketing-positioning.md): lead with relief and recognizable task.
 - [Release visual design](../../vault/release-visual-design.md): one verified benefit, actual entry point, 1–3 steps and evidence before release art.
-- [2.3.8 release notes](../../release-notes/v2.3.8.md): currently internal c1 dogfood notes, **not** evidence of a public 2.3.8 release.
+- [2.3.8 release notes](../../release-notes/v2.3.8.md): the historical installed self-testing notes for an early local development artifact are **not** proof that its exact installer was a public release. Verify the GitHub tag and actual [release assets](https://github.com/absol89/ParadigmEve/releases) separately.
 
 ## Facts still to verify before any outward answer
 

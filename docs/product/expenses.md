@@ -202,7 +202,7 @@ template implementation that persists analysis context must give that context it
 rather than mixing it into `data/ledger.json`. The generic design questions live in the
 [Feature Spec Template](feature-spec-template.md).
 
-## Dogfood evaluation: reconstruct first, compare second
+## Installed self-testing: reconstruct first, compare second
 
 The user's physical ledger through December 2025 is a human reference set for validating the model,
 not a target that reconstructed data should be forced to equal. Reconstruct historical months from
@@ -211,8 +211,8 @@ against the physical ledger. Report exact agreements, explainable adjustments, m
 coverage and unresolved discrepancies separately. A mismatch is useful evidence about ingestion,
 classification or source coverage; it must not be hidden by silently editing facts to match paper.
 
-For 2026, dogfood the workflow receipt-first using the user's roughly 100 recent receipts. Build the
-structured receipt ledger first, including uncertain/faded fields and item-level budget overrides,
+For 2026, self-test the installed workflow receipt-first using the roughly 100 recent receipts in the
+original evaluation set. Build the structured receipt ledger first, including uncertain/faded fields and item-level budget overrides,
 then use bank screenshots as complementary evidence. Bank evidence should expose purchases that
 receipts naturally miss, such as automatic billing, subscriptions and digital purchases, and can
 also show income or other cashflow needed for a broader household picture. Those rows stay visibly

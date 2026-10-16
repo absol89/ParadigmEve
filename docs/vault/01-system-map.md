@@ -141,7 +141,7 @@ Renderer state, in-memory indexes, browser presence TTLs, command offers and der
 ### Template projects separate intake, evidence, records and interpretation
 
 An inbox-shaped template can reuse one familiar conversation while the linked local project owns the
-canonical structured state. Expenses is the current dogfood example: `data/ledger.json` is the record
+canonical structured state. Expenses is the current local self-testing example: `data/ledger.json` is the record
 authority; chat and the linked `%expenses` Thread provide continuity and useful context. `#quilt`
 is broader thematic/context scope and cannot silently choose that project. Raw receipts are optional,
 user-controlled evidence rather than the default long-term data model. See the

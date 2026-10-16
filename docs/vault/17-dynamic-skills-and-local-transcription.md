@@ -7,10 +7,10 @@ syntax: **dynamic Skills** and **local transcription with speaker diarization**.
 goal: Eve should discover and use the right capability from the user's ordinary request while keeping
 the full implementation/procedure out of context until it is actually needed.
 
-**Evidence boundary (2026-10-16):** the public `v2.4.0` tag identifies source
-checkpoint `aac7643b`. The installed local c28 Windows x64 debug candidate was
-built earlier from `7b30cc22` plus a recorded patch that already contained the
-source-aware path. The later source checkpoint commits that work and its tests.
+**Evidence boundary (2026-10-16):** GitHub version tag `v2.4.0` identifies source
+checkpoint `aac7643b`. The locally installed Windows x64 debug build was
+produced earlier from `7b30cc22` plus a recorded patch that already contained the
+source-aware path. The tagged source checkpoint commits that work and its tests.
 Tag ancestry alone does not prove the installed/runtime state or the publication
 of a downloadable installer.
 
@@ -110,7 +110,7 @@ For a GPU run, the transcript/run provenance records at least requested device c
 device, GPU index and fallback. If fallback is disabled, a failed GPU attempt fails instead of being
 relabeled as GPU success.
 
-Vulkan is the current Windows acceleration path. The c28 installer included
+Vulkan is the current Windows acceleration path. The installed Windows x64 debug build included
 `whisper-cli.exe` and `ggml-probe.exe` under the packaged `build-vulkan` runtime;
 local packaged/installed hashes matched and its read-only GPU probe returned a
 usable Vulkan compute device. This verifies the packaged backend and probe on
@@ -175,7 +175,7 @@ The tag includes unit tests for speaker renumbering, source/timestamp identity,
 echo suppression, overlapping segments, and preserved human names. **Automatic
 discovery of three simultaneous or partially overlapping voices in a real
 recording remains an open live acceptance test**, including per-track speaker
-count accuracy and final merged output. The installed c28 pipeline/CLI/settings
+count accuracy and final merged output. The installed Windows build's pipeline/CLI/settings
 matched the tagged source during a read-only comparison; `sources.py` differed
 only in an explanatory comment. That supports packaging identity for this
 implementation, but the actual recorded three-voice case and merged transcript

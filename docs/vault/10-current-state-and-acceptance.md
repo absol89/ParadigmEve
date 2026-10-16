@@ -13,15 +13,15 @@ installer and a live acceptance run are different evidence levels.
   synchronized with public `main` at the checkpoint inspected 2026-10-16.
 - Package version, `APP_VERSION` and Companion manifest all declare **2.4.0**.
 - Bridge protocol: **15**.
-- The **c28 Windows x64 debug** local candidate was built from earlier commit
-  `7b30cc22` with a recorded source patch. Its build/packaging checks passed;
-  it was subsequently installed and exercised locally. Installed app/asar and
-  Vulkan engine/probe bytes were checked against that candidate. This does
+- The locally installed **Windows x64 debug self-test build** was produced from
+  earlier source commit `7b30cc22` with a recorded patch. Its build/packaging
+  checks passed; it was installed and exercised locally. Installed app/asar and
+  Vulkan engine/probe bytes were checked against the packaged build. This does
   not establish that later tagged source changes were installed.
 - The `v2.4.0` tag is source provenance. Public installers/downloads depend on
   separate CI packaging, checksums and publication; the tag alone proves none
   of those completed, and local Windows acceptance does not cover other OSes.
-- Windows candidate builds here use **debug** flavor unless release policy changes.
+- Windows local self-test builds here use **debug** flavor unless release policy changes.
 - The shared working tree may be dirty because coordinated tasks can be in flight at once.
 - Do not reset, clean, checkout, or overwrite unrelated work to manufacture a clean tree.
 
@@ -40,8 +40,10 @@ installer and a live acceptance run are different evidence levels.
   `%organizar`, `plan`/`planer`/`planes`) route to `%expenses`, `%how`, `%organize` and `#plans` through the
   shared resolver. An exact user-created name wins, and Eve is told the alias and, when the rest of the
   message is in the alias's language, to answer in that language.
-- `%Hotlink` is now `%Instruction` (a Thread with a prompt and no Pins). Pets can be renamed (display
-  name only) and ship per-language descriptions.
+- The Pins **`%instructions` category** contains prompted Threads with no Pins;
+  it is a category label, not a guaranteed built-in `%instructions` Thread alias.
+  Open an individual saved instruction using its exact `%ThreadName`. Pets can
+  be renamed (display name only) and ship per-language descriptions.
 - Details and the evidence checklist: [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md).
 
 ## Knowledge and work model
@@ -118,16 +120,16 @@ installer and a live acceptance run are different evidence levels.
   Detected DOCX or XLSX/XLSM features that would be lost require an additional
   native feature-loss consent before broker editing. The original is never
   overwritten by this workflow.
-- These contracts predate and are included in the c28 source/build line.
-  Provider opening reported during c28 local dogfood is narrower evidence
-  than file-edit fidelity or a published release. See
+- These contracts predate and are included in the locally installed Windows
+  debug build. Provider opening observed during installed self-testing is
+  narrower evidence than file-edit fidelity or a published release. See
   [MCP and tools](03-mcp-connectors-and-tools.md#file-broker-inspect-offer-edit-or-show).
 
 ## Local transcription and diarization
 
-- The installed c28 Windows x64 candidate includes the local transcription
+- The installed Windows x64 debug build includes the local transcription
   engine, embedded Python runtime and CPU/Vulkan `whisper.cpp` binaries;
-  local verification matched the Vulkan binaries and probe to the c28 package.
+  local verification matched the Vulkan binaries and probe to that package.
 - First use may fetch pinned, verified FFmpeg and model payloads into the managed transcription
   runtime. After those are present, local transcription and speaker diarization run offline.
 - GPU transcription is capability-driven, not assumed. `gpu-probe` distinguishes a compiled/usable
@@ -143,15 +145,16 @@ installer and a live acceptance run are different evidence levels.
 - A combined track can still be produced for compatibility, but production evidence fusion should
   prefer the clearer per-span source using ASR confidence, acoustic quality, timing agreement and
   diarization evidence rather than treating one track as globally authoritative.
-- The c28 recorded source patch and tagged source provide a more specific
-  first path: for a recorded `mix.wav` with audible mic + system tracks and
-  automatic speaker count, it
-  transcribes/diarizes each track independently, keeps track-specific speaker
+- The Windows build's recorded source patch and GitHub `v2.4.0` tag provide a
+  more specific first path: for a recorded `mix.wav` with audible mic + system
+  tracks and automatic speaker count, it transcribes/diarizes each track
+  independently, keeps track-specific speaker
   identities, flags simultaneous speech, and suppresses likely playback echo.
   Unit tests cover the merge contract; full automatic **three-voice overlap**
   and accurate speaker discovery in live recording remain **unverified**.
-  The source-aware code was checkpointed after the c28 build, which already
-  contained an earlier recorded patch; its installed pipeline/CLI/settings
+  The source-aware code was committed under the GitHub version tag after the
+  Windows build, which already contained an earlier recorded patch; its installed
+  pipeline/CLI/settings
   matched the tagged source on inspection, while the `sources.py` difference
   was confined to a comment. See
   [Dynamic Skills and local transcription](17-dynamic-skills-and-local-transcription.md#source-aware-pipeline-in-the-tagged-240-source).

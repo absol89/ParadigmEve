@@ -87,4 +87,4 @@ a background skill. One anecdotal win is a candidate lesson, **not** automatic g
 This guidance is packaged with Eve and is available even without the source repository at
 `/paradigmeve-manual/release-visual-design.md`; prompt delivery still depends on the connected
 model/client consuming Core instructions. A source change alone does **not** update installed Eve
-or prove that external image models followed the guidance. Build, install and dogfood separately.
+or prove that external image models followed the guidance. Build, install and self-test separately.

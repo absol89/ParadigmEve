@@ -4,7 +4,7 @@ Status: confirmed investigation notes. No production fix is included in this doc
 
 ## Scope
 
-This note records two related regressions observed while dogfooding ParadigmEve 2.4.0:
+This note records two related regressions observed while self-testing the installed ParadigmEve 2.4.0 development build:
 
 1. ChatGPT can visibly finish an assistant reply while the Eve recorder never commits the corresponding canonical `assistant_message`, so Eve later marks the turn interrupted and cannot present that reply.
 2. The rebuildable archive can remain behind the canonical session transcript when projection stops at a mutable frontier row and no later retry reaches the stable rows behind it.

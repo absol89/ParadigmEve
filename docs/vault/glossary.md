@@ -32,7 +32,7 @@ Thread can belong to several Quilts and a Quilt can contain several Threads. `#`
 
 **Goal** — Driver mode that asks a second model whether requested work is complete and can stop when it is.
 
-**Instruction** — (formerly Hotlink; `%instruktion` in Swedish, `%instrucción` in Spanish.) A saved Pins item with zero Pins and a non-empty Thread prompt. Link and description are optional metadata and do not change the kind.
+**Instruction** — A saved Pins item with zero Pins and a non-empty Thread prompt, shown under the **`%instructions`** category. That category name does not create a built-in Thread alias; use the saved item's exact `%ThreadName` to activate it. Link and description are optional metadata and do not change the kind.
 
 **Loop** — Driver mode that keeps producing the next in-scope user message and does not decide to stop on its own.
 

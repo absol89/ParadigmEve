@@ -28,15 +28,16 @@ that exact commit. This is source verification; it does **not** build and publis
 the release assets or prove real installation on all those platforms. The public
 GitHub Release/publish workflow is separately and manually dispatched at a tag.
 
-The user installed the earlier **c28 Windows x64 debug candidate** and reported
-successful heartbeat, Compact & Resume, wake, transcription/diarization,
-WordCraft/GridCraft opening, and controlled Force Send. The c28 `COMMIT.txt` and
-`uncommitted.patch` explicitly include the track-separated transcription and
-responsive Pins source files **in the packaged candidate**. Their automatic
-multi-speaker/overlapping-voice behavior still needs specific live acceptance;
-packaging evidence alone cannot establish that. Later worker/heartbeat Plan
-prompt edits were checkpointed in source after c28 packaging and require a new
-installer to reach installed users. See [2.4.0 release notes](../release-notes/v2.4.0.md).
+Installed **Windows x64 debug self-testing** confirmed heartbeat, Compact & Resume,
+wake, transcription/diarization, WordCraft/GridCraft opening, and controlled
+Force Send on that local build. Its recorded build manifest (`COMMIT.txt`) and
+source patch (`uncommitted.patch`) show that the track-separated transcription
+and responsive Pins changes were **included in the installed artifact**. Reliable
+automatic multi-speaker/overlapping-voice behavior still requires specific live
+acceptance; packaging evidence alone cannot establish that. Later worker/heartbeat
+Plan prompt edits were checkpointed under GitHub source tag `v2.4.0` after that
+Windows build was packaged; a newer installer is needed before those changes can
+be claimed as installed. See [2.4.0 release notes](../release-notes/v2.4.0.md).
 
 Version metadata is not ancestry proof. For a cumulative candidate such as 2.2.2 carrying the full
 2.2.1 baseline, inspect the current branch, working-tree status, recent history and tracked release

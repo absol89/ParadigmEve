@@ -2,22 +2,22 @@
 
 Date: 2026-10-12
 
-## Candidate inspected
+## Historical source and local installer inspected
 
 - Worktree: the dedicated `release/2.3.8` checkout
 - Branch: `release/2.3.8`
 - Source checkpoint before the verification-only edits below: `c6033936` (`build/2.3.8-c4`)
-- Existing c4 Windows x64 debug installer SHA-256: `CF4FCA6F0F0A7EF8573E742D2DA73F55F787BCF734BD78895D1AD329C29D2DA1`
+- Existing local Windows x64 debug installer SHA-256: `CF4FCA6F0F0A7EF8573E742D2DA73F55F787BCF734BD78895D1AD329C29D2DA1`
 
 ## Compact & Resume continuity observed
 
 The live Eve session survived Compact & Resume and moved to a different ChatGPT conversation while
-retaining the same durable local session. This proves that the currently running dogfood runtime can
+retaining the same durable local session. This proves that the previously installed self-test runtime could
 complete that handoff shape and that Core connectivity recovered in the successor chat.
 
-This is **not c4 live evidence**. The running ParadigmEve processes were still executing the local
-2.3.8 c1 dogfood build. c4 therefore still needs installed/live
-qualification before public release.
+This is **not installed evidence for the newer SHA-256-listed package**. The running ParadigmEve
+processes were still executing the earlier local 2.3.8 self-test build. The newer package therefore
+still requires its own installed self-testing before public release.
 
 ## Verification investigation
 
@@ -67,5 +67,6 @@ plus this worklog.
 ## Release status
 
 Source/test qualification is green after the verification stabilization. Public release should still
-wait for c4 installed/live qualification, because the observed successful handoff came from the c1
-dogfood executable rather than c4. No install, tag, push or publication was performed here.
+wait for installed self-testing of the newer SHA-256-listed package, because the observed successful
+handoff came from an earlier installed build. Neither local build label is a GitHub version tag;
+no installation, tag, push or publication was performed here.

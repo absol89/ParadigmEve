@@ -144,8 +144,8 @@ window.
   notices/native-source inventory, TypeScript and Electron gates passed; the main Vitest phase passed
   **4,880 tests with 42 skipped** across **230 files with 4 skipped**; dedicated
   `test/computer.test.ts` passed **20/20** and `test/mcp-shutdown.test.ts` passed **2/2**.
-- These are source-level gates only. No package/install/live 22-minute dogfood was performed as part
-  of this hardening task.
+- These are source-level gates only. This hardening task did not include packaging, installation,
+  or a live self-test across a 22-minute heartbeat cycle.
 
 The regression matrix now covers stable human-first four-Plan rotation, mid-cycle newcomer deferral,
 partial-ack restart/owner transfer, revision drift, provenance-only drift, exact mutating replay,
@@ -178,4 +178,4 @@ These checks establish source contracts and regression behavior. They do not cla
 currently installed **2.0.19** runtime contains this newer source change. The first directly
 observed semantic heartbeat completed successfully on 2.0.19, but that installed build still used
 the older queue-time cursor; the receipt-backed durability change requires a later build/install
-before it can be dogfooded live.
+before it can be self-tested in the installed app.

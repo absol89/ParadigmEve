@@ -780,7 +780,7 @@ are not allowed to masquerade as retained images.
 - superseded memory remains auditable;
 - provider swap can load the same selected local memory.
 
-## 32. Dogfood matrix
+## 32. Installed self-testing matrix
 
 Test four distinct image classes separately:
 

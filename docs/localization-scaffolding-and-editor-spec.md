@@ -395,7 +395,7 @@ CSV is never loaded directly by the runtime and never becomes a second canonical
 
 ### Product position
 
-First implementation is a **debug/dev localization tool**, not a shipping end-user feature. It dogfoods the
+First implementation is a **debug/dev localization tool**, not a shipping end-user feature. It exercises the
 same locale schema and can later be promoted if custom language packs prove useful to normal users.
 
 It lives under Settings as `Localization Lab` only when the build flavor permits developer tooling.
@@ -594,7 +594,7 @@ Own the debug/dev editor surface on top of the established schema/storage API. N
 renderer.
 
 Prime independently reviews integration, resolves contract seams, runs the combined suites, and performs
-hands-on English/Swedish + one disposable third-locale dogfood before any promotion.
+hands-on installed self-testing in English, Swedish, and one disposable third locale before any promotion.
 
 ## 16. First implementation milestone
 
@@ -616,7 +616,7 @@ mockup.
 - rich HTML translations;
 - a full ICU plural/gender engine;
 - direct source-tree mutation from the renderer;
-- shipping arbitrary community locale packs before the draft/validation trust boundary is dogfooded.
+- shipping arbitrary community locale packs before the draft/validation trust boundary passes installed self-testing.
 
 ## 18. Completion definition
 
@@ -648,7 +648,7 @@ Sequence:
 
 1. finish and verify the localization substrate: stable keys, sectioned JSON, generated runtime registry,
    validation, English fallback and unchanged English/Swedish runtime behavior;
-2. dogfood the migrated Swedish UI in the real app and let the product owner revise wording until the
+2. self-test the migrated Swedish UI in the installed app and let the product owner revise wording until the
    Swedish copy is natural, consistent and pleasant again;
 3. rerun localization/runtime verification after those copy edits;
 4. present the exact reviewed diff and publication contents for approval;

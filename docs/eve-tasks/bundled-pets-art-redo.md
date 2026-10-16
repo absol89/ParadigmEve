@@ -45,7 +45,7 @@ After assembly, inspect all 96 cells for transparent gutter/UV bleed and baselin
 occupancy checks should ignore effectively invisible alpha fringe (`alpha <= 1`) so resampling noise is
 not mistaken for real art touching an edge. Always test the real bundled `pets/<id>/atlas.png` consumed
 by the renderer; do not declare success from a side image, alternate folder, contact sheet, or tests
-alone. The final on-desktop dogfood pass is part of the visual acceptance.
+alone. The final installed-app desktop self-test is part of the visual acceptance.
 
 ## What to deliver
 

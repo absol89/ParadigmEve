@@ -49,7 +49,7 @@ Ask Eve to open, proofread, edit or show you work on a DOCX, XLSX, PDF or PPTX f
 
 If the file is in a folder you approved, `file_action` can inspect the actual file and discover suitable editing providers. If you only have a **ChatGPT Library link**, Eve can still ask `file_action` which provider handles a known extension, such as `docx`, but that lookup does **not** open or download the Library file. Actual editing requires an accessible local copy in an approved folder (for example, a native attachment saved there when available). A Library URL alone is not a local file path.
 
-For Word documents, the broker can offer **WordCraft** (`artcraft.wordcraft`); for spreadsheets, **GridCraft** (`artcraft.gridcraft`). These are separate in-development apps, **not** preinstalled office suites or guarantees of complete DOCX/XLSX fidelity. With a compatible available provider, `file_edit` can discover its tools, edit a **new copy**, or open that copy visibly when the desktop app and permissions allow it. Installation requires your agreement and confirmation in ParadigmEve's native dialog; detected feature loss requires separate approval. The original file remains untouched by broker-managed edits. The 2.4.0 source—including c28's build baseline—teaches Eve to discover the broker in fresh chats; that does not guarantee any particular provider is available, installed, or able to edit a given document.
+For Word documents, the broker can offer **WordCraft** (`artcraft.wordcraft`); for spreadsheets, **GridCraft** (`artcraft.gridcraft`). These are separate in-development apps, **not** preinstalled office suites or guarantees of complete DOCX/XLSX fidelity. With a compatible available provider, `file_edit` can discover its tools, edit a **new copy**, or open that copy visibly when the desktop app and permissions allow it. Installation requires your agreement and confirmation in ParadigmEve's native dialog; detected feature loss requires separate approval. The original file remains untouched by broker-managed edits. The `v2.4.0` tagged source and the earlier locally installed Windows test build both include fresh-chat broker discovery; that does not guarantee any particular provider is available, installed, or able to edit a given document.
 
 See the [file-broker workflow in the engineering manual](docs/vault/03-mcp-connectors-and-tools.md#file-broker-inspect-offer-edit-or-show) for the exact operations.
 
@@ -110,7 +110,7 @@ The **Plans** tab keeps your commitments and Plans created in the main Eve/Prime
 ParadigmEve gives saved context a few simple shapes:
 
 - **`%Thread`** — a specific stream of saved context you want to keep using.
-- **`%Instruction`** — a saved prompt or shortcut you can invoke again.
+- **`%instructions`** — saved prompts or shortcuts you can reuse. Activate a particular one by its exact `%name` reference; `%instructions` is the category name, not a universal activation command.
 - **`#Concept`** — passive context around an idea, without an instruction that automatically runs.
 - **`#Quilt`** — a wider grouping for related Threads.
 
@@ -175,13 +175,13 @@ Luna, Hammy, Miso the cat, and Pip the dog are bundled animated desktop pets. Ch
 
 On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso and Pip are already marked as favorites. Updates preserve your saved pet choices.
 
-## 2.4.0: tagged source, installed candidate, published download
+## v2.4.0: GitHub tag, installed self-testing, published downloads
 
 The app and Companion source currently declare **2.4.0**, and the public `v2.4.0` source tag points to commit `aac7643b`. That is a **source checkpoint**, not confirmation that every platform installer exists on GitHub Releases.
 
-Separately, the **c28 Windows x64 development candidate** was installed and dogfooded locally. Reported successful checks include heartbeat, Compact & Resume, restart wake, transcription/diarization, a usable GPU compute probe, opening WordCraft/GridCraft, and controlled Force Send. Its recorded build includes source-aware microphone/system-audio processing and narrow-screen Pins improvements; those being packaged is **not** proof that automatic speaker discovery, overlapping speakers, or merged source-aware output passed live acceptance. Fresh-chat broker discovery also predates c28, although opening an editor does not prove end-to-end document fidelity. Later worker-Plan prompting changes in tagged source must not automatically be attributed to the installed candidate.
+Separately, **Windows x64 installed self-testing** used a local 2.4.0 development build assembled before the final GitHub tag. Reported successful checks include heartbeat, Compact & Resume, restart wake, transcription/diarization, a usable GPU compute probe, opening WordCraft/GridCraft, and controlled Force Send. Its recorded build includes source-aware microphone/system-audio processing and narrow-screen Pins improvements; those being packaged is **not** proof that automatic speaker discovery, overlapping speakers, or merged source-aware output passed live self-testing. Fresh-chat broker discovery was also present in that installed build, although opening an editor does not prove end-to-end document fidelity. Later worker-Plan prompting changes in the tagged source must not automatically be attributed to the installed build.
 
-For a fresh install, use only the binaries actually listed under **[GitHub Releases](https://github.com/absol89/ParadigmEve/releases)** and verify the matching release notes and checksums. A local candidate directory, installed c28, Git tag, and CI build are not interchangeable evidence of a downloadable release. macOS, Linux and Windows ARM64 have not received equivalent live c28 acceptance. Read the [2.4.0 release notes](docs/release-notes/v2.4.0.md) for the detailed provenance.
+For a fresh install, use only the binaries actually listed under **[GitHub Releases](https://github.com/absol89/ParadigmEve/releases)** and verify the matching release notes and checksums. A locally installed development build, GitHub version tag, CI result, and downloadable release asset are separate forms of evidence. macOS, Linux and Windows ARM64 have not received equivalent live installed self-testing. Read the [v2.4.0 release notes](docs/release-notes/v2.4.0.md) for the detailed provenance.
 
 ## Requirements
 

@@ -23,9 +23,12 @@ capabilities, permission to act, or successful delivery.
 The [three 22-minute discovery tutorials](../quilt-discovery-tutorials.md) remain
 the first Thread/Quilt build's acceptance scope. In current user-facing terminology, a Pin is saved
 to one specific `%thread`, and a wider `#quilt` Quilt groups related Threads. Each Thread may also keep an
-editable Thread prompt: standing opening guidance that is separate from the Thread's saved Pins. The
-six themes in this folder personalize
-that loop and describe future opportunities. Documenting them does not expand the
+editable Thread prompt: standing opening guidance separate from its saved Pins. Reusable prompts
+with **no** Pins belong to the `%instructions` category (shown as Instructions in the app); they
+are not a substitute for a pinned Thread or its source context.
+
+The six themes in this folder personalize that loop and describe future opportunities. Documenting
+them does not expand the
 MVP to six independently implemented flows, autonomous housekeeping, deal monitoring,
 or scheduled postcards.
 

@@ -1,4 +1,4 @@
-# Chat On Steroids 2.1.37 port and c6 — status (2026-10-14)
+# Chat On Steroids 2.1.37 port — historical integration status (2026-10-14)
 
 Branch `feature/cos-2.1.37-port`, cut from `release/2.4.0` at `f37889ae`, in the
 `ParadigmEve-file-broker-2.4.0` worktree. Local commits only; nothing pushed or merged.
@@ -26,19 +26,19 @@ Reviewed and not ported:
 
 5749 passed, 5 failed: the ripgrep-dependent exec test (no rg in this worktree), two exec tests and one Ollama skills test that pass when run alone (load flakiness), and the Vulkan hash test below. None touch files this port changed.
 
-## B. After Eve commits c5 on `release/2.4.0` (waiting for Eric)
+## B. Original post-checkpoint integration plan (historical, not a current release instruction)
 
-1. On `release/2.4.0`: fix c5 review findings
+1. On `release/2.4.0`: fix review findings from the preceding local checkpoint
    - 1: `content.js` boundary — when the new user message is not found, fall back to all observed turns instead of an empty prefix.
    - 2: decide the old turn's outcome after the exact-turn Fiber refresh (bounded wait), or let the recorder upgrade a "replaced by a new user message" end when that turn's final arrives. Pick the cleaner variant.
    - 4: `archive-runtime.ts` — compute "later stable final of the same turn" once per projection (or only after the last user message), not per mutable row.
    - 5: give `finishGeneration` a "refresh this exact turn for any outcome" option instead of the duplicated block and misleading comment.
    - Tests for finding 3: a witnessed live generation whose final lands with the next user message; a lost generation node.
-   - Split the `test/code-mode-mcp.test.ts` polling change into its own commit if c5 bundled it.
+   - Split the `test/code-mode-mcp.test.ts` polling change into its own commit if bundled into that checkpoint.
    - Pre-existing on release/2.4.0 (f37889ae): `test/transcription-staging.test.ts` "ships the vendored Vulkan build tools unmodified and hash-verified" fails on a correct LF checkout (`transcription-engine/third_party/vulkan-build/SOURCES.txt` is `eol=lf`; the Eve 2.4.0 worktree has it as CRLF on disk, which the pinned hash appears to match). Re-pin from the committed LF bytes.
-2. Rebase `feature/cos-2.1.37-port` onto `release/2.4.0` and fast-forward `release/2.4.0` to it. No file overlap with c5 is expected.
+2. Rebase `feature/cos-2.1.37-port` onto `release/2.4.0` and fast-forward `release/2.4.0` to it. No file overlap with the preceding checkpoint was expected.
 
-## C. Broker and c6
+## C. Broker integration and versioned verification (historical next steps)
 
 1. Rebase `feature/file-format-broker-2.4.0` (6 commits, base `491cd336`) onto `release/2.4.0`.
    Expected conflicts (keep both sides): `src/main/mcp/surfaces.ts` CORE_TOOLS (`skills` + `file_action`/`file_edit`),
@@ -46,6 +46,6 @@ Reviewed and not ported:
    `ollama-chat.ts` / `ollama-worker-executor.ts` (skills catalog + broker route/endpoint), preload, `index.html`,
    locales, `AGENTS.md`, package files, `test/mcp.test.ts` counts.
 2. Re-measure Core tools/list bytes (about 46.4 KB expected with skills); trim or set the cap with a comment.
-3. Full suite, `verify:notices`, `verify:privacy`, diff check; then `npm run candidate -- c6`.
+3. Full suite, `verify:notices`, `verify:privacy`, diff check; then package the exact source for installed self-testing. Any subsequent public release identity must be established by a GitHub version tag and verified release assets, not by a local numbered package label.
 
 Rules: follow the repo `CLAUDE.md` (no Claude attribution in commits). Ask before force operations, dropping commits, or touching Eve's uncommitted files.

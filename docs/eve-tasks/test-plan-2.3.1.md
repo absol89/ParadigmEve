@@ -3,9 +3,15 @@
 **Owners:** Eve (Computer Use, real UI) · Claude (code, automation, fixes) · the user (decisions, release)
 **Source:** Eve's 2.3.1 black-box test plan, turned into a shared checklist · **Written:** 2026-09-28
 
+**Historical evidence notice:** the numbered local build labels and installer paths in the candidate
+log below identify distinct archived artifacts, **not GitHub version tags**. A public release is
+identified by its GitHub version tag and verified release assets; installed self-testing proves only
+the specific binary actually installed. Preserve the old SHA-256 hashes and commit IDs when comparing
+these results.
+
 The release question: can Eve reliably start, observe, act, delegate, finish, recover, and stay attached to the right
-ChatGPT conversation and project in normal use? 2.3.1 is not promoted from dogfood until every applicable gate
-below is green on the installed build.
+ChatGPT conversation and project in normal use? Promotion to a GitHub-tagged public 2.3.1 release
+was conditional on every applicable gate below being green on the installed build.
 
 **Division of work.** Eve tests the experience; Claude tests the implementation around whatever Eve proves
 fragile. A synthetic test that passes never closes a failed real-user flow.
@@ -35,7 +41,7 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
 | 8 Safety refusal & recovery | Open | Done for ported fixes | Open |
 | 9 Tab lifecycle | Open | Blocked on decision | Open |
 | 10 Localization & onboarding | Blocked on i18n phase | Blocked on i18n phase | Open |
-| 11 Long-running dogfood | Open | Open | Open |
+| 11 Long-running installed self-test | Open | Open | Open |
 | Final release gate | — | — | Open |
 
 ## Decisions from the user
@@ -77,7 +83,7 @@ fragile. A synthetic test that passes never closes a failed real-user flow.
 - [x] Candidate commit recorded in the Candidate log.
 - [x] Windows x64 debug installer built from that exact commit into
   `ParadigmEve-installers\2.3.1\c2\ParadigmEve-2.3.1-windows-x64-debug.exe`, with `.sha`, `.blockmap`, and
-  `COMMIT.txt`; c1 remains preserved separately.
+  `COMMIT.txt`; the earlier local artifact remains preserved separately.
 
 **Gate:** candidate frozen. The branch changes only to fix a confirmed failure. No tag or publish is part of this plan.
 
@@ -96,8 +102,8 @@ candidate has passed the cheaper and more isolated layers first.
 3. **Eva Windows candidate — first native Windows gate.** Install the packaged candidate on Eva before Eve. Exercise
    the real Electron/browser path, native Windows behavior, restart/update behavior, ChatGPT interaction, input and
    capture. Eva is the first real Windows victim so a bad candidate does not break Eve's trusted 2.3.0 environment.
-4. **Eve Windows upgrade/dogfood — final real-user gate.** Only after Claude, %docker and Eva are green, install the
-   candidate over Eve's main copy and run the applicable black-box phases plus long-running dogfood.
+4. **Eve Windows upgrade/self-testing — final real-user gate.** Only after Claude, %docker and Eva are green, install the
+   candidate over Eve's main copy and run the applicable black-box phases plus long-running installed self-testing.
 5. **User release decision.** Tag/publish/latest promotion happens only after the user explicitly decides to release.
 
 Failure localization is part of the value of this ladder:
@@ -113,7 +119,7 @@ same ladder again, while only the Core smoke set and phases touched by the fix a
 
 **Eve**, from the packaged installer only, never the development tree:
 
-- [ ] Install over the current 2.3.0 dogfood build.
+- [ ] Install over the current 2.3.0 self-test build.
 - [ ] App starts normally.
 - [ ] Settings survive the upgrade.
 - [ ] Threads, Quilts, Pins, Plans, archive, schedules and project mappings are all still visible.
@@ -395,7 +401,7 @@ Look for broken labels, missing keys, overflow, misleading steps, or mixed langu
 
 **Gate:** no functional UI broken by localization.
 
-## Phase 11 — Long-running dogfood
+## Phase 11 — Long-running installed self-testing
 
 **Eve** does one real multi-step ParadigmEve task that includes:
 
@@ -435,7 +441,7 @@ If a fix touches any of these areas, expand testing to that whole phase.
 - [ ] Every applicable phase above is green.
 - [ ] Deferred behavior is listed under Known gaps, not left untested by accident.
 - [ ] No known high-severity regression remains.
-- [ ] The installed candidate survives a realistic dogfood session.
+- [ ] The installed candidate survives a realistic self-testing session.
 - [ ] Tag and publish wait for the user's explicit release decision.
 
 ## Candidate log
@@ -444,9 +450,9 @@ If a fix touches any of these areas, expand testing to that whole phase.
 | --- | --- | --- | --- | --- | --- |
 | 2.3.1-c1 | `b19ab11` | `546129c30f2e155ffd793004b40558ceb8e1b9d8aa6c8fe8c5b833776b2f42a3` | Claude | 2026-09-28 | Priorities 1 and 2. Later commits that touch only this checklist do not change the candidate. |
 | 2.3.1-c2 | `ae4be915` | `f0732069bcf6498aec70583ce447bbd357334c0172fa8be88bdf1cccce08daf7` | Eve | 2026-09-28 | Rebuild after the Compact & Resume race fix, deterministic Windows WGC fixture, and fresh CI-timeout fixes. Exact head passed `npm run verify`; packaged runtime and NSIS Vault smoke passed. |
-| 2.3.1-c3 | `dd8864c9` | `e0bf5a570a52b12838b8e3fbd4994c015112ea38e5cde9423855a1d963b72a51` | Claude | 2026-09-28 | Rebuild with the native ChatGPT Project mapping fixes (`45b3dc3`, `dd8864c`): old Project chats from chatgpt.com join their Eve project folder, and a Project link survives an entry chat that cannot join. Full suite 5,192 passed plus `computer` and `mcp-shutdown`; typecheck, privacy and notices passed; packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c3`. Rerun the Core smoke set and Phase 4. Built from the release tip `dd8864c`, which already contains `45b3dc3`. Superseded by c4. |
-| 2.3.1-c4 | `d912ab0` | `31be851105811df67bdbeb7398a352e5ec2bb36969d467629f8f2310c2de100b` | Claude | 2026-09-28 | Rebuild with the stuck restart-wake escalation to Compact & Resume (`d912ab0`). Exact head passed `npm run verify` (5,198 tests plus `computer` and `mcp-shutdown`); packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c4`. This candidate changes the Companion (`extension/content.js`): run the smoke tests only after the Companion reports the c4 build. Bug 1 (recovery retired while the chat is open) is not addressed by this commit. Its `verify` ran under en-US; under sv-SE four renderer tests failed on locale formatting. Superseded by c5. |
-| 2.3.1-c5 | `b640b6a` | `da909eb41176656686a75ba124e50d974223f5977228dfa103bd56a8d8a3b062` | Claude | 2026-09-28 | c4 plus a tests-only fix: usage and model-slider tests expect locale-formatted numbers, and the PowerShell argv probe ignores host warnings. No app code changed, so c4 results carry over except where a rerun is needed. Exact head passed `npm run verify` under en-US (5,198 tests plus `computer` and `mcp-shutdown`), and the full suite also passed with Swedish number formatting; packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c5`. Bug 1 still open. **Superseded before testing:** `b640b6a` was built on an unpublished local line and was replayed onto the public tip as `4253536`, with five newer public fixes underneath (Plans, duplicate chat tab, stuck image message). The next candidate is built from the pushed tip. |
+| 2.3.1-c3 | `dd8864c9` | `e0bf5a570a52b12838b8e3fbd4994c015112ea38e5cde9423855a1d963b72a51` | Claude | 2026-09-28 | Rebuild with the native ChatGPT Project mapping fixes (`45b3dc3`, `dd8864c`): old Project chats from chatgpt.com join their Eve project folder, and a Project link survives an entry chat that cannot join. Full suite 5,192 passed plus `computer` and `mcp-shutdown`; typecheck, privacy and notices passed; packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c3`. Rerun the Core smoke set and Phase 4. Built from the release tip `dd8864c`, which already contains `45b3dc3`. Superseded by the subsequent `d912ab0` package. |
+| 2.3.1-c4 | `d912ab0` | `31be851105811df67bdbeb7398a352e5ec2bb36969d467629f8f2310c2de100b` | Claude | 2026-09-28 | Rebuild with the stuck restart-wake escalation to Compact & Resume (`d912ab0`). Exact head passed `npm run verify` (5,198 tests plus `computer` and `mcp-shutdown`); packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c4`. This candidate changes the Companion (`extension/content.js`): run the smoke tests only after the Companion reports this exact installed generation. Bug 1 (recovery retired while the chat is open) is not addressed by this commit. Its `verify` ran under en-US; under sv-SE four renderer tests failed on locale formatting. Superseded by the subsequent `b640b6a` package. |
+| 2.3.1-c5 | `b640b6a` | `da909eb41176656686a75ba124e50d974223f5977228dfa103bd56a8d8a3b062` | Claude | 2026-09-28 | The preceding package plus a tests-only fix: usage and model-slider tests expect locale-formatted numbers, and the PowerShell argv probe ignores host warnings. No app code changed, so earlier results carry over except where a rerun is needed. Exact head passed `npm run verify` under en-US (5,198 tests plus `computer` and `mcp-shutdown`), and the full suite also passed with Swedish number formatting; packaged runtime and NSIS Vault smoke passed. Installer in `2.3.1\c5`. Bug 1 still open. **Superseded before testing:** `b640b6a` was built on an unpublished local line and was replayed onto the public tip as `4253536`, with five newer public fixes underneath (Plans, duplicate chat tab, stuck image message). The next package was to be built from the pushed tip. |
 
 ## Bug log
 

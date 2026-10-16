@@ -164,9 +164,9 @@ garden** identity; old chat A becomes a readable historical frontend, and new ch
 the current authority only after the commit. A queued exact restart wake or Prime finding follows
 the session's proven successor. Nothing authorizes typing it back into superseded A. A worker
 cannot self-compact; source code rejects worker Compact & Resume and applies eligibility checks
-before automatic compaction. The reported c28 candidate dogfood included a successful Compact &
-Resume path, which is useful acceptance evidence for that candidate, but does not prove every
-interrupted-send or crash boundary or the bytes of a different installed/public build.
+before automatic compaction. Installed Windows x64 self-testing included a successful Compact &
+Resume path, which is useful acceptance evidence for that exact build, but does not prove every
+interrupted-send or crash boundary or the bytes of a different installed or publicly released build.
 
 ## Send checkpoints
 

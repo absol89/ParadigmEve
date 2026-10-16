@@ -4,10 +4,11 @@ Back to [vault index](README.md).
 
 This subsystem is where “the app is running” is deliberately separated from “Chrome exists”, “the Companion is paired”, “a current ChatGPT document checked in”, and “this exact chat may be reloaded.”
 
-The public **v2.4.0** source checkpoint (`aac7643b`) and an installed **c28** candidate are
-different evidence levels. A source contract or candidate dogfood observation does not prove
-an installed machine is running those exact bytes; verify its Companion build and recovery
-readiness before claiming installed behavior.
+The GitHub **v2.4.0** source tag (`aac7643b`) and the earlier locally installed
+Windows x64 debug build have different provenance. Source contracts and
+installed self-testing from one build do not prove another installation runs
+the same bytes; verify its Companion build and recovery readiness before
+claiming installed behavior.
 
 ## Process lifetime
 

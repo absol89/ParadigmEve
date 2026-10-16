@@ -27,9 +27,9 @@ the public release-assets workflow is separate and manual.
 - 2.4.0 source instructions make Eve discover and use its **built-in file-format broker** whenever a user asks to open, edit, proofread, convert or otherwise work with a Word document (DOCX), PDF, spreadsheet or slide presentation. The guidance is available in fresh conversations without a special command or earlier chat context.
 - Resolve supported file providers and broker capabilities **before** suggesting an unrelated external editor installation. Provider availability is checked rather than assumed; missing capabilities must be reported honestly.
 - Preserve the original file: edits use a separate local working copy, with fidelity or feature-loss risks identified before proceeding. Native application installation, opening a visible editor, and other consent-sensitive actions remain subject to explicit user approval and existing safety checks.
-- The user reported opening WordCraft and GridCraft in installed c28. Actual editor features, install availability, format fidelity and cross-platform behavior still depend on provider capabilities, and are not implied by the source tag.
+- The user reported opening WordCraft and GridCraft during installed Windows x64 self-testing. Actual editor features, install availability, format fidelity and cross-platform behavior still depend on provider capabilities, and are not implied by the source tag.
 
-### c28-era reliability and workflow improvements
+### v2.4.0 reliability and workflow improvements
 
 - Heartbeat now uses a bounded, read-only worker with exact debt/Prime lineage,
   source-backed Plan review, durable completion receipts and actionable findings
@@ -41,16 +41,17 @@ the public release-assets workflow is separate and manual.
 - Keep wake, Compact & Resume and Force Send tied to exact conversation/input
   identity. Recover provider stream failures and preserve drafts, voice sessions,
   model choice and active tabs rather than resending ambiguous instructions.
-- Windows c28 was installed and dogfooded for heartbeat, wake, compaction,
+- A local Windows 2.4.0 development build underwent installed self-testing for heartbeat, wake, compaction,
   transcription, diarization, WordCraft/GridCraft opening, and Force Send.
-  The Vulkan probe was usable on the test GPU. The candidate's recorded dirty
+  The Vulkan probe was usable on the test GPU. The build's recorded local
   source patch already included track-separated mic/system transcription, echo
   suppression, overlapping-speech flags, and narrow-width Pins navigation; those
-  features need their own live behavior acceptance, not a claim that they were
+  features need their own live self-testing, not a claim that they were
   absent from the installer. Worker/heartbeat Plan-prompt updates were committed
-  after c28 was built and are source-only until another candidate is packaged.
+  after the locally installed Windows test build was packaged and are present
+  in the `v2.4.0` tagged source, not proven in the earlier installed build.
 
-Windows x64 **preview accepted locally** (2026-10-14): the c7 installer built from `1ac504221d15`, passed 5,766 automated tests (42 skipped), installed with no visible command-window popup, and delivered one confirmed restart wake to the exact Eve chat without any pending duplicate. The +1/+2-minute fallback has test coverage but has not been live-tested against a deliberate pickup failure. Other operating systems and Windows ARM64 have not received live acceptance. The public preview tag and publication are separate actions.
+Earlier Windows x64 **installed self-testing** (2026-10-14): a debug build from commit `1ac504221d15` passed 5,766 automated tests (42 skipped), installed with no visible command-window popup, and delivered one confirmed restart wake to the exact Eve chat without any pending duplicate. The +1/+2-minute fallback has test coverage but has not been live-tested against a deliberate pickup failure. Other operating systems and Windows ARM64 have not received equivalent installed self-testing. The GitHub version tag and binary publication are separate actions.
 
 - Settings → Transcription: GPU (priority 1), Local (2) and Cloud via Groq (3), each with a switch
   and a whole-number priority. The lowest enabled number runs first; unavailable options are skipped.
@@ -239,7 +240,7 @@ and public release remain separate verification steps.
 
 ## [2.3.6] — Talk, plan, delegate
 
-2.3.5 was an internal dogfood build and is not released publicly; its changes below ship with 2.3.6.
+2.3.5 was an internal self-testing build and is not released publicly; its changes below ship with 2.3.6.
 
 ### Added
 
@@ -371,7 +372,7 @@ and public release remain separate verification steps.
 
 ### Changed
 
-- `%Hotlink` is now `%Instruction` (`%Instruktion`, `%Instrucción`). Stored data and behavior are unchanged.
+- The saved `%instructions` category now appears as Instructions (with Swedish and Spanish localization). Stored data and activation behavior are unchanged.
 - The Pins screen shows the shipped starters under their localized names in Swedish and Spanish.
 - **Open static archive** is now **Open Archive Browser** (**Opening Archive Browser…** while it works), in every
   language, and on Windows it brings the browser window it opened to the front.
@@ -591,7 +592,7 @@ and public release remain separate verification steps.
 
 - `pins` MCP actions for Thread prompts (`create_thread` with `prompt`, `set_thread_prompt`) and Pin Hearts
   (`set_pin_sticky`).
-- A shipped `%claude` starter Hotlink for Eve ↔ Claude coordination.
+- A shipped `%claude` starter Instruction for Eve ↔ Claude coordination.
 - **Cancel plan:** a Live Plan that is no longer relevant can be cancelled (two clicks). It moves to Done as
   Cancelled with its checklist exactly as it was, instead of ticking items only to archive it.
 
@@ -651,7 +652,7 @@ and public release remain separate verification steps.
 
 ### Verified
 
-- Installed Windows dogfood proved a fresh Eve turn as `callerIdentity: proven` for its exact Eve conversation,
+- Installed Windows self-testing proved a fresh Eve turn as `callerIdentity: proven` for its exact Eve conversation,
   with the first attribution wait reduced to `identity_ms=2` and the next call at `identity_ms=0`.
 - `app.log` recorded the request as attributed **from its earlier stream sighting**, with no `no page evidence ...
   Unattributed activity` fallback for those fresh-turn calls.
@@ -695,20 +696,20 @@ and public release remain separate verification steps.
 - Adds the Archive workspace and narrow path-free renderer IPC, while hardening archive/store/blob publication against symlink/junction escapes and retiring archived evidence when the user explicitly deletes a session.
 - Adds a static archive chat-order toggle (`Newer first` / `Older first`, with Swedish `Nyare först` / `Äldre först`) without changing stable chat hashes, plus the measured 188px desktop sidebar default, a safe GitHub brand action, and a View-menu shortcut to the local static archive.
 - Keeps provider-neutral memory separate from transcript evidence, retains portable `.evechat` validation seams, and preserves the existing secure artifact download and session/history tooling.
-- The feature line is based on the frozen `2.2.3` source checkpoint and targets tag `2.2.4`; private Windows qualification uses an x64 debug build until installed dogfood and final release gates are complete.
+- The feature line is based on the frozen `2.2.3` source checkpoint and targets tag `2.2.4`; private Windows qualification uses an x64 debug build until installed self-testing and final release gates are complete.
 
-## [2.2.3] — Concepts, friendlier Pins and Plans, and post-Angel dogfood polish
+## [2.2.3] — Concepts, friendlier Pins and Plans, and post-Angel self-testing polish
 
-- Adds the current Concepts/Hotlinks/Threads presentation model on top of the durable Pins library, including local Create editing, Quilt grouping, preview controls, safer Links, and current English/Swedish copy.
+- Adds the current Concepts/Instructions/Threads presentation model on top of the durable Pins library, including local Create editing, Quilt grouping, preview controls, safer Links, and current English/Swedish copy.
 - Polishes Pins and Plans navigation with clearer workspace actions and the new Pins heart-memo heading icon while preserving exact Pin provenance and Thread/Quilt activation semantics.
 - Adds the durable `%plans` starter behind Plans → Create. The onboarding chat starts with `Make me a 3 step plan to get started with %plans`, and the starter description explains that the Plan stays beside the app chat as durable shared state.
 - Repairs fresh-chat Plan Request Trail admission when the confirmed app-authored opening is recorded immediately before ChatGPT's first `turn_start`, while continuing to fail closed on ambiguous request ownership.
 - Keeps an already accepted durable Plan successful when only secondary Request Trail reconciliation needs repair, so Activity no longer labels that accepted Plan as “Refused.”
-- Keeps the 2.2.2 Angel schedule/request/recovery baseline cumulative and bridge protocol **15** while this 2.2.3 line remains private debug dogfood until separately checkpointed and released.
+- Keeps the 2.2.2 Angel schedule/request/recovery baseline cumulative and bridge protocol **15** while this 2.2.3 line remains private debug self-testing until separately checkpointed and released.
 
 ## [2.2.2] — Durable schedules, request trails, and safer Computer Use recovery
 
-- Treats 2.2.2 as a cumulative continuation of the 2.2.1 dogfood baseline, retaining its model-selection, Activity/Pins/Thread, starter-durability, Thread-description, accessibility and browser-recovery improvements. Release provenance now requires those settled changes to live in the same committed target-version tree rather than only in an uncommitted integration workspace.
+- Treats 2.2.2 as a cumulative continuation of the 2.2.1 self-testing baseline, retaining its model-selection, Activity/Pins/Thread, starter-durability, Thread-description, accessibility and browser-recovery improvements. Release provenance now requires those settled changes to live in the same committed target-version tree rather than only in an uncommitted integration workspace.
 - Adds first-class `%schedules` / `%evecron` persistence, editing, projection, and installed-runtime execution. User availability stays explicitly known/unknown; Eve duration is explicit authority; shared-free overlap is projected only when both sides are actually known rather than guessed.
 - Repairs the shared Schedule editor backplate for both user availability and Eve routines by using the current app theme surfaces, so the dialog and its form controls remain opaque and readable in light and dark themes.
 - Runs due Eve schedule work in its own fresh schedule-owned chat lane instead of appending to the user's active conversation. An occurrence may become **Started** only after the browser ACK and exact recorded session prove delivery, and **Done** only after durable completion evidence; restart/retry paths dedupe the same occurrence rather than admitting it twice.
@@ -719,9 +720,9 @@ and public release remain separate verification steps.
 - Keeps request-id attribution reconnect retryable across the fresh worker/Resume journal gate. A gated or incomplete `/correlations` replay no longer consumes its reconnect token; the same exact page retries after rebind, without weakening caller authority or reloading/navigating a healthy page.
 - Keeps bridge protocol **15** because these changes do not require an incompatible app/Companion browser-wire contract.
 
-## [2.2.1] — Active dogfood integration line
+## [2.2.1] — Active self-testing integration line
 
-- Moves the active dogfood/release candidate to **2.2.1** so continuing integration, packaging, and installer evidence use a fresh release identity after the extended 2.2.0 iteration.
+- Moves the active self-testing/release candidate to **2.2.1** so continuing integration, packaging, and installer evidence use a fresh release identity after the extended 2.2.0 iteration.
 - Keeps bridge protocol **15**; this version rollover does not change the app/Companion browser wire contract.
 
 ## [2.2.0] — Free-account readiness, truthful first-tool setup, and Computer Use recovery
@@ -734,11 +735,11 @@ and public release remain separate verification steps.
 - Retires stale Window2 coordinate/index authority when a selected window disappears, when the native helper generation changes, and at the durable screen/control permission transition. The same retained caller API must re-list/re-observe before input can succeed after restart or revocation.
 - Strengthens first-install readiness so connector discovery alone cannot durably complete setup. Every required non-optional surface needs both real request/discovery evidence and a recognized external tool invocation.
 - Keeps first-tool proof scoped to external connector activity: authenticated app self-tests, tunnel probes, and broker-owned local workers cannot mint ChatGPT onboarding evidence. External direct and nested/code-mode calls remain eligible.
-- Keeps fresh/default permissions minimal: `roots=[]` and Computer Use off. A safely refused recognized external tool call may prove routing for onboarding, while release dogfood separately requires one harmless Eve tool to actually succeed.
+- Keeps fresh/default permissions minimal: `roots=[]` and Computer Use off. A safely refused recognized external tool call may prove routing for onboarding, while release self-testing separately requires one harmless Eve tool to actually succeed.
 - Aligns current user-facing context vocabulary with ordinary keyboards: `%thread` activates one specific Thread, while `#quilt` addresses a wider Quilt that groups related Threads. Existing legacy storage/type names remain implementation details rather than user syntax.
 - Keeps bridge protocol **15** because these changes do not alter the app/Companion browser wire contract.
 
-## [2.1.9] — Thread activation, self-describing `%how`, and durable dogfood checkpoint
+## [2.1.9] — Thread activation, self-describing `%how`, and durable self-testing checkpoint
 
 - Separates direct `%thread` activation from broad `#quilt` context. `%thread` and explicit Thread-start inject that Thread's standing prompt plus saved Pins, while `#quilt` contributes member Threads' saved Pins without activating their standing prompts.
 - Keeps `%how`'s packaged Vault/manual context behind explicit How activation, so `#Eve` can carry broad saved context without silently spending the How prompt/manual budget.
@@ -755,7 +756,7 @@ and public release remain separate verification steps.
 
 - Fixes the reproduced blank-successor Compact & Resume failure where a marked `?clf=…#clf=…` tab could be created but never reach `/commands/redeem`. The successor watchdog now permits one same-tab recovery reload while the exact marker is still present, unless the page positively reports user/retargeted state that must be preserved; it never opens a second successor.
 - Raises the Companion bridge protocol to **15** so an already-resident Chrome service worker from older 2.1.7 bytes cannot continue executing stale pre-fix successor logic merely because the unpacked extension files on disk were refreshed. Same-version stale protocol-14 peers are rejected before browser placement authority is granted.
-- Lowers the **debug** dogfood auto-compaction threshold to **300,000** estimated local units with a **400,000** red line, while dev/shipping remain 369,000/492,000. Exact untouched 2.1.7 debug defaults migrate down; explicit custom thresholds are preserved.
+- Lowers the **debug** self-testing auto-compaction threshold to **300,000** estimated local units with a **400,000** red line, while dev/shipping remain 369,000/492,000. Exact untouched 2.1.7 debug defaults migrate down; explicit custom thresholds are preserved.
 - Adds a reusable continuity acceptance gate covering the exact reported marker pair, local `POST /commands/redeem` transport, same-tab reload/redeem, lost redeem replies, slow/final ACK behavior, one-shot destination ownership, restart idempotence, timeout behavior and the lower debug ceiling. ParadigmEve does not depend on ChatGPT's private `/backend-api/f/conversation/resume` request.
 - Pins now open the exact recorded source row by durable local `sessionId + eventSeq`, including historical cross-session sources. Chat explicitly loads the bounded history page containing the event, clears filters that could hide it, centers the row and highlights it instead of searching by text or timestamp.
 - Historical Pin navigation is protected against a background selected-session/detail refresh replacing the requested page while it is loading. The live regression case now lands on exact durable event 587 in the older source session instead of drifting back toward the live tail.
@@ -776,7 +777,7 @@ and public release remain separate verification steps.
 - This follows the separate upstream Compact & Resume failure discussed in Chat On Steroids issue #167; the newer shadow-session guards from upstream PRs #224/#231 are already present in ParadigmEve and remain unchanged.
 - Bridge protocol remains **14** because 2.1.6 changes browser-side receipt recovery only; no app/Companion request or response shape changed.
 
-## [2.1.5] — One-agent identity and LAN dogfood candidate
+## [2.1.5] — One-agent identity and LAN self-testing candidate
 
 - Replaced the user-facing Prime/Sol/Gaia ownership model with one configured installation agent (`Eve`, `Eva`, etc.) plus her worker garden. Exactly one durable owner conversation may carry that identity; ambiguous history fails closed to a New Chat agent-claim path, which commits only after ChatGPT proves the exact new conversation id.
 - Exact owner identity now survives sleeping workers and transfers through Compact & Resume independently of broker-family activity. Restart/reinstall recovery consumes that durable owner only, queues an immediate wake, and keeps Chrome's native session restore additive for the remaining dedicated-profile tabs.
@@ -796,13 +797,13 @@ and public release remain separate verification steps.
 - Hardened browser/restart recovery and related session ownership paths around Chrome's native session restore, restored-tab reuse, worker/Prime routing and exact mutation authority; the integrated tree also contains the current Swedish UI, workspace/Pins/Plans navigation, startup/readiness and build-flavor/provider policy work.
 - This entry describes the integrated 2.1.3 candidate source and regression scope. Packaging, reinstall rehearsal and installed/live acceptance remain separate release gates and are not claimed here.
 
-## [2.1.2] — Portable gaming-PC dogfood build
+## [2.1.2] — Portable gaming-PC self-testing build
 
 - A ParadigmEve installation can give its primary ChatGPT connection a local human name such as **Eve** or **Eva**. That name flows through setup, tunnel/app guidance, connector cards, work context and MCP instructions while the stable product, Companion and MCP server identities remain ParadigmEve-owned. This makes two computers on the same ChatGPT account easier to keep visually and operationally distinct when each has its own tunnel and active chat.
 - The app-interface language choice now uses a single current-flag dropdown for **US English and Swedish** in Setup and Settings, leaving room for more locales without adding a permanent row of flags. Swedish localizes app-authored UI while leaving authored conversation text, connector names and technical identifiers untouched.
 - First-run and everyday presentation received the current homey guide/startup/Pins/Plans polish, with workspace navigation kept inside the same desktop experience rather than turning onboarding into a developer-oriented checklist.
 
-## [2.1.1] — Pins + Plans visual dogfood slice
+## [2.1.1] — Pins + Plans visual self-testing slice
 
 - Added first-class Pins and Plans destinations beside Chat. Chat remains the review surface; useful messages, tool results and plans can be harvested into durable Quilt cards without turning the transcript into a library UI.
 - Every Pin now requires an explicit Quilt destination. The chooser starts with no Quilt selected and supports either choosing an existing pinned Quilt or explicitly creating a new one; persisted orphan Pins fail closed.
@@ -810,12 +811,12 @@ and public release remain separate verification steps.
 - Accepted session `update_plan` progress now projects into the matching first-class Live Plan only after the existing caller/session stale-call fence accepts the update. Global plan edits retain their own revision fence.
 - Hardened Pins/Plans library state against malformed durable JSON and historical message Pins against false Compact & Resume source links. Browser repair now requires a final exact action claim after the Companion's fresh tab scan, so Block/Stop/supersession changes can cancel a stale handout before Chrome mutates a tab; bridge protocol 14 enforces the matching Companion contract.
 
-## [2.1.0] — ParadigmEve private dogfood build
+## [2.1.0] — ParadigmEve private self-testing build
 
 - The 22-minute semantic review heartbeat is now receipt-backed. Its exact review debt is durable before browser transport, survives explicit-user cancellation/restart, and advances only after the authenticated coordinator calls `chat_review_complete`; browser send ACKs, final prose and sidebar state cannot silently retire owed review work.
 - Heartbeat completion and recovery now preserve exact session/conversation provenance through Compact & Resume and bounded stalled-owner transfer. Wrong keys, worker/helper callers, ambiguous ownership and nested code-mode completion fail closed.
 - Added a Mac-from-USB private build bootstrap plus Setup-time Screen Recording/Accessibility guidance so a copied repository can produce the matching native macOS package without mutating the source checkout or hiding missing OS permissions.
-- Refined Quilt's first dogfood model around a checkerboard of durable snapshots: a useful moment is pinned with traceable source context, current state and a small next step rather than becoming another reminder stream. The three 22-minute discovery rides now use that model consistently.
+- Refined Quilt's first self-testing model around a checkerboard of durable snapshots: a useful moment is pinned with traceable source context, current state and a small next step rather than becoming another reminder stream. The three 22-minute discovery rides now use that model consistently.
 - Added focused regressions for review debt/reissue/receipt authority, exact Core lifecycle exposure and the macOS Setup permission controls.
 
 ## [2.0.19] — ParadigmEve private build
@@ -863,9 +864,9 @@ and public release remain separate verification steps.
 
 ## [2.0.14] — ParadigmEve private build
 
-- Closed the final assisted-NSIS boundary found by live dogfooding: the InstFiles completion page now auto-closes after ParadigmEve has been launched, instead of leaving an enabled Close button behind.
+- Closed the final assisted-NSIS boundary found by live self-testing: the InstFiles completion page now auto-closes after ParadigmEve has been launched, instead of leaving an enabled Close button behind.
 - The external reinstall controller also recognizes Close only when the installer snapshot explicitly says `Installation Complete`, so older or unexpected assisted-installer behavior still has a safe fallback without ever clicking Close while files are being written.
-- The previous 2.0.13 dogfood proved the stronger current-generation Companion + ChatGPT-document recovery handshake live before this installer-boundary follow-up.
+- The previous 2.0.13 self-testing proved the stronger current-generation Companion + ChatGPT-document recovery handshake live before this installer-boundary follow-up.
 
 ## [2.0.13] — ParadigmEve private build
 

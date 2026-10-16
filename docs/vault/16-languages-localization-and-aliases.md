@@ -118,8 +118,11 @@ Rules:
 - An unresolved `#name` is reported to Eve only when Pins vocabulary sits nearby. The vocabulary list is
   English, Swedish and Spanish (thread, tråd, hilo, concept, koncept, concepto, quilt, pin, and so on).
 
-The object formerly called a Hotlink is now an **Instruction** (`%Instruction`, Swedish `%Instruktion`,
-Spanish `%Instrucción`): a Thread with a prompt and no Pins. Only the user-facing name changed.
+The Pins **`%instructions` category** groups saved Instructions: Threads with a
+prompt and no Pins. Its displayed label is localized (for example Swedish
+"Instruktioner"). The category label is descriptive, **not** a universal built-in
+`%instructions` alias; a saved Instruction is activated by its actual, exactly
+resolved `%ThreadName`. See the stored-name and alias precedence rules above.
 
 ## Pets
 

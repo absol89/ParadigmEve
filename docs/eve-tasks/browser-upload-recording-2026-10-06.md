@@ -58,7 +58,7 @@ not install or publish a release, or reconstruct bytes missing from historical u
 Scratch logs in the existing ignored `tools/release-preview` directory retain the verify and build
 output. No extension reload, app restart or live post-fix upload was performed.
 
-## c13 debug build
+## Historical local Windows debug package
 
 On the user's explicit build request, packaged an isolated snapshot of the tracked working-tree
 bytes over `ed3b33f1` on `release/2.3.6`, preserving the shared dirty tree. The private snapshot uses
@@ -76,4 +76,6 @@ The task receipt was copied into the snapshot; unrelated untracked experiments w
   build output. The embedded main bundle declares `BUILD_FLAVOR = "debug"`.
 - Adjacent source-manifest.json, build-receipt.json, package.log and checksum file preserve evidence.
 
-The source verification caveat above remains: c13 has not been installed or live-upload tested.
+The source verification caveat above remains: this exact SHA-256-identified local package has not
+been installed or subjected to live-upload self-testing. Its local directory label is not a GitHub
+version tag or proof of a published release asset.

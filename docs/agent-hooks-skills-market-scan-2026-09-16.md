@@ -186,7 +186,7 @@ The main rule is: **activation should never be ambiguous**. A Thread activation,
 
 1. Prototype a read-only Agent Skill importer against a few public `SKILL.md` packages and measure how much normalization Eve actually needs.
 2. Draft a tiny semantic hook event vocabulary based on Eve's own lifecycle, then map Claude/Cursor/Copilot/Codex events onto it to find gaps.
-3. Dogfood one non-destructive hook such as “after edit → suggest/run focused validation” before allowing hooks to block or mutate actions.
+3. Self-test one non-destructive hook in the installed app, such as “after edit → suggest/run focused validation”, before allowing hooks to block or mutate actions.
 4. Test whether a Thread that references a Skill feels clearer than putting the whole workflow into the Thread prompt.
 5. Explore plugin packaging where a tutorial installs a Thread template + Skill + optional MCP connector without exposing those implementation nouns unless the user wants them.
 
