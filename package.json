@@ -23,6 +23,7 @@
     "installer-art": "node scripts/make-installer-art.mjs",
     "tunnel": "node scripts/fetch-tunnel-client.mjs",
     "rg": "node scripts/fetch-ripgrep.mjs",
+    "fix:eol": "node scripts/line-endings.mjs",
     "packaging:prepare": "node scripts/prepare-packaging-native.mjs",
     "desktop:mac": "node scripts/prepare-macos-desktop-helper.mjs --platform darwin",
     "dist": "node scripts/package.mjs --arch x64,arm64",

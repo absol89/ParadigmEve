@@ -3,6 +3,8 @@ import { configDefaults, defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
+    // Fails any run, even a single test file, when a text file has CRLF (`npm run fix:eol`).
+    globalSetup: ['test/global-line-endings.ts'],
     // Transcription/Whisper are optional, candidate-tested features. Keep every
     // dedicated suite on the laptop, but do not require them on GitHub CI hosts.
     exclude: [...configDefaults.exclude, ...(process.env.CI ? ['test/transcription-*.test.ts'] : [])],
