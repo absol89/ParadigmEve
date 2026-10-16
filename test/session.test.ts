@@ -1708,7 +1708,9 @@ describe('handoff storage', () => {
       readSpy.mockRestore();
       await deleteSession(seed.id);
     }
-  }, 90_000);
+    // 5,001 mocked folders are read through the real catalog code: CPU-bound, and a shared Windows
+    // CI runner exceeded 90 s on this exact commit while another run of it passed (2026-10-16).
+  }, 240_000);
 
   it('never prunes the session holding the newest handoff', async () => {
     const stale = await createSession({ title: 'stale' });
