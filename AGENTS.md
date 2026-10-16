@@ -27,8 +27,8 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-10-16**, public 2.4.0 source checkpoint `aac7643b` plus any
-subsequent explicitly reviewed changes. App/extension **2.4.0**,
+Source alignment: **2026-10-16**, the final `v2.4.0` tag (built on source checkpoint `aac7643b`
+plus reviewed fixes). App/extension **2.4.0**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). The public Git tag is source provenance, not proof of
 downloadable release assets, installation or live Chrome behavior.
@@ -886,7 +886,9 @@ with the same fingerprint and retries only classified pre-delivery failures with
   app-wide Plans catalog. The renderer derives audience from durable session ancestry: ordinary
   Prime/user work stays in the manager-facing Plans view, while worker execution plans are grouped
   under Eve activity. A worker must call its own `update_plan` for an actual worker checklist
-  to appear there; historical worker tool calls alone do not synthesize a Plan. Archived worker
+  to appear there; historical worker tool calls alone do not synthesize a checklist. A worker session
+  that never wrote a Plan but delivered finish reports gets one archived entry labelled "Recovered from
+  finish reports (no Plan was written)", built only from those delivered reports. Archived worker
   Plans remain in Eve activity → Done rather than being discarded. The human Plans view still rolls those worker plans up as collapsed
   **Verified work**, preserving their completed audit/checklist evidence without giving every
   execution plan equal visual weight with the user's goals. This is a presentation split over the

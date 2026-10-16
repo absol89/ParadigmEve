@@ -28,9 +28,11 @@ Friendly ids like `worker-2` are local to one run and are never global ownership
 An assigned worker with several meaningful steps should create **its own real `update_plan`**
 near the start and keep it updated with the implementation and checks actually performed. A
 Markdown checklist or a Prime-authored overview is not that worker's Plan. The broker does
-**not** silently synthesize Plans from every historical worker or tool call: a worker without
-a recorded `update_plan` may have completed real work but will have **no Plan card** in Eve
-activity. This is a known coverage limit, not evidence that the worker did nothing.
+**not** synthesize checklists from historical worker tool calls. A worker session that never
+wrote a Plan but delivered finish reports gets one archived Eve activity → Done entry labelled
+"Recovered from finish reports (no Plan was written)", built only from those delivered reports.
+A worker with neither a Plan nor a delivered report has no card; that is a coverage limit, not
+evidence that the worker did nothing.
 
 `src/main/mcp/plan-tool.ts` writes the worker's plan into its exact local session, then
 `src/main/plans.ts` projects an accepted revision into the first-class Plans catalog. Audience
@@ -46,7 +48,8 @@ legacy report-only trailing steps do not keep an otherwise completed worker Plan
 Live. `agents action=finish` submits the worker result separately, and delivered-report evidence
 is tracked by message id and session ancestry. Eligible completed worker Plans can **auto-archive
 when that exact report delivery is proved**, only while **Allow Eve to archive completed Eve work**
-is on, and then remain visible in Eve activity → Done. A
+is on, and then remain visible in Eve activity → Done. A heartbeat review worker's own finished
+Plan is archived with its review receipt under the same permission. A
 completed ordinary human Plan instead stays Live until its user archives it. Do not equate
 "all checklist items done", "reported", "archive accepted" or "worker sleeping".
 

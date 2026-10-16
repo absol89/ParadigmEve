@@ -12,8 +12,8 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current public source line is **2.4.0** (checkpoint `aac7643b`, tagged `v2.4.0`
-on 2026-10-16). The earlier **App + Companion 2.2.2** Angel checkpoint remains
+The current public source line is **2.4.0** (tagged `v2.4.0` on 2026-10-16;
+the GitHub release page shows the tagged commit). The earlier **App + Companion 2.2.2** Angel checkpoint remains
 part of the release history, and the current bridge protocol is **15**. A 2.4.0 package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other. This tagged *source* checkpoint is not
@@ -21,10 +21,10 @@ itself a published installer or proof of live operation on every target platform
 
 ## Git provenance for cumulative release lines
 
-At the 2026-10-16 checkpoint, public `main`, `release/2.4.0`, and `v2.4.0` all
-resolved to `aac7643b`. The `release/2.4.0` and `main` GitHub CI matrices each
-passed Windows x64, macOS arm64, Linux x64, and Linux with Swedish locale on
-that exact commit. This is source verification; it does **not** build and publish
+The `v2.4.0` tag marks the final 2.4.0 head shared by public `main` and
+`release/2.4.0`. The GitHub CI matrices for both branches run Windows x64, macOS
+arm64, Linux x64, and Linux with Swedish locale; check the run for the tagged
+commit rather than trusting a hash written here. This is source verification; it does **not** build and publish
 the release assets or prove real installation on all those platforms. The public
 GitHub Release/publish workflow is separately and manually dispatched at a tag.
 

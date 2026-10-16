@@ -15,11 +15,16 @@ operation.
 
 ## [2.4.0] — Source checkpoint, resilient wakes and transcription
 
-**Public source checkpoint (2026-10-16):** the `v2.4.0` tag points to
-`aac7643b`; later commits on `main` and `release/2.4.0` change documentation only. The local privacy/typecheck/notices and
-5,882 + 20 + 2 automated tests passed, along with six Python source-aware
-tests. GitHub CI passed all four Windows/macOS/Linux/Swedish-locale jobs on
-both release and main. This **source tag does not publish installers**;
+**Public source (2026-10-16):** the annotated `v2.4.0` tag marks the final
+2.4.0 head of `main` and `release/2.4.0`. It builds on source checkpoint
+`aac7643b`, where the local privacy/typecheck/notices checks and 5,882 + 20 + 2
+automated tests passed, along with six Python source-aware tests, and GitHub CI
+passed all four Windows/macOS/Linux/Swedish-locale jobs on both release and
+main. Reviewed additions after that checkpoint recover Eve activity for workers
+that never wrote a Plan, archive a heartbeat review's own finished Plan with its
+receipt (only while Eve may archive completed work), stop an unrelated chat
+error from replacing the Plan-archived confirmation, give one slow CI test more
+time, and correct documentation. This **source tag does not publish installers**;
 the public release-assets workflow is separate and manual.
 
 ### File-format broker included in tagged source

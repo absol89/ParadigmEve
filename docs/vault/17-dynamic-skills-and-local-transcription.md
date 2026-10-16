@@ -7,9 +7,9 @@ syntax: **dynamic Skills** and **local transcription with speaker diarization**.
 goal: Eve should discover and use the right capability from the user's ordinary request while keeping
 the full implementation/procedure out of context until it is actually needed.
 
-**Evidence boundary (2026-10-16):** GitHub version tag `v2.4.0` identifies source
-checkpoint `aac7643b`. The locally installed Windows x64 debug build was
-produced earlier from `7b30cc22` plus a recorded patch that already contained the
+**Evidence boundary (2026-10-16):** GitHub version tag `v2.4.0` identifies the final
+2.4.0 source. The locally installed Windows x64 debug build was
+produced earlier from an earlier 2.4.0 commit plus a recorded patch that already contained the
 source-aware path. The tagged source checkpoint commits that work and its tests.
 Tag ancestry alone does not prove the installed/runtime state or the publication
 of a downloadable installer.

@@ -9,12 +9,12 @@ installer and a live acceptance run are different evidence levels.
 
 ## Current product state
 
-- Current tagged source: **`v2.4.0` at `aac7643b`** on `release/2.4.0`,
-  synchronized with public `main` at the checkpoint inspected 2026-10-16.
+- Current tagged source: **`v2.4.0`**, the final 2.4.0 head of `release/2.4.0` and
+  public `main` (2026-10-16; the GitHub release page shows the tagged commit).
 - Package version, `APP_VERSION` and Companion manifest all declare **2.4.0**.
 - Bridge protocol: **15**.
 - The locally installed **Windows x64 debug self-test build** was produced from
-  earlier source commit `7b30cc22` with a recorded patch. Its build/packaging
+  an earlier 2.4.0 source commit with a recorded patch. Its build/packaging
   checks passed; it was installed and exercised locally. Installed app/asar and
   Vulkan engine/probe bytes were checked against the packaged build. This does
   not establish that later tagged source changes were installed.

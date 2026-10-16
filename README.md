@@ -177,7 +177,7 @@ On a fresh install, Luna is enabled. Hammy, Miso, and Pip start disabled; Miso a
 
 ## v2.4.0: GitHub tag, installed self-testing, published downloads
 
-The app and Companion source currently declare **2.4.0**, and the public `v2.4.0` source tag points to commit `aac7643b`. That is a **source checkpoint**, not confirmation that every platform installer exists on GitHub Releases.
+The app and Companion source currently declare **2.4.0**, and the public `v2.4.0` source tag marks the final 2.4.0 commit on `main`. That is a **source checkpoint**, not confirmation that every platform installer exists on GitHub Releases.
 
 Separately, **Windows x64 installed self-testing** used a local 2.4.0 development build assembled before the final GitHub tag. Reported successful checks include heartbeat, Compact & Resume, restart wake, transcription/diarization, a usable GPU compute probe, opening WordCraft/GridCraft, and controlled Force Send. Its recorded build includes source-aware microphone/system-audio processing and narrow-screen Pins improvements; those being packaged is **not** proof that automatic speaker discovery, overlapping speakers, or merged source-aware output passed live self-testing. Fresh-chat broker discovery was also present in that installed build, although opening an editor does not prove end-to-end document fidelity. Later worker-Plan prompting changes in the tagged source must not automatically be attributed to the installed build.
 

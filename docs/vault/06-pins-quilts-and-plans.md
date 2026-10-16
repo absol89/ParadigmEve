@@ -289,7 +289,7 @@ Schema validation also rejects orphan Pins, duplicate ids and invalid Quilt memb
 ## Plans
 
 `src/main/plans.ts` + `src/shared/plans.ts` own first-class Plans.
-In **2.4.0** (`v2.4.0` source at `aac7643b`), the Plans screen separates
+In **2.4.0** (`v2.4.0` source), the Plans screen separates
 human-facing **Plans** from **Eve activity**. This is one durable catalog with
 two audience projections, not two independent Plan databases.
 
