@@ -3406,7 +3406,8 @@ select option { background: var(--card); color: var(--ink); }
 .composer-dock .queued-input, #activeGoalRow, #recoveryStatus { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 7px 12px; margin: 0; border: 0; border-bottom: 1px solid var(--edge); font-size: 13px; color: var(--soft); }
 .composer-dock > :nth-last-child(1 of :not([hidden])) { border-bottom: 0; }
 .composer-dock > :nth-last-child(1 of :not([hidden])) > .queued-input:last-child { border-bottom: 0; }
-.composer-dock:not([hidden]):has(> :not([hidden])) + .composer { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+/* Square top corners: the dock's straight sides run on into the composer's without a notch. */
+.composer-dock:not([hidden]):has(> :not([hidden])) + .composer { border-top-left-radius: 0; border-top-right-radius: 0; }
 .composer-dock .ico { width: 15px; height: 15px; flex-shrink: 0; }
 .composer-dock .queue-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-dock button { flex-shrink: 0; }
