@@ -8807,7 +8807,8 @@ function bootstrapText(spec: CommandSpec, summary: string): string {
     return (
       `${spec.task}\n\n` +
       `(ParadigmEve: you are ${spec.agent}, a worker. Report to prime through the agents tool — ` +
-      'action=message to="prime" as you go, action=finish once at the end. Workers cannot reach each other. ' +
+      'action=message to="prime" as you go, action=finish once at the end. Keep your steps in update_plan. ' +
+      'Workers cannot reach each other. ' +
       'ultrathink)'
     );
   }

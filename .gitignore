@@ -70,6 +70,8 @@ transcription-engine/.vendor/whisper.cpp/build-vulkan/
 
 # The one required, pinned Windows x64 CPU Whisper executable is a release input.
 # Never admit other local build outputs, models, caches or optional GPU executables.
+__pycache__/
+*.py[cod]
 !transcription-engine/.vendor/whisper.cpp/build/
 transcription-engine/.vendor/whisper.cpp/build/**
 !transcription-engine/.vendor/whisper.cpp/build/bin/

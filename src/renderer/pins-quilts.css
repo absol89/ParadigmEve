@@ -141,6 +141,7 @@
 
 .pins-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   margin-bottom: 24px;
 }
@@ -162,6 +163,8 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 34px;
   padding: 6px 11px;
   border: 1px solid var(--pins-line);
@@ -169,6 +172,11 @@
   background: color-mix(in srgb, var(--pins-panel) 58%, transparent);
   color: var(--pins-soft);
   font-size: 12px;
+}
+
+.pins-tab > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pins-tab:hover,
@@ -184,6 +192,7 @@
 }
 
 .pins-tab-count {
+  flex: 0 0 auto;
   min-width: 19px;
   padding: 1px 5px;
   border-radius: var(--pill);

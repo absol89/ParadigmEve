@@ -31,6 +31,13 @@ beforeEach(() => {
 
 afterEach(() => dom.window.close());
 
+it('wraps Pins navigation pills at narrow window widths without losing their count badges', () => {
+  const css = readFileSync(path.join(process.cwd(), 'src', 'renderer', 'pins-quilts.css'), 'utf8');
+  expect(css).toMatch(/\.pins-tabs\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/s);
+  expect(css).toMatch(/\.pins-tab\s*\{[^}]*max-width:\s*100%;/s);
+  expect(css).toMatch(/\.pins-tab-count\s*\{[^}]*flex:\s*0 0 auto;/s);
+});
+
 it('uses the saved message excerpt as the meaningful Thread mosaic preview', () => {
   let opened: string | null = null;
   let started: string | null = null;

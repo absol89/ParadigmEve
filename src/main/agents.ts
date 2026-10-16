@@ -1627,7 +1627,8 @@ export async function dispatchHeartbeatReviewWorker(
     `Then read /appdata/state/plans.json and review only the exact debt.planBatch Plan ids/revisions and their provenance, plus locally recorded session requests from debt.sinceAt through debt.untilAt. Do not inspect ChatGPT browser history. ` +
     `For every selected Plan, follow its exact source with session search/read before calling chat_review_plan with the debt key, plan id, expected updatedAt and a review classification. ` +
     `After the recent-request review and every selected Plan acknowledgement, call chat_review_complete with this exact key and the proper result/finding. ` +
-    `Do not execute or delegate user work, send messages, edit/install, drive the browser, or mutate Plans. ` +
+    `Record this review's steps and findings as your own Plan with update_plan; it appears under Eve activity. ` +
+    `Do not execute or delegate user work, send messages, edit/install, drive the browser, or change any other Plan. ` +
     `Prime alone owns execution; finish after the exact heartbeat lifecycle receipt. ` +
     `If you are blocked before that receipt, report the blocker to Prime and finish anyway: the review stays pending for the next heartbeat.`;
   let owner = runForConversation(primeConversationId);

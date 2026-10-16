@@ -699,7 +699,8 @@ async function dispatchTracked(
   const localCallerRejected = Boolean(context.caller.localPrincipal) && !localCaller;
   if (localCaller) context.agent = localCaller;
   const heartbeatReviewWorker = isHeartbeatReviewWorkerCaller(context.caller);
-  const heartbeatReviewToolAllowed = new Set(['session', 'read', 'search', 'view_image', 'chat_review_plan', 'chat_review_complete']);
+  // update_plan writes only the worker's own Plan (its Eve activity action list), never another one.
+  const heartbeatReviewToolAllowed = new Set(['session', 'read', 'search', 'view_image', 'update_plan', 'chat_review_plan', 'chat_review_complete']);
   // A blocked heartbeat worker must still be able to tell Prime and finish, or it stays "running"
   // forever. `agents` routes a worker's messages to Prime only; spawning stays refused.
   const heartbeatWorkerReportsToPrime = (tool: string, input: unknown): boolean =>

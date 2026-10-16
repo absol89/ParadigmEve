@@ -57,6 +57,7 @@ class RunSettings:
     gpu_device: Optional[int] = None         # GPU index for --device; None = first GPU that passed the probe
     gpu_fallback: bool = True                # if GPU ASR fails, rerun on CPU and record it in provenance
     recover: bool = True                     # re-transcribe suspected hallucinations, suppress if unrecoverable
+    by_source: bool = True                   # a capture's mix.wav: transcribe mic.wav and system.wav apart (ldw/sources.py)
     split_turns: bool = False                # split Whisper segments at speaker changes
     temp_dir: Optional[Path] = None
     keep_intermediate_wav: bool = False

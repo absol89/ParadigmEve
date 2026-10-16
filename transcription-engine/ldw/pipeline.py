@@ -19,7 +19,10 @@ import tempfile
 import time
 from typing import Callable, Dict, Optional
 
-from . import __version__, contract, paths, procs
+from dataclasses import replace
+import uuid
+
+from . import __version__, contract, paths, procs, sources
 from .settings import RunSettings
 
 ProgressFn = Callable[[str, float], None]  # (stage, fraction 0..1)
@@ -214,6 +217,99 @@ def _apply_capture_evidence(audio: Path, segments) -> Optional[dict]:
     return summary
 
 
+def _source_tracks(audio: Path) -> Dict[str, Path]:
+    """The capture tracks of a ``diarize record`` mix.wav that carry sound, or {} for any other file."""
+    folder = audio.parent
+    if audio.name != "mix.wav" or not (folder / "capture.json").is_file():
+        return {}
+    found = {track: folder / f"{track}.wav" for track in sources.TRACKS if (folder / f"{track}.wav").is_file()}
+    if len(found) < 2:
+        return {}
+    import numpy as np
+    import soundfile as sf
+
+    active: Dict[str, Path] = {}
+    for track, path in found.items():
+        data, _rate = sf.read(str(path), dtype="float32", always_2d=True)
+        mono = data.mean(axis=1)
+        if len(mono) and 20 * np.log10(np.sqrt(np.mean(mono ** 2)) + 1e-9) > -60:
+            active[track] = path
+    return active
+
+
+def _run_by_source(audio: Path, tracks: Dict[str, Path], settings: RunSettings, output: Optional[Path],
+                   names, cancel, progress, allowed_output_roots, source_extra) -> Path:
+    """Transcribe each capture track on its own, then merge them into one transcript."""
+    cancel = cancel or procs.CancelToken()
+    audio = validate_input(audio)
+    out_dir = output_directory(audio, output, allowed_output_roots)
+    started = time.perf_counter()
+    _log(f"Transcribing {', '.join(tracks)} separately (source-aware); output: {out_dir}")
+    per_track = replace(settings, by_source=False)
+    documents: Dict[str, dict] = {}
+    for track, path in tracks.items():
+        track_dir = out_dir / "sources" / track
+        run(path, per_track, output=track_dir, cancel=cancel, progress=progress, allowed_output_roots=[out_dir])
+        documents[track] = contract.read(track_dir / "eve-transcript.json")
+
+    recording_id = "sha256:" + file_sha256(audio)
+    merged = sources.merge(documents, recording_id)
+    segments = merged["segments"]
+    capture_report = _apply_capture_evidence(audio, segments)
+    for segment in segments:
+        axes = segment["evidence"].setdefault("axes", {})
+        levels = axes.get("source_track") or {}
+        axes["source_track"] = {**levels, "value": segment["source_track"],
+                                "note": "Transcribed from this recorded track on its own."}
+    base = documents.get("system") or documents["mic"]
+    cloud = next((d for d in documents.values() if d["privacy"].get("processing") == "cloud_asr"), None)
+    executions = {track: d["provenance"].get("asr_execution", {}) for track, d in documents.items()}
+    backends = {e.get("backend") for e in executions.values()}
+    # One honest summary for the app: a mixed run reports its weakest backend (a GPU track that fell
+    # back to CPU makes the whole result CPU); every track's own record stays under source_tracks.
+    weakest = next((e for e in executions.values() if e.get("backend") == "cpu"), None) if len(backends) > 1 else None
+    asr_execution = dict(weakest or base["provenance"].get("asr_execution", {}))
+    document = {
+        **base,
+        "transcript_id": str(uuid.uuid4()),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source": {
+            "recording_id": recording_id,
+            "file_name": audio.name,
+            "path": str(audio),
+            "size_bytes": audio.stat().st_size,
+            "duration_seconds": max((d["source"].get("duration_seconds") or 0) for d in documents.values()) or None,
+            "transcribed_by_track": {track: {"folder": f"sources/{track}", "recording_id": d["source"]["recording_id"],
+                                             "speakers": merged["track_speakers"][track]}
+                                     for track, d in documents.items()},
+            **(source_extra or {}),
+            **({"capture_integrity": capture_report} if capture_report is not None else {}),
+        },
+        "speakers": merged["speakers"],
+        "segments": segments,
+        "provenance": {**base["provenance"], "asr_execution": asr_execution, "settings": settings.to_json(),
+                       "source_tracks": executions},
+        "privacy": (cloud or base)["privacy"],
+        "raw": {"sources": {track: f"sources/{track}/eve-transcript.json" for track in documents}},
+    }
+    contract.apply_names(document, contract.names_from_mapping(names or {}))
+    contract.write(out_dir / "eve-transcript.json", document)
+    render_all(out_dir, document)
+    (out_dir / "run.json").write_text(json.dumps({
+        "title": audio.stem,
+        "source": str(audio),
+        "mode": "by_source",
+        "tracks": list(documents),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "tool_version": __version__,
+        "runtime_seconds": {"total": round(time.perf_counter() - started, 3)},
+        "asr_execution": asr_execution,
+        "settings": settings.to_json(),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    (progress or (lambda stage, fraction: None))("done", 1.0)
+    return out_dir
+
+
 def rediarize(out_dir: Path, settings: RunSettings, output: Optional[Path] = None, cancel=None,
               progress=None) -> Path:
     """Re-run only speaker diarization and re-align the saved raw Whisper result.
@@ -313,6 +409,13 @@ def run(audio: Path, settings: RunSettings, output: Optional[Path] = None,
     """Full pipeline. With ``reuse_whisper_json`` the transcription step is skipped and the
     saved raw Whisper result is re-aligned against a fresh diarization (``rediarize``)."""
     settings.resolved()
+    # A capture's mix with separate tracks is transcribed per track (ldw/sources.py). A fixed
+    # speaker count is a statement about the mix, so it keeps the single-file path.
+    if settings.by_source and reuse_whisper_json is None and settings.speakers == "auto":
+        tracks = _source_tracks(Path(audio))
+        if tracks:
+            return _run_by_source(Path(audio), tracks, settings, output, names, cancel, progress,
+                                  allowed_output_roots, source_extra)
     cancel = cancel or procs.CancelToken()
     progress = progress or (lambda stage, fraction: None)
     upstream = paths.import_upstream()

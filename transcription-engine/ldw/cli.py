@@ -52,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--timeout", type=float, help="Per-stage timeout in seconds (default 6x audio length, min 10 min)")
     run.add_argument("--cluster-threshold", type=float, default=1.0,
                      help="Clustering threshold for --speakers auto (default 1.0; upstream 0.5 over-splits)")
+    run.add_argument("--mix-only", action="store_true",
+                     help="For a capture's mix.wav, diarize the mix instead of mic.wav and system.wav apart")
     run.add_argument("--merge-small", type=float, default=0.02,
                      help="Fold auto-found clusters under this share of talk time into the most similar speaker (0 = off)")
     run.add_argument("--asr", choices=["local", "groq", "openai"], default="local",
@@ -166,7 +168,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 whisper_model=args.whisper_model,
                 process_memory_limit=int(args.memory_limit_gb * 1024 ** 3) if args.memory_limit_gb else None,
                 priority=args.priority, timeout_seconds=args.timeout, cluster_threshold=args.cluster_threshold,
-                merge_small_share=args.merge_small,
+                merge_small_share=args.merge_small, by_source=not args.mix_only,
                 split_turns=args.split_turns, decoding=args.decoding, asr=args.asr, cloud_model=args.cloud_model,
                 asr_device="cpu" if args.cpu_only else args.asr_device, gpu_device=args.gpu_device,
                 gpu_fallback=not args.no_gpu_fallback, max_context=args.max_context, temp_dir=args.temp_dir, keep_intermediate_wav=args.keep_wav,
