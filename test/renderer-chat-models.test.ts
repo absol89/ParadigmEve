@@ -191,25 +191,29 @@ it('does not let an older paid session observation bypass a current Free or Go n
   expect(dom.window.document.querySelector('#composerPowerChoices input')).toBeNull();
 });
 
-// Unselected first-run chats use the provider's native model, even before Free/Go detection.
-it.each(['unknown', 'pending', 'unavailable'])('keeps an unselected new chat on ChatGPT default when discovery is %s', async state => {
+// A user who never chose a model must choose once before the first send; nothing is manufactured.
+it.each(['unknown', 'pending', 'unavailable'])('holds an unselected new chat until the user chooses when discovery is %s', async state => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const requestChatModels = vi.fn();
   Object.assign(dom.window, { api: { requestChatModels,
     getChatModels: async () => ({ ok: true, data: { state, requestedAt: 1, observedAt: null, models: [], error: 'Account models could not be fetched' } }) } });
-  const { initChatModels, applyChatModels, applyComposerSessionModel, ensureComposerModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  const { initChatModels, applyChatModels, applyComposerSessionModel, ensureComposerModel, confirmedComposerModel, firstModelChoiceNeeded } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
   applyComposerSessionModel(null, null);
+  expect(firstModelChoiceNeeded()).toBe(true);
+  expect(confirmedComposerModel()).toBeNull();
+  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).not.toBe('ChatGPT default');
+  [...dom.window.document.querySelectorAll<HTMLButtonElement>('#composerModelChoices button')].find(button => button.textContent === 'ChatGPT default')!.click();
+  expect(firstModelChoiceNeeded()).toBe(false);
   expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
   expect(await ensureComposerModel()).toEqual({ model: null, reasoningEffort: null });
   expect(requestChatModels).not.toHaveBeenCalled();
-  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
   applyComposerSessionModel('existing:1', { model: 'requested-pro', reasoningEffort: 'pro', observedAt: 2 });
   expect(confirmedComposerModel()).toBeNull();
 });
 
-it('keeps a fresh unselected chat on ChatGPT default while refresh retains an older catalog', async () => {
+it('keeps a fresh unselected chat waiting for a choice while refresh retains an older catalog', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [{ id: 'stale-sol', label: 'GPT-5.6 Sol', efforts: ['high'] }];
@@ -217,14 +221,13 @@ it('keeps a fresh unselected chat on ChatGPT default while refresh retains an ol
     getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models } }),
     requestChatModels: async () => ({ ok: true, data: { state: 'pending', requestedAt: 3, observedAt: 2, models } })
   } });
-  const { initChatModels, applyChatModels, applyComposerSessionModel, ensureComposerModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  const { initChatModels, applyChatModels, applyComposerSessionModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
   applyComposerSessionModel(null, null);
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
 
   dom.window.document.getElementById('refreshComposerModels')!.click();
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
-  expect(await ensureComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
 
   const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
@@ -366,7 +369,7 @@ it('excludes GPT-5.5 everywhere and keeps the composer slider fixed to Sol Mediu
   expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#workerModel option')].some(option => option.value === 'old')).toBe(false);
   expect(dom.window.document.querySelector('.power-dot.locked')?.getAttribute('aria-label')).toBe('xhigh · Pro');
   slider.value = '2'; slider.dispatchEvent(new dom.window.Event('input'));
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
   expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol · Medium');
 });
 
@@ -441,10 +444,10 @@ it('never folds observed Pro lanes or unrelated model families into the three-st
   slider.value = '2'; slider.dispatchEvent(new dom.window.Event('input'));
   // The meter formats with the machine's locale (400,000 in English, 400 000 with a no-break space in Swedish).
   expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain(`Auto-compaction at ${new Intl.NumberFormat().format(400_000)} tokens`);
-  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
+  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('Select model');
   expect(dom.window.document.querySelector('.power-dot.locked')?.getAttribute('aria-label')).toBe('xhigh · Pro');
   expect(slider.getAttribute('aria-valuetext')).toBe('GPT-5.6 Sol · Medium');
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
   // The meter formats with the machine's locale (400,000 in English, 400 000 with a no-break space in Swedish).
   expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain(`Auto-compaction at ${new Intl.NumberFormat().format(400_000)} tokens`);
@@ -622,7 +625,7 @@ it('keeps the Sol steps stable and lists the GPT-6 family to their right while o
   const config = { multiAgent: {}, goal: {} } as Config;
   applyChatModels(config); await Promise.resolve();
   const select = (id: string) => dom.window.document.getElementById(id) as HTMLSelectElement;
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
   expect(dom.window.document.getElementById('composerModelChoices')!.textContent).toContain('ChatGPT default');
   const reload = dom.window.document.getElementById('refreshComposerModels')!;
   expect(reload.querySelector('svg')).not.toBeNull();
@@ -741,9 +744,9 @@ it('paints catalog pushes immediately and refuses late startup reads without ref
   const config = { multiAgent: {}, goal: {} } as Config;
   initChatModels(); applyChatModels(config);
   receive({ state: 'ready', requestedAt: 1, observedAt: 2, models: [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['high', 'pro'] }] });
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
   resolve({ ok: true, data: { state: 'pending', requestedAt: 1, observedAt: null, models: [] } }); await Promise.resolve();
-  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+  expect(confirmedComposerModel()).toBeNull();
   applyChatModels(config); applyChatModels(config);
   expect(getChatModels).toHaveBeenCalledTimes(1);
 });
@@ -812,4 +815,35 @@ it('uses the persisted current-chat pair for an established chat until exact pro
 
   applyComposerSessionModel('session:legacy-without-observation', { model: '5.6', reasoningEffort: 'high', observedAt: 3 });
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
+});
+
+// The first choice is the user's; the account's tier only decides what is recommended (2.4.1).
+it.each([
+  ['Plus', [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'] }], 'GPT-5.6 Sol · Medium'],
+  ['Pro', [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['medium', 'high', 'pro'] }, { id: '6.1', label: 'GPT-6.1', efforts: ['none', 'high'] }], 'GPT-6.1 · High'],
+  ['Pro without a 6.1 High step', [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['medium', 'high', 'pro'] }], 'GPT-5.6 Sol · Medium']
+])('recommends the %s starting model without choosing it', async (_tier, models, recommended) => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models } }) } });
+  const { initChatModels, applyChatModels, confirmedComposerModel, firstModelChoiceNeeded } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve(); await Promise.resolve();
+  expect(firstModelChoiceNeeded()).toBe(true);
+  expect(confirmedComposerModel()).toBeNull();
+  expect(dom.window.document.getElementById('composerPowerModel')!.textContent).toBe(`Recommended: ${recommended}`);
+  const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
+  slider.click();
+  expect(firstModelChoiceNeeded()).toBe(false);
+  const chosen = confirmedComposerModel()!;
+  expect(`${chosen.model === '5.6' ? 'GPT-5.6 Sol' : 'GPT-6.1'} · ${chosen.reasoningEffort === 'high' ? 'High' : 'Medium'}`).toBe(recommended);
+});
+
+it('never holds a Free or Go account, whose ChatGPT has no model picker', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models: [], nativeDefault: true } }) } });
+  const { initChatModels, applyChatModels, confirmedComposerModel, firstModelChoiceNeeded } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve(); await Promise.resolve();
+  expect(firstModelChoiceNeeded()).toBe(false);
+  expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
 });

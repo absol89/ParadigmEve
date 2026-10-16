@@ -18,6 +18,8 @@ type ComposerChoice = { model: string; reasoningEffort: ReasoningEffort | null; 
 const composerChoices = new Map<string, ComposerChoice>();
 let defaultComposerChoice: ComposerChoice | null = null;
 let composerPreferenceLoaded = false;
+/** The user has never saved a composer model (undefined, unlike an explicit null "ChatGPT default"). */
+let composerNeverChosen = false;
 const MAX_COMPOSER_CHOICES = 128;
 const MODEL_CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MODEL_REFRESH_RETRY_MS = 10 * 60 * 1000;
@@ -104,6 +106,7 @@ function rememberComposerChoice(): void {
   const model = selected.model ?? CHATGPT_DEFAULT_MODEL_ID;
   if (model !== CHATGPT_DEFAULT_MODEL_ID && !selected.reasoningEffort) return;
   composerPreferenceLoaded = true;
+  composerNeverChosen = false;
   defaultComposerChoice = model === CHATGPT_DEFAULT_MODEL_ID
     ? null
     : { model, reasoningEffort: selected.reasoningEffort, editedAt: Date.now() };
@@ -302,6 +305,7 @@ function paintComposerChoices(): void {
     const useDefault = el('button', 'btn model-choice', () => t('ChatGPT default')) as HTMLButtonElement;
     useDefault.type = 'button';
     useDefault.setAttribute('aria-pressed', confirmedComposerModel()?.model === null && !(catalog.nativeDefault && lastObservedComposer()) ? 'true' : 'false');
+    if (firstModelChoiceNeeded() && catalog.state === 'ready' && !tierRecommendation()) useDefault.classList.add('is-recommended');
     useDefault.onclick = () => {
       paintPair('composerModel', 'composerReasoning', CHATGPT_DEFAULT_MODEL_ID, '');
       rememberComposerChoice();
@@ -350,7 +354,21 @@ function paintComposerChoices(): void {
     track.style.setProperty('--power-position', `${steps.length > 1 ? Number(slider.value) / (steps.length - 1) * 100 : 100}%`);
     return step;
   };
-  if (current >= 0) show();
+  const recommended = firstModelChoiceNeeded() ? tierRecommendation() : null;
+  const recommendedIndex = recommended ? steps.findIndex(step => step.model === recommended.model && step.effort === recommended.reasoningEffort) : -1;
+  if (firstModelChoiceNeeded()) {
+    // Nothing is chosen yet. Rest the thumb on the account's recommended step without choosing
+    // it; one click or keypress on the slider chooses, as does the ChatGPT default button.
+    if (recommendedIndex >= 0) slider.value = String(recommendedIndex);
+    const hint = recommendedIndex >= 0 ? steps[recommendedIndex]! : null;
+    if (title) ui(title, 'textContent', () => t("Choose a model"));
+    if (subtitle) ui(subtitle, 'textContent', () => hint
+      ? t("Recommended: {0}", [`${hint.modelLabel} · ${t(hint.displayEffort)}`])
+      : catalog.state === 'ready' ? t("Recommended: {0}", [t("ChatGPT default")]) : t("Reading your ChatGPT account"));
+    ui(slider, 'aria-valuetext', () => t("Choose a model"));
+    track.style.setProperty('--power-position', `${steps.length > 1 ? Number(slider.value) / (steps.length - 1) * 100 : 100}%`);
+  }
+  else if (current >= 0) show();
   else if (confirmedComposerModel()?.model === null) {
     if (title) ui(title, 'textContent', () => t('ChatGPT default'));
     if (subtitle) ui(subtitle, 'textContent', () => t('Model choice stays in ChatGPT'));
@@ -376,7 +394,7 @@ function paintComposerChoices(): void {
     models.dataset.signature = JSON.stringify([catalog.state, catalog.nativeDefault, choices, selected.value, effort.value, confirmedComposerModel()]);
   };
   slider.oninput = choose;
-  slider.onclick = () => { if (current < 0) choose(); };
+  slider.onclick = () => { if (current < 0 || firstModelChoiceNeeded()) choose(); };
   // Keep the range node alive through pointer/keyboard adjustment; hidden selects remain
   // the existing send authority, and no separate model selection state is introduced.
   track.append(dots, slider); powers.append(track);
@@ -399,6 +417,7 @@ export function confirmedComposerModel(): { model: string | null; reasoningEffor
     const confirmed = composerModels().find(choice => choice.id === model)?.efforts.find(effort => effort === reasoningEffort);
     if (confirmed) return { model, reasoningEffort: confirmed };
   }
+  if (firstModelChoiceNeeded()) return null;
   if (model === CHATGPT_DEFAULT_MODEL_ID) {
     return { model: null, reasoningEffort: null };
   }
@@ -436,6 +455,37 @@ function paintComposerLabel(): void {
   ui(node, 'textContent', label);
   ui(node, 'title', label);
   onComposerPaint?.();
+}
+
+/**
+ * The model recommended to a user who has never chosen one, read only from the account's picker.
+ *
+ * An account offering Pro is recommended the GPT-6.1 family at High when its picker lists that
+ * exact step; Plus, and Pro without that step, Sol 5.6 Medium when offered; anything else ChatGPT
+ * default (null). It is only a recommendation: the first choice is always the user's click.
+ */
+function tierRecommendation(): ComposerChoice | null {
+  if (catalog.state !== 'ready' || catalog.nativeDefault) return null;
+  const pro = catalog.models.some(model => isProModel(model.id) || isAstraModel(model.id) || model.efforts.includes('pro'));
+  const gpt6 = gpt6FamilyModel();
+  const is61 = (value: string) => /^(?:gpt[ ._-]?)?6\.1$/i.test(value.trim());
+  if (pro && gpt6 && (is61(gpt6.id) || is61(gpt6.label)) && gpt6.efforts.includes('high')) {
+    return { model: gpt6.id, reasoningEffort: 'high', editedAt: 0 };
+  }
+  const sol = catalog.models.find(choice => configuredChatSettingsModel(choice.id) === CHATGPT_SOL_MODEL_ID ||
+    configuredChatSettingsModel(choice.label) === CHATGPT_SOL_MODEL_ID || choice.aliases?.includes(CHATGPT_SOL_MODEL_ID));
+  return sol?.efforts.includes('medium') ? { model: CHATGPT_SOL_MODEL_ID, reasoningEffort: 'medium', editedAt: 0 } : null;
+}
+
+/**
+ * Send is held until the user has chosen a model once: a first message that went out with
+ * whatever ChatGPT happened to have selected was an onboarding failure. The choice is saved, so
+ * only a user who never chose is asked, and only in a chat with no observed model. Free/Go
+ * accounts, whose ChatGPT has no picker, have nothing to choose and are never held.
+ */
+export function firstModelChoiceNeeded(): boolean {
+  return composerNeverChosen && !(catalog.state === 'ready' && catalog.nativeDefault) && !!composerContext &&
+    !composerContext.observation && !composerContext.nativeDefault && !composerContext.edited;
 }
 
 function paintStatus(): void {
@@ -552,10 +602,11 @@ export function applyChatModels(config: Config, previous?: Config): void {
   const preferenceChanged = previous && (config.ui?.chatModel !== previous.ui?.chatModel || config.ui?.chatReasoning !== previous.ui?.chatReasoning);
   if (!composerPreferenceLoaded || preferenceChanged) {
     composerPreferenceLoaded = true;
-    // A never-chosen composer has no authority to change the ChatGPT account's native model.
-    // In particular, a new Free/Go account can open before discovery identifies its native-only
-    // picker; manufacturing Sol Medium here made first-run messages request a paid model. Keep
-    // genuine saved user choices, including an explicit null/native-default preference.
+    // A never-chosen composer is never given a model behind the user's back: manufacturing Sol
+    // Medium made a new Free/Go account's first message request a paid model. Instead Send waits
+    // for the user's first choice (firstModelChoiceNeeded). Saved user choices, including an
+    // explicit null/native-default preference, always win.
+    composerNeverChosen = config.ui?.chatModel === undefined && config.ui?.chatReasoning === undefined;
     defaultComposerChoice = config.ui?.chatModel && config.ui?.chatReasoning
       ? { model: configuredChatSettingsModel(config.ui.chatModel), reasoningEffort: config.ui.chatReasoning, editedAt: 0 }
       : null;

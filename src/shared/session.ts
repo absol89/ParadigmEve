@@ -473,9 +473,24 @@ function clip(text: string, max: number): string {
  * with nothing in them to say which run a row belonged to. The command that opened the
  * chat already knows what the chat is for, so the name comes from there instead.
  */
+/** Opens every task the app hands its read/review-only heartbeat worker; model text cannot grant it. */
+export const HEARTBEAT_REVIEW_WORKER_MARKER = '[[PARADIGMEVE-HEARTBEAT-REVIEW-WORKER:v1]]';
+
+/**
+ * The app-owned heartbeat review worker, recognised from the task the app itself wrote.
+ *
+ * ChatGPT titles that chat from the connector's coding-agent instructions ("Coding agent
+ * collaboration"), which read as a chat that can edit and run things. It can only review, so
+ * the app names it for what it is instead of showing the native title.
+ */
+export function isHeartbeatReviewOrigin(origin: SessionOrigin | null | undefined): boolean {
+  return origin?.kind === 'worker' && origin.task.startsWith(HEARTBEAT_REVIEW_WORKER_MARKER);
+}
+
 export function originTitle(origin: SessionOrigin, source: string | null): string {
   if (origin.kind === 'desktop') return source || 'New chat';
   if (origin.kind === 'helper') return 'Task helper';
+  if (isHeartbeatReviewOrigin(origin)) return 'Heartbeat review';
   if (origin.kind === 'worker') {
     const who = origin.agentId ?? 'worker';
     const task = clip(origin.task, 60);

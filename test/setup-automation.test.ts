@@ -120,10 +120,65 @@ describe('automatic setup request ownership', () => {
       { type: 'focus', window: 7 },
       { type: 'click_ref', ref: 'load-ref' },
     ], { window: 7 });
+    expect(computer.act).toHaveBeenCalledWith([{ type: 'ui_action', ref: 'path-ref', action: 'focus' }], { window: 19 });
     expect(computer.act).toHaveBeenCalledWith([
-      { type: 'ui_action', ref: 'path-ref', action: 'focus' },
       { type: 'keypress', keys: ['ctrl', 'a'] },
       { type: 'type', text: 'C:\\Program Files\\ParadigmEve\\extension' },
     ], { window: 19 });
+    expect(computer.act).toHaveBeenCalledWith([{ type: 'click_ref', ref: 'select-ref' }], { window: 19 });
+  });
+
+  // The picker as the live Windows build exposes it: control 1152 is a pattern-less Pane.
+  function folderPicker(options: { focus?: 'fails'; type?: 'fails'; selectButton?: boolean } = {}) {
+    const screen = { x: 0, y: 0, width: 1920, height: 1080 };
+    const browserWindow = { id: 7, app: 'Chrome.setupbrowserprofile.Default', process: 'chrome' };
+    const pickerWindow = { id: 19, app: 'chrome-folder-picker', process: 'chrome' };
+    let pickerOpen = false;
+    computer.listWindows.mockResolvedValue({ windows: [browserWindow], screen });
+    computer.activeWindow.mockImplementation(async () => ({ window: pickerOpen ? pickerWindow : browserWindow, screen }));
+    computer.findUi.mockImplementation(async ({ window, query }: { window?: number; query?: string }) => ({
+      window: window ?? 7,
+      snapshotId: 1,
+      elements: window === 7 && query === 'Load unpacked'
+        ? [{ ref: 'load-ref', name: 'Load unpacked', role: 'Button', automationId: '', enabled: true }]
+        : window === 19 && query === '1152'
+          ? [{ ref: 'path-ref', name: 'Folder:', role: 'Pane', automationId: '1152', enabled: true }]
+          : window === 19 && query === '1' && options.selectButton !== false
+            ? [{ ref: 'select-ref', name: 'Select Folder', role: 'Button', automationId: '1', enabled: true }]
+            : [],
+    }));
+    computer.act.mockImplementation(async (steps: Array<{ type?: string; ref?: string; keys?: string[] }>) => {
+      if (options.focus === 'fails' && steps.some(step => step.type === 'ui_action')) throw new Error('UI_ACTION_UNSUPPORTED');
+      if (options.type === 'fails' && steps.some(step => step.type === 'type')) throw new Error('INPUT_REJECTED');
+      if (steps.some(step => step.ref === 'load-ref')) pickerOpen = true;
+      if (steps.some(step => step.ref === 'select-ref' || step.keys?.[0] === 'enter')) pickerOpen = false;
+      return { cursor: null, clipboard: [], completedCount: steps.length, routes: [] };
+    });
+    return () => loadUnpackedCompanion({
+      extensionPath: 'D:\\Data\\paradigmeve\\extension',
+      isEveBrowserWindow: window => window.id === 7,
+      timeoutMs: 1,
+    });
+  }
+
+  it('still types the folder when focusing the pattern-less field fails, since it already has focus', async () => {
+    await expect(folderPicker({ focus: 'fails' })()).resolves.toBe(true);
+    expect(computer.act).toHaveBeenCalledWith([
+      { type: 'keypress', keys: ['ctrl', 'a'] },
+      { type: 'type', text: expect.stringContaining('paradigmeve') },
+    ], { window: 19 });
+  });
+
+  it('pastes the folder when typing is rejected', async () => {
+    await expect(folderPicker({ type: 'fails' })()).resolves.toBe(true);
+    expect(computer.act).toHaveBeenCalledWith([
+      { type: 'keypress', keys: ['ctrl', 'a'] },
+      { type: 'paste', text: expect.stringContaining('paradigmeve') },
+    ], { window: 19 });
+  });
+
+  it('accepts with Enter, the default button, when Select Folder is not exposed', async () => {
+    await expect(folderPicker({ selectButton: false })()).resolves.toBe(true);
+    expect(computer.act).toHaveBeenCalledWith([{ type: 'keypress', keys: ['enter'] }], { window: 19 });
   });
 });

@@ -1,5 +1,5 @@
 import { ui, t } from './i18n.js';
-import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel, refreshSettingsModelsOnOpen } from './chat-models.js';
+import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel, firstModelChoiceNeeded, refreshSettingsModelsOnOpen } from './chat-models.js';
 import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
@@ -40,6 +40,7 @@ import {
   CONTINUATION_MARKER,
   TURN_OUTCOME_LABELS,
   foldProgress,
+  isHeartbeatReviewOrigin,
   isOllamaConversation
 } from '../shared/session.js';
 import { chronological } from '../shared/chronology.js';
@@ -129,6 +130,8 @@ let syncChatEdges: () => void = () => undefined;
 let newChatSelected = true;
 /** True only for the explicit owner-replacement New Chat surface while identity is fail-closed. */
 let newChatAgentClaim = false;
+/** The startup composer's `@Eve ` is offered once; a user who deletes it keeps it deleted. */
+let startupClaimPrefilled = false;
 /** Exact ended Eve/Eva owner the user explicitly chose to replace with this fresh top-level chat. */
 let newChatAgentReplacementFrom: string | null = null;
 let selectedProjectId: string | null = null;
@@ -152,6 +155,12 @@ function paintThreadSettingsProject(): void {
 }
 function draftKey(): string {
   return selectedId ?? (selectedProjectId ? `project:${selectedProjectId}` : selectedContextQuiltId ? `quilt:${selectedContextQuiltId}` : 'new');
+}
+/** Enter, Send and Start goal all land here before a first choice: open the picker, keep the draft. */
+function askFirstModelChoice(): void {
+  const menu = document.getElementById('modelMenu') as HTMLDetailsElement | null;
+  if (menu) menu.open = true;
+  toast(t("Choose a model for your first message. It is remembered for new chats."));
 }
 function composerModelScope(): string | null {
   return selectedId ? `session:${selectedId}` : null;
@@ -369,6 +378,7 @@ function unattributedBlocked(): boolean {
 function sessionRoleLabel(summary: SessionSummary): string | null {
   if (summary.conversationId === null) return t("Unattributed");
   if (summary.origin?.kind === 'helper') return t("Helper");
+  if (isHeartbeatReviewOrigin(summary.origin)) return t("Heartbeat");
   if (summary.origin?.kind === 'worker') {
     const id = summary.origin.agentId;
     if (!id) return null;
@@ -391,6 +401,8 @@ function sessionRoleLabel(summary: SessionSummary): string | null {
  */
 function sessionDisplayTitle(summary: SessionSummary): string {
   const raw = summary.title.trim();
+  // Its native ChatGPT title comes from the connector instructions, not from what it does.
+  if (isHeartbeatReviewOrigin(summary.origin)) return t("Heartbeat review");
   if (!raw) return t("Untitled session");
   const origin = summary.origin;
   if (origin?.kind !== 'worker' || !origin.agentId) return raw;
@@ -2899,7 +2911,8 @@ function paintSwarm(state: SwarmState): void {
   ) {
     newChatAgentClaim = true;
     const input = $<HTMLTextAreaElement>('chatInput');
-    if (input.value.trim() === '') {
+    if (!startupClaimPrefilled && input.value.trim() === '') {
+      startupClaimPrefilled = true;
       input.value = `@${configuredAgentName()} `;
       paintDeliveryControls();
     }
@@ -4121,6 +4134,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   if (discoveryGeneration !== composerDiscoveryGeneration || discoverySelection !== selectionGeneration || discoverySession !== selectedId ||
       input.value !== discoveryDraft || (imageDrafts.get(key) ?? []).some((image, index) => image !== images[index]) ||
       (imageDrafts.get(key)?.length ?? 0) !== images.length) return false;
+  if (!modelSettings && firstModelChoiceNeeded()) { askFirstModelChoice(); return false; }
   if (!modelSettings) { toast(t("Model discovery could not confirm your selection. Choose an available model and thinking effort, then send again.")); return false; }
   const sessionId = selectedId;
   const generation = selectionGeneration;
@@ -4445,6 +4459,7 @@ export function initChat(next: Deps): void {
         const draft = objective.value, mode = $<HTMLSelectElement>('sessionObjectiveMode').value as 'goal' | 'loop';
         if (!draft.trim()) return;
         const settings = confirmedComposerModel();
+        if (!settings && firstModelChoiceNeeded()) { askFirstModelChoice(); return; }
         if (!settings) { toast('Reload model choices and select an available model and thinking effort before sending.'); return; }
         const selection = selectionGeneration, intent = goalIntentGeneration, requestId = crypto.randomUUID();
         const projectId = selectedProjectId;

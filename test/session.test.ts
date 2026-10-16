@@ -69,6 +69,8 @@ import {
   eventTokens,
   foldProgress,
   originTitle,
+  HEARTBEAT_REVIEW_WORKER_MARKER,
+  isHeartbeatReviewOrigin,
   tokenPressure,
   type SessionEvent,
   type SessionOrigin,
@@ -2425,6 +2427,15 @@ describe('naming the chats this app opened', () => {
 
   it('names a worker chat for its agent and task', () => {
     expect(originTitle(worker, null)).toBe('worker-1 · Port the recorder tests to the new fixture');
+  });
+
+  it('names the app-owned heartbeat review worker for what it does, never for its task text', () => {
+    const heartbeat: SessionOrigin = { ...worker, agentId: 'worker-3', task: `${HEARTBEAT_REVIEW_WORKER_MARKER}
+review only` };
+    expect(isHeartbeatReviewOrigin(heartbeat)).toBe(true);
+    expect(originTitle(heartbeat, 'Coding agent collaboration')).toBe('Heartbeat review');
+    // Ordinary worker text that merely mentions the marker later cannot claim the name.
+    expect(isHeartbeatReviewOrigin({ ...worker, task: `Explain ${HEARTBEAT_REVIEW_WORKER_MARKER}` })).toBe(false);
   });
 
   it('recovers a worker transcript agent from durable origin after live broker ownership is gone', async () => {

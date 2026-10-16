@@ -373,6 +373,8 @@ interface GoalMount {
   state: any;
 }
 
+const NEVER_CHOSEN_UI = { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light' as const };
+
 async function mountChat(
   overrides: Record<string, unknown> = {},
   models: any[] = [],
@@ -408,7 +410,9 @@ async function mountChat(
       screen: true, control: true, clipboardRead: true, clipboardWrite: true
     },
     tunnel: { kind: 'openai', tunnelId: 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', desktopTunnelId: '', binaryPath: '' },
-    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light' as const },
+    // A returning user who chose ChatGPT default; `configUi` replaces it (first-run tests).
+    ui: (overrides.configUi as Record<string, unknown> | undefined) ??
+      { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light' as const, chatModel: null, chatReasoning: null },
     sessions: { record: true, retainDays: 30, advisoryTokens: 300000, limitTokens: 400000 },
     compaction: { auto: true, autoTokens: 300000 },
     multiAgent: { enabled: false, maxWorkers: 2, allowUnattributedCalls: false, recoverAgentTabs: true },
@@ -956,9 +960,9 @@ it('arms exact replacement only when top-level New Chat sees one ended current E
   expect(sendInput).toHaveBeenCalledWith(expect.not.objectContaining({ claimAgentIdentity: true }));
 });
 
-it('starts an unselected paid fresh Eve composer on provider default until the user chooses otherwise', async () => {
+it('holds the first send of a never-chosen paid composer until the user chooses a model', async () => {
   const sendInput = vi.fn(async (input: any) => ({ ok: false as const, error: `stop:${input.id}` }));
-  const mounted = await mountChat({}, [], {
+  const mounted = await mountChat({ configUi: NEVER_CHOSEN_UI }, [], {
     sendInput,
     getChatModels: async () => ({ ok: true, data: {
       state: 'ready', requestedAt: 1, observedAt: Date.now(),
@@ -972,24 +976,33 @@ it('starts an unselected paid fresh Eve composer on provider default until the u
   (doc.getElementById('newChat') as HTMLButtonElement).click();
   await settle();
 
-  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
+  expect(doc.getElementById('composerModelLabel')!.textContent).toBe('Select model');
 
   const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = '@Eve use the selected model';
   doc.getElementById('composer')!.dispatchEvent(new mounted.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle();
 
+  expect(sendInput).not.toHaveBeenCalled();
+  expect((doc.getElementById('modelMenu') as HTMLDetailsElement).open).toBe(true);
+  expect(input.value).toBe('@Eve use the selected model');
+  expect(doc.getElementById('composerPowerModel')!.textContent).toBe('Recommended: GPT-5.6 Sol · Medium');
+
+  doc.querySelector<HTMLInputElement>('#composerPowerChoices input')!.click();
+  doc.getElementById('composer')!.dispatchEvent(new mounted.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+
   expect(sendInput).toHaveBeenCalledWith(expect.objectContaining({
     sessionId: null,
     text: '@Eve use the selected model',
-    model: null,
-    reasoningEffort: null
+    model: '5.6',
+    reasoningEffort: 'medium'
   }));
 });
 
 it('keeps a Free or Go fresh Eve composer on ChatGPT native default for the first send', async () => {
   const sendInput = vi.fn(async (input: any) => ({ ok: false as const, error: `stop:${input.id}` }));
-  const mounted = await mountChat({}, [], {
+  const mounted = await mountChat({ configUi: NEVER_CHOSEN_UI }, [], {
     sendInput,
     getChatModels: async () => ({ ok: true, data: {
       state: 'ready', requestedAt: 1, observedAt: Date.now(), models: [], nativeDefault: true

@@ -164,7 +164,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     },
     tunnel: { kind: 'openai', tunnelId: 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', desktopTunnelId: '', binaryPath: '' },
     mcp: { connectorName: options.connectorName ?? 'Eve', instructions: '' },
-    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light', developerMode: options.developerMode ?? false,
+    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light', chatModel: null, chatReasoning: null, developerMode: options.developerMode ?? false,
       // An absent choice is now the paid Sol Medium default; tests of the user-selected
       // native setting must provide its persisted null explicitly.
       ...(options.nativeChatModelPreference ? { chatModel: null, chatReasoning: null } : {}) },

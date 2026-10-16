@@ -157,18 +157,25 @@ export async function loadUnpackedCompanion(options: {
     return box ? { window: window.id, box } : null;
   }, 10_000);
   if (!dialog) return false;
-  // The Windows folder picker exposes control 1152 as the keyboard-editable folder field, but
-  // some current builds do not expose UIA ValuePattern on that wrapper. `set_value` therefore
-  // fails before changing anything with UI_VALUE_UNSUPPORTED. Focus the exact observed control,
-  // then replace its text through the normal keyboard path instead of requiring ValuePattern.
-  await act([
-    { type: 'ui_action', ref: dialog.box.ref, action: 'focus' },
+  // The Windows folder picker's folder field is control 1152, a Win32 Edit that current builds
+  // project into UIA as a Pane with no patterns at all, so `set_value` always fails there with
+  // UI_VALUE_UNSUPPORTED. Drive it from the keyboard instead. The field already holds keyboard
+  // focus when the picker opens, so focusing it explicitly is only a best effort. Typing is the
+  // first choice; a clipboard paste is the fallback for an input method that rejects typed text.
+  await act([{ type: 'ui_action', ref: dialog.box.ref, action: 'focus' }], { window: dialog.window }).catch(() => undefined);
+  const entered = await act([
     { type: 'keypress', keys: ['ctrl', 'a'] },
     { type: 'type', text: options.extensionPath },
-  ], { window: dialog.window });
+  ], { window: dialog.window }).then(() => true, () => false) ||
+    await act([
+      { type: 'keypress', keys: ['ctrl', 'a'] },
+      { type: 'paste', text: options.extensionPath },
+    ], { window: dialog.window }).then(() => true, () => false);
+  if (!entered) return false;
+  // Select Folder is the picker's default button, so Enter accepts the typed folder when the
+  // button itself is not exposed.
   const select = await elementById(dialog.window, '1', 'button');
-  if (!select) return false;
-  await act([{ type: 'click_ref', ref: select.ref }], { window: dialog.window });
+  await act([select ? { type: 'click_ref', ref: select.ref } : { type: 'keypress', keys: ['enter'] }], { window: dialog.window });
   // The picker closes once the folder was accepted.
   return !!(await waitFor(async () => {
     const { window } = await activeWindow();

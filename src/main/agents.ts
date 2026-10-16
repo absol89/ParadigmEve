@@ -15,7 +15,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { AgentInfo, AgentMessage, AgentState, ReasoningEffort, SwarmState } from '../shared/session.js';
-import { REASONING_EFFORTS, isReasoningEffort } from '../shared/session.js';
+import { HEARTBEAT_REVIEW_WORKER_MARKER, REASONING_EFFORTS, isReasoningEffort } from '../shared/session.js';
 import { AGENT_BACKEND_IDS, agentBackendExecutionStatus, type AgentBackendId } from '../shared/agent-backends.js';
 import { getConfig } from './config.js';
 import { getChatModels } from './chat-models.js';
@@ -1549,7 +1549,6 @@ export function stageSpawn(input: SpawnInput): StagedSpawn {
   };
 }
 
-const HEARTBEAT_REVIEW_WORKER_MARKER = '[[PARADIGMEVE-HEARTBEAT-REVIEW-WORKER:v1]]';
 const heartbeatReviewEpochMarker = (key: string): string => `[[PARADIGMEVE-HEARTBEAT-REVIEW:${key}]]`;
 const heartbeatReviewAgent = (agent: Agent): boolean =>
   agent.info.role === 'worker' && agent.info.maintenanceKind === 'heartbeat-review';
