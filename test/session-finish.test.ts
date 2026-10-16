@@ -56,7 +56,7 @@ describe('session finish turn identity', () => {
     let fail!: (error: Error) => void;
     hooks.followup.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
     await announceTransport(sessionId, 'Ready');
-    await vi.waitFor(() => expect(fail).toBeTypeOf('function'));
+    await vi.waitFor(() => expect(fail).toBeTypeOf('function'), { timeout: 15_000 }); // slow shared CI runners exceed 1 s
     vi.useFakeTimers();
     fail(new TaskRequestError('rate_limited: busy', true));
     await vi.advanceTimersByTimeAsync(0);
@@ -78,7 +78,7 @@ describe('session finish turn identity', () => {
     let fail!: (error: Error) => void;
     hooks.followup.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
     await announceTransport(sessionId, 'Ready');
-    await vi.waitFor(() => expect(fail).toBeTypeOf('function'));
+    await vi.waitFor(() => expect(fail).toBeTypeOf('function'), { timeout: 15_000 }); // slow shared CI runners exceed 1 s
     vi.useFakeTimers();
     fail(new TaskRequestError('http_503: busy', true));
     await vi.advanceTimersByTimeAsync(0);

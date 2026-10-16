@@ -311,7 +311,8 @@ describe('ArchiveRuntime', () => {
     };
     listener!(id);
     await runtime.drain();
-    await vi.waitFor(async () => expect(runtime.staticSiteStale()).toBe(false));
+    // The rebuild streams real files; a shared Windows CI runner needed more than the 1 s default.
+    await vi.waitFor(async () => expect(runtime.staticSiteStale()).toBe(false), { timeout: 15_000 });
 
     const after = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
     expect((await Promise.all(after.chunks.map(chunk => fs.readFile(chunk, 'utf8')))).join('\n')).toContain('NEW VOICE TURN');
