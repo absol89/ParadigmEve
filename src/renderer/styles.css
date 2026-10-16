@@ -2134,7 +2134,7 @@ input[readonly] {
 /* Both share column 1 explicitly. Without a column, the dock's row-3 cell collided with the chat's
    2 / 4 span and grid auto-placement opened a second column beside the chat (c21). */
 .card.is-session > #chatBody { grid-row: 2 / 4; grid-column: 1; margin-block: 24px; padding-top: 12px; padding-bottom: calc(24px + var(--dock-h, 0px)); }
-.card.is-session > .composer-dock { grid-row: 3; grid-column: 1; align-self: end; position: relative; z-index: 4; width: min(836px, calc(100% - 140px)); }
+.card.is-session > .composer-dock { grid-row: 3; grid-column: 1; align-self: end; position: relative; z-index: 4; }
 .card.is-session > #composer { grid-row: 4; }
 .card.is-session > #chatFoot { grid-row: 5; }
 
@@ -3192,7 +3192,8 @@ nav button:hover, nav button.is-sel { background: var(--hover); color: var(--ink
   .app { --sidebar-default: 205px; }
   .app > header .live em { display: none; }
   [data-panel='home'] { grid-template-rows: none; }
-  .composer { width: calc(100% - 32px); padding: 14px 12px 10px; }
+  .composer, .composer-dock { width: calc(100% - 32px); }
+  .composer { padding: 14px 12px 10px; }
   #chatBody { padding: 20px 22px; }
 }
 
@@ -3399,7 +3400,8 @@ select option { background: var(--card); color: var(--ink); }
 .agent-plan-step[data-status='completed'] .agent-plan-marker { color: var(--soft); border-color: transparent; }
 .agent-plan-details { padding: 0 14px 10px 32px; color: var(--faint); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.composer-dock { width: min(836px, calc(100% - 72px)); margin: 10px auto -15px; border: 1px solid var(--edge); border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--card); overflow: hidden; }
+/* Exactly the composer's width (.composer), so the Plan and queue read as part of the input box. */
+.composer-dock { width: calc(100% - 48px); max-width: 860px; margin: 10px auto -15px; border: 1px solid var(--edge); border-bottom: 0; border-radius: 16px 16px 0 0; background: var(--card); overflow: hidden; }
 .composer-dock[hidden], .app[data-screen='settings'] .composer-dock, .composer-dock:not(:has(> :not([hidden]))) { display: none; }
 .composer-dock .queued-input, #activeGoalRow, #recoveryStatus { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 7px 12px; margin: 0; border: 0; border-bottom: 1px solid var(--edge); font-size: 13px; color: var(--soft); }
 .composer-dock > :nth-last-child(1 of :not([hidden])) { border-bottom: 0; }
