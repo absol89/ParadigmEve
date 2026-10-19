@@ -16,6 +16,16 @@ type ArchiveRendererApi = {
 let initialized = false;
 let refreshGeneration = 0;
 let busy: 'rebuild' | 'open' | null = null;
+let recordingChoice: ((enabled: boolean) => void) | null = null;
+
+/** Mirrors the one Workspace recording permission; this is not a second preference. */
+export function paintArchiveRecording(enabled: boolean): void {
+  const input = document.getElementById('archiveRecordingCheckbox') as HTMLInputElement | null;
+  if (input) {
+    input.checked = enabled;
+    input.disabled = !recordingChoice;
+  }
+}
 
 function api(): ArchiveRendererApi {
   // Prime owns the preload contract. This renderer slice stays narrow and compiles while that
@@ -126,9 +136,10 @@ async function openStaticArchive(): Promise<void> {
   }
 }
 
-export function initArchiveSurface(): void {
+export function initArchiveSurface(onRecordingChange?: (enabled: boolean) => void): void {
   if (initialized) return;
   initialized = true;
+  recordingChoice = onRecordingChange ?? null;
   const root = el('section', 'archive-surface');
   const head = el('header', 'archive-head');
   const heading = el('div', 'archive-heading');
@@ -155,14 +166,29 @@ export function initArchiveSurface(): void {
   rebuild.id = 'archiveRebuild'; rebuild.type = 'button';
   const open = el('button', 'btn btn-solid archive-action', () => t('Open Archive Browser')) as HTMLButtonElement;
   open.id = 'archiveOpenStatic'; open.type = 'button';
-  actions.append(rebuild, open);
+  const recordingLabel = el('label', 'archive-recording-choice');
+  const recording = document.createElement('input');
+  recording.type = 'checkbox';
+  recording.id = 'archiveRecordingCheckbox';
+  // No choice may be saved until main has painted the actual persisted preference.
+  recording.disabled = true;
+  recording.setAttribute('aria-describedby', 'archiveRecordingDescription');
+  recordingLabel.append(recording, el('span', '', () => t('Save new chat history locally')));
+  actions.append(rebuild, open, recordingLabel);
   const actionStatus = el('p', 'archive-action-status'); actionStatus.id = 'archiveActionStatus'; actionStatus.setAttribute('role', 'status');
 
-  const note = el('p', 'archive-boundary', () => t('The Archive Browser is a set of web pages saved on this computer. Opening it shows the latest saved copy right away and updates it in the background.'));
+  const note = el('p', 'archive-boundary');
+  note.id = 'archiveRecordingDescription';
+  note.append(
+    el('span', '', () => t('The Archive Browser is a set of web pages saved on this computer. Opening it shows the latest saved copy right away and updates it in the background.')),
+    document.createTextNode(' '),
+    el('span', '', () => t('This checkbox controls new local chat and tool-history recording, which is on by default. Turning it off does not delete existing sessions, archive copies, Pins, Plans, or app logs; ChatGPT keeps its own history. Goal and Loop require recording.'))
+  );
   root.append(head, statusCard, recoveryCard, actions, actionStatus, note);
   host().replaceChildren(root);
   rebuild.addEventListener('click', () => { void rebuildArchive(); });
   open.addEventListener('click', () => { void openStaticArchive(); });
+  recording.addEventListener('change', () => recordingChoice?.(recording.checked));
 }
 
 export async function refreshArchiveSurface(): Promise<void> {

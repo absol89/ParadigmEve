@@ -53,7 +53,7 @@ import { chatApply, chatSettingsPatch, chatVisible, initChat, openChatView } fro
 import { initWorkspaceLibrary, refreshPinsSurface, refreshPlansSurface } from './workspace-library.js';
 import { initWorkspaceNavigation, navigateWorkspace, onWorkspaceNavigation } from './workspace-navigation.js';
 import { initScheduleWorkspace } from './schedule-workspace.js';
-import { archiveWorkspaceLabel, initArchiveSurface, refreshArchiveSurface } from './archive-surface.js';
+import { archiveWorkspaceLabel, initArchiveSurface, paintArchiveRecording, refreshArchiveSurface } from './archive-surface.js';
 import { applyConceptSettings, conceptSettingsPatch, initConceptSettings } from './concept-settings.js';
 
 declare global {
@@ -521,7 +521,11 @@ initWorkspaceLibrary();
 initConceptSettings(() => { void save(); });
 api.onPinsChanged(() => { void refreshThreadSettingsEntries(); });
 initScheduleWorkspace();
-initArchiveSurface();
+initArchiveSurface((enabled) => {
+  // The Home permission is the single saved authority. Archive only mirrors and edits it.
+  const home = $<HTMLInputElement>('sessRecord');
+  if (home.checked !== enabled) home.click();
+});
 
 // ------------------------------------------------------------ permissions
 
@@ -611,10 +615,14 @@ function buildGroups(): void {
   const record = document.createElement('input');
   record.type = 'checkbox';
   record.id = 'sessRecord';
-  ui(record, 'title', () => t("Record this chat locally, and expose the session tool in ChatGPT"));
-  record.addEventListener('change', () => void save());
-  const recording = groupShell('recording', 'Session recording', 'i-steps', record);
+  ui(record, 'title', () => t("Save new chat messages and local tool results on this computer"));
+  ui(record, 'aria-label', () => t('Save new chat history locally'));
+  record.addEventListener('change', () => { paintLocalArchivePreference(); void save(); });
+  const recording = groupShell('recording', 'Local chat archive', 'i-steps', record);
   const recordTools = el('div', 'tools');
+  recordTools.append(el('p', 'archive-privacy-detail', () => t(
+    'On by default for governance and auditability. Off stops new local chat and tool-history recording, not previously saved sessions or archive copies. Pins, Plans, app logs and ChatGPT history are separate. Goal and Loop require recording.'
+  )));
   for (const [name, detail] of [
     ['search', 'List recent recordings or find past and concurrent work by text.'],
     ['read', 'Read one explicit recording, continue it, or expand one short T… tool reference.']
@@ -654,8 +662,26 @@ function buildGroups(): void {
   tools.append(toolNames(['agents']));
   agents.append(tools);
 
-  $('groups').replaceChildren(...permissionGroups, recording, agents);
+  $('groups').replaceChildren(recording, ...permissionGroups, agents);
 }
+
+function paintLocalArchivePreference(): void {
+  const enabled = $<HTMLInputElement>('sessRecord').checked;
+  paintArchiveRecording(enabled);
+  ui($('archiveRecordingStatus'), 'textContent', () => t(enabled
+    ? 'On — saving new chat and tool history locally'
+    : 'Off — not saving new chat and tool history locally'));
+}
+
+function openArchiveRecordingSetting(): void {
+  showTab('home');
+  openGroup = 'recording';
+  paintGroups();
+  document.querySelector<HTMLElement>('[data-group="recording"]')?.scrollIntoView({ block: 'nearest' });
+}
+
+$('archiveRecordingManage').addEventListener('click', openArchiveRecordingSetting);
+$('setupArchiveRecordingManage').addEventListener('click', openArchiveRecordingSetting);
 
 function capInput(cap: Capability): HTMLInputElement {
   return document.querySelector<HTMLInputElement>(`[data-cap="${cap}"]`)!;
@@ -711,7 +737,7 @@ function paintGroups(): void {
   // flipped a user's just-clicked toggle back when an unsolicited stale state push
   // arrived before save completed, so this only reads them.
   for (const [id, onText] of [
-    ['recording', 'session tool exposed'],
+    ['recording', 'On — recording new chats'],
     ['agents', 'agents tool exposed']
   ] as Array<[string, string]>) {
     const root = document.querySelector<HTMLElement>(`[data-group="${id}"]`);
@@ -719,7 +745,7 @@ function paintGroups(): void {
     const box = root.querySelector<HTMLInputElement>('.sw input')!;
     root.classList.toggle('is-open', openGroup === id);
     root.classList.toggle('is-on', box.checked);
-    ui(root.querySelector<HTMLElement>('.group-count')!, 'textContent', () => t(box.checked ? onText : 'off'));
+    ui(root.querySelector<HTMLElement>('.group-count')!, 'textContent', () => t(box.checked ? onText : id === 'recording' ? 'Off — not recording' : 'off'));
   }
 }
 
@@ -1490,6 +1516,8 @@ function apply(next: AppState): void {
     config.sessions.record,
     previousState?.config.sessions.record
   );
+  // Reflect the focused/unsaved Home switch rather than a potentially stale state push.
+  paintLocalArchivePreference();
   paintGroups();
   paintDesktopAccess(next);
   paintSetupDesktopAccess(next);

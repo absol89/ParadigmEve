@@ -1090,6 +1090,13 @@ main {
   gap: 2px;
 }
 
+.tools .archive-privacy-detail {
+  margin: 5px 0 9px;
+  color: var(--soft);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
 /* One capability checkbox inside a permission group.
    Scoped to `.tools` on purpose. This used to be a bare `.tool`, which also matched the
    expanded tool call in the Chat timeline — a `<details class="tool">` further down this

@@ -74,6 +74,18 @@ Config contains non-secret choices:
 - Goal/Loop settings;
 - MCP instruction text.
 
+**Local chat archive opt-out (2.4.2):** Recording remains on by default for governance and
+auditability. The same `sessions.record` permission is exposed at the top of Workspace's
+Permissions and as a checkbox alongside Rebuild/Open in Archive Browser. Setup and
+Settings → Browser & history link to the Workspace permission. Switching it off prevents
+new session messages and local tool results from being recorded, and disables features
+that require recording, such as Goal/Loop and the session tool; it is not a global
+privacy/erasure switch. Previously saved sessions, archive projections and static copies
+remain readable, and archive rebuilding can still process earlier stored evidence.
+Pins, Plans, logs, separate feature outputs and ChatGPT's own history have independent
+storage or retention. The configured recording-retention window handles old session files;
+turning recording off does not erase earlier content.
+
 A corrupt config falls back conservatively rather than silently receiving fresh-install permissive defaults.
 
 Settings mutation is serialized and published only after the new config is atomically written.

@@ -98,6 +98,22 @@ it('does not overwrite a focused dirty settings field on an unsolicited state pu
   expect(w.document.querySelector('[data-step="chatgpt"]')?.textContent).toContain('Allow all actions');
   expect(w.document.querySelector('[data-step="chatgpt"]')?.textContent).toContain('Choose how much autonomy you want');
 
+  const recording = w.document.getElementById('sessRecord') as HTMLInputElement;
+  const archiveRecording = w.document.getElementById('archiveRecordingCheckbox') as HTMLInputElement;
+  expect(recording.checked).toBe(true);
+  expect(archiveRecording.checked).toBe(true);
+  expect(w.document.querySelector('#groups [data-group="recording"]')).toBe(w.document.querySelector('#groups .perm'));
+  archiveRecording.click();
+  expect(recording.checked).toBe(false);
+  expect(w.document.getElementById('archiveRecordingStatus')?.textContent).toContain('Off');
+  stateListener({ ...structuredClone(state), config: { ...baseConfig, sessions: { ...baseConfig.sessions, record: false } } });
+  expect(archiveRecording.checked).toBe(false);
+  recording.click();
+  expect(archiveRecording.checked).toBe(true);
+  w.document.getElementById('archiveRecordingManage')!.click();
+  expect(w.document.querySelector('[data-group="recording"]')?.classList.contains('is-open')).toBe(true);
+  expect(w.document.querySelector<HTMLElement>('.app')?.dataset.screen).toBe('home');
+
   const field = w.document.getElementById('tunnelId') as HTMLInputElement;
   expect(field.value).toBe(baseConfig.tunnel.tunnelId);
   field.focus();

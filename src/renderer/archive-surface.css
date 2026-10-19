@@ -34,6 +34,9 @@
 
 .archive-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
 .archive-action { min-height: 40px; }
+.archive-recording-choice { display: inline-flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 9px; cursor: pointer; font-size: 12.5px; color: var(--ink); }
+.archive-recording-choice input { width: 17px; height: 17px; margin: 0; accent-color: var(--blue); cursor: pointer; }
+.archive-recording-choice:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: var(--r-sm); }
 .archive-action-status { min-height: 20px; margin: 9px 0 0; color: var(--soft); font-size: 12px; }
 .archive-action-status[data-tone='error'] { color: #c86464; }
 .archive-boundary { max-width: 720px; margin: 18px 0 0; color: var(--faint); font-size: 11.5px; line-height: 1.55; }

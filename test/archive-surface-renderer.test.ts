@@ -96,3 +96,31 @@ it('localizes Archive chrome in Swedish without translating runtime evidence', a
   expect(dom.window.document.getElementById('archiveRebuild')?.textContent).toBe('Bygg om arkivet');
   expect(dom.window.document.getElementById('archiveError')?.textContent).toContain('EXACT_RUNTIME_ERROR');
 });
+
+it('shows an opt-out beside Archive Browser controls, localizes it, and keeps prior archive available', async () => {
+  const choices: boolean[] = [];
+  const surface = await import('../src/renderer/archive-surface.js');
+  surface.initArchiveSurface(enabled => choices.push(enabled));
+  surface.paintArchiveRecording(true);
+  const input = dom.window.document.getElementById('archiveRecordingCheckbox') as HTMLInputElement;
+  const label = input.closest('label')!;
+  const note = dom.window.document.getElementById('archiveRecordingDescription')!;
+  expect(input.disabled).toBe(false);
+  expect(input.checked).toBe(true);
+  expect(label.parentElement?.classList.contains('archive-actions')).toBe(true);
+  expect(note.textContent).toContain('does not delete existing sessions');
+  expect(note.textContent).toContain('ChatGPT keeps its own history');
+  input.click();
+  expect(choices).toEqual([false]);
+  expect(input.checked).toBe(false);
+  surface.paintArchiveRecording(true);
+  expect(input.checked).toBe(true);
+  expect(choices).toEqual([false]); // settings refresh is not another user save
+  const { setLanguage } = await import('../src/renderer/i18n.js');
+  setLanguage('sv-SE');
+  expect(label.textContent).toContain('Spara ny chatthistorik lokalt');
+  expect(note.textContent).toContain('raderar inte befintliga sessioner');
+  setLanguage('es-419');
+  expect(label.textContent).toContain('Guardar el historial de chats nuevos');
+  expect(note.textContent).toContain('no elimina sesiones existentes');
+});
