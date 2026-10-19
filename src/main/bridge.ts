@@ -3272,6 +3272,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       changed();
       return json(res, 200, { aborted: true, sessionId: entry.sessionId, job: resumeJobFor(entry.sessionId) }, origin);
     }
+    // A source page that stopped before Send has not asked ChatGPT for the handoff. Only the
+    // matching automatic, still-reversible ticket may report its temporary refusal.
+    if (body['sourceDeferred'] === true) {
+      const entry = continuationByToken(checkpointToken);
+      if (!entry || entry.from !== id) return json(res, 409, { error: 'no_such_continuation' }, origin);
+      if (!entry.automatic || entry.state !== 'awaiting-summary' || !sendUnattempted(entry.sourceSend)) {
+        return json(res, 409, { error: 'source_send_not_deferrable' }, origin);
+      }
+      const reason = typeof body['sourceError'] === 'string' ? body['sourceError'].trim().slice(0, 500) : '';
+      compactionDeferrals.set(entry.token, reason || 'The source page could not prepare the handoff yet.');
+      logInfo(`bridge: compaction ticket ${entry.token.slice(0, 8)} could not ask for the handoff yet: ${reason || 'no reason given'}`);
+      changed();
+      return json(res, 200, { deferred: true, job: resumeJobFor(entry.sessionId) }, origin);
+    }
     // The last durable write before the click, quoting the claim handed out above. A false
     // answer means this document was reclaimed while it was composing and must submit nothing.
     if (body['sourceDispatch'] === true) {
@@ -5551,6 +5565,8 @@ export interface ResumeJobView {
     messageId: string | null;
   };
   error: string | null;
+  /** Exact source page's most recent pre-Send refusal, not a submitted prompt. */
+  deferredReason?: string;
 }
 
 const RUNNING_STAGES = new Set<ResumeStage>(['handoff-pending', 'opening', 'waiting-for-browser']);
@@ -5600,7 +5616,9 @@ export function resumeJobFor(sessionId: string): ResumeJobView | null {
     handoffId: entry.handoffId,
     sourceSend: entry.sourceSend,
     destinationSend: entry.destinationSend,
-    error: entry.error
+    error: entry.error,
+    ...(entry.automatic && entry.state === 'awaiting-summary' && sendUnattempted(entry.sourceSend) && compactionDeferrals.has(entry.token)
+      ? { deferredReason: compactionDeferrals.get(entry.token) } : {})
   };
 }
 
@@ -7430,6 +7448,8 @@ const COMPACTION_PICKUPS: Record<CompactionPhase, { every: number; attempts: num
   opening: { every: 15 * 60_000, attempts: 3 }
 };
 const compactionWatch = new Map<string, { token: string; phase: CompactionPhase; since: number; attempts: number; backoffs?: number; told?: boolean; voiceHeld?: boolean }>();
+/** Ephemeral display reason for the latest source-page refusal on this exact automatic ticket. */
+const compactionDeferrals = new Map<string, string>();
 /** The pause before an automatic pre-Send ticket's next pickup burst. (Ported from chat-on-steroids #391.) */
 const AUTOMATIC_ASKING_RETRY_PAUSE_MS = 10 * 60_000;
 /**
@@ -7615,6 +7635,10 @@ async function inspectOwedGoals(now: number): Promise<boolean> {
 async function inspectOwedCompactions(now: number): Promise<boolean> {
   if (compactionWatchFloor === null) return false;
   const owed = new Map(pendingContinuations().map((entry) => [entry.from, entry]));
+  const owedTokens = new Set([...owed.values()].map((entry) => entry.token));
+  for (const token of compactionDeferrals.keys()) {
+    if (!owedTokens.has(token)) compactionDeferrals.delete(token);
+  }
   for (const [conversationId, watch] of compactionWatch) {
     if (owed.get(conversationId)?.token === watch.token) continue;
     compactionWatch.delete(conversationId);
@@ -7735,6 +7759,8 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
     }
     if (!acted) continue;
 
+    // The pickup gives the page another chance; the prior refusal is no longer current.
+    compactionDeferrals.delete(entry.token);
     watch.attempts += 1;
     watch.since = now;
     queued = true;
@@ -9461,6 +9487,7 @@ export function resetBridgeForTests(): void {
   attributedTurns.clear();
   goalWatch.clear();
   compactionWatch.clear();
+  compactionDeferrals.clear();
   // Re-armed rather than cleared: the seam stands in for a process that has just started
   // serving, which is exactly what the fence measures. Clearing it would leave the watchdog
   // permanently off in every suite that starts the bridge once and resets between tests.

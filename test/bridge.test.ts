@@ -2198,6 +2198,43 @@ describe('restart recovery escalation', () => {
 describe('automatic compaction', () => {
   const settled = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+  it('reports a held source ticket without pretending a handoff was sent, and rejects stale or post-Send deferrals', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ce21';
+    const otherConversation = 'a1a1a1a1-0000-4000-8000-00000000ce22';
+    await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'user_message', time: Date.now(), text: 'Retain this work', messageId: 'source-user' }
+    ] } });
+    const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+    expect(filed.status).toBe(202);
+    const token = filed.body.token as string;
+    const sessionId = filed.body.sessionId as string;
+    const wrongChat = await request('POST', '/compact', { body: {
+      conversationId: otherConversation, token, sourceDeferred: true, sourceError: 'wrong chat'
+    } });
+    expect(wrongChat.status).toBe(409);
+    expect(resumeJobFor(sessionId)?.deferredReason).toBeUndefined();
+
+    const refusal = 'Local tools still running: ' + 'x'.repeat(600);
+    const held = await request('POST', '/compact', { body: {
+      conversationId, token, sourceDeferred: true, sourceError: refusal
+    } });
+    expect(held.status).toBe(200);
+    expect(held.body).toMatchObject({ deferred: true, job: {
+      token, stage: 'handoff-pending', sourceSend: { state: 'not-attempted' }
+    } });
+    expect(held.body.job.deferredReason).toBe(refusal.slice(0, 500));
+    expect(resumeJobFor(sessionId)?.deferredReason).toBe(refusal.slice(0, 500));
+    expect((await request('POST', '/compact', { body: { conversationId, token, sourceAttempt: true } })).body.allowed).toBe(true);
+    expect((await request('POST', '/compact', { body: { conversationId, token, sourceDispatch: true } })).body.armed).toBe(true);
+    expect(resumeJobFor(sessionId)?.deferredReason).toBeUndefined();
+    const late = await request('POST', '/compact', { body: {
+      conversationId, token, sourceDeferred: true, sourceError: 'too late'
+    } });
+    expect(late.status).toBe(409);
+    expect(late.body.error).toBe('source_send_not_deferrable');
+  });
+
   // Ported from Chat On Steroids 2.1.35 (7cbc1aa5).
   // 2026-10-12: an automatic ticket filed while the crossing turn still worked spent all its pickups
   // reloading a generating page and gave up (handoff_never_sent) just after the turn ended.

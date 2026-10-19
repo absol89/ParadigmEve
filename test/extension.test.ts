@@ -2000,11 +2000,13 @@ describe('worker settings authority', () => {
     await worker.send({ type: 'compact', conversationId: CHAT, token, sourceUndelivered: true, newestUserMessage: 'm-before', documentSince: 1_791_650_000_000 }, 44);
     // The document time only qualifies the message it reports; alone it carries nothing.
     await worker.send({ type: 'compact', conversationId: CHAT, token, sourceUndelivered: true, documentSince: 1_791_650_000_000 }, 44);
+    await worker.send({ type: 'compact', conversationId: CHAT, token, sourceDeferred: true, sourceError: 'Local tools still running' }, 44);
 
     expect(posted[0]).toMatchObject({ token, sourceDispatch: true, before: 'm-before' });
     expect(posted[1]).toMatchObject({ token, sourceUndelivered: true, newestUserMessage: 'm-before', documentSince: 1_791_650_000_000 });
     expect(posted[2]).toMatchObject({ token, sourceUndelivered: true });
     expect(posted[2]).not.toHaveProperty('documentSince');
+    expect(posted[3]).toMatchObject({ token, sourceDeferred: true, sourceError: 'Local tools still running' });
   });
 
   it.each(['new-chat', 'other-chat', 'pending-navigation'])('checks the current Chrome route for compaction after %s', async scenario => {

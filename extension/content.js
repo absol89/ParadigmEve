@@ -8293,6 +8293,8 @@
           ? 'Opening a fresh chat'
           : job.stage === 'waiting-for-browser'
             ? 'Waiting for Chrome'
+            : job.deferredReason && ['not-attempted', 'attempted-unresolved'].includes(job.sourceSend?.state)
+              ? 'Handoff paused before Send'
             : phase === 'delivering' ? 'Saving the handoff'
               : summary?.state === 'stopped' ? 'The handoff response was stopped'
                 : summary?.state === 'failed' ? 'The handoff response needs attention'
@@ -8313,7 +8315,7 @@
             : phase === 'prompting' || phase === 'waiting' || asked
               ? 1
               : 0;
-      return { stage, detail: summary?.detail || '', body: '', kind: 'compact', steps: COMPACT_STEPS, at, done: false };
+      return { stage, detail: job.deferredReason || summary?.detail || '', body: '', kind: 'compact', steps: COMPACT_STEPS, at, done: false };
     }
     const goalView = goalStageView(goal);
     if (goalView) return goalView;
@@ -8658,6 +8660,13 @@
     stagePanel.body.hidden = view.body === '';
   }
 
+  // An automatic source-page refusal is not a submitted handoff. Report its exact ticket and
+  // reason so a later safe pickup can retry without the UI claiming ChatGPT is already answering.
+  function reportDeferredCompaction(forId, token, why) {
+    if (!forId || !token || !why) return;
+    void ask({ type: 'compact', conversationId: forId, token, sourceDeferred: true, sourceError: why }).catch(() => undefined);
+  }
+
   async function startCompact(automatic = false, noInterrupt = false) {
     const forId = conversationId;
     const forEpoch = epoch;
@@ -8780,6 +8789,7 @@
     if (barrier) {
       // Nothing was sent, so a refused recovery ticket is withdrawn rather than left to expire.
       if (noInterrupt) void ask({ type: 'compact', conversationId: forId, cancel: true }).catch(() => undefined);
+      else if (automatic) reportDeferredCompaction(forId, String(filed.data.token || filed.data.job?.token || ''), barrier);
       pressedAt = 0;
       nativeBusy = false;
       nativePhase = '';
@@ -9096,6 +9106,8 @@
         const lost = await ask({ type: 'compact', conversationId: forId, token, sourceLost: true }).catch(() => null);
         if (lost && lost.ok === true && lost.data && lost.data.aborted === true) job = null;
         else localError = replyError(lost) || 'The blocked handoff could not be safely retired; it was not sent twice.';
+      } else if (automaticTicket) {
+        reportDeferredCompaction(forId, token, why);
       }
       if (!current()) return;
       renderControl();
