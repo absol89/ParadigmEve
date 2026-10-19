@@ -907,6 +907,25 @@ describe('session store', () => {
     expect((await getSession(summary.id))?.lastAssistantFinalAt).toBe(200);
   });
 
+  it('preserves the final activity boundary when the same answer gains metadata after reload', async () => {
+    const summary = await createSession({ title: 'finished response reread' });
+    const messageId = 'stable-final-reread';
+    const final = (time: number, text: string, extras: { goalEligible?: boolean; providerMessageId?: string } = {}) =>
+      upsertMessageEvent(summary.id, {
+        time, source: 'extension', kind: 'assistant_message', messageId,
+        message: { text, chars: text.length, truncated: false },
+        state: 'final', final: true, ...extras
+      });
+    await final(200, 'Finished.');
+    const enrichment = await final(900, 'Finished.', { goalEligible: true, providerMessageId: messageId });
+    expect(enrichment.changed).toBe(true);
+    expect((await getSession(summary.id))?.lastAssistantFinalAt).toBe(200);
+
+    // The same canonical provider message with genuinely edited prose is new finished work.
+    await final(1000, 'Finished, revised.');
+    expect((await getSession(summary.id))?.lastAssistantFinalAt).toBe(1000);
+  });
+
   it('projects a successful worker finish report as the session finish boundary', async () => {
     const summary = await createSession({ title: 'finish boundary' });
     const call = (callId: string, tool: string, finish: boolean) => ({

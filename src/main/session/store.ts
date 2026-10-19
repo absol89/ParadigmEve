@@ -1346,7 +1346,11 @@ export function upsertMessageEvent(
         entry.summary.contextTokens = Math.max(0, entry.summary.contextTokens + delta);
         entry.summary.updatedAt = Math.max(entry.summary.updatedAt, nextEvent.time);
         noteFinishWork(entry.summary, full);
-        if (full.kind === 'assistant_message' && (full.final === true || full.state === 'final')) {
+        // A metadata/HTML enrichment of the same finished answer is not a new response.
+        // Only first finalisation or a genuine text revision advances unread/activity time.
+        const sameFinishedAnswer = sameMessage && previous.kind === 'assistant_message' &&
+          (previous.final === true || previous.state === 'final');
+        if (!sameFinishedAnswer && full.kind === 'assistant_message' && (full.final === true || full.state === 'final')) {
           entry.summary.lastAssistantFinalAt = Math.max(
             entry.summary.lastAssistantFinalAt ?? 0,
             nextEvent.time
