@@ -1575,6 +1575,40 @@ export function heartbeatReviewWorkerOwnsKey(
   return agent.info.task.includes(marker) || agent.queue.some((message) => message.from === PRIME_ID && message.text.includes(marker));
 }
 
+/**
+ * Whether exactly one app-owned heartbeat reviewer of this Prime, running or parked, was handed
+ * this epoch. For a review call that reached MCP with no page evidence: ChatGPT keeps a turn
+ * running after the page loses its stream (laptop, 2026-10-20 10:31-10:47), so the worker's own
+ * acknowledgements arrive unattributed. The random key is printed only into that worker's task
+ * while the epoch is owed, so it names that one worker. Grants no authority by itself.
+ */
+export function heartbeatReviewWorkerHoldsKey(key: string, primeConversationId: string): boolean {
+  if (!key || !primeConversationId) return false;
+  const marker = heartbeatReviewEpochMarker(key);
+  const owners: Array<Run | DormantRun> = [...runs.values()].filter((run) => run.primeConversationId === primeConversationId);
+  const dormant = dormantRuns.get(primeConversationId);
+  if (dormant) owners.push(dormant);
+  const holders = owners.flatMap((owner) => [...owner.agents.values()]).filter((agent) =>
+    heartbeatReviewAgent(agent) &&
+    (agent.info.task.includes(marker) || agent.queue.some((message) => message.from === PRIME_ID && message.text.includes(marker))));
+  return holders.length === 1;
+}
+
+/**
+ * The heartbeat receipt tools' reviewer check: the exact attributed worker, or a call with a
+ * Companion request id that no page placed in any conversation, presenting a key exactly one
+ * reviewer holds. A call attributed to some other chat or local principal never qualifies.
+ */
+export function heartbeatReviewWorkerCall(
+  caller: Caller & { requestId?: string | null; sessionId?: string | null },
+  key: string,
+  primeConversationId: string
+): boolean {
+  if (heartbeatReviewWorkerOwnsKey(caller, key, primeConversationId)) return true;
+  const unattributed = Boolean(caller.requestId) && !caller.conversationId && !caller.sessionId && !caller.localPrincipal;
+  return unattributed && heartbeatReviewWorkerHoldsKey(key, primeConversationId);
+}
+
 /** Hard execution-policy predicate for the app-owned maintenance worker. */
 export function isHeartbeatReviewWorkerCaller(caller: Caller): boolean {
   const agent = resolve(caller);

@@ -1219,11 +1219,28 @@ export function chatReviewAttentionText(review: ChatReviewAttention): string {
     'This review worker does not own Prime coordination. After the exact receipt, finish this review without opening a new Prime turn or taking any action.';
 }
 
+/** A pre-2.4.0 Prime-composer review row for this key may already have been sent. */
+export const LEGACY_HEARTBEAT_AMBIGUOUS = 'LEGACY_HEARTBEAT_AMBIGUOUS';
+
+/**
+ * When the legacy Prime-composer rows for this review key last showed any transport activity, or
+ * null when there are none. The heartbeat waits a full cadence past this before it supersedes an
+ * ambiguous legacy epoch, so a Prime still answering that old message can finish it first.
+ */
+export function legacyChatReviewActivityAt(key: string): Promise<number | null> {
+  return serial(async () => {
+    const rows = (await load()).filter(row => row.purpose === 'attention' && row.chatReview?.key === key);
+    if (!rows.length) return null;
+    return Math.max(...rows.flatMap(row => [row.createdAt, row.offeredAt, row.sendAuthorizedAt, row.deliveredAt]
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))));
+  });
+}
+
 /** Dispatch this heartbeat into the app-owned worker broker, never into Prime's composer. */
 export async function dispatchChatReviewWorker(sessionId: string, review: ChatReviewAttention): Promise<unknown> {
   const retired = await retireLegacyChatReviewAttention(review.key);
   if (retired === 'ambiguous') {
-    throw new Error('A legacy heartbeat browser send may already have been authorized; worker review is deferred to avoid duplicating the same epoch.');
+    throw new Error(`${LEGACY_HEARTBEAT_AMBIGUOUS}: A legacy heartbeat browser send may already have been authorized; worker review is deferred to avoid duplicating the same epoch.`);
   }
   const session = await getSession(sessionId);
   if (!session?.conversationId || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {

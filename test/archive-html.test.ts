@@ -339,6 +339,7 @@ describe('static archive HTML', () => {
       runScripts: 'dangerously',
       pretendToBeVisual: true,
       beforeParse(window) {
+        window.scrollTo = () => undefined;
         (window as unknown as Record<string, unknown>).__EVE_ARCHIVE_SEARCH__ = {
           'chat-0': ['a phrase found only inside the first user message'],
           'chat-1': ['second transcript words']
@@ -349,6 +350,8 @@ describe('static archive HTML', () => {
     const runtime = dom.window as unknown as {
       __EVE_ARCHIVE_SEGMENT__: (token: string, index: number, html: string) => void;
     };
+    // The default opens the newest segment; explicitly visit the oldest for this paging test.
+    dom.window.document.querySelector<HTMLButtonElement>('[data-chat-segment-first]')!.click();
     runtime.__EVE_ARCHIVE_SEGMENT__('chat-0', 0, '<article class="message"><div class="message-text">first loaded transcript</div></article>');
 
     const host = dom.window.document.querySelector<HTMLElement>('[data-chat-host]')!;

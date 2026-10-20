@@ -88,9 +88,9 @@ import { BLOCKED_CHAT_REFUSAL, anyChatBlocked, isChatBlocked } from '../session/
 import { anyContinuationOpen, compactingConversation } from '../session/continuation.js';
 import { acknowledgeBackgroundExecOutput, backgroundExecRecoveryNotices, offerBackgroundExecOutput } from '../codex/ownership.js';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '../codex/unified-exec-constants.js';
-import { unattributedRepairEta } from '../bridge.js';
+import { chatUrl, unattributedRepairEta } from '../bridge.js';
 import { sharedEveOwnerForCurrentCall } from '../eve-access.js';
-import { conversationAttachment, readOverflowText } from '../session/store.js';
+import { conversationAttachment, findSessionByConversation, readOverflowText } from '../session/store.js';
 import type { StoredText, ToolOutcome } from '../../shared/session.js';
 import { archiveWorkerPlansForDeliveredReport } from '../plans.js';
 
@@ -493,6 +493,28 @@ export const COMPACTION_IN_PROGRESS_REFUSAL =
   'user message asks for the handoff brief: write that brief now, as plain text, and then stop. ' +
   'Work continues in the replacement chat.';
 
+const SUPERSEDED_REFUSAL =
+  'CONVERSATION_SUPERSEDED: Compact & Resume replaced this ChatGPT conversation. Its transcript remains readable, but it can no longer execute local tools.';
+
+/**
+ * Refused to a chat Compact & Resume replaced, naming where the work went (CoS #1700). Without
+ * the link the model could only say "open a new session" and the person could not find their work.
+ * The durable session's current chat is the newest in its lineage, so A -> B -> C names C. A failed
+ * or ambiguous lookup keeps the plain refusal; it never becomes an error of its own.
+ */
+export async function supersededRefusal(conversationId: string): Promise<string> {
+  try {
+    const owner = await findSessionByConversation(conversationId, { includeHistorical: true, requireUnique: true });
+    const current = owner?.conversationId;
+    if (owner && current && current !== conversationId && owner.chatIds.includes(conversationId)) {
+      const title = owner.title.trim();
+      const named = title && title !== 'ChatGPT session' ? `, named "${title}" in ParadigmEve` : '';
+      return `${SUPERSEDED_REFUSAL} The work continues in ${chatUrl(current)}${named}. Send the user there; no local tool was run.`;
+    }
+  } catch { /* the plain refusal below */ }
+  return `${SUPERSEDED_REFUSAL} Continue only in the replacement chat; no local tool was run.`;
+}
+
 async function dispatchTracked(
   context: CallContext,
   name: string,
@@ -741,11 +763,7 @@ async function dispatchTracked(
         : compacting
         ? Promise.resolve(fail(COMPACTION_IN_PROGRESS_REFUSAL))
         : supersededConversation
-        ? Promise.resolve(
-            fail(
-              'CONVERSATION_SUPERSEDED: Compact & Resume replaced this ChatGPT conversation. Its transcript remains readable, but it can no longer execute local tools. Continue only in the replacement chat; no local tool was run.'
-            )
-          )
+        ? supersededRefusal(context.caller.conversationId!).then(fail)
         : dormantWorker
         ? Promise.resolve(fail(dormantWorker))
         : retiredWorker

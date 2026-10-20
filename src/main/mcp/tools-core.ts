@@ -113,6 +113,7 @@ import { ensureDevToolchain } from '../toolchain.js';
 import {
   agentForCaller,
   currentRunId,
+  heartbeatReviewWorkerCall,
   heartbeatReviewWorkerOwnsKey,
   isHeartbeatReviewWorkerCaller,
   noteAgentAlive,
@@ -1313,7 +1314,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
       let caller = currentCaller();
       const call = currentCall();
       const continuity = await resolveChatReviewContinuity(key);
-      const reviewWorker = Boolean(continuity && heartbeatReviewWorkerOwnsKey(caller, key, continuity.conversationId));
+      const reviewWorker = Boolean(continuity && heartbeatReviewWorkerCall(caller, key, continuity.conversationId));
       const workerRequired = await chatReviewRequiresWorker(key);
       if (workerRequired && !reviewWorker) {
         return fail('CHAT_REVIEW_WORKER_REQUIRED: this review epoch belongs to ParadigmEve’s read-only heartbeat worker. The Prime/legacy conversation cannot complete it.');

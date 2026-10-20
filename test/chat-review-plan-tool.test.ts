@@ -53,7 +53,7 @@ const fixture = vi.hoisted(() => ({
 
 vi.mock('../src/main/agents.js', () => ({
   PRIME_ID: 'prime',
-  heartbeatReviewWorkerOwnsKey: () => fixture.reviewWorker
+  heartbeatReviewWorkerCall: () => fixture.reviewWorker
 }));
 
 vi.mock('../src/main/mcp/call-context.js', () => ({

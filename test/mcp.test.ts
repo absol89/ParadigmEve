@@ -22,7 +22,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { effectiveCapabilities, defaultConfig, getConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { forgetExposedSurface, lastRequestAt, onMcpRequestSeen, selfTestHeaders, startMcpServer, tunnelProbeHeaders, type McpEndpoint } from '../src/main/mcp/server.js';
 import { lastToolCallAt, onMcpToolCallSeen, type ToolContext } from '../src/main/mcp/tools.js';
-import { friendlyError } from '../src/main/mcp/kernel.js';
+import { friendlyError, supersededRefusal } from '../src/main/mcp/kernel.js';
 import { SURFACE_LIST, surfaceDefinition, type SurfaceId } from '../src/main/mcp/surfaces.js';
 import {
   appendEvent,
@@ -4288,6 +4288,32 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(failed(stale)).toBe(true);
     expect(textOf(stale)).toContain('CONVERSATION_SUPERSEDED');
     expect(textOf(stale)).toContain('no local tool was run');
+    // CoS #1700: the refusal says where the work continues.
+    expect(textOf(stale)).toContain(`https://chatgpt.com/c/${chatB}`);
+    expect(textOf(stale)).toContain('"exec continuation owner"');
+  });
+
+  it('names the newest chat after a second Compact & Resume, and the link alone for an unnamed chat', async () => {
+    const [chatA, chatB, chatC] = ['f0f00015-1111-4111-8111-111111111111', 'f0f00016-1111-4111-8111-111111111111', 'f0f00017-1111-4111-8111-111111111111'];
+    const named = await createSession({ title: 'twice moved', conversationId: chatA });
+    expect(await rebindSession(named.id, chatA, chatB)).toBe(true);
+    expect(await rebindSession(named.id, chatB, chatC)).toBe(true);
+    const fromA = await supersededRefusal(chatA);
+    expect(fromA).toContain(`https://chatgpt.com/c/${chatC}`);
+    expect(fromA).not.toContain(chatB);
+    expect(fromA).toContain('"twice moved"');
+    expect(fromA).toContain('no local tool was run');
+
+    const [chatD, chatE] = ['f0f00018-1111-4111-8111-111111111111', 'f0f00019-1111-4111-8111-111111111111'];
+    const unnamed = await createSession({ conversationId: chatD });
+    expect(await rebindSession(unnamed.id, chatD, chatE)).toBe(true);
+    const fromD = await supersededRefusal(chatD);
+    expect(fromD).toContain(`https://chatgpt.com/c/${chatE}`);
+    expect(fromD).not.toContain('named');
+
+    // No lineage: the plain refusal, never an error.
+    expect(await supersededRefusal('f0f0001a-1111-4111-8111-111111111111'))
+      .toBe('CONVERSATION_SUPERSEDED: Compact & Resume replaced this ChatGPT conversation. Its transcript remains readable, but it can no longer execute local tools. Continue only in the replacement chat; no local tool was run.');
   });
 
   it('refuses every tool from a chat whose handoff brief has been asked for, until the move is over', async () => {

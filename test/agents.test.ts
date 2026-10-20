@@ -63,6 +63,7 @@ const {
   noteAgentContextTokens,
   failWorkerRevival,
   isWorkerConversation,
+  heartbeatReviewWorkerCall,
   heartbeatReviewWorkerOwnsKey,
   isHeartbeatReviewWorkerCaller,
   WAKE_FAILURES_BEFORE_GIVING_UP,
@@ -177,6 +178,30 @@ describe('app-owned heartbeat review worker', () => {
       'heartbeat:forged', PRIME_CHAT)).toBe(false);
     expect(isHeartbeatReviewWorkerCaller({ conversationId: 'c-ordinary-quoted-worker' })).toBe(false);
   });
+  // 2026-10-20 laptop: the network dropped, ChatGPT kept worker-39's review turn running, and its
+  // chat_review_plan calls reached the app with no page evidence, so they were refused as Prime's.
+  // A call no page placed in any conversation may present the live epoch key one reviewer holds.
+  it('recognizes an unattributed review call only by a key exactly one reviewer holds, even once parked', async () => {
+    await setEnabled(true);
+    const first = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:unattributed-1');
+    expect(bindConversation(first.workerId, 'c-heartbeat-unattributed')).toBe(true);
+    const unattributed = { conversationId: null, sessionId: null, requestId: 'bf709d96-3f91-44d8-b50a-a0e37ef34112' };
+
+    expect(heartbeatReviewWorkerCall(unattributed, 'heartbeat:unattributed-1', PRIME_CHAT)).toBe(true);
+    // Nothing else stands in: a guessed key, another Prime, a missing request id, a call some page
+    // attributed to another chat, or a local principal.
+    expect(heartbeatReviewWorkerCall(unattributed, 'heartbeat:guessed', PRIME_CHAT)).toBe(false);
+    expect(heartbeatReviewWorkerCall(unattributed, 'heartbeat:unattributed-1', 'c-other-prime')).toBe(false);
+    expect(heartbeatReviewWorkerCall({ conversationId: null }, 'heartbeat:unattributed-1', PRIME_CHAT)).toBe(false);
+    expect(heartbeatReviewWorkerCall({ ...unattributed, conversationId: PRIME_CHAT }, 'heartbeat:unattributed-1', PRIME_CHAT)).toBe(false);
+    // The attributed worker itself still qualifies through the exact-owner path.
+    expect(heartbeatReviewWorkerCall({ conversationId: 'c-heartbeat-unattributed' }, 'heartbeat:unattributed-1', PRIME_CHAT)).toBe(true);
+
+    // The page lost the turn and the worker was slept: its late acknowledgements still count.
+    expect(finishWorkerConversation('c-heartbeat-unattributed', 'Went silent.')?.info.state).toMatch(/sleeping|finished/);
+    expect(heartbeatReviewWorkerCall(unattributed, 'heartbeat:unattributed-1', PRIME_CHAT)).toBe(true);
+  });
+
   // c21, 2026-10-15: an "active" heartbeat worker whose chat went silent kept every later epoch queued
   // to a chat that never called a tool again. Past the stale window it is slept, and the new epoch goes
   // to it as a real revival instead of failing as "still finishing its previous epoch".

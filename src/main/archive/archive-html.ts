@@ -340,9 +340,11 @@ function renderLazyChatFrame(chat: ArchiveViewChatHeader, token: string, segment
     </header>
     ${captureBanner(chat)}
     <nav class="chat-segment-nav" data-chat-segment-nav aria-label="Archived chat parts"${pagingHidden}>
+      <button type="button" data-chat-segment-first>First</button>
       <button type="button" data-chat-segment-prev>Previous part</button>
-      <span data-chat-segment-status>Part 1 of ${segmentCount}</span>
+      <span data-chat-segment-status role="status" aria-live="polite" aria-atomic="true">Part ${segmentCount} of ${segmentCount}</span>
       <button type="button" data-chat-segment-next>Next part</button>
+      <button type="button" data-chat-segment-last>Last</button>
     </nav>
     <div class="transcript" data-chat-segment-host><div class="empty-transcript">Loading archived chat…</div></div>
   </section>`;
@@ -383,7 +385,7 @@ const STYLE = `
 .chat-metadata{display:flex;flex-wrap:wrap;gap:8px 18px;margin:18px 0 0}.metadata-row{display:flex;gap:6px;font-size:12px}.metadata-row dt{color:#898989}.metadata-row dd{margin:0;color:#c7c7c7}
 .capture-banner,.notice,.continuation-card,.empty-transcript{margin:20px 0;padding:12px 14px;border:1px solid #4a4230;border-radius:10px;background:#242018;color:#e8d9b7}
 .notice-info,.continuation-card{border-color:#353535;background:#202020;color:#d5d5d5}.notice-missing{border-color:#573838;background:#281c1c;color:#f0caca}
-.chat-segment-nav{display:flex;align-items:center;justify-content:center;gap:12px;margin:18px 0 4px}.chat-segment-nav[hidden]{display:none}.chat-segment-nav button{border:1px solid #3d3d3d;background:#202020;color:#d8d8d8;border-radius:8px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}.chat-segment-nav button:hover:not(:disabled),.chat-segment-nav button:focus-visible{background:#292929;color:#fff}.chat-segment-nav button:disabled{opacity:.45;cursor:default}.chat-segment-nav span{min-width:90px;text-align:center;color:#999;font-size:12px}
+.chat-segment-nav{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin:18px 0 4px;padding:9px 6px;border:1px solid #333;border-radius:10px;background:#171717}.chat-segment-nav[hidden]{display:none}.chat-segment-nav button{border:1px solid #3d3d3d;background:#202020;color:#d8d8d8;border-radius:8px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}.chat-segment-nav button:hover:not(:disabled),.chat-segment-nav button:focus-visible{background:#292929;color:#fff}.chat-segment-nav button:focus-visible{outline:2px solid #7aa7e8;outline-offset:2px}.chat-segment-nav button:disabled{opacity:.45;cursor:default}.chat-segment-nav span{min-width:90px;text-align:center;color:#bbb;font-size:12px}
 .transcript{padding-top:10px}.message{margin:18px 0;padding:16px 18px;border-radius:16px;background:#202020;border:1px solid #2d2d2d}.message-user{margin-left:12%;background:#2a2a2a}.message-system{border-style:dashed;color:#c9c9c9}
 .message header,.tool-call header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.message header span,.tool-call header span{color:#888;font-size:12px}
 .message-text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55}
@@ -501,6 +503,7 @@ const LAZY_SCRIPT = `
   let currentToken = '';
   let currentSegment = -1;
   let loader = null;
+  let scrollAfterLoad = null;
   const preferredLanguages = Array.isArray(navigator.languages) && navigator.languages.length
     ? navigator.languages
     : [navigator.language];
@@ -509,8 +512,8 @@ const LAZY_SCRIPT = `
     ? { newer: 'Nyare först', older: 'Äldre först' }
     : { newer: 'Newer first', older: 'Older first' };
   const segmentLabels = swedish
-    ? { navigation: 'Arkiverade chattdelar', previous: 'Föregående del', next: 'Nästa del', part: 'Del', of: 'av', loading: 'Laddar arkiverad chatt…', error: 'Den här arkiverade chattdelen saknas eller kunde inte läsas lokalt.' }
-    : { navigation: 'Archived chat parts', previous: 'Previous part', next: 'Next part', part: 'Part', of: 'of', loading: 'Loading archived chat…', error: 'This archived chat part is missing or could not be loaded locally.' };
+    ? { navigation: 'Arkiverade chattdelar', first: 'Första', previous: 'Föregående', next: 'Nästa', last: 'Sista', part: 'Del', of: 'av', loading: 'Laddar arkiverad chatt…', error: 'Den här arkiverade chattdelen saknas eller kunde inte läsas lokalt.' }
+    : { navigation: 'Archived chat parts', first: 'First', previous: 'Previous', next: 'Next', last: 'Last', part: 'Part', of: 'of', loading: 'Loading archived chat…', error: 'This archived chat part is missing or could not be loaded locally.' };
   const normalize = value => String(value || '').normalize('NFKC').toLocaleLowerCase().replace(/\\s+/gu, ' ').trim();
   const sortValue = link => {
     const raw = link.getAttribute('data-chat-updated-at');
@@ -548,12 +551,18 @@ const LAZY_SCRIPT = `
     if (!host) return;
     const count = segmentsByToken.get(currentToken) || 0;
     const nav = host.querySelector('[data-chat-segment-nav]');
+    const first = host.querySelector('[data-chat-segment-first]');
     const previous = host.querySelector('[data-chat-segment-prev]');
     const next = host.querySelector('[data-chat-segment-next]');
+    const last = host.querySelector('[data-chat-segment-last]');
     const status = host.querySelector('[data-chat-segment-status]');
     if (nav) {
       nav.hidden = count <= 1;
       nav.setAttribute('aria-label', segmentLabels.navigation);
+    }
+    if (first) {
+      first.textContent = segmentLabels.first;
+      first.disabled = currentSegment <= 0;
     }
     if (previous) {
       previous.textContent = segmentLabels.previous;
@@ -563,6 +572,10 @@ const LAZY_SCRIPT = `
       next.textContent = segmentLabels.next;
       next.disabled = currentSegment < 0 || currentSegment >= count - 1;
     }
+    if (last) {
+      last.textContent = segmentLabels.last;
+      last.disabled = currentSegment < 0 || currentSegment >= count - 1;
+    }
     if (status) status.textContent = segmentLabels.part + ' ' + (Math.max(0, currentSegment) + 1) + ' ' + segmentLabels.of + ' ' + count;
   };
   const showLoadError = (token, index) => {
@@ -571,11 +584,13 @@ const LAZY_SCRIPT = `
     if (target) target.innerHTML = '<div class="empty-transcript">' + segmentLabels.error + '</div>';
     updateSegmentNav();
   };
-  const loadSegment = (token, index) => {
+  const loadSegment = (token, index, scroll = 'top') => {
     if (!host || !token || !known.has(token)) return;
     const count = segmentsByToken.get(token) || 0;
     if (!Number.isSafeInteger(index) || index < 0 || index >= count) return;
+    if (token === currentToken && index === currentSegment) return;
     currentSegment = index;
+    scrollAfterLoad = scroll;
     const target = segmentHost();
     if (!target) return;
     // Evict the previous heavy transcript DOM before reading the next local script.
@@ -601,6 +616,21 @@ const LAZY_SCRIPT = `
     if (!target) { showLoadError(token, index); return; }
     target.innerHTML = html;
     updateSegmentNav();
+    const scroll = scrollAfterLoad;
+    scrollAfterLoad = null;
+    if (scroll === 'bottom') {
+      const documentHeight = () => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      window.scrollTo(0, documentHeight());
+      const bottomAtRender = Math.max(0, documentHeight() - window.innerHeight);
+      // Account for content reflow after insertion without stealing scrolling if the reader moved.
+      requestAnimationFrame(() => {
+        if (token === currentToken && index === currentSegment && Math.abs(window.scrollY - bottomAtRender) < 4) {
+          window.scrollTo(0, documentHeight());
+        }
+      });
+    } else if (scroll === 'top') {
+      window.scrollTo(0, 0);
+    }
   };
   const mount = token => {
     if (!host || !token || !known.has(token)) return;
@@ -615,6 +645,7 @@ const LAZY_SCRIPT = `
     }
     currentToken = token;
     currentSegment = -1;
+    scrollAfterLoad = null;
     if (loader && loader.parentNode) loader.remove();
     loader = null;
     host.innerHTML = '';
@@ -625,11 +656,16 @@ const LAZY_SCRIPT = `
       return;
     }
     panel.hidden = false;
+    const first = host.querySelector('[data-chat-segment-first]');
     const previous = host.querySelector('[data-chat-segment-prev]');
     const next = host.querySelector('[data-chat-segment-next]');
+    const last = host.querySelector('[data-chat-segment-last]');
+    if (first) first.addEventListener('click', () => loadSegment(token, 0));
     if (previous) previous.addEventListener('click', () => loadSegment(token, currentSegment - 1));
     if (next) next.addEventListener('click', () => loadSegment(token, currentSegment + 1));
-    loadSegment(token, 0);
+    if (last) last.addEventListener('click', () => loadSegment(token, count - 1, 'bottom'));
+    // The newest retained part is the natural entry point for a long conversation.
+    loadSegment(token, count - 1, 'bottom');
   };
   const activate = () => {
     const requested = location.hash.startsWith('#') ? location.hash.slice(1) : '';

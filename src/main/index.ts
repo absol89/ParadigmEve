@@ -932,12 +932,15 @@ void app.whenReady().then(async () => {
   else if (getConfig().lan.enabled) logWarn('LAN discovery is enabled but no valid secure LAN group key is available; no socket was opened');
   let lastChatReviewHeartbeatStatus = '';
   let lastHeartbeatBackoff = '';
+  let lastHeartbeatError = '';
   const startReviewHeartbeatMaintenance = () => {
     if (stopChatReviewHeartbeat) return;
     logInfo('chat review heartbeat maintenance started; semantic cadence is 22 minutes');
     stopChatReviewHeartbeat = startChatReviewHeartbeatMaintenance({
       onQueued: (result) => logInfo(`chat review heartbeat queued for ${result.conversationId ?? result.sessionId ?? 'Eve'}`),
       onResult: (result) => {
+        if (lastHeartbeatError) logInfo('chat review heartbeat running again after: ' + lastHeartbeatError);
+        lastHeartbeatError = '';
         const status = `${result.status}:${result.reason ?? ''}`;
         if (status === lastChatReviewHeartbeatStatus) return;
         const previous = lastChatReviewHeartbeatStatus;
@@ -974,6 +977,10 @@ void app.whenReady().then(async () => {
           logInfo(`chat review heartbeat deferred: ${error.message.replace(/^HEARTBEAT_REVIEW_BACKOFF:\s*/, '')}`);
           return;
         }
+        // A held handoff (PRIME_TRANSFER_IN_PROGRESS) retries every minute for as long as it lasts;
+        // 68 identical lines on 2026-10-20. Say it once, and again when it changes or clears.
+        if (error.message === lastHeartbeatError) return;
+        lastHeartbeatError = error.message;
         logWarn(`chat review heartbeat could not run: ${error.message}`);
       }
     });

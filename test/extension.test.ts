@@ -1754,6 +1754,58 @@ describe('app-owned retained tab pool', () => {
     const worker = await budget({ safe: n => n !== 3 && n !== 4, changed: 5, retired: true });
     expect(worker.tabsRemove.mock.calls.map(call => call[0])).toEqual([2]);
   });
+
+  // Eva, 2026-10-20 19:52:55: the owner chat's tab closed as `retired-managed-tab`. Owner chats are
+  // never retired or closable, so only the duplicate path can close one, and a tab that had moved to
+  // ChatGPT's home page still counted as a copy through its remembered conversation.
+  function soleOwnerTab(options: { keeperLeavesAtCloseCheck?: boolean } = {}) {
+    const owner = id(7);
+    const tabs = [
+      // Selected and most recent, but now on the new-chat page; it only remembers the owner chat.
+      { id: 1, windowId: 7, url: 'https://chatgpt.com/', active: true, pinned: false, lastAccessed: Date.now() },
+      { id: 2, windowId: 7, url: `https://chatgpt.com/c/${owner}`, active: false, pinned: false, lastAccessed: 0 }
+    ];
+    let keeperLeft = false;
+    const removed = () => new Set(worker.tabsRemove.mock.calls.map(call => call[0] as number));
+    const worker: ReturnType<typeof loadWorker> = loadWorker({
+      local: new FakeStorageArea({ port: 8765, token: 'paired-token' }),
+      session: new FakeStorageArea({
+        tabDocuments: { 1: 'doc-1', 2: 'doc-2' }, tabEpochs: { 1: 0, 2: 0 }, tabConversations: { 1: owner, 2: owner }
+      }),
+      fetch: async input => response(200, new URL(input).pathname === '/hello' ? { app: 'chat-on-steroids', paired: true } : {
+        ok: true, repairs: [], tabsToKeepOpen: 2, retiredConversations: [], workerConversations: [],
+        conversationActivityAt: { [owner]: 1000 }, managedConversations: [owner], nonDiscardableConversations: [], closableConversations: []
+      }),
+      tabsQuery: async () => tabs.filter(tab => !removed().has(tab.id))
+        .map(tab => keeperLeft && tab.id === 3 ? { ...tab, url: 'https://chatgpt.com/' } : tab),
+      windowsGet: async () => ({ focused: true }),
+      tabsGet: async n => tabs.find(tab => tab.id === n)!,
+      tabsSendMessage: async n => {
+        // The elected copy navigates away while the first candidate's page is being checked.
+        if (options.keeperLeavesAtCloseCheck) keeperLeft = true;
+        return { safe: true, navigationEpoch: 0, conversationId: tabs.find(tab => tab.id === n)!.url.split('/c/')[1] };
+      }
+    });
+    return { worker, tabs, owner };
+  }
+
+  it('never closes the only tab showing a chat because another tab remembers that chat', async () => {
+    const { worker } = soleOwnerTab();
+    await worker.fireAlarm();
+    expect(worker.tabsRemove).not.toHaveBeenCalled();
+  });
+
+  it('closes a real duplicate only while another tab still shows the chat at close time', async () => {
+    const { worker, tabs, owner } = soleOwnerTab({ keeperLeavesAtCloseCheck: true });
+    tabs[0]!.url = `https://chatgpt.com/c/${owner}`;
+    tabs.push({ id: 3, windowId: 7, url: `https://chatgpt.com/c/${owner}`, active: false, pinned: false, lastAccessed: Date.now() - 1 });
+    tabs[0]!.active = false;
+    tabs[0]!.lastAccessed = 0;
+    await worker.fireAlarm();
+    // Tab 3 was elected keeper; tabs 1 and 2 are copies. At close time only 1 and 2 still show the
+    // chat, so the first copy may close (2 still shows it) but never the last one.
+    expect(worker.tabsRemove.mock.calls.map(call => call[0])).toEqual([1]);
+  });
 });
 
 describe('worker settings authority', () => {

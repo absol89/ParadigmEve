@@ -3211,10 +3211,14 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
   const managed = new Set((Array.isArray(policy.managedConversations) ? policy.managedConversations : []).map(cleanConversationId).filter(Boolean));
   for (const id of closable) managed.add(id);
   const owned = tab => managed.has(conversationForTab(tab));
+  // A copy is a tab whose URL shows the chat now. conversationForTab() also remembers the chat a
+  // tab last showed; a tab since moved to ChatGPT's home or new-chat page must never be elected
+  // keeper, or the one tab really showing the chat is closed as its "duplicate" (Eva, 2026-10-20).
+  const showing = (tab, conversationId) => !tab.pendingUrl && conversationFromUrl(tab.url) === conversationId;
   // Keep the selected/recent copy. The oldest surplus goes first, independent of query order.
   const ordered = [...tabs].sort((a, b) => Number(b.active === true) - Number(a.active === true) || (b.lastAccessed || 0) - (a.lastAccessed || 0) || a.id - b.id);
   const keeper = new Map();
-  for (const tab of ordered) if (owned(tab) && !keeper.has(conversationForTab(tab))) keeper.set(conversationForTab(tab), tab.id);
+  for (const tab of ordered) if (owned(tab) && showing(tab, conversationForTab(tab)) && !keeper.has(conversationForTab(tab))) keeper.set(conversationForTab(tab), tab.id);
   const activity = policy.conversationActivityAt || {};
   // Evict by model work/turn completion, never by which browser tab was selected.
   const candidates = ordered.filter(owned).sort((a, b) =>
@@ -3224,7 +3228,8 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
   for (const tab of candidates) {
     const conversationId = conversationForTab(tab);
     if (!Number.isInteger(tab.id) || tab.pinned) continue;
-    const duplicate = keeper.get(conversationId) !== tab.id && remaining.some(other => other.id !== tab.id && conversationForTab(other) === conversationId);
+    const duplicate = keeper.has(conversationId) && keeper.get(conversationId) !== tab.id &&
+      remaining.some(other => other.id === keeper.get(conversationId) && showing(other, conversationId));
     // A pending/recovery input protects the conversation's elected page, not every redundant
     // Chrome-restore copy of that same conversation. Let an exact duplicate reach the page-side
     // close proof; that proof still refuses human drafts, live work and ambiguous documents.
@@ -3251,6 +3256,10 @@ async function pruneManagedTabs(tabs, policy, protectedChats, closable) {
       if (proof?.safe !== true || proof.conversationId !== conversationId || proof.navigationEpoch !== source.navigationEpoch || !ownsDocument(source)) continue;
       const latest = await chrome.tabs.get(tab.id);
       if (latest.pinned || (idlePage && latest.active) || latest.pendingUrl || conversationFromUrl(latest.url) !== conversationId || !ownsDocument(source) || journalCountForConversation(conversationId) > 0) continue;
+      // A copy closes only while another tab still shows this exact chat right now: the census
+      // above can be seconds old, and the kept tab may have navigated or closed meanwhile.
+      if (duplicate && !retired.has(conversationId) &&
+          !(await chrome.tabs.query({ url: CHATGPT_TAB_URLS })).some(other => other.id !== tab.id && showing(other, conversationId))) continue;
 
       await closeTabLogged(tab.id, latest, idlePage ? 'idle-managed-tab' : 'retired-managed-tab', 'app tab policy + page close check');
       remaining = remaining.filter(other => other.id !== tab.id);

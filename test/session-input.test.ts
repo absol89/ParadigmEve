@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../src/shared/user-prompt.js';
 import { flushDurable, initDurableStore, readDurable, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import {
-  CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
+  CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, legacyChatReviewActivityAt, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   reconcileHeartbeatFindingQueue,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
@@ -1950,9 +1950,12 @@ it.each(['sent', 'failed', 'cancelled'] as const)(
     await writeDurableNow('session-input', next);
     resetInputForTests();
 
-    await expect(dispatchChatReviewWorker(sessionId, review)).rejects.toThrow('may already have been authorized');
+    await expect(dispatchChatReviewWorker(sessionId, review)).rejects.toThrow('LEGACY_HEARTBEAT_AMBIGUOUS');
     expect(binding.dispatchHeartbeatReviewWorker).not.toHaveBeenCalled();
     expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({ state, sendAuthorizedAt: now });
+    // The heartbeat dates the old row by its latest transport activity before superseding the epoch.
+    expect(await legacyChatReviewActivityAt(review.key)).toBe(Math.max(legacy.createdAt, now));
+    expect(await legacyChatReviewActivityAt('heartbeat:no-legacy-rows')).toBeNull();
   }
 );
 

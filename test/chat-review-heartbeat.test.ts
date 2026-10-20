@@ -615,6 +615,134 @@ describe('chat review heartbeat', () => {
     expect(legacy.enqueue).not.toHaveBeenCalled();
   });
 
+  // 2026-10-20 laptop: three times Prime's turn ended `stalled`, the next due review logged
+  // "paused: no exact Eve/Eva coordinator" and waited 15-22 minutes until Prime's next turn started.
+  // A fresh epoch is always worker-lane, so the identity-named chat's own turn state must not hold it.
+  it('starts a fresh worker-lane epoch for the identity-named chat whose last turn stalled or failed', async () => {
+    for (const outcome of ['stalled', 'failed'] as const) {
+      const now = 5_000_000;
+      const owner = session({
+        id: 'prime-session',
+        conversationId,
+        lastToolCallAt: now - 60_000,
+        lastTurnOutcome: outcome,
+        activeTurnId: null
+      });
+      let state: ChatReviewHeartbeatState | null = null;
+      const enqueue = vi.fn(async () => undefined);
+      const result = await runChatReviewHeartbeat(now, {
+        readState: async () => state,
+        writeState: async (next) => { state = next; },
+        sessions: async () => [owner],
+        uniqueSession: async (id) => id === conversationId ? owner : null,
+        blocked: () => false,
+        enqueue,
+        plans: emptyPlans,
+        makeKey: () => `heartbeat:fresh-after-${outcome}`,
+        agentConversation: () => conversationId
+      });
+      expect(result).toMatchObject({ status: 'queued', sessionId: 'prime-session', conversationId });
+      expect((state as ChatReviewHeartbeatState | null)?.debt)
+        .toMatchObject({ key: `heartbeat:fresh-after-${outcome}`, reviewLane: 'worker', sessionId: 'prime-session' });
+      expect(enqueue).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // Eva, 2026-10-20 19:52:48: pre-2.4.0 debt whose Prime-composer message may have been sent made
+  // every retry throw the legacy deferral, so no heartbeat worker tab ever opened again.
+  describe('an ambiguous legacy epoch', () => {
+    const legacyError = new Error('LEGACY_HEARTBEAT_AMBIGUOUS: A legacy heartbeat browser send may already have been authorized; worker review is deferred to avoid duplicating the same epoch.');
+    async function tick(pending: ChatReviewDebt, state0: ChatReviewHeartbeatState | null, lastActivity: number | null, now = 10_000_000) {
+      let state: ChatReviewHeartbeatState | null = state0 ?? { debt: pending };
+      const owner = session({ id: pending.sessionId, conversationId: pending.conversationId, lastToolCallAt: now - 60_000 });
+      const enqueue = vi.fn(async (_sessionId: string, review: { key: string }) => {
+        if (review.key === pending.key && pending.reviewLane === undefined) throw legacyError;
+        if (review.key === pending.key && pending.reviewLane === 'worker') throw legacyError;
+        return undefined;
+      });
+      const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+      const run = runChatReviewHeartbeat(now, {
+        readState: async () => state,
+        writeState,
+        sessions: async () => [owner],
+        uniqueSession: async (id) => id === pending.conversationId ? owner : null,
+        blocked: () => false,
+        enqueue,
+        plans: emptyPlans,
+        makeKey: () => 'heartbeat:worker-successor',
+        agentConversation: () => pending.conversationId,
+        legacyActivityAt: async () => lastActivity
+      });
+      return { run, enqueue, writeState, state: () => state };
+    }
+
+    it('keeps deferring, with no state change, while the old row was active within the last cadence', async () => {
+      const pending = debt({ key: 'heartbeat:legacy-recent' });
+      const { run, enqueue, writeState } = await tick(pending, null, 10_000_000 - 5 * 60_000);
+      await expect(run).rejects.toThrow('LEGACY_HEARTBEAT_AMBIGUOUS');
+      expect(writeState).not.toHaveBeenCalled();
+      expect(enqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it('never resends it, and reviews the same window afresh in the worker lane once the old row is quiet', async () => {
+      const pending = debt({ key: 'heartbeat:legacy-stuck', sinceAt: 1_000, untilAt: 2_000 });
+      const { run, enqueue, state } = await tick(pending, null, 10_000_000 - CHAT_REVIEW_HEARTBEAT_MS);
+      await expect(run).resolves.toMatchObject({ status: 'queued', sessionId: pending.sessionId, conversationId: pending.conversationId });
+      // One attempt under the old key (refused by the legacy fence, nothing sent), one under the new key.
+      expect(enqueue.mock.calls.map(call => call[1].key)).toEqual(['heartbeat:legacy-stuck', 'heartbeat:worker-successor']);
+      expect(enqueue.mock.calls[1]![1]).toMatchObject({ sinceAt: 1_000, untilAt: 10_000_000 });
+      expect(state()?.debt).toMatchObject({
+        key: 'heartbeat:worker-successor', reviewLane: 'worker', sinceAt: 1_000, untilAt: 10_000_000,
+        sessionId: pending.sessionId, conversationId: pending.conversationId, planAcks: []
+      });
+      // The coverage cursor is untouched: nothing counts as reviewed until the worker's receipt.
+      expect(state()?.lastCompletedAt).toBeUndefined();
+      // The retired key no longer resolves, so a late receipt for it cannot complete the new epoch.
+      await expect(resolveChatReviewContinuity('heartbeat:legacy-stuck', { readState: async () => state() })).resolves.toBeNull();
+    });
+
+    it('does not supersede a worker-lane epoch or an epoch with no legacy rows', async () => {
+      const worker = debt({ key: 'heartbeat:worker-epoch', reviewLane: 'worker' });
+      const a = await tick(worker, null, 0);
+      await expect(a.run).rejects.toThrow('LEGACY_HEARTBEAT_AMBIGUOUS');
+      expect(a.writeState).not.toHaveBeenCalled();
+
+      const legacy = debt({ key: 'heartbeat:legacy-no-rows' });
+      const b = await tick(legacy, null, null);
+      await expect(b.run).rejects.toThrow('LEGACY_HEARTBEAT_AMBIGUOUS');
+      expect(b.writeState).not.toHaveBeenCalled();
+    });
+  });
+
+  it('still pauses a fresh epoch without advancing state when the identity-named chat is blocked or ended', async () => {
+    const now = 5_000_000;
+    for (const variant of ['blocked', 'ended'] as const) {
+      const owner = session({
+        id: 'prime-session',
+        conversationId,
+        lastToolCallAt: now - 60_000,
+        lastTurnOutcome: 'stalled',
+        activeTurnId: null,
+        ...(variant === 'ended' ? { endedAt: now - 1 } : {})
+      });
+      const writeState = vi.fn(async () => undefined);
+      const enqueue = vi.fn(async () => undefined);
+      const result = await runChatReviewHeartbeat(now, {
+        readState: async () => null,
+        writeState,
+        sessions: async () => [owner],
+        uniqueSession: async (id) => id === conversationId ? owner : null,
+        blocked: () => variant === 'blocked',
+        enqueue,
+        plans: emptyPlans,
+        agentConversation: () => conversationId
+      });
+      expect(result).toMatchObject({ status: 'no-coordinator' });
+      expect(writeState).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+    }
+  });
+
   it('moves stale debt to a newly proven installation-agent identity even when the legacy owner still appears active', async () => {
     const pending = debt({ key: 'heartbeat:installation-rebound' });
     let state: ChatReviewHeartbeatState | null = { debt: pending };

@@ -13,6 +13,38 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.3] — Reliability, archive choice and navigation
+
+**Status (2026-10-20):** Public source release `v2.4.3` on `main`. App and Companion declare
+**2.4.3**. 2.4.2 was published only as a pre-release, so 2.4.3 is the first public release of
+the 2.4.2 changes below as well. `npm run verify:ci` and Windows x64 packaging passed; a 2.4.3
+candidate installed on a second machine completed its stuck heartbeat review. See CI and GitHub
+Releases for the actual publication outcome.
+
+### Changed
+
+- **Archive Browser opens at the newest part.** Long, segmented chats open on their last part,
+  scrolled to the bottom, with **First / Previous / Next / Last** controls and a **Part N of M**
+  status in English and Swedish.
+- **A replaced chat says where its work went.** A chat that Compact & Resume replaced is told the
+  ChatGPT link and ParadigmEve name of the chat its work continues in (the newest after two moves).
+
+### Fixed
+
+- **Heartbeat review after a stalled Prime turn.** A stalled or failed Prime turn no longer pauses
+  the review until Prime's next turn; reviews run in their own worker chat.
+- **Heartbeat review after a lost page stream.** A review call that reaches the app with no page
+  evidence is accepted when it carries the current review key that exactly one heartbeat reviewer
+  holds. Other unattributed calls stay unattributed.
+- **Old pre-2.4.0 heartbeat work.** A review whose old message to Prime may have been sent no longer
+  blocks every later review. After a full quiet cycle its window is reviewed again in the worker lane
+  under a new key; the old message is never re-sent and its record is kept.
+- **Eve chat tab closed by tab cleanup.** A tab that moved to ChatGPT's home page no longer counts as a
+  copy of the chat it last showed, and a copy closes only while another tab still shows that chat.
+- A repeating heartbeat error is logged once instead of every minute.
+
+The [2.4.3 release notes](docs/release-notes/v2.4.3.md) include the 2.4.2 changes.
+
 ## [2.4.2] — Reliability and local archive choice
 
 **Status (2026-10-20):** Public source release `v2.4.2` brings the

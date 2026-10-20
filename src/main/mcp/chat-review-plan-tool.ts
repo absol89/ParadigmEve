@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PRIME_ID, heartbeatReviewWorkerOwnsKey } from '../agents.js';
+import { PRIME_ID, heartbeatReviewWorkerCall } from '../agents.js';
 import {
   acknowledgeChatReviewPlan,
   CHAT_REVIEW_PLAN_CLASSIFICATIONS,
@@ -48,7 +48,7 @@ export function registerChatReviewPlanTool(reg: SurfaceRegistrar): void {
       const call = currentCall();
       const agent = currentAgent();
       const continuity = await resolveChatReviewContinuity(key);
-      const reviewWorker = Boolean(continuity && heartbeatReviewWorkerOwnsKey(caller, key, continuity.conversationId));
+      const reviewWorker = Boolean(continuity && heartbeatReviewWorkerCall(caller, key, continuity.conversationId));
       const workerRequired = await chatReviewRequiresWorker(key);
       if (workerRequired && !reviewWorker) {
         return fail('CHAT_REVIEW_WORKER_REQUIRED: this Plan review belongs to ParadigmEve’s read-only heartbeat worker. Prime/legacy callers cannot acknowledge it.');

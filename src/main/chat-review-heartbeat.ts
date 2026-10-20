@@ -22,6 +22,8 @@ import { isChatBlocked } from './session/blocked-chats.js';
 import {
   dispatchChatReviewWorker,
   enqueueChatReviewFinding,
+  LEGACY_HEARTBEAT_AMBIGUOUS,
+  legacyChatReviewActivityAt,
   reconcileHeartbeatFindingQueue,
   type ChatReviewAttention,
   type ChatReviewPlanSnapshot
@@ -156,6 +158,8 @@ type Dependencies = {
   planFence: <T>(targets: readonly PlanReviewExpectation[], commit: () => Promise<T>) => Promise<T>;
   makeKey: () => string;
   agentConversation: () => string | null;
+  /** Latest transport activity of pre-2.4.0 Prime-composer rows for a review key, or null. */
+  legacyActivityAt: (key: string) => Promise<number | null>;
 };
 
 const safeTime = (value: unknown): value is number =>
@@ -391,7 +395,8 @@ const defaults: Dependencies = {
   plans: listPlans,
   planFence: withPlanReviewValidationFence,
   makeKey: () => `heartbeat:${randomUUID()}`,
-  agentConversation: currentAgentConversationId
+  agentConversation: currentAgentConversationId,
+  legacyActivityAt: (key) => legacyChatReviewActivityAt(key)
 };
 
 let heartbeatChain: Promise<unknown> = Promise.resolve();
@@ -596,7 +601,8 @@ type ExactCoordinator = SessionSummary & { conversationId: string };
 async function installationCoordinator(
   identityConversationId: string,
   deps: Dependencies,
-  excludeSessionId: string | null = null
+  excludeSessionId: string | null = null,
+  workerLane = false
 ): Promise<ExactCoordinator | null> {
   // `uniqueSession()` includes exact historical chatIds. A stale product-identity pointer can
   // therefore still name pre-compaction chat A while the same durable session is currently attached
@@ -605,7 +611,11 @@ async function installationCoordinator(
   const session = await deps.uniqueSession(identityConversationId);
   if (!session || session.id === excludeSessionId || !session.conversationId ||
       !session.chatIds.includes(identityConversationId) || !session.chatIds.includes(session.conversationId) ||
-      deps.blocked(session.conversationId) || session.endedAt !== null || coordinatorTurnRetired(session) ||
+      deps.blocked(session.conversationId) || session.endedAt !== null ||
+      // A stalled/failed last turn matters only to a lane that types into this chat. The worker
+      // lane reviews in its own chat, and a stalled Prime is what it exists to catch: requiring a
+      // fresh Prime turn paused every review until someone nudged Eve (laptop, 2026-10-20).
+      (!workerLane && coordinatorTurnRetired(session)) ||
       session.origin?.kind === 'worker' || session.origin?.kind === 'helper') return null;
   return session as ExactCoordinator;
 }
@@ -662,14 +672,15 @@ export async function chatReviewRequiresWorker(
 async function newestCoordinator(
   sessions: readonly SessionSummary[],
   deps: Dependencies,
-  excludeSessionId: string | null = null
+  excludeSessionId: string | null = null,
+  workerLane = false
 ): Promise<ExactCoordinator | null> {
   const identityConversationId = deps.agentConversation();
   if (identityConversationId) {
     // Once the installation has an explicit Eve/Eva identity, never fall back to a merely recent
     // tool-proven chat if that exact identity/lineage cannot be resolved safely. The latter would
     // turn a stale or ambiguous product owner into permission to wake an unrelated conversation.
-    return installationCoordinator(identityConversationId, deps, excludeSessionId);
+    return installationCoordinator(identityConversationId, deps, excludeSessionId, workerLane);
   }
   for (const candidate of chatReviewCoordinatorCandidates(sessions)) {
     if (candidate.id === excludeSessionId) continue;
@@ -1095,7 +1106,40 @@ export function runChatReviewHeartbeat(
           await deps.writeState(stateWithDebt(state, debt));
         }
       }
-      await deps.enqueue(debt.sessionId, await attentionForDebt(debt, deps, retryLibrary));
+      try {
+        await deps.enqueue(debt.sessionId, await attentionForDebt(debt, deps, retryLibrary));
+      } catch (error) {
+        // A pre-2.4.0 epoch whose Prime-composer message may already have been sent is never sent
+        // again and never reviewed twice under its key, but it must not hold every later review
+        // either (Eva, 2026-10-20: no heartbeat tab, the same deferral on every retry). Once that
+        // old row has been quiet a full cadence, retire its key and review the same window afresh in
+        // the worker lane. The old row stays untouched as the record of a possible Send.
+        if (debt.reviewLane === 'worker' || !String(error).includes(LEGACY_HEARTBEAT_AMBIGUOUS)) throw error;
+        const lastActivity = await deps.legacyActivityAt(debt.key);
+        if (lastActivity === null || now - lastActivity < CHAT_REVIEW_HEARTBEAT_MS) throw error;
+        const library = retryLibrary ?? checkedPlanLibrary(await deps.plans());
+        const planReview = selectPlanReviewBatch(state, library);
+        const successor: ChatReviewDebt = {
+          key: deps.makeKey(),
+          sinceAt: debt.sinceAt,
+          untilAt: Math.max(debt.untilAt, now),
+          sessionId: debt.sessionId,
+          conversationId: debt.conversationId,
+          reviewLane: 'worker',
+          planBatch: planReview.targets,
+          planAcks: []
+        };
+        await deps.writeState({ ...stateWithDebt(state, successor), planSweep: planReview.sweep });
+        logInfo(`chat review heartbeat: legacy epoch ${debt.key} may already have reached Prime and is not sent again; ` +
+          `its window is reviewed again in the worker lane as ${successor.key}`);
+        await deps.enqueue(successor.sessionId, { key: successor.key, sinceAt: successor.sinceAt, untilAt: successor.untilAt, plans: planReview.snapshots });
+        return {
+          status: 'queued',
+          nextAt: now + CHAT_REVIEW_RETRY_MS,
+          sessionId: successor.sessionId,
+          conversationId: successor.conversationId
+        };
+      }
       return {
         status: 'pending',
         nextAt: now + CHAT_REVIEW_RETRY_MS,
@@ -1120,7 +1164,8 @@ export function runChatReviewHeartbeat(
       state?.pendingFinding || (state?.findingSpoolRead ?? 0) < (state?.findingSpoolWrite ?? 0)
         ? Math.min(dueAt, now + CHAT_REVIEW_RETRY_MS) : dueAt };
 
-    const unique = await newestCoordinator(await deps.sessions(), deps);
+    // Every fresh epoch is worker-lane (`reviewLane: 'worker'` below).
+    const unique = await newestCoordinator(await deps.sessions(), deps, null, true);
     if (unique) {
       const conversationId = unique.conversationId;
       const sinceAt = lastCompletedAt === null || clockReset
