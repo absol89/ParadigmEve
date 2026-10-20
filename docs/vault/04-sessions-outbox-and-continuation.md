@@ -131,6 +131,14 @@ changes. A browser Send authorization with missing receipt stays ambiguous; the 
 bounded `uncertainFindings`/pending delivery evidence instead of replaying a possibly accepted
 message or holding up future reviews. See [runtime heartbeat](02-runtime-browser-recovery.md).
 
+Heartbeat maintenance also reconciles *exact-key* redundant notifications in the local outbox:
+an untouched queued copy is retired only when the same session/finding key has a confirmed or
+possibly authorized Send, or an explicit **Remove queued task** dismissal. Dismissing an unsent
+finding is durable, so the heartbeat advances its matching retry-spool cursor instead of
+re-creating the notification after Compact & Resume. Definite transport failures remain
+retryable. Different findings, claims or uncertain Sends are never deleted based on age,
+similar-looking text or total queue length; the reviewer/Prime must resolve their meaning.
+
 ## Compact & Resume
 
 `src/main/session/continuation.ts` is a transaction, not a summary convenience.

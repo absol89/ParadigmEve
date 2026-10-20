@@ -49,11 +49,16 @@ const boundedFetch: typeof fetch = async (input, init) => {
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 };
 
+/** OAuth must use the account chosen inside Eve Browser, not the OS-default personal profile. */
+export async function openPluginAuthorizationInEveBrowser(url: URL): Promise<void> {
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Unsupported plugin authorization URL');
+  const { openEveWebLink } = await import('../eve-browser-links.js');
+  await openEveWebLink(url.href);
+}
+
 /** Installation policy owns connections; lifecycle mutations serialize per installation. */
 export class PluginManager {
-  constructor(private openAuthorization: (url: URL) => Promise<void> = async url => {
-    const { shell } = await import('electron'); await shell.openExternal(url.href);
-  }) {}
+  constructor(private openAuthorization: (url: URL) => Promise<void> = openPluginAuthorizationInEveBrowser) {}
   private root = '';
   private records: RecordEntry[] = [];
   private live = new Map<string, Live>();

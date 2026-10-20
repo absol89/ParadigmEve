@@ -671,7 +671,8 @@ export async function openParadigmEveChromeProfile(
   await launchParadigmEveChromeProfile([url], browser);
 }
 
-function dedicatedParadigmEveChromeWindow(window: WindowInfo, browser: ChatBrowser = selectedChatBrowser()): boolean {
+/** The shared native identity fence for every action targeting Eve's dedicated browser window. */
+export function dedicatedParadigmEveChromeWindow(window: WindowInfo, browser: ChatBrowser = selectedChatBrowser()): boolean {
   const appId = window.app?.toLowerCase() ?? '';
   const processName = (window.process ?? '').toLowerCase().replace(/\.exe$/u, '');
   if (processName !== PARADIGMEVE_BROWSER_PROCESS[browser]) return false;

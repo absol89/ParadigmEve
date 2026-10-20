@@ -19,10 +19,24 @@ vi.mock('../src/main/secrets.js', () => ({
 import { initDurableStore } from '../src/main/durable.js';
 import { getSecret } from '../src/main/secrets.js';
 import { PluginManager } from '../src/main/plugins/manager.js';
+import { openPluginAuthorizationInEveBrowser } from '../src/main/plugins/manager.js';
 import { PluginOAuth, PluginNeedsAuth } from '../src/main/plugins/oauth.js';
 import * as pluginInstaller from '../src/main/plugins/installer.js';
 import * as exposureModule from '../src/main/plugins/exposure.js';
 import * as durableModule from '../src/main/durable.js';
+
+const eveLink = vi.hoisted(() => vi.fn(async (_url: string) => undefined));
+vi.mock('../src/main/eve-browser-links.js', () => ({ openEveWebLink: eveLink }));
+
+it('routes plugin OAuth only to Eve Browser, never an ambient OS-default signed-in account', async () => {
+  eveLink.mockClear();
+  await openPluginAuthorizationInEveBrowser(new URL('https://oauth.example/authorize?state=opaque'));
+  expect(eveLink).toHaveBeenCalledTimes(1);
+  expect(eveLink).toHaveBeenCalledWith('https://oauth.example/authorize?state=opaque');
+  await expect(openPluginAuthorizationInEveBrowser(new URL('mailto:user@example.com')))
+    .rejects.toThrow('Unsupported plugin authorization URL');
+  expect(eveLink).toHaveBeenCalledTimes(1);
+});
 
 // Real plugin servers start and stop as child processes; slow CI runners (arm64) need more than
 // vi.waitFor's one-second default. Still bounded by the 30 s test timeout.

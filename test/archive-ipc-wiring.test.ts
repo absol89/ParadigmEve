@@ -33,7 +33,7 @@ describe('Archive IPC wiring', () => {
     const firstVerifyAt = open.indexOf('await verifiedArchiveStaticIndex(runtime.staticSiteTarget())');
     const rebuildAt = open.indexOf('await runtime.rebuildDerived()');
     const reverifyAt = open.indexOf('await verifiedArchiveStaticIndex', rebuildAt);
-    const shellAt = open.indexOf('await shell.openPath(indexPath)');
+    const browserAt = open.indexOf('await openEveBrowserFile(indexPath)');
 
     expect(firstVerifyAt).toBeGreaterThanOrEqual(0);
     expect(rebuildAt).toBeGreaterThan(firstVerifyAt);
@@ -41,7 +41,8 @@ describe('Archive IPC wiring', () => {
     expect(reverifyAt).toBeGreaterThan(rebuildAt);
     // A stale site refreshes behind the opened page instead of holding the button.
     expect(open).toContain('runtime.refreshStaticSite()');
-    expect(shellAt).toBeGreaterThan(reverifyAt);
+    expect(browserAt).toBeGreaterThan(reverifyAt);
+    expect(open).not.toContain('shell.openPath(indexPath)');
     expect(open).not.toContain('shell.openPath(payload');
     expect(open).toContain("sanitizeArchiveRendererError(error, 'Static archive could not be opened.')");
   });

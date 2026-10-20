@@ -8,6 +8,7 @@ import { MAX_CHATGPT_MESSAGE_CHARS } from '../src/shared/user-prompt.js';
 import { flushDurable, initDurableStore, readDurable, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, enqueueLanPeerKnowledge, enqueueWorkerAttention,
+  reconcileHeartbeatFindingQueue,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
   markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, forceSendRefusal
@@ -1888,6 +1889,8 @@ it('keeps the legacy Prime heartbeat text review-only when reading an old queued
   expect(review.text).not.toContain('AI browser');
   expect(review.text).toContain('read/review-only maintenance turn');
   expect(review.text).toContain('Prime is the only coordinator that may act');
+  expect(review.text).toContain('Do not dispatch a finding merely to tell Prime to continue work already underway');
+  expect(review.text).toContain('same issue is already reported in a pending heartbeat finding');
   expect(review.text).not.toContain('Carry out bounded unworked requests');
   expect(review.text).toContain('This review worker does not own Prime coordination.');
   expect(review.text).not.toContain('Continue coordination from this exact thread.');
@@ -1972,7 +1975,11 @@ it('keeps a heartbeat finding durable behind active work and retries only defini
   expect(first).toMatchObject({ purpose: 'heartbeat-finding', mode: 'after-turn', state: 'queued' });
   expect(await pendingBrowserInputs()).toEqual([]);
 
-  await cancelInput(first.id);
+  // A definite transport failure is retryable; manually removing a queued
+  // finding is now an explicit dismissal, covered separately below.
+  await writeDurableNow('session-input', (await listInputs()).map(row => row.id === first.id
+    ? { ...row, state: 'failed' as const, error: 'Not sent: browser preparation timed out.' } : row));
+  resetInputForTests();
   binding.activeTurnId = null;
   binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'user-turn', time: now + 1 };
   const retry = await enqueueChatReviewFinding(sessionId, 'heartbeat:finding', 'Source session A still needs Prime to apply the already-authorized fix.');
@@ -1986,6 +1993,65 @@ it('keeps a heartbeat finding durable behind active work and retries only defini
   const noReplay = await enqueueChatReviewFinding(sessionId, 'heartbeat:finding', 'Source session A still needs Prime to apply the already-authorized fix.');
   expect(noReplay.id).toBe(retry.id);
   expect(noReplay.sendAuthorizedAt).toBeDefined();
+});
+
+it('treats a human-removed heartbeat finding as a durable dismissal rather than recreating it each tick', async () => {
+  binding.activeTurnId = 'busy-turn';
+  const first = await enqueueChatReviewFinding(sessionId, 'heartbeat:manually-cleared', 'Review outcome already seen by Prime.');
+  expect(first.state).toBe('queued');
+  expect(await cancelInput(first.id)).toBe(true);
+  const replay = await enqueueChatReviewFinding(sessionId, 'heartbeat:manually-cleared', 'Review outcome already seen by Prime.');
+  expect(replay).toMatchObject({ id: first.id, state: 'cancelled', dismissed: true });
+  expect((await listInputs()).filter(row => row.purpose === 'heartbeat-finding')).toHaveLength(1);
+  // A legacy UI wrote no error at all for an explicit queue removal. Its receipt
+  // remains meaningful after updating the app or moving the Prime conversation.
+  await writeDurableNow('session-input', (await listInputs()).map(row => row.id === first.id ? { ...row, error: undefined } : row));
+  resetInputForTests();
+  binding.pastConversations = ['conversation-a'];
+  binding.conversationId = 'conversation-b';
+  expect(await enqueueChatReviewFinding(sessionId, 'heartbeat:manually-cleared', 'Review outcome already seen by Prime.'))
+    .toMatchObject({ id: first.id, dismissed: true });
+});
+
+it('retires unclaimed heartbeat duplicates after a dismissal or an earlier confirmed Send', async () => {
+  const first = await enqueueChatReviewFinding(sessionId, 'heartbeat:duplicates', 'Keep source provenance without repeating the note.');
+  await cancelInput(first.id);
+  const rows = await listInputs();
+  await writeDurableNow('session-input', [...rows, { ...first, id: randomUUID(), state: 'queued' as const,
+    owner: null, offeredAt: undefined, sendAuthorizedAt: undefined, messageId: undefined, deliveredAt: undefined }]);
+  resetInputForTests();
+  expect((await enqueueChatReviewFinding(sessionId, 'heartbeat:duplicates', 'Keep source provenance without repeating the note.')).dismissed).toBe(true);
+  expect((await listInputs()).filter(row => row.state === 'queued' && row.purpose === 'heartbeat-finding')).toHaveLength(0);
+
+  const sentKey = 'heartbeat:already-sent';
+  const spent = await enqueueChatReviewFinding(sessionId, sentKey, 'Do not repeat an accepted Send.');
+  const after = await listInputs();
+  await writeDurableNow('session-input', [...after.map(row => row.id === spent.id
+    ? { ...row, state: 'sent' as const, sendAuthorizedAt: now + 1, deliveredAt: now + 2, messageId: 'confirmed-message' }
+    : row), { ...spent, id: randomUUID(), state: 'queued' as const, owner: null }]);
+  resetInputForTests();
+  expect(await enqueueChatReviewFinding(sessionId, sentKey, 'Do not repeat an accepted Send.'))
+    .toMatchObject({ id: spent.id, state: 'sent' });
+  expect((await listInputs()).filter(row => row.state === 'queued' && row.purpose === 'heartbeat-finding')).toHaveLength(0);
+});
+
+it('heartbeat maintenance finds stale exact-key copies without removing distinct work or unconfirmed browser claims', async () => {
+  const dismissed = await enqueueChatReviewFinding(sessionId, 'heartbeat:retired-key', 'Already removed by the user.');
+  await cancelInput(dismissed.id);
+  const unique = await enqueueChatReviewFinding(sessionId, 'heartbeat:still-actionable', 'Different task awaiting Prime.');
+  const claimed = await enqueueChatReviewFinding(sessionId, 'heartbeat:claimed', 'Claimed copy requires its own receipt.');
+  const rows = await listInputs();
+  await writeDurableNow('session-input', [...rows,
+    { ...dismissed, id: randomUUID(), state: 'queued' as const, owner: null },
+    { ...claimed, id: randomUUID(), state: 'browser' as const, owner: 'exact-page', offeredAt: now }]);
+  resetInputForTests();
+  expect(await reconcileHeartbeatFindingQueue()).toBe(1);
+  expect(await reconcileHeartbeatFindingQueue()).toBe(0);
+  const after = await listInputs();
+  expect(after.find(row => row.id === unique.id)?.state).toBe('queued');
+  expect(after.find(row => row.id === claimed.id)?.state).toBe('queued');
+  expect(after.some(row => row.purpose === 'heartbeat-finding' && row.state === 'browser' && row.owner === 'exact-page')).toBe(true);
+  expect(after.filter(row => row.purpose === 'heartbeat-finding' && row.text.includes('heartbeat:retired-key') && row.state === 'queued')).toHaveLength(0);
 });
 
 it('does not offer a heartbeat finding to the browser while Voice owns the Prime conversation', async () => {

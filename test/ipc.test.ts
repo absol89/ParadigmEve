@@ -1322,9 +1322,29 @@ describe('every link the window offers', () => {
   it.each(['https://example.com/path?q=hello', 'http://localhost:3000/', 'mailto:person@example.com?subject=Hello'])(
     'opens an authored external link: %s', async url => {
       expect(await handlers.get('link:open')!(trustedEvent(), { url })).toEqual({ ok: true, data: true });
-      expect(shell.openExternal).toHaveBeenLastCalledWith(url);
+      if (url.startsWith('mailto:')) {
+        expect(shell.openExternal).toHaveBeenLastCalledWith(url);
+        expect(setupAssistantMocks.openParadigmEveChromeProfile).not.toHaveBeenCalled();
+      } else {
+        expect(setupAssistantMocks.openParadigmEveChromeProfile).toHaveBeenLastCalledWith(url);
+        expect(shell.openExternal).not.toHaveBeenCalled();
+      }
     }
   );
+
+  it('keeps an explicit native Settings deep link in the OS, not the web URL path', async () => {
+    const url = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
+    expect(await handlers.get('link:open')!(trustedEvent(), { url })).toEqual({ ok: true, data: true });
+    expect(shell.openExternal).toHaveBeenCalledWith(url);
+    expect(setupAssistantMocks.openParadigmEveChromeProfile).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to the personal browser when Eve Browser refuses the web link', async () => {
+    setupAssistantMocks.openParadigmEveChromeProfile.mockRejectedValueOnce(new Error('Eve Browser is unavailable'));
+    expect(await handlers.get('link:open')!(trustedEvent(), { url: 'https://example.com/' }))
+      .toEqual({ ok: false, error: 'Eve Browser is unavailable' });
+    expect(shell.openExternal).not.toHaveBeenCalled();
+  });
   it.each(['javascript:alert(1)', 'data:text/html,hi', 'file:///C:/secret', 'ms-settings:privacy',
     'x-apple.systempreferences:unapproved', 'https://user:password@example.com/', '//example.com/',
     'https:example.com', 'https://example.com/\nfoo', 'mailto:a@example.com?body=%0Ainjected', 'https://example.com/\\path'])(
@@ -1339,7 +1359,7 @@ describe('every link the window offers', () => {
   it('serializes non-Error throws into a real IPC error string', async () => {
     vi.mocked(shell.openExternal).mockRejectedValueOnce('Windows shell refused the request');
     const reply = (await handlers.get('link:open')!(trustedEvent(), {
-      url: 'https://openrouter.ai/settings/keys'
+      url: 'mailto:person@example.com'
     })) as { ok: boolean; error?: string };
     expect(reply).toEqual({ ok: false, error: 'Windows shell refused the request' });
   });
@@ -1374,7 +1394,7 @@ describe('durable Thread resource destinations', () => {
     expect(vi.mocked(shell.openPath).mock.calls.length).toBe(openPathCalls);
   });
 
-  it('opens a local HTML document through the OS association', async () => {
+  it('opens a local HTML document in Eve Browser instead of the OS-default profile', async () => {
     const html = path.join(dir, 'report.html');
     await fs.writeFile(html, '<!doctype html><title>Report</title>');
     const created = await handlers.get('pins:createThread')!(trustedEvent(), {
@@ -1384,7 +1404,38 @@ describe('durable Thread resource destinations', () => {
     }) as { ok: true; data: { id: string } };
     expect(await handlers.get('pins:openDestination')!(trustedEvent(), { threadId: created.data.id }))
       .toEqual({ ok: true, data: true });
-    expect(shell.openPath).toHaveBeenLastCalledWith(html);
+    expect(setupAssistantMocks.openParadigmEveChromeProfile).toHaveBeenLastCalledWith(expect.stringMatching(/^file:\/\//));
+    expect(shell.openPath).not.toHaveBeenCalled();
+  });
+
+  it('opens a local SVG in Eve Browser and only reveals an internet shortcut', async () => {
+    const svg = path.join(dir, 'chart.svg');
+    const shortcut = path.join(dir, 'account.url');
+    await fs.writeFile(svg, '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    await fs.writeFile(shortcut, '[InternetShortcut]\r\nURL=https://example.com/\r\n');
+    for (const [file, title] of [[svg, 'ipc-svg'], [shortcut, 'ipc-url']] as const) {
+      const created = await handlers.get('pins:createThread')!(trustedEvent(), {
+        title, link: file, collectionNames: []
+      }) as { ok: true; data: { id: string } };
+      expect(await handlers.get('pins:openDestination')!(trustedEvent(), { threadId: created.data.id }))
+        .toEqual({ ok: true, data: true });
+    }
+    expect(setupAssistantMocks.openParadigmEveChromeProfile).toHaveBeenCalledTimes(1);
+    expect(setupAssistantMocks.openParadigmEveChromeProfile).toHaveBeenLastCalledWith(expect.stringMatching(/chart\.svg$/));
+    expect(shell.showItemInFolder).toHaveBeenLastCalledWith(shortcut);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    expect(shell.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('opens a saved Thread web destination in Eve Browser without touching the OS default browser', async () => {
+    const url = 'https://example.com/owned-account';
+    const created = await handlers.get('pins:createThread')!(trustedEvent(), {
+      title: 'ipc-web-link', link: url, collectionNames: []
+    }) as { ok: true; data: { id: string } };
+    expect(await handlers.get('pins:openDestination')!(trustedEvent(), { threadId: created.data.id }))
+      .toEqual({ ok: true, data: true });
+    expect(setupAssistantMocks.openParadigmEveChromeProfile).toHaveBeenLastCalledWith(url);
+    expect(shell.openExternal).not.toHaveBeenCalled();
   });
 });
 

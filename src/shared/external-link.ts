@@ -1,4 +1,4 @@
-/** URLs authored in chat may open in the OS browser/mail app, never as executable schemes. */
+/** Allowed authored URL shapes. Web URLs go to Eve Browser, mailto to the explicit OS mail handler. */
 export function safeExternalLink(value: string): boolean {
   if (!value || value.length > 8192 || /[\s\\\u0000-\u001f\u007f]/.test(value) || /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) return false;
   try {

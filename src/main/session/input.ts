@@ -1208,11 +1208,12 @@ export function chatReviewAttentionText(review: ChatReviewAttention): string {
     'Scope the recent-request review to locally recorded sessions and their exact provenance. Do not inspect ChatGPT browser history or use Computer Use for discovery during this heartbeat. Missing cross-device conversations are outside this review, not a blocker or a reason to guess their contents; do not use sidebar unread/blue-dot state as a completion signal.\n' +
     'Find user requests for real work (for example create, save, document, implement, fix, dispatch, check, or otherwise act) where the requested persistent/computer-side result was not actually completed. A prose answer, plan, or promise is not completion when the user asked for execution. ' +
     'Before deciding, inspect the source conversation and current files/repository/tool history so newer instructions, completed work, or an already-running turn are not duplicated or overridden. Preserve exact conversation/session provenance and fail closed on ambiguous ownership.\n' +
+    'An unfinished task already actively owned by Prime in the exact current session or a live Plan is not a newly unworked request. Do not dispatch a finding merely to tell Prime to continue work already underway, or because a final assistant reply has not yet appeared while the task is active. Check the most recent source status and newer instructions first. If the same issue is already reported in a pending heartbeat finding, do not send another reminder without genuinely new actionable evidence. A genuinely abandoned or blocked request may still merit a finding when its missing next action is proven.\n' +
     'This is a read/review-only maintenance turn. Do not carry out or delegate user work, send messages, install anything, edit files, drive the browser, or mutate repositories. Decide act / do not act, and on what. Return actionable findings to Prime; Prime is the only coordinator that may act. If the recent-request review finds no still-valid unworked request, report no action for that obligation.\n' +
     chatReviewPlanBatchText(review) + '\n' +
     'Do not call agents or spawn/delegate additional workers from this maintenance review; this worker is already the bounded review lane. ' +
     `Only after the recent-request review and every selected Plan target are complete, call chat_review_complete directly with key ${JSON.stringify(review.key)} and result: ` +
-    '`completed` if no unfinished actionable work remained, `dispatched` if actionable findings were durably returned to Prime without executing them, `blocked` if the review could not safely determine what Prime should do, or `failed` for a real review failure. ' +
+    '`completed` if no newly unowned actionable work remained (including when Prime is already actively doing the task), `dispatched` if a newly actionable finding requiring Prime attention was durably returned without executing it, `blocked` if the review could not safely determine what Prime should do, or `failed` for a real review failure. ' +
     'For dispatched, blocked, or failed, include one compact provenance-bound finding for Prime; only completed closes quietly with no finding. ' +
     'That explicit receipt is the only event that completes this heartbeat; browser delivery, an ACK, or ordinary final prose do not clear it. If the receipt is rejected, leave the review pending rather than guessing another chat, session, or key. ' +
     'This review worker does not own Prime coordination. After the exact receipt, finish this review without opening a new Prime turn or taking any action.';
@@ -1273,7 +1274,47 @@ export function retireLegacyChatReviewAttention(key: string): Promise<'retired' 
  * or confirmed send is never replayed. User input only moves an untouched finding behind that
  * turn, and live Voice/draft/browser custody remains enforced by the ordinary native-send path.
  */
-export function enqueueChatReviewFinding(sessionId: string, key: string, text: string): Promise<InputEntry> {
+/** A manual Remove queued task is a decision about this finding, not a failed Send. */
+const DISMISSED_HEARTBEAT_FINDING = 'Heartbeat finding dismissed from the queue; it will not be sent again.';
+type ChatReviewFindingDelivery = InputEntry & { dismissed?: true };
+const untouchedHeartbeatFinding = (row: InputEntry): boolean => row.state === 'queued' && row.owner === null &&
+  row.offeredAt === undefined && row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined;
+const heartbeatFindingSpent = (row: InputEntry): boolean => row.state === 'sent' || row.sendAuthorizedAt !== undefined ||
+  row.messageId !== undefined || row.deliveredAt !== undefined;
+const heartbeatFindingDismissed = (row: InputEntry): boolean => row.state === 'cancelled' && row.owner === null &&
+  row.offeredAt === undefined && row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined &&
+  (row.error === undefined || row.error === DISMISSED_HEARTBEAT_FINDING);
+/** Bounded, evidence-only maintenance: never infer semantic task completion from age or queue length. */
+export function reconcileHeartbeatFindingQueue(): Promise<number> {
+  return serial(async () => {
+    const current = await load();
+    const keyed = (row: InputEntry): string | null => {
+      if (row.purpose !== 'heartbeat-finding' || !row.sessionId) return null;
+      const match = /^\[\[PARADIGMEVE-HEARTBEAT-FINDING:(heartbeat:[^\]\r\n]+)\]\]\n/.exec(row.text);
+      return match ? `${row.sessionId}\u0000${match[1]}` : null;
+    };
+    const terminalByKey = new Map<string, 'spent' | 'dismissed'>();
+    for (const row of current) {
+      const key = keyed(row);
+      if (!key) continue;
+      if (heartbeatFindingSpent(row)) terminalByKey.set(key, 'spent');
+      else if (heartbeatFindingDismissed(row) && terminalByKey.get(key) !== 'spent') terminalByKey.set(key, 'dismissed');
+    }
+    const obsolete = new Map<string, 'spent' | 'dismissed'>();
+    for (const row of current) {
+      const disposition = terminalByKey.get(keyed(row) ?? '');
+      if (disposition && untouchedHeartbeatFinding(row)) obsolete.set(row.id, disposition);
+    }
+    if (!obsolete.size) return 0;
+    await commit(current.map(row => {
+      const disposition = obsolete.get(row.id);
+      return disposition ? { ...row, state: 'cancelled' as const, error: disposition === 'spent'
+        ? 'Duplicate heartbeat finding retired after an earlier Send was authorized.' : DISMISSED_HEARTBEAT_FINDING } : row;
+    }));
+    return obsolete.size;
+  });
+}
+export function enqueueChatReviewFinding(sessionId: string, key: string, text: string): Promise<ChatReviewFindingDelivery> {
   return serial(async () => {
     if (!key || key.length > 512 || !text.trim() || text.length > 6000) throw new Error('Heartbeat finding is invalid.');
     const session = await getSession(sessionId);
@@ -1282,9 +1323,25 @@ export function enqueueChatReviewFinding(sessionId: string, key: string, text: s
     }
     const current = await load();
     const tag = `[[PARADIGMEVE-HEARTBEAT-FINDING:${key}]]`;
-    const prior = [...current].reverse().find(row => row.purpose === 'heartbeat-finding' && row.text.startsWith(tag));
+    const matches = current.filter(row => row.purpose === 'heartbeat-finding' && row.sessionId === sessionId && row.text.startsWith(`${tag}\n`));
+    // A confirmed or ambiguous Send is stronger than a more recent queued duplicate.
+    // This can happen after a Compact & Resume and a delayed retry in another chat.
+    const spent = matches.find(heartbeatFindingSpent);
+    const dismissed = matches.find(heartbeatFindingDismissed);
+    // The old UI left error unset when a human removed an untouched queued row.
+    // Keep that as legacy positive dismissal evidence. Retire only other untouched
+    // copies of this exact key, preserving claimed or maybe-sent transport forever.
+    if (spent || dismissed) {
+      const untouched = new Set(matches.filter(untouchedHeartbeatFinding).map(row => row.id));
+      if (untouched.size) await commit(current.map(row => untouched.has(row.id)
+        ? { ...row, state: 'cancelled' as const, error: spent
+          ? 'Duplicate heartbeat finding retired after an earlier Send was authorized.' : DISMISSED_HEARTBEAT_FINDING }
+        : row));
+      if (spent) return { ...spent };
+      return { ...dismissed!, dismissed: true };
+    }
+    const prior = matches.at(-1);
     if (prior && !['failed', 'cancelled'].includes(prior.state)) return { ...prior };
-    if (prior && (prior.messageId || prior.deliveredAt !== undefined || prior.sendAuthorizedAt !== undefined)) return { ...prior };
     const policy = await sessionInputPolicy(sessionId);
     const anotherInputOwnsNextTurn = current.some(row => row.sessionId === sessionId &&
       row.state !== 'sent' && row.state !== 'cancelled' && row.state !== 'failed');
@@ -1606,7 +1663,9 @@ export function cancelInput(id: string): Promise<boolean> {
     const found = current.find((entry) => entry.id === id);
     if (!found || !['queued', 'browser'].includes(found.state)) return false;
     await commit(current.map((entry) => entry === found ? { ...entry, state: 'cancelled',
-      error: found.state === 'browser' ? found.requiresAuthorization && found.sendAuthorizedAt === undefined
+      error: found.state === 'queued' && found.purpose === 'heartbeat-finding' && found.owner === null &&
+        found.offeredAt === undefined && found.sendAuthorizedAt === undefined ? DISMISSED_HEARTBEAT_FINDING :
+        found.state === 'browser' ? found.requiresAuthorization && found.sendAuthorizedAt === undefined
         ? 'Not sent: this delivery was cancelled before Send was authorized.'
         : 'Cancelled locally. Delivery to ChatGPT is unconfirmed; the message may already have been sent.' : undefined } : entry));
     decisionWaiters.get(id)?.reject(new Error('goal_browser_cancelled'));

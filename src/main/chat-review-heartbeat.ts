@@ -12,6 +12,7 @@ import { PLAN_CATALOG_MAX, planIdSchema, type PlanLibrary, type PlanView } from 
 import type { SessionSummary } from '../shared/session.js';
 import { currentAgentConversationId } from './agent-identity.js';
 import { readDurable, readDurableStrict, writeDurableNow } from './durable.js';
+import { logInfo, logWarn } from './logger.js';
 import {
   listPlans,
   withPlanReviewValidationFence,
@@ -21,6 +22,7 @@ import { isChatBlocked } from './session/blocked-chats.js';
 import {
   dispatchChatReviewWorker,
   enqueueChatReviewFinding,
+  reconcileHeartbeatFindingQueue,
   type ChatReviewAttention,
   type ChatReviewPlanSnapshot
 } from './session/input.js';
@@ -140,6 +142,8 @@ type Dependencies = {
   enqueue: (sessionId: string, review: ChatReviewAttention) => Promise<unknown>;
   enqueueFinding: (sessionId: string, key: string, text: string) => Promise<{
     state?: string;
+    /** Exact unsent user-dismissal tombstone from the input owner (no browser Send). */
+    dismissed?: boolean;
     sendAuthorizedAt?: number;
     deliveredAt?: number;
     messageId?: string;
@@ -973,7 +977,7 @@ export function runChatReviewHeartbeat(
         const delivery = await deps.enqueueFinding(finding.sessionId, finding.key, finding.text).catch(() => null);
         const ambiguous = delivery !== null && (delivery.state === 'failed' || delivery.state === 'cancelled') &&
           (delivery.sendAuthorizedAt !== undefined || delivery.deliveredAt !== undefined || Boolean(delivery.messageId));
-        if (delivery?.state === 'sent' || ambiguous) {
+        if (delivery?.state === 'sent' || delivery?.dismissed === true || ambiguous) {
           const next = { ...state, findingSpoolRead: readIndex + 1 };
           if (ambiguous) {
             const uncertain = [...(next.uncertainFindings ?? []).filter(item => item.key !== finding.key), finding];
@@ -1003,7 +1007,7 @@ export function runChatReviewHeartbeat(
           await deps.writeState(state);
         }
         const delivery = await deps.enqueueFinding(finding.sessionId, finding.key, finding.text).catch(() => null);
-        if (delivery?.state === 'sent') {
+        if (delivery?.state === 'sent' || delivery?.dismissed === true) {
           const { pendingFinding: _delivered, ...deliveredState } = state;
           await deps.writeState(deliveredState);
           state = deliveredState;
@@ -1178,7 +1182,19 @@ export function startChatReviewHeartbeatMaintenance(options: {
   onError?: (error: Error) => void;
 } = {}): () => void {
   const now = options.now ?? Date.now;
-  const run = options.run ?? ((at) => runChatReviewHeartbeat(at));
+  // Housekeep the local outbox at the heartbeat cadence. Only exact-key
+  // duplicates of a known Send or explicit queued dismissal are retired;
+  // no unique finding, user input, or ambiguous browser claim is touched.
+  const run = options.run ?? (async (at) => {
+    try {
+      const retired = await reconcileHeartbeatFindingQueue();
+      if (retired) logInfo(`chat review heartbeat retired ${retired} proven redundant queued finding(s)`);
+    } catch (error) {
+      // Queue housekeeping is never permission to stall a separate semantic review.
+      logWarn(`chat review heartbeat queue reconciliation deferred: ${String(error)}`);
+    }
+    return runChatReviewHeartbeat(at);
+  });
   let stopped = false;
   let timer: NodeJS.Timeout | null = null;
   let inFlight = false;

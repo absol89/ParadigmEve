@@ -5,12 +5,14 @@ vi.mock('../src/main/config.js', () => ({ getConfig: () => config }));
 const open = vi.hoisted(() => vi.fn(async (_url: string): Promise<string | null> => 'chrome'));
 const dedicated = vi.hoisted(() => vi.fn(async (_url: string, _browser?: string): Promise<void> => undefined));
 const running = vi.hoisted(() => vi.fn(async (): Promise<boolean | null> => null));
+const dedicatedWindow = vi.hoisted(() => vi.fn(async (): Promise<boolean | null> => null));
 const restore = vi.hoisted(() => vi.fn(async (): Promise<unknown> => ({ id: 77, restoredPages: true })));
 const conversationOpen = vi.hoisted(() => vi.fn((_conversationId: string): boolean | null => false));
 vi.mock('../src/main/bridge.js', () => ({ bridgeStatus: async () => ({ ...browser }), browserConversationOpen: conversationOpen, browserWakeConnected: () => browser.connected, startBridge: async () => true }));
 vi.mock('../src/main/browser.js', () => ({ openInPreferredBrowser: open, isPreferredBrowserRunning: running }));
 vi.mock('../src/main/setup-assistant.js', () => ({
   openParadigmEveChromeProfile: dedicated,
+  paradigmeEveBrowserWindowOpen: dedicatedWindow,
   restoreParadigmEveChromeSessionForRecovery: restore,
 }));
 vi.mock('../src/main/connection.js', () => ({ connect: vi.fn(), getStatus: vi.fn(), onStatusChange: vi.fn() }));
@@ -22,7 +24,7 @@ const hostPlatform = process.platform;
 beforeAll(() => { Object.defineProperty(process, 'platform', { value: 'win32', configurable: true }); });
 afterAll(() => { Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true }); });
 
-beforeEach(() => { resetBrowserStartupForTests(); config.ui.chatBrowser = 'chrome'; browser.connected = false; browser.present = false; browser.lastSeenAt = null; conversationOpen.mockReset().mockReturnValue(false); open.mockReset().mockResolvedValue('chrome'); dedicated.mockReset().mockResolvedValue(undefined); running.mockReset().mockResolvedValue(false); restore.mockReset().mockResolvedValue({ id: 77, restoredPages: true }); });
+beforeEach(() => { resetBrowserStartupForTests(); config.ui.chatBrowser = 'chrome'; browser.connected = false; browser.present = false; browser.lastSeenAt = null; conversationOpen.mockReset().mockReturnValue(false); open.mockReset().mockResolvedValue('chrome'); dedicated.mockReset().mockResolvedValue(undefined); running.mockReset().mockResolvedValue(false); dedicatedWindow.mockReset().mockResolvedValue(false); restore.mockReset().mockResolvedValue({ id: 77, restoredPages: true }); });
 
 it('starts the newly selected family without reusing the old attempt or overriding a connected companion', async () => {
   await wakeBrowserUrl('https://chatgpt.com/?cos-model-catalog=old');
@@ -132,21 +134,37 @@ it('starts cold model discovery in the dedicated Eve Browser profile instead of 
   expect(open).not.toHaveBeenCalled();
 });
 
-it('opens an authorized recovery only after proving process absence, including stale HTTP absence', async () => {
-  running.mockResolvedValue(null);
+it('opens an authorized recovery only after proving dedicated-window absence, including stale HTTP absence', async () => {
+  dedicatedWindow.mockResolvedValue(null);
   const authority = { current: () => true };
   await wakeBrowserUrl('https://chatgpt.com/c/recovery', true, true, authority);
-  expect(open).not.toHaveBeenCalled(); // Unknown process state is not absence.
-  running.mockResolvedValue(true);
+  expect(open).not.toHaveBeenCalled(); // Unknown dedicated-window state is not absence.
+  dedicatedWindow.mockResolvedValue(true);
   await wakeBrowserUrl('https://chatgpt.com/c/recovery', true, true, authority);
-  expect(open).not.toHaveBeenCalled(); // No socket/HTTP observation is not a closed browser.
-  running.mockResolvedValue(false);
+  expect(open).not.toHaveBeenCalled(); // No socket/HTTP observation does not prove a dedicated window closed.
+  dedicatedWindow.mockResolvedValue(false);
   await Promise.all([
     wakeBrowserUrl('https://chatgpt.com/c/recovery', true, true, authority),
     wakeBrowserUrl('https://chatgpt.com/?eve-input=concurrent')
   ]);
   expect(restore).toHaveBeenCalledTimes(1);
   expect(open).not.toHaveBeenCalled();
+});
+
+it('restores an absent Eve Browser even when ordinary Chrome is running, without forwarding into that profile', async () => {
+  running.mockResolvedValue(true);
+  dedicatedWindow.mockResolvedValue(false);
+  await wakeBrowserUrl('https://chatgpt.com/c/exact-prime', true, true, { current: () => true, exactPrime: true });
+  expect(restore).toHaveBeenCalledTimes(1);
+  expect(dedicated).not.toHaveBeenCalled();
+  expect(running).not.toHaveBeenCalled(); // An unrelated Chrome family process is not recovery authority.
+  resetBrowserStartupForTests(); restore.mockClear();
+  dedicatedWindow.mockResolvedValue(true);
+  await wakeBrowserUrl('https://chatgpt.com/c/exact-prime', true, true, { current: () => true, exactPrime: true });
+  expect(restore).not.toHaveBeenCalled(); // An existing dedicated Eve Browser is never replaced.
+  dedicatedWindow.mockResolvedValue(null);
+  await wakeBrowserUrl('https://chatgpt.com/c/exact-prime', true, true, { current: () => true, exactPrime: true });
+  expect(restore).not.toHaveBeenCalled(); // An uncertain census also preserves the browser.
 });
 
 it('gives native Chrome session restore first claim for bridge-owned cold starts', async () => {
@@ -212,7 +230,7 @@ it('preserves failed restore retry semantics without falling through to an exact
 it('cannot open a recovery revoked while its process probe is pending', async () => {
   let current = true;
   let release!: (value: boolean) => void;
-  running.mockReturnValue(new Promise(resolve => { release = resolve; }));
+  dedicatedWindow.mockReturnValue(new Promise(resolve => { release = resolve; }));
   const work = wakeBrowserUrl('https://chatgpt.com/c/recovery', true, true,
     { current: () => current });
   await Promise.resolve();

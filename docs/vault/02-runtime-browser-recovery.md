@@ -32,6 +32,15 @@ Why it exists:
 
 `src/main/setup-assistant.ts` owns profile launching and the setup/recovery browser helpers.
 
+Eve-owned web navigation, renderer Open link, saved Thread web destinations, plugin OAuth
+sign-in and the local static Archive open in this **same dedicated profile**, never via the
+OS-default personal browser. `src/main/eve-browser-links.ts` centralizes web/verified local
+browser-file opening; it does not fall back to `shell.openExternal` if the Eve Browser fails.
+Users choose which accounts to sign into within Eve Browser. Access to a personal browser,
+its existing tabs/cookies/accounts/passwords, or cross-profile credential import is **not**
+implicit consent from installing Eve or enabling general Computer Use. `mailto:` and explicitly
+allowlisted native Settings deep links are separate OS handler actions, not web navigation.
+
 ## Companion bridge
 
 `src/main/bridge.ts` hosts a separate local HTTP server on `127.0.0.1`, normally one of ports **8765–8769**.

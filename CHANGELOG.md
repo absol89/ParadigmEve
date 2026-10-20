@@ -13,6 +13,63 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.2] — Reliability and local archive choice
+
+**Status (2026-10-20):** Public source release `v2.4.2` brings the
+`release/2.4.2` work into `main`. App and Companion declare **2.4.2**.
+Windows x64 source and package verification passed, with partial installed
+acceptance for Compact & Resume and Archive opening in Eve Browser.
+These checks do not establish complete live regression coverage or downloadable
+platform assets; see CI and GitHub Releases for the actual publication outcome.
+
+### Changed
+
+- **Optional local chat archive recording.** The existing recording preference
+  is now prominent in Archive Browser and discoverable via Workspace, Setup
+  and Settings. English, Swedish and Latin American Spanish explanations are
+  included. Recording stays on by default; turning it off stops **new** session
+  and local tool-result capture and disables recording-dependent Goal/Loop.
+  Existing sessions, archived copies, Pins, Plans, separate logs and ChatGPT
+  history are **not deleted**.
+- **Eve's links open in Eve Browser.** Open link, saved Thread web links,
+  plugin sign-in, the local Archive and browser-viewable Thread files (HTML,
+  PDF, SVG, MHTML) open in the dedicated Eve Browser profile. They are never
+  sent to your default browser, so Eve uses only the accounts you sign into
+  there. A failed Eve Browser launch does not fall back to your personal
+  browser. Internet shortcut files are shown in their folder instead of
+  opened. `mailto:` links and macOS privacy-settings links still use the
+  system handler.
+- **Companion journal durability.** Writes are coalesced without dropping
+  pending acknowledgements when new observations arrive during persistence.
+- **Compact & Resume status.** Held/deferred handoffs show truthful ownership
+  and delivery status rather than implying a completed send.
+
+### Fixed and protected
+
+- **Completed-turn boundary.** Session rereads no longer move a completed
+  answer's finish timestamp merely due to later metadata updates.
+- **Stale Companion eligibility.** New bridge regression tests protect
+  existing worker placement/revival gates; no production algorithm rewrite
+  was made by that test-only commit.
+- **No repeated heartbeat findings in the chat.** A heartbeat finding whose
+  exact copy was already sent, or that you removed from the queue, is no longer
+  queued again, including after Compact & Resume. Removing one is final. The
+  heartbeat review also stops reporting work Prime is already doing. Different
+  findings and possibly-sent messages are never retired.
+- **Prime wakes while your own Chrome is open.** On Windows, a recovery wake
+  checks for the Eve Browser window itself rather than for any running
+  browser, so a personal browser window no longer leaves a queued wake waiting.
+- **`app.log` no longer stops after a failed write or rotation.** When a write
+  or the rotation rename failed (on Windows, whenever another program holds
+  `app.log` open), the log stayed silent for the rest of the run. Now the
+  unwritten lines are kept in order and retried (1 s, doubling to 60 s), no
+  line is repeated or lost after a partial write, and a log that cannot rotate
+  keeps growing to twice its limit with a one-line note before lines wait.
+
+ChatGPT model limits, provider context and access remain unchanged. See the
+[2.4.2 release notes](docs/release-notes/v2.4.2.md) for implementation details,
+scoped test results, limitations and release status.
+
 ## [2.4.1] — Smoother first run
 
 **Status (2026-10-17):** tagged `v2.4.1` on `main` and `release/2.4.1`, built on `v2.4.0`. A

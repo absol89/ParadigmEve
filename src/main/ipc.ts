@@ -9,6 +9,7 @@ import { prepareSessionPrompt } from './session/prompt.js';
 import { noteChatOrigin } from './session/recorder.js';
 import { REASONING_EFFORTS } from '../shared/session.js';
 import { safeExternalLink } from '../shared/external-link.js';
+import { openEveBrowserFile, openEveWebLink } from './eve-browser-links.js';
 import { wakeBrowserWork } from './browser-wake.js';
 import { getChatModels, startChatModelDiscovery, configureChatModelDiscovery } from './chat-models.js';
 import { releaseSessionFinish, requestSessionFinishGoal } from './session/finish.js';
@@ -230,6 +231,8 @@ const ALLOWED_LINKS = new Set([
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
   'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
 ]);
+/** Local documents a browser renders; the OS association would hand them to a personal profile. */
+const EVE_BROWSER_DOCUMENTS = new Set(['.htm', '.html', '.xhtml', '.xht', '.shtml', '.mht', '.mhtml', '.svg', '.pdf']);
 
 const capabilityPatch = z.object(
   Object.fromEntries(CAPABILITIES.map((c) => [c, z.boolean()])) as Record<
@@ -1092,13 +1095,13 @@ export function registerIpc(
           logWarn('archive open ' + traceId + ': background refresh failed: ' + (error instanceof Error ? error.message : String(error))));
       }
       logInfo('archive open ' + traceId + ': static index verified');
-      const error = await shell.openPath(indexPath);
-      logInfo('archive open ' + traceId + ': open returned ' + (error ? 'error' : 'success'));
-      // Bring the browser that took the page to the front; best effort and never an error to the user.
-      if (!error) logInfo('archive open ' + traceId + ': browser focus ' + ((await focusOpenedArchiveBrowser()) ? 'done' : 'skipped'));
-      return error
-        ? { ok: false as const, error: sanitizeArchiveRendererError(error, 'Static archive could not be opened.') }
-        : { ok: true as const } satisfies ArchiveRendererOpenResult;
+      // Never hand a private local archive to the OS default browser/profile. The
+      // dedicated Eve Browser owns the opened archive and any links it opens.
+      await openEveBrowserFile(indexPath);
+      logInfo('archive open ' + traceId + ': opened in Eve Browser');
+      // Bring the Eve Browser window that took the page to the front; best effort and never an error to the user.
+      logInfo('archive open ' + traceId + ': browser focus ' + ((await focusOpenedArchiveBrowser()) ? 'done' : 'skipped'));
+      return { ok: true as const } satisfies ArchiveRendererOpenResult;
     } catch (error) {
       logWarn('archive open ' + traceId + ': failed: ' + (error instanceof Error ? error.message : String(error)));
       return {
@@ -1160,7 +1163,7 @@ export function registerIpc(
     const destination = classifyResourceDestination(thread.link);
     if (!destination) throw new Error('That Thread destination is not allowed');
     if (destination.kind === 'external') {
-      await shell.openExternal(destination.url);
+      await openEveWebLink(destination.url);
       return true;
     }
 
@@ -1170,10 +1173,18 @@ export function registerIpc(
     if (!info) throw new Error('That local destination does not exist');
     const executableLike = info.isFile() && new Set([
       '.exe', '.com', '.bat', '.cmd', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
-      '.msi', '.msp', '.scr', '.cpl', '.reg', '.lnk'
+      '.msi', '.msp', '.scr', '.cpl', '.reg', '.lnk',
+      // Internet shortcuts launch their stored URL in the OS-default (personal) browser.
+      '.url', '.website', '.webloc'
     ]).has(extname(destination.path).toLocaleLowerCase());
     if (executableLike) {
       shell.showItemInFolder(destination.path);
+      return true;
+    }
+    // Browsable local documents also belong to Eve's profile; the OS association
+    // could otherwise silently open a personal Chrome/Edge profile.
+    if (info.isFile() && EVE_BROWSER_DOCUMENTS.has(extname(destination.path).toLowerCase())) {
+      await openEveBrowserFile(destination.path);
       return true;
     }
     const error = await shell.openPath(destination.path);
@@ -1429,8 +1440,13 @@ export function registerIpc(
 
   handle('link:open', async (payload) => {
     const { url } = z.object({ url: z.string().max(8192) }).parse(payload);
-    if (!ALLOWED_LINKS.has(url) && !safeExternalLink(url)) throw new Error('That link is not allowed');
-    await shell.openExternal(url);
+    // Native Settings deep links are explicitly allowlisted actions, not web pages.
+    if (ALLOWED_LINKS.has(url)) {
+      await shell.openExternal(url);
+      return true;
+    }
+    if (!safeExternalLink(url)) throw new Error('That link is not allowed');
+    await openEveWebLink(url);
     return true;
   });
 

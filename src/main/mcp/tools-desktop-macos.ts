@@ -57,10 +57,10 @@ const DEFAULT_WINDOW_RESULTS = 60;
  * with ctrl+tab and typed a URL into one. The window the keys would reach is the last one a
  * focus action in this batch named, else the one in front now.
  */
+// A bare browser launch opens the user's personal default profile, with their accounts.
+// Point at Eve Browser instead of naming a command that would land there.
 function newBrowserWindowHint(): string {
-  return process.platform === 'darwin'
-    ? 'open -na "Google Chrome" --args --new-window "$url"'
-    : "Start-Process chrome.exe -ArgumentList '--new-window', $url";
+  return "in Eve Browser, ParadigmEve's own browser profile, never a new window of the user's personal browser profile";
 }
 
 async function browserChordRefusal(actions: Action[]): Promise<string | null> {

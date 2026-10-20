@@ -780,6 +780,43 @@ describe('chat review heartbeat', () => {
     expect(enqueueFinding).toHaveBeenNthCalledWith(2, finding.sessionId, finding.key, finding.text);
   });
 
+  it('advances a finding spool past a proven manual dismissal without resurrecting it', async () => {
+    const finding = { key: 'heartbeat:cleared-in-ui', sessionId: 'prime-session', conversationId,
+      text: 'Old note explicitly removed by the user', createdAt: 1_000 };
+    const coordinator = session({ id: finding.sessionId, conversationId });
+    let state: ChatReviewHeartbeatState | null = { lastCompletedAt: 2_000, findingSpoolRead: 0, findingSpoolWrite: 1 };
+    const enqueueFinding = vi.fn(async () => ({ state: 'cancelled', dismissed: true }));
+    await runChatReviewHeartbeat(3_000, {
+      readState: async () => state,
+      writeState: async next => { state = next; },
+      readPendingSpool: async () => finding,
+      enqueueFinding,
+      uniqueSession: async () => coordinator,
+      blocked: () => false
+    });
+    expect(state?.findingSpoolRead).toBe(1);
+    expect(state?.findingSpoolWrite).toBe(1);
+    expect(state?.uncertainFindings).toBeUndefined();
+    expect(enqueueFinding).toHaveBeenCalledOnce();
+  });
+
+  it('retires the latest manually dismissed finding but never treats an unknown cancellation as dismissal', async () => {
+    const finding = { key: 'heartbeat:latest-dismissed', sessionId: 'prime-session', conversationId,
+      text: 'Already handled notification', createdAt: 3_000 };
+    const coordinator = session({ id: finding.sessionId, conversationId });
+    let state: ChatReviewHeartbeatState | null = { lastCompletedAt: 2_000, pendingFinding: finding };
+    const enqueueFinding = vi.fn().mockResolvedValueOnce({ state: 'cancelled' })
+      .mockResolvedValueOnce({ state: 'cancelled', dismissed: true });
+    const deps = { readState: async () => state, writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      uniqueSession: async () => coordinator, blocked: () => false, enqueueFinding };
+    await runChatReviewHeartbeat(3_000, deps);
+    expect(state?.pendingFinding).toEqual(finding);
+    await runChatReviewHeartbeat(4_000, deps);
+    expect(state?.pendingFinding).toBeUndefined();
+    expect(state?.uncertainFindings).toBeUndefined();
+    expect(enqueueFinding).toHaveBeenCalledTimes(2);
+  });
+
   it('does not let an unsent Prime finding freeze a due independent review epoch', async () => {
     const owner = session({ id: 'prime-session', conversationId, lastToolCallAt: 1_000 });
     const oldFinding = {

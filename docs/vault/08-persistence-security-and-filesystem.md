@@ -186,8 +186,9 @@ the `hidden` attribute, which only works while the generated CSS keeps `.chat-li
 after the `.chat-link` rule. The app can open this same recovery view from
 the Archive workspace or View menu (**Open Archive Browser**, shown as **Opening Archive Browser…** while it
 rebuilds and opens) without exposing its filesystem path to the renderer. The main process hands the verified
-file to the system's default browser, then on Windows brings the window that shows the page's
-`ParadigmEve Archive` title to the front (`src/main/archive/archive-focus.ts`), best effort and never an error.
+file to the dedicated Eve Browser profile, not the system's default/personal browser.
+This avoids putting locally retained conversation history in another account's browser profile;
+the launcher does not search for or force-focus a personal Chrome window.
 
 An unfinished historical assistant row remains honest evidence. Once a later authored user message
 proves that interrupted row is no longer the live streaming frontier, the archive can retain that

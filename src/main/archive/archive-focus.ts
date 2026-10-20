@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { focusWindow, listWindows, type WindowInfo } from '../computer/index.js';
+import { dedicatedParadigmEveChromeWindow } from '../setup-assistant.js';
 
 /** The generated archive page's `<title>`; a browser shows it in its window title. */
 export const ARCHIVE_PAGE_TITLE = 'ParadigmEve Archive';
@@ -10,23 +10,21 @@ export interface ArchiveFocusDeps {
   focus?: (id: number) => Promise<boolean>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
-  /** This app's own executable, so ParadigmEve's window is never mistaken for the browser. */
-  ownExecutable?: string;
+  /** Test seam. Production always uses the same exact Eve Browser identity fence as recovery. */
+  dedicatedWindow?: (window: WindowInfo) => boolean;
 }
 
-function isArchiveBrowserWindow(window: WindowInfo, ownExecutable: string): boolean {
-  if (!window.title.includes(ARCHIVE_PAGE_TITLE)) return false;
-  const executable = window.processPath ?? window.process;
-  return !(executable && path.resolve(executable).toLowerCase() === path.resolve(ownExecutable).toLowerCase());
+function isArchiveBrowserWindow(window: WindowInfo, dedicatedWindow: (window: WindowInfo) => boolean): boolean {
+  return window.title.includes(ARCHIVE_PAGE_TITLE) && dedicatedWindow(window);
 }
 
 /**
  * Bring the browser window that just opened the static archive to the front.
  *
- * `shell.openPath` hands the file to the system's default browser, which may open the tab behind
- * ParadigmEve. Once the page's title shows up in a window we focus that window, best effort: a
- * non-Windows host, a missing helper or a browser that never shows the title simply leaves the OS's
- * own behavior. The page is already open either way, so a failure here is never an error to the user.
+ * Eve Browser can take the page in a window behind ParadigmEve. Only a window proven to
+ * belong to the dedicated Eve profile is eligible: an old same-title Archive in someone's
+ * personal browser must never receive focus. On unsupported hosts or failed observation,
+ * leave the window as opened rather than guessing a browser owner.
  */
 export async function focusOpenedArchiveBrowser(deps: ArchiveFocusDeps = {}, timeoutMs = 4000): Promise<boolean> {
   if ((deps.platform ?? process.platform) !== 'win32') return false;
@@ -34,11 +32,11 @@ export async function focusOpenedArchiveBrowser(deps: ArchiveFocusDeps = {}, tim
   const focus = deps.focus ?? focusWindow;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const now = deps.now ?? Date.now;
-  const own = deps.ownExecutable ?? process.execPath;
+  const dedicatedWindow = deps.dedicatedWindow ?? dedicatedParadigmEveChromeWindow;
   const deadline = now() + timeoutMs;
   try {
     do {
-      const windows = (await list()).windows.filter(window => isArchiveBrowserWindow(window, own));
+      const windows = (await list()).windows.filter(window => isArchiveBrowserWindow(window, dedicatedWindow));
       const target = windows.find(window => window.state === 'foreground') ?? windows[0];
       if (target) return await focus(target.id);
       if (now() >= deadline) return false;

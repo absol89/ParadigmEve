@@ -2,7 +2,7 @@
 import { bridgeStatus, browserConversationOpen, browserWakeConnected } from './bridge.js';
 import { isPreferredBrowserRunning } from './browser.js';
 import { getConfig } from './config.js';
-import { openParadigmEveChromeProfile, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
+import { openParadigmEveChromeProfile, paradigmeEveBrowserWindowOpen, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
 
 let waking: { lastSeenAt: number | null; selected: string; kind: 'forward' | 'cold' | 'recovery'; work: Promise<void>; failed: boolean; finished: boolean } | null = null;
 /** One browser startup per absence episode, shared by authored sends, discovery and owed recovery. */
@@ -14,10 +14,17 @@ export async function wakeBrowserUrl(url: string, retry = false, _backgroundStar
   const selected = getConfig().ui.chatBrowser ?? 'chrome';
   // The companion can be missing because its protocol is incompatible or MV3 is
   // suspended. Explicit authored/discovery work may hand its URL to a confirmed
-  // running selected browser; durable recovery remains stricter and requires process
-  // absence because forwarding can activate an unrelated/restoring Chrome window.
+  // running selected browser; durable recovery instead requires the absence of an
+  // exact dedicated Eve window (on Windows), never forwarding into a restoring one.
   const prior = waking;
-  const processState = await isPreferredBrowserRunning();
+  // Restart/repair owns the dedicated profile, not every Chrome window on the machine.
+  // The user's ordinary Chrome can be running while Eve's profile has no window; treating
+  // that as browser presence leaves an exact queued Prime wake waiting indefinitely.
+  // A missing/unknown dedicated-window census still fails closed rather than touching an
+  // existing Eve tab with a live draft or an MV3-suspended Companion.
+  const processState = authority && process.platform === 'win32'
+    ? await paradigmeEveBrowserWindowOpen()
+    : await isPreferredBrowserRunning();
   const absent = processState === false;
   const mayForwardToRunning = !authority && processState === true;
   // A settings change while the probe yielded revokes that browser's absence evidence.
