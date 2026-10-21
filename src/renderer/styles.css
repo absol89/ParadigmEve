@@ -2163,6 +2163,7 @@ input[readonly] {
 .sess-block.is-blocked { color: var(--red); }
 .session-diagnostics { margin-top: 20px; color: var(--faint); }
 .session-diagnostics > summary { padding: 8px 10px; cursor: pointer; font-size: 12px; }
+.session-diagnostics > .diagnostics-explanation { padding: 0 10px 8px; color: var(--soft); font-size: 11px; line-height: 1.45; }
 .session-diagnostics .sess-top b { font-size: 13px; }
 
 /* ---------------------------------------------------------- timeline */

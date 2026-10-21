@@ -792,6 +792,48 @@ it('shows only the configured agent, worker, helper and Unattributed role badges
   await settle();
   expect(w.document.getElementById('chatRoleBadge')?.hasAttribute('hidden')).toBe(true);
 });
+
+it('explains unverified tool origins without hiding the recorded request, command or result', async () => {
+  const call = toolCall(1, 'unverified-exec');
+  if (call.kind !== 'tool_call') throw new Error('Expected a tool call');
+  call.call.tool = 'exec_command';
+  call.call.attribution = 'inferred';
+  call.call.attributionMethod = 'unattributed';
+  call.call.conversationId = null;
+  call.call.requestId = '2b6c21b7-a565-4c98-bdd3-bec4f9c5564a';
+  call.call.args = text('{"cmd":"Get-ChildItem"}');
+  call.call.result = text('Completed successfully');
+  const diagnostic = { ...summary([call]), id: 'unattributed-session', conversationId: null, chatIds: [], title: 'Unattributed activity' };
+  const { w } = await boot([call], false, [], [], { sessions: [diagnostic] });
+
+  const group = w.document.querySelector('.session-diagnostics')!;
+  expect(group.querySelector('.diagnostics-explanation')?.textContent).toContain('does not prove who requested or approved it');
+  expect(group.querySelector('.diagnostics-explanation')?.textContent).toContain('Exact browser request-ID evidence');
+  (group.querySelector('[data-id="unattributed-session"]') as HTMLElement).click();
+  await settle();
+
+  const row = w.document.querySelector('.ev-tool_call')!;
+  expect(row.querySelector('.meta')?.textContent).toContain('could not verify which ChatGPT conversation');
+  expect(row.querySelector('.meta')?.textContent).toContain('does not prove who requested or approved it');
+  expect(row.querySelector('.raw')?.textContent).toContain('Request ID: 2b6c21b7-a565-4c98-bdd3-bec4f9c5564a');
+  expect(row.querySelector('.raw')?.textContent).toContain('Originating conversation: not verified');
+  expect(row.querySelector('.raw')?.textContent).toContain('Get-ChildItem');
+  expect(row.querySelector('.raw')?.textContent).toContain('Completed successfully');
+});
+
+it.each(['request_id', 'superseded'] as const)('does not imply unverified origin for %s tool calls', async method => {
+  const call = toolCall(1, `verified-${method}`);
+  if (call.kind !== 'tool_call') throw new Error('Expected a tool call');
+  call.call.attributionMethod = method;
+  if (method === 'superseded') call.call.attribution = 'superseded';
+  const { w } = await boot([call]);
+  const row = w.document.querySelector('.ev-tool_call')!;
+  expect(row.textContent).not.toContain('does not prove who requested or approved it');
+  expect(row.querySelector('.raw')?.textContent).not.toContain('Originating conversation: not verified');
+  expect(row.querySelector('.raw')?.textContent).toContain(`Request ID: req-verified-${method}`);
+  if (method === 'superseded') expect(row.querySelector('.meta')?.textContent).toContain('Refused by design');
+});
+
 it('shows original user text while retaining transport instructions outside the visible bubble', async () => {
   const { w } = await boot([{ seq: 1, time: T0, source: 'app', kind: 'user_message', messageId: 'native-one', inputId: 'one', authoredText: 'hello', message: text('hello\n\nTransport-only control instruction') }]);
   expect(w.document.querySelector('.said.is-user .msg')?.textContent).toBe('hello');

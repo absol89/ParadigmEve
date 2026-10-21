@@ -880,6 +880,7 @@ function paintSessions(): void {
     disclosure.className = 'session-diagnostics';
     disclosure.open = diagnosticsExpanded;
     disclosure.append(el('summary', '', () => t("Unattributed activity · {0}", [diagnostics.length])));
+    disclosure.append(el('p', 'diagnostics-explanation', () => t("Calls here have no verified originating ChatGPT conversation. A recorded execution does not prove who requested or approved it. Exact browser request-ID evidence is required to link a call to a chat.")));
     disclosure.append(...diagnostics.map(sessionRow));
     disclosure.addEventListener('toggle', () => { diagnosticsExpanded = disclosure.open; });
     rows.push(disclosure);
@@ -1773,6 +1774,8 @@ function toolBody(event: Extract<SessionEvent, { kind: 'tool_call' }>, context?:
   ui(facts, 'textContent', () => `${call.tool} · ${call.outcome} · ${Math.round(call.durationMs)} ms · ` +
     t("placed by {0}", [ATTRIBUTION_LABELS[call.attribution] ?? call.attribution]));
   raw.append(facts);
+  if (call.requestId) raw.append(el('p', 'raw-facts', () => t("Request ID: {0}", [call.requestId])));
+  if (call.attributionMethod === 'unattributed') raw.append(el('p', 'raw-facts', () => t("Originating conversation: not verified")));
 
   if (call.changes && call.changes.length > 0) {
     const changes = el('ul', 'changes');
@@ -2056,6 +2059,9 @@ function eventRow(event: SessionEvent): HTMLElement {
         () => t("From a chat that Compact & Resume had already replaced — ChatGPT kept running its stopped turn there. Refused by design; nothing to repair.")
       )
     );
+  }
+  if (event.kind === 'tool_call' && event.call.attributionMethod === 'unattributed') {
+    body.append(el('p', 'meta', () => t("ParadigmEve recorded this call and its result, but could not verify which ChatGPT conversation it came from. Execution does not prove who requested or approved it.")));
   }
   row.append(time, body);
   return row;
@@ -2540,6 +2546,9 @@ function itemSignature(item: TimelineItem): string {
       parts.push(
         event.call.outcome,
         event.call.attribution,
+        event.call.attributionMethod,
+        event.call.requestId ?? '',
+        event.call.conversationId ?? '',
         event.call.durationMs,
         event.call.args.chars,
         event.call.result.chars,
