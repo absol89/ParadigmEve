@@ -26,6 +26,16 @@ export function workContext(ctx: ToolContext, platform: NodeJS.Platform = proces
   const caller = currentCall()?.caller;
   const exact = !!(caller?.requestId && caller.conversationId && caller.sessionId);
   const shared = !exact && sharedEveOwnerForCurrentCall() !== null;
+  // An account-wide Eve grant permits some operations, but it is not proof that
+  // the call came from Prime, a worker, or any particular browser conversation.
+  // Keep the upstream request id available for later exact recorder correlation.
+  const callerProof = {
+    kind: exact ? 'exact_companion' : shared ? 'shared_authority_unattributed' : 'unproven',
+    requestId: caller?.requestId ?? null,
+    conversationId: exact ? caller!.conversationId : null,
+    sessionId: exact ? caller!.sessionId : null,
+    chatgptApproval: 'external_to_eve'
+  };
   const history = ctx.sessionTools ?? config.sessions.record;
   const workers = ctx.agentTools ?? config.multiAgent.enabled;
   const roots = ctx.roots.map(root => `/${root.name}`);
@@ -75,6 +85,7 @@ export function workContext(ctx: ToolContext, platform: NodeJS.Platform = proces
     recordingEnabled: history,
     workersEnabled: workers,
     callerIdentity: exact ? 'proven' : shared ? 'shared-eve' : 'unproven',
+    callerProof,
     ...(exact ? { sessionId: caller!.sessionId, conversationId: caller!.conversationId } : {}),
     guidance: connectedWorkGuidance(connectorName),
     nextSteps: steps
