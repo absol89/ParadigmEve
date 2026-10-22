@@ -171,7 +171,7 @@ import { registerSessionTool as registerSessionSearchReadTool } from './session-
 import { registerPinsTool } from './pins-tool.js';
 import { registerScheduleTool } from './schedule-tool.js';
 import { chatReviewRequiresWorker, completeChatReviewHeartbeat, currentChatReviewPlanEvidence, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
-import { currentCallMayUseEveAuthority, sharedEveOwnerForCurrentCall } from '../eve-access.js';
+import { currentCallMayUseEveAuthority } from '../eve-access.js';
 import { lanPeerMessagingStatus, lanPeerRuntimeAvailable, sendLanPeerMessage } from '../lan-peer-runtime.js';
 import { ArtifactFetchError } from './artifact-fetch.js';
 import { ArtifactTargetError } from './artifact-target.js';
@@ -1767,12 +1767,10 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           if (items.length === 0) return fail('agents action=message requires to and text, or a messages array.');
           // Before any slot is reserved: a sleeping worker whose chat has since crossed the
           // context ceiling is not revivable, and this is the call that would otherwise wake it.
-          const caller = await callerNow(startedAt, {
-            reviewKey: input.review_key,
-            // A worker reporting to Prime must be identified as that exact worker. Falling back
-            // to shared Eve authority turns the worker into Prime and produces a false self-route.
-            allowShared: !items.some((item) => item.to === PRIME_ID)
-          });
+          // Shared installation permission is not proof that this request came from Prime.
+          // Both directions of worker messaging require an exact caller or the narrowly
+          // verified heartbeat continuity identity, even when Prime is the recipient.
+          const caller = await callerNow(startedAt, { reviewKey: input.review_key });
           await measureSleepingWorkers(caller);
           // One call, one identity resolution, one all-or-nothing delivery: a prime
           // redirecting its whole run cannot end up with two of its three messages sent.
@@ -1832,7 +1830,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           }
           // Finish is worker-only. Shared Eve authority is intentionally not a caller identity:
           // without exact page/request proof, fail closed instead of misclassifying a worker as Prime.
-          const staged = stageFinishAgent(await callerNow(startedAt, { allowShared: false }), input.result);
+          const staged = stageFinishAgent(await callerNow(startedAt), input.result);
           let accepted = staged.repeat;
           try {
             if (!staged.repeat) {
@@ -2005,7 +2003,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
  */
 async function callerNow(
   startedAt: number,
-  options: { exact?: boolean; reviewKey?: string; allowShared?: boolean } = {}
+  options: { exact?: boolean; reviewKey?: string } = {}
 ): Promise<Caller> {
   const base = currentCaller();
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
@@ -2036,10 +2034,12 @@ async function callerNow(
       // outright, so two workers calling at the same moment are no longer a hard case.
       requestId: base.requestId
     }));
-  // Cross-device Eve access borrows broker membership only. The outer MCP call remains
-  // unattributed/shared for audit; never stamp Prime onto currentCall().caller.
-  const borrowedOwner = exactResolved || options.allowShared === false ? null : sharedEveOwnerForCurrentCall();
-  const resolved = exactResolved ?? borrowedOwner;
+  // An authenticated shared-Eve connector request may use ordinary self-contained
+  // tools without Companion page evidence. It must never borrow Prime's broker identity:
+  // a synthetic conversationId would let an unknown caller inspect or mutate a worker
+  // run and make the result look as if Prime had done it. No broker action has a safe
+  // nonmember identity fallback. Keep unrelated shared-Eve permissions unchanged.
+  const resolved = exactResolved;
   const caller: Caller = {
     ...base,
     conversationId: resolved,

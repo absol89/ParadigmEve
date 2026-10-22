@@ -2851,7 +2851,7 @@ describe('through the MCP endpoint', () => {
     }
   });
 
-  it('lets a connector-authenticated remote chat control Eve’s existing worker family without rewriting outer caller identity', async () => {
+  it('does not turn connector-authenticated shared Eve permission into Prime worker-broker identity', async () => {
     const ownerConversation = 'c-prime-owner';
     startSwarm(1, { conversationId: ownerConversation });
     restoreAgentIdentity({ version: 1, conversationId: ownerConversation });
@@ -2859,10 +2859,38 @@ describe('through the MCP endpoint', () => {
     const recovery = vi.fn();
     const dispose = onPrimeIdentityRecoveryRequest(recovery);
     try {
+      const before = swarmStateForCaller({ conversationId: ownerConversation });
       const text = await agentsWithRequestId(requestId, 'status');
-      expect(text).not.toContain('WORKER_IDENTITY_LOST');
-      expect(text).toContain('worker-1');
+      expect(text).toContain('WORKER_IDENTITY_LOST');
+      expect(text).not.toContain('worker-1');
       expect(recovery).toHaveBeenCalledWith(ownerConversation, requestId);
+      expect(swarmStateForCaller({ conversationId: ownerConversation })).toEqual(before);
+    } finally {
+      dispose();
+      resetAgentIdentityForTests();
+    }
+  });
+
+  it('refuses shared-Eve worker messaging and spawning without exact chat evidence', async () => {
+    const ownerConversation = 'c-prime-owner-mutations';
+    startSwarm(1, { conversationId: ownerConversation });
+    restoreAgentIdentity({ version: 1, conversationId: ownerConversation });
+    const recovery = vi.fn();
+    const dispose = onPrimeIdentityRecoveryRequest(recovery);
+    try {
+      const before = swarmStateForCaller({ conversationId: ownerConversation });
+      const message = await agentsWithRequestId('wfr_shared_unproven_message', 'message', {
+        to: 'worker-1', text: 'must not be routed as Prime'
+      });
+      expect(message).toContain('WORKER_IDENTITY_LOST');
+      expect(pendingCount('worker-1')).toBe(0);
+      const spawnResult = await agentsWithRequestId('wfr_shared_unproven_spawn', 'spawn', {
+        workers: [{ task: 'must not become a new worker under borrowed Prime identity' }]
+      });
+      expect(spawnResult).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(swarmStateForCaller({ conversationId: ownerConversation })).toEqual(before);
+      expect(recovery).toHaveBeenCalledWith(ownerConversation, 'wfr_shared_unproven_message');
+      expect(recovery).toHaveBeenCalledWith(ownerConversation, 'wfr_shared_unproven_spawn');
     } finally {
       dispose();
       resetAgentIdentityForTests();
