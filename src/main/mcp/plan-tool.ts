@@ -1,13 +1,12 @@
 import { currentCaller, currentCall } from './call-context.js';
 import { fail, guard, ok, type SurfaceRegistrar } from './kernel.js';
 import { toolDeclaration } from './tool-declarations.js';
-import { findSessionByConversation, getSession, readRecentEvents, readSessionPlan, updateSessionPlan } from '../session/store.js';
+import { getSession, readRecentEvents, readSessionPlan, updateSessionPlan } from '../session/store.js';
 import type { PlanStepSource } from '../../shared/plans.js';
 import { listPlans, syncSessionAgentPlan } from '../plans.js';
 import { ensureRequestTrailForAcceptedPlan } from '../request-trail-admission.js';
 import { agentPlanUpdateSchema } from '../../shared/agent-plan.js';
 import { logInfo, logWarn } from '../logger.js';
-import { sharedEveOwnerForCurrentCall } from '../eve-access.js';
 
 /**
  * Adapted from OpenAI Codex's update_plan (Apache-2.0), revision
@@ -23,18 +22,11 @@ export function registerPlanTool(reg: SurfaceRegistrar): void {
   })), update => guard('update_plan', async () => {
     if (!reg.sessionToolsLive) return reg.featureDisabled('Session recording', 'Settings → Chat');
     const caller = currentCaller();
-    let sessionId = caller.sessionId;
-    let conversationId = caller.conversationId;
-    if (!sessionId || !conversationId) {
-      const sharedOwner = sharedEveOwnerForCurrentCall();
-      const sharedSession = sharedOwner
-        ? await findSessionByConversation(sharedOwner, { requireUnique: true })
-        : null;
-      if (sharedOwner && sharedSession?.conversationId === sharedOwner) {
-        sessionId = sharedSession.id;
-        conversationId = sharedOwner;
-      }
-    }
+    // Shared-Eve authority permits self-contained tools from another device, but it
+    // does not establish which conversation owns a Plan. Borrowing the durable Eve
+    // identity here made an unknown worker/phone request mutate Prime's Plan.
+    const sessionId = caller.sessionId;
+    const conversationId = caller.conversationId;
     if (!sessionId || !conversationId) {
       return fail('Exact chat identity is required to update its plan. No plan was changed; retry after the companion reconnects.');
     }

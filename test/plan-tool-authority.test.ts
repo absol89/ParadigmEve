@@ -170,7 +170,7 @@ describe('update_plan archive boundary', () => {
     expect(fixture.ensureRequestTrailForAcceptedPlan).toHaveBeenCalledTimes(1);
   });
 
-  it('lets connector-authenticated shared Eve update the durable Prime plan when exact Companion proof is unavailable', async () => {
+  it('refuses to update Prime’s Plan from shared Eve authority without exact Companion proof', async () => {
     fixture.caller = { sessionId: null, conversationId: null } as any;
     fixture.sharedOwner = 'conversation-prime';
     fixture.sessions.set('session-prime', {
@@ -182,20 +182,11 @@ describe('update_plan archive boundary', () => {
 
     const reply = await registeredHandler()({ plan: [{ step: 'Voice plan update', status: 'in_progress' }] });
 
-    expect(reply.isError).not.toBe(true);
-    expect(fixture.updateSessionPlan).toHaveBeenCalledWith(
-      'session-prime',
-      'conversation-prime',
-      expect.anything(),
-      123
-    );
-    expect(fixture.syncSessionAgentPlan).toHaveBeenCalledWith(
-      'session-prime',
-      'conversation-prime',
-      'Prime Eve',
-      expect.anything(),
-      { sources: [] }
-    );
+    expect(reply.isError).toBe(true);
+    expect(reply.content[0].text).toContain('Exact chat identity is required');
+    expect(fixture.updateSessionPlan).not.toHaveBeenCalled();
+    expect(fixture.syncSessionAgentPlan).not.toHaveBeenCalled();
+    expect(fixture.ensureRequestTrailForAcceptedPlan).not.toHaveBeenCalled();
   });
 
   it('still refuses an unproven caller when shared Eve authority does not resolve one unique Prime session', async () => {
