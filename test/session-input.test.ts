@@ -2051,10 +2051,69 @@ it('heartbeat maintenance finds stale exact-key copies without removing distinct
   expect(await reconcileHeartbeatFindingQueue()).toBe(1);
   expect(await reconcileHeartbeatFindingQueue()).toBe(0);
   const after = await listInputs();
-  expect(after.find(row => row.id === unique.id)?.state).toBe('queued');
+  // The newer distinct finding carries the older one; reconciliation leaves both rows alone.
+  expect(after.find(row => row.id === unique.id)).toMatchObject({ state: 'cancelled', error: expect.stringContaining('Folded') });
   expect(after.find(row => row.id === claimed.id)?.state).toBe('queued');
+  expect(after.find(row => row.id === claimed.id)?.text).toContain('Different task awaiting Prime.');
   expect(after.some(row => row.purpose === 'heartbeat-finding' && row.state === 'browser' && row.owner === 'exact-page')).toBe(true);
   expect(after.filter(row => row.purpose === 'heartbeat-finding' && row.text.includes('heartbeat:retired-key') && row.state === 'queued')).toHaveLength(0);
+});
+
+it('folds findings queued behind a stalled Prime turn into one message instead of one turn each', async () => {
+  // 2026-10-22: four findings waited behind a stalled dogfood turn and then reached Prime in 77 s.
+  binding.activeTurnId = 'stalled-turn';
+  const oldest = await enqueueChatReviewFinding(sessionId, 'heartbeat:f5', 'c3 build still running.');
+  const middle = await enqueueChatReviewFinding(sessionId, 'heartbeat:f6', 'c3 build finished; not installed.');
+  const newest = await enqueueChatReviewFinding(sessionId, 'heartbeat:f7', 'c3 installed; dogfood turn stalled.');
+  const rows = (await listInputs()).filter(row => row.purpose === 'heartbeat-finding');
+  expect(rows.filter(row => row.state === 'queued').map(row => row.id)).toEqual([newest.id]);
+  for (const id of [oldest.id, middle.id]) {
+    expect(rows.find(row => row.id === id)).toMatchObject({ state: 'cancelled', error: expect.stringContaining('Folded') });
+  }
+  expect(newest.text.startsWith('[[PARADIGMEVE-HEARTBEAT-FINDING:heartbeat:f7]]\n')).toBe(true);
+  expect(newest.text.split('Heartbeat review found something for Prime').length).toBe(2);
+  const at = (needle: string) => newest.text.indexOf(needle);
+  expect(at('c3 installed; dogfood turn stalled.')).toBeLessThan(at('[[PARADIGMEVE-HEARTBEAT-FINDING-EARLIER:heartbeat:f6]]'));
+  expect(at('c3 build finished; not installed.')).toBeLessThan(at('[[PARADIGMEVE-HEARTBEAT-FINDING-EARLIER:heartbeat:f5]]'));
+  expect(at('c3 build still running.')).toBeGreaterThan(at('[[PARADIGMEVE-HEARTBEAT-FINDING-EARLIER:heartbeat:f5]]'));
+
+  // The heartbeat spool retries the older keys every tick: they answer with the carrier, never a new row.
+  expect(await enqueueChatReviewFinding(sessionId, 'heartbeat:f5', 'c3 build still running.')).toMatchObject({ id: newest.id, state: 'queued' });
+  expect((await listInputs()).filter(row => row.purpose === 'heartbeat-finding')).toHaveLength(3);
+  await writeDurableNow('session-input', (await listInputs()).map(row => row.id === newest.id
+    ? { ...row, state: 'sent' as const, owner: 'prime-page', offeredAt: now, sendAuthorizedAt: now + 1, deliveredAt: now + 2, messageId: 'carrier' } : row));
+  resetInputForTests();
+  expect(await enqueueChatReviewFinding(sessionId, 'heartbeat:f5', 'c3 build still running.')).toMatchObject({ id: newest.id, state: 'sent' });
+  expect(await enqueueChatReviewFinding(sessionId, 'heartbeat:f6', 'c3 build finished; not installed.')).toMatchObject({ id: newest.id, state: 'sent' });
+  expect((await listInputs()).filter(row => row.purpose === 'heartbeat-finding')).toHaveLength(3);
+});
+
+it('answers folded keys with the carrier dismissal, and re-queues them alone when the carrier failed before Send', async () => {
+  binding.activeTurnId = 'busy-turn';
+  await enqueueChatReviewFinding(sessionId, 'heartbeat:older', 'Older finding.');
+  const carrier = await enqueueChatReviewFinding(sessionId, 'heartbeat:newer', 'Newer finding.');
+  expect(await cancelInput(carrier.id)).toBe(true);
+  expect(await enqueueChatReviewFinding(sessionId, 'heartbeat:older', 'Older finding.')).toMatchObject({ id: carrier.id, dismissed: true });
+
+  await enqueueChatReviewFinding(sessionId, 'heartbeat:lost-older', 'Lost older finding.');
+  const failed = await enqueueChatReviewFinding(sessionId, 'heartbeat:lost-newer', 'Lost newer finding.');
+  await writeDurableNow('session-input', (await listInputs()).map(row => row.id === failed.id
+    ? { ...row, state: 'failed' as const, error: 'Not sent: the browser did not pick up this message within 60 seconds.' } : row));
+  resetInputForTests();
+  const requeued = await enqueueChatReviewFinding(sessionId, 'heartbeat:lost-older', 'Lost older finding.');
+  expect(requeued).toMatchObject({ state: 'queued' });
+  expect(requeued.text.startsWith('[[PARADIGMEVE-HEARTBEAT-FINDING:heartbeat:lost-older]]\n')).toBe(true);
+});
+
+it('never folds a heartbeat finding that a browser has claimed', async () => {
+  binding.activeTurnId = 'busy-turn';
+  const claimedFinding = await enqueueChatReviewFinding(sessionId, 'heartbeat:claimed-first', 'Already offered to the page.');
+  await writeDurableNow('session-input', (await listInputs()).map(row => row.id === claimedFinding.id
+    ? { ...row, state: 'browser' as const, owner: 'prime-page', offeredAt: now, requiresAuthorization: true } : row));
+  resetInputForTests();
+  const later = await enqueueChatReviewFinding(sessionId, 'heartbeat:after-claim', 'Later finding.');
+  expect(later.text).not.toContain('Already offered to the page.');
+  expect((await listInputs()).find(row => row.id === claimedFinding.id)?.state).toBe('browser');
 });
 
 it('does not offer a heartbeat finding to the browser while Voice owns the Prime conversation', async () => {

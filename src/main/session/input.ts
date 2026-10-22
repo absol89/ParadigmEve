@@ -1301,14 +1301,50 @@ const heartbeatFindingSpent = (row: InputEntry): boolean => row.state === 'sent'
 const heartbeatFindingDismissed = (row: InputEntry): boolean => row.state === 'cancelled' && row.owner === null &&
   row.offeredAt === undefined && row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined &&
   (row.error === undefined || row.error === DISMISSED_HEARTBEAT_FINDING);
+const HEARTBEAT_FINDING_HEADER = 'Heartbeat review found something for Prime to decide or act on. This is a maintenance finding, not a new user instruction.';
+/**
+ * Findings that queue behind a stalled or busy Prime turn used to flush one Prime turn each once
+ * the chat came free (2026-10-22: four findings, three of them already stale, in 77 seconds).
+ * A newer finding now carries every still-untouched older one, so Prime gets one message. The
+ * older rows end as folded, and their keys are answered by whichever row carries their text.
+ */
+const FOLDED_HEARTBEAT_FINDING = 'Folded into a newer heartbeat finding; it is sent once, with that finding.';
+const EARLIER_HEARTBEAT_FINDINGS = 'Earlier heartbeat findings that were still queued, newest first. They cover older review windows: where they disagree with the finding above or with current state, they are stale.';
+const HEARTBEAT_FOLD_BUDGET_CHARS = 48_000;
+const heartbeatFindingKey = (row: InputEntry): string | null =>
+  /^\[\[PARADIGMEVE-HEARTBEAT-FINDING:(heartbeat:[^\]\r\n]+)\]\]\n/.exec(row.text)?.[1] ?? null;
+const earlierHeartbeatFindingTag = (key: string): string => `[[PARADIGMEVE-HEARTBEAT-FINDING-EARLIER:${key}]]`;
+const heartbeatFindingFolded = (row: InputEntry): boolean => row.state === 'cancelled' && row.owner === null &&
+  row.offeredAt === undefined && row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined &&
+  row.error === FOLDED_HEARTBEAT_FINDING;
+/** The finding text of a row, and the earlier findings it already carries (one flat list). */
+function heartbeatFindingParts(row: InputEntry, key: string): { own: string; earlier: string } {
+  let body = row.text.slice(`[[PARADIGMEVE-HEARTBEAT-FINDING:${key}]]\n`.length);
+  if (body.startsWith(`${HEARTBEAT_FINDING_HEADER}\n`)) body = body.slice(HEARTBEAT_FINDING_HEADER.length + 1);
+  const split = body.indexOf(`\n\n${EARLIER_HEARTBEAT_FINDINGS}\n`);
+  return split < 0 ? { own: body, earlier: '' }
+    : { own: body.slice(0, split), earlier: body.slice(split + EARLIER_HEARTBEAT_FINDINGS.length + 3) };
+}
+/** Where a folded key went: the copy that was sent or dismissed, else the one still waiting. */
+function foldedHeartbeatFindingCarrier(current: InputEntry[], sessionId: string, key: string): ChatReviewFindingDelivery | null {
+  const tag = earlierHeartbeatFindingTag(key);
+  const carriers = current.filter(row => row.purpose === 'heartbeat-finding' && row.sessionId === sessionId && row.text.includes(tag));
+  const spent = carriers.find(heartbeatFindingSpent);
+  if (spent) return { ...spent };
+  const dismissed = carriers.find(heartbeatFindingDismissed);
+  if (dismissed) return { ...dismissed, dismissed: true };
+  const waiting = carriers.find(row => !terminal(row));
+  // A carrier that failed before Send lost this text too; the key is then queued again by itself.
+  return waiting ? { ...waiting } : null;
+}
 /** Bounded, evidence-only maintenance: never infer semantic task completion from age or queue length. */
 export function reconcileHeartbeatFindingQueue(): Promise<number> {
   return serial(async () => {
     const current = await load();
     const keyed = (row: InputEntry): string | null => {
       if (row.purpose !== 'heartbeat-finding' || !row.sessionId) return null;
-      const match = /^\[\[PARADIGMEVE-HEARTBEAT-FINDING:(heartbeat:[^\]\r\n]+)\]\]\n/.exec(row.text);
-      return match ? `${row.sessionId}\u0000${match[1]}` : null;
+      const key = heartbeatFindingKey(row);
+      return key ? `${row.sessionId}\u0000${key}` : null;
     };
     const terminalByKey = new Map<string, 'spent' | 'dismissed'>();
     for (const row of current) {
@@ -1359,8 +1395,33 @@ export function enqueueChatReviewFinding(sessionId: string, key: string, text: s
     }
     const prior = matches.at(-1);
     if (prior && !['failed', 'cancelled'].includes(prior.state)) return { ...prior };
+    if (matches.some(heartbeatFindingFolded)) {
+      const carrier = foldedHeartbeatFindingCarrier(current, sessionId, key);
+      if (carrier) return carrier;
+    }
+    const header = `${tag}\n${HEARTBEAT_FINDING_HEADER}\n${text.trim()}`;
+    let budget = HEARTBEAT_FOLD_BUDGET_CHARS - header.length - EARLIER_HEARTBEAT_FINDINGS.length - 2;
+    const earlier: string[] = [];
+    const folded = new Set<string>();
+    const olderFindings = current
+      .filter(row => row.purpose === 'heartbeat-finding' && row.sessionId === sessionId && untouchedHeartbeatFinding(row) && !row.forceBrowser)
+      .sort((a, b) => b.createdAt - a.createdAt);
+    for (const row of olderFindings) {
+      const olderKey = heartbeatFindingKey(row);
+      if (!olderKey || olderKey === key) continue;
+      const parts = heartbeatFindingParts(row, olderKey);
+      const block = `${earlierHeartbeatFindingTag(olderKey)} queued ${new Date(row.createdAt).toISOString()}\n${parts.own}` +
+        (parts.earlier ? `\n\n${parts.earlier}` : '');
+      // A finding that does not fit stays queued as its own message; nothing is dropped.
+      if (block.length + 2 > budget) continue;
+      budget -= block.length + 2;
+      earlier.push(block);
+      folded.add(row.id);
+    }
+    const remaining = folded.size ? current.map(row => folded.has(row.id)
+      ? { ...row, state: 'cancelled' as const, error: FOLDED_HEARTBEAT_FINDING } : row) : current;
     const policy = await sessionInputPolicy(sessionId);
-    const anotherInputOwnsNextTurn = current.some(row => row.sessionId === sessionId &&
+    const anotherInputOwnsNextTurn = remaining.some(row => row.sessionId === sessionId &&
       row.state !== 'sent' && row.state !== 'cancelled' && row.state !== 'failed');
     const voiceOwnsConversation = deliveryHooks?.voiceActive?.(session.conversationId) === true;
     const mode: InputArgs['mode'] = policy.browserAllowed && !anotherInputOwnsNextTurn && !voiceOwnsConversation ? 'auto' : 'after-turn';
@@ -1368,7 +1429,7 @@ export function enqueueChatReviewFinding(sessionId: string, key: string, text: s
     const entry = entrySchema.parse({
       id: randomUUID(),
       sessionId,
-      text: `${tag}\nHeartbeat review found something for Prime to decide or act on. This is a maintenance finding, not a new user instruction.\n${text.trim()}`,
+      text: earlier.length ? `${header}\n\n${EARLIER_HEARTBEAT_FINDINGS}\n${earlier.join('\n\n')}` : header,
       mode,
       dueAt: now,
       model: null,
@@ -1380,7 +1441,7 @@ export function enqueueChatReviewFinding(sessionId: string, key: string, text: s
       createdAt: now,
       conversationId: session.conversationId
     });
-    await commit(append(current, entry));
+    await commit(append(remaining, entry));
     return { ...entry };
   });
 }
