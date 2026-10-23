@@ -1,4 +1,5 @@
 import { offerToolInput, acknowledgeToolInput, TOOL_INPUT_HEADER } from '../session/input.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { pluginManager } from '../plugins/manager.js';
 import { WINDOWS_COMPUTER_STATE_INPUT_METHODS } from '../../shared/windows-computer.js';
 /**
@@ -81,7 +82,9 @@ import {
   evidenceWindow,
   freshCallOrigin,
   recordAgentMessage,
-  recordToolCall
+  recordToolCall,
+  admitWorkerExecution,
+  settleWorkerExecution
 } from '../session/recorder.js';
 import { requestCorrelation } from '../session/correlation.js';
 import { BLOCKED_CHAT_REFUSAL, anyChatBlocked, isChatBlocked } from '../session/blocked-chats.js';
@@ -449,7 +452,8 @@ export async function dispatch(
   requestId: string | null,
   surface: SurfaceId,
   run: () => Promise<ToolResult>,
-  parent?: CallContext
+  parent?: CallContext,
+  effectful = true
 ): Promise<ToolResult> {
   // The context is built here, one layer out from where the work happens, because the
   // compaction barrier asks about the whole request and not just the handler. A call is
@@ -468,7 +472,7 @@ export async function dispatch(
   };
   try {
     const result = await trackMcpRequest(() =>
-      trackInFlight(context, () => dispatchTracked(context, name, args, transportKey, requestId, surface, run, !!parent))
+      trackInFlight(context, () => dispatchTracked(context, name, args, transportKey, requestId, surface, run, !!parent, effectful))
     );
     // In-process callers have no socket; resolving their outer invocation publishes it.
     if (!parent && !inboundPublication()) context.publication!.completedAt = Date.now();
@@ -523,7 +527,8 @@ async function dispatchTracked(
   requestId: string | null,
   surface: SurfaceId,
   run: () => Promise<ToolResult>,
-  nested: boolean
+  nested: boolean,
+  effectful: boolean
 ): Promise<ToolResult> {
   // Publish local admission before any wait for page identity. The page can then retry a
   // first-call correlation without the handler and browser waiting on one another.
@@ -749,9 +754,67 @@ async function dispatchTracked(
   }
   let handlerRan = false;
   markTiming('identity');
-  const invokeHandler = (): Promise<ToolResult> => {
+  const invokeHandler = async (): Promise<ToolResult> => {
+    let receiptId: string | null = null;
+    // A mixed read/write tool's read action is not an external effect even
+    // though its top-level MCP declaration cannot carry per-action hints.
+    const readAction = args !== null && typeof args === 'object' &&
+      ((name === 'pins' || name === 'schedule') && (args as { action?: unknown }).action === 'list' ||
+        name === 'agents' && (args as { action?: unknown }).action === 'status');
+    if (effectful && !readAction && context.agent?.startsWith('worker-')) {
+      // A worker's existing broker identity is proof, not the shared Eve
+      // permission. The durable receipt must precede the actual handler.
+      const localPrincipal = context.caller.localPrincipal;
+      const conversationId = context.caller.conversationId;
+      const sessionId = context.caller.sessionId ?? null;
+      const runId = localPrincipal?.runId ?? (conversationId ? currentRunId(conversationId) : null);
+      const invocationId = localPrincipal ? randomUUID() : requestId;
+      if (!runId || !invocationId ||
+          (localPrincipal ? localPrincipal.agentId !== context.agent : !conversationId || !sessionId)) {
+        return fail('WORKER_RECEIPT_IDENTITY_REQUIRED: no effect was dispatched.');
+      }
+      try {
+        const admitted = await admitWorkerExecution({
+          conversationId, sessionId, workerId: context.agent,
+          principalKind: localPrincipal ? 'local-agent' : 'chatgpt',
+          runId, invocationId, tool: name, args
+        });
+        if (!admitted.accepted) return fail(`${admitted.reason}: no effect was dispatched.`);
+        receiptId = admitted.id;
+      } catch (error) {
+        logWarn(`worker receipt admission failed before ${name}: ${friendlyError(error)}`);
+        return fail('WORKER_RECEIPT_NOT_DURABLE: no effect was dispatched.');
+      }
+    }
     handlerRan = true;
-    return run();
+    try {
+      const executed = await run();
+      if (receiptId) {
+        // A tool-level error may follow a partial external effect, even if
+        // guard() mapped it to a normal rejection. Only a positive result is
+        // authoritative completion; errors remain unknown until reconciled.
+        const digest = createHash('sha256');
+        for (const part of executed.content) {
+          digest.update(part.type);
+          if (part.type === 'text') digest.update(part.text);
+          else digest.update(part.mimeType).update(part.data);
+        }
+        if (executed.structuredContent) digest.update(JSON.stringify(executed.structuredContent));
+        await settleWorkerExecution(receiptId, executed.isError ? 'unknown' : 'completed',
+          context.outcome ?? (executed.isError ? 'tool_rejected' : 'ok'), digest.digest('hex'));
+      }
+      return executed;
+    } catch (error) {
+      if (receiptId) {
+        try { await settleWorkerExecution(receiptId, 'unknown'); }
+        catch { /* admitted intent remains the restart fence */ }
+      }
+      if (receiptId) {
+        logWarn(`worker receipt could not settle ${name}: ${friendlyError(error)}`);
+        return fail('WORKER_RECEIPT_OUTCOME_UNKNOWN: do not retry this effect.');
+      }
+      throw error;
+    }
   };
   const result = await runInCallContext(context, () =>
       blockedChat
@@ -1153,7 +1216,7 @@ export function createRegistrar(server: McpServer | null, ctx: ToolContext, surf
   const agentToolsExposed = ctx.exposedAgentTools ?? agentToolsLive;
   const findExposed = ctx.exposedFind ?? (!exposedCaps.command && exposedCaps.search);
   const names: string[] = [];
-  const handlers = new Map<string, { description: string; run: (args: unknown) => Promise<ToolResult> }>();
+  const handlers = new Map<string, { description: string; effectful: boolean; run: (args: unknown) => Promise<ToolResult> }>();
 
   return {
     ctx,
@@ -1170,11 +1233,11 @@ export function createRegistrar(server: McpServer | null, ctx: ToolContext, surf
       return dispatch(name, args, parent.caller.transportKey, parent.caller.requestId, surface, async () => {
         const entry = handlers.get(name);
         return entry ? entry.run(args) : fail('UNKNOWN_TOOL: this tool is not available on this connector.');
-      }, parent);
+      }, parent, handlers.get(name)?.effectful ?? true);
     },
     register(name, config, handler) {
       names.push(name);
-      handlers.set(name, { description: config.description, run: async args => {
+      handlers.set(name, { description: config.description, effectful: config.annotations?.readOnlyHint !== true, run: async args => {
         const parsed = await config.inputSchema.safeParseAsync(args);
         return parsed.success ? handler(parsed.data) : fail('INVALID_ARGUMENTS: arguments do not match this tool’s schema.');
       } });
@@ -1189,7 +1252,7 @@ export function createRegistrar(server: McpServer | null, ctx: ToolContext, surf
       }, ((args: never, mcpCtx?: McpCallContext) =>
         dispatch(name, args, mcpCtx?.sessionId ?? null, requestIdOf(mcpCtx), surface, () =>
           handler(args)
-        )) as never);
+        , undefined, config.annotations?.readOnlyHint !== true)) as never);
     },
     guarded(cap, name, fn) {
       return guard(name, async () => {

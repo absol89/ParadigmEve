@@ -3,20 +3,30 @@
 > Not in an engineering mood? Start with the local [Eve HTML tour](../readme/index.html):
 > human problems first, tiny interactive demos, technical details only when you ask for them.
 
-> **Current source/manual line:** 2.4.1 — `v2.4.1` source tag (`main`, `release/2.4.1`)
+> **Current source/manual line:** 2.4.4 development candidate on `release/2.4.4`; this is not a public `v2.4.4` release tag.
 > **Bridge protocol:** 15
-> **Release evidence:** the installed Windows x64 debug build has separate local self-testing evidence; only assets actually listed on [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) are public downloads.
+> **Release evidence:** private Windows 2.4.4 c2 was hash-verified in the installed app and incremental archive reuse was observed; this does not establish full acceptance or installation of the new c3 delivery controls. Only assets actually listed on [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) are public downloads.
 
 This folder is the fast, linked operational manual for how the current ParadigmEve source fits together. It is
 the current manual, not a changelog or nomenclature history. Rewrite it when the product changes so
 the Vault always teaches the behavior, names and operating model that are true now.
+
+The [2.4.4 candidate notes](../release-notes/v2.4.4.md) distinguish the
+c1 transcription/updater changes, c2 archive/`%how` improvements, and c3
+failed-message action rail. The current pre-Send pickup timeout recovery is
+**Force Send only when the original user outbox row is provably untouched**;
+an ambiguous browser claim offers manual composer restoration instead.
+Neither path permits automatic duplicate Send. Startup full archive indexing
+and Prime page-evidence/Request Trail attribution remain open reliability work.
 
 Current source/tests and first-hand runtime evidence remain authoritative for what exists today; the
 Vault is the canonical human-readable operational manual. [`AGENTS.md`](../../AGENTS.md) supplies the agent/developer
 bootstrap and implementation contracts. These notes explain **who owns what, how data moves, where
 state lives, and what to check when something breaks**. See [Self-reliant AI and the manual](12-self-reliant-ai-and-the-manual.md).
 
-## 2.4.1 snapshot — know which evidence you are reading
+## Historical 2.4.1 / 2.4.0 acceptance snapshot — not the current release
+
+The entries below describe earlier tagged source and Windows self-testing. Do not present them as evidence that a current 2.4.4 installation has passed live acceptance. Check the running app version and current release notes instead.
 
 - **2.4.1 source:** `package.json` and the Companion manifest declare `2.4.1` on `release/2.4.1`: onboarding fixes on top of 2.4.0 (see [2.4.1 notes](../release-notes/v2.4.1.md)). Tagged `v2.4.1` on `main` after Windows x64 self-testing.
 - **Tagged source:** tag `v2.4.0` marks the final 2.4.0 commit. This identifies source, **not** the state of a user's installed application or a published installer.
@@ -59,6 +69,7 @@ state lives, and what to check when something breaks**. See [Self-reliant AI and
 | [15 — Desktop pets and Eve avatars](15-desktop-pets-and-avatars.md) | How does Eve make a desktop pet or a human avatar of herself that the user can import on the Pets page? |
 | [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md) | How do the three app languages, the agent's own name, the setup guide and localized `%`/`#` names work? |
 | [17 — Dynamic Skills and local transcription](17-dynamic-skills-and-local-transcription.md) | How are reusable Skills selected, and how do local CPU/GPU or cloud speech recognition, microphone/system capture and local diarization work? |
+| [18 — Worker tool authority and provenance](18-worker-tool-authority-and-provenance.md) | How will durable Eve-local grants, independent worker tools, exact chat attribution and approval-block recovery be implemented and tested? This is an implementation spec, not an installed feature. |
 | [Release-visual design and evaluation](release-visual-design.md) | How can Eve or any connected model make an accessible, actionable release explainer rather than an overloaded infographic, and evaluate candidates without inventing a feature? |
 | [Glossary](glossary.md) | Exact meanings of session, conversation, turn, worker, Thread, Quilt, Plan, repair, etc. |
 

@@ -27,8 +27,8 @@ Keep durable procedures in the Vault instead of growing a second manual in this 
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-10-16**, `release/2.4.1` on top of the final `v2.4.0` tag (built on
-source checkpoint `aac7643b` plus reviewed fixes). App/extension **2.4.1**,
+Source alignment: **2026-10-23**, cumulative `release/2.4.4` based on public
+`v2.4.3` (`204e1a45`). App/extension **2.4.4**,
 bridge protocol **15** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). The public Git tag is source provenance, not proof of
 downloadable release assets, installation or live Chrome behavior.

@@ -12,13 +12,22 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current public source line is **2.4.1** (tagged `v2.4.1` on 2026-10-17, built on
-`v2.4.0`; the GitHub release page shows each tag's commit). A Windows x64 candidate passed
-installed self-testing before the tag. The earlier **App + Companion 2.2.2** Angel checkpoint remains
+The current **2.4.4 source-release preparation line** is `release/2.4.4`,
+cumulative over public `v2.4.3`. Tag, main integration and remote push require
+independent verification; neither a planned tag nor an installed c7 candidate
+proves public installers. The earlier **App + Companion 2.2.2** Angel checkpoint remains
 part of the release history, and the current bridge protocol is **15**. A package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other. This tagged *source* checkpoint is not
 itself a published installer or proof of live operation on every target platform.
+
+The 2.4.4 c2 Windows x64 debug candidate was later installed locally and its
+installed app bundle hash matched the packaged c2 source. Its incremental
+static-site refresh reused 34 of 35 chats, but a full startup archive index
+scan still reached about 921 MiB RSS. Candidate 3 adds the delivery-icon and
+recovery-action-state source fix; its installer and installed acceptance are
+separate evidence, never inferred from the c2 hash. Read
+[2.4.4 candidate notes](../release-notes/v2.4.4.md) for the exact scope.
 
 ## Git provenance for cumulative release lines
 
@@ -197,6 +206,18 @@ For the current source line, live acceptance includes checks such as:
   remains Ready to archive until the user explicitly archives it;
 - no obsolete connector-maintenance page hijacks the active chat;
 - Companion/browser reconnect proves the current build.
+
+For a 2.4.4 c3 acceptance, also inspect a failed user-authored browser
+pickup timeout: one **Force Send** action and one **Dismiss**, with no icon
+overlap at the actual window width; a browser-claimed/possibly delivered row
+must instead offer manual composer restoration, never Force Send. Exercise
+guarded Force Send only on a fresh, intentionally created *provably unclaimed*
+test message, preserving current human drafts, voice and tab focus. Confirm
+no duplicate send and that the original durable row retains its identity.
+Measure app memory/CPU and archive write activity across startup, shutdown,
+dirty-chat refresh and Archive opening; note that full startup/shutdown
+indexing is still a known issue. Check Prime attribution and Request Trail
+on real tool calls before treating c3 as an acceptable main-branch candidate.
 
 ## Runtime updater
 

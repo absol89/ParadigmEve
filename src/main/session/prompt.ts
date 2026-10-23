@@ -5,7 +5,7 @@ import { currentCoreInstructions } from '../mcp/instructions.js';
 import { getSessionProject, projectWorkspace } from '../projects.js';
 import { resolvePath } from '../sandbox.js';
 import { MAX_CHATGPT_MESSAGE_CHARS, prependUserPrompt } from '../../shared/user-prompt.js';
-import { readVaultManualText, VAULT_CONTEXT_MARKER, VAULT_MANUAL_ROOT } from '../vault-path.js';
+import { readHowOpeningManualText, VAULT_CONTEXT_MARKER, VAULT_MANUAL_ROOT } from '../vault-path.js';
 
 type PromptScope = { sessionId?: string | null; projectId?: string | null };
 export type PromptLimits = { maxChars: number; maxBytes: number };
@@ -39,7 +39,7 @@ async function expandPackagedVault(text: string, core: string, budget: PromptLim
   if (!text.includes(VAULT_CONTEXT_MARKER)) return text;
   let manual: string;
   try {
-    manual = await readVaultManualText();
+    manual = await readHowOpeningManualText();
   } catch {
     return vaultFallback(text, core, budget);
   }

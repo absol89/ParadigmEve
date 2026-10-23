@@ -18,7 +18,20 @@ vi.mock('../src/main/session/recorder.js', async (original) => ({
   ...await original<typeof import('../src/main/session/recorder.js')>(),
   freshCallOrigin: (_tool: string, _at: number, request: string | null) => request?.startsWith('req-') ? request.slice(4) : null,
   awaitFreshCallOrigin: broker.awaitOrigin,
-  recordToolCall: async () => null, recordAgentMessage: broker.record
+  recordToolCall: async () => null, recordAgentMessage: broker.record,
+  // This suite exercises inbox/heartbeat dispatch, not the durable receipt store.
+  // Its synthetic request owners need a separate, authoritative session fixture.
+  admitWorkerExecution: async () => ({ accepted: true, id: 'inbox-fixture-receipt' }),
+  settleWorkerExecution: async () => undefined
+}));
+vi.mock('../src/main/session/correlation.js', async (original) => ({
+  ...await original<typeof import('../src/main/session/correlation.js')>(),
+  requestCorrelation: (requestId: string | null) => {
+    const conversationId = requestId?.startsWith('req-') ? requestId.slice(4)
+      : requestId?.startsWith('late-') ? requestId.slice(5) : null;
+    return conversationId ? { requestId, conversationId, sessionId: `session-${conversationId}`,
+      messageId: 'fixture-message', tool: 'fixture', observedAt: Date.now() } : null;
+  }
 }));
 vi.mock('../src/main/session/store.js', async (original) => ({
   ...await original<typeof import('../src/main/session/store.js')>(), conversationAttachment: async () => 'current'

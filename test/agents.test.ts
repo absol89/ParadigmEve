@@ -2932,6 +2932,51 @@ describe('through the MCP endpoint', () => {
     }
   });
 
+  /**
+   * Installed c6, 2026-10-23 request 708c053f: the worker-lane key is printed only into the
+   * app-owned reviewer's task. An unattributed call presenting it is (at best) that worker, so it
+   * must never resolve to Prime — not for status, not for messaging, not for spawning.
+   */
+  it('never turns a worker-lane heartbeat key into Prime identity for an unattributed call', async () => {
+    const heartbeatPrime: Caller = { conversationId: 'c-prime-worker-lane' };
+    startSwarm(1, heartbeatPrime);
+    const key = 'heartbeat:worker-lane-not-prime';
+    await recordChatObservations(heartbeatPrime.conversationId!, [
+      { kind: 'user_message', time: Date.now(), text: 'heartbeat coordinator', messageId: 'worker-lane-coordinator-message' }
+    ]);
+    const summary = await findSessionByConversation(heartbeatPrime.conversationId!, { requireUnique: true });
+    expect(summary).toBeTruthy();
+    await writeDurableNow('chat-review-heartbeat', {
+      debt: {
+        key,
+        sinceAt: 100,
+        untilAt: 200,
+        sessionId: summary!.id,
+        conversationId: heartbeatPrime.conversationId,
+        reviewLane: 'worker'
+      }
+    });
+    try {
+      const before = swarmStateForCaller(heartbeatPrime);
+      const status = await agentsWithRequestId('wfr_worker_lane_status', 'status', { review_key: key });
+      expect(status).toContain('WORKER_IDENTITY_LOST');
+      expect(status).not.toContain('worker-1');
+      const message = await agentsWithRequestId('wfr_worker_lane_message', 'message', {
+        to: 'prime', text: 'reviewer report must not be routed as Prime', review_key: key
+      });
+      expect(message).toContain('WORKER_IDENTITY_LOST');
+      expect(message).not.toMatch(/cannot message itself/i);
+      const spawned = await agentsWithRequestId('wfr_worker_lane_spawn', 'spawn', {
+        workers: [{ task: 'must not spawn under a reviewer key' }], review_key: key
+      });
+      expect(spawned).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(swarmStateForCaller(heartbeatPrime)).toEqual(before);
+      expect(pendingCount('worker-1')).toBe(0);
+    } finally {
+      await writeDurableNow('chat-review-heartbeat', {});
+    }
+  });
+
   it('never chooses a Prime refresh target when active ownership is ambiguous', async () => {
     startSwarm(1);
     spawn({ workers: [{ task: 'second prime work' }], caller: { conversationId: 'c-prime-b' } });

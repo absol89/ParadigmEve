@@ -178,6 +178,18 @@ provider URLs to fill gaps. If native/generated image bytes were never captured,
 explicit provider-only, metadata-only, missing or capture-error state rather than presenting the
 asset as retained.
 
+Static Archive Browser generation is local Node.js/filesystem work, not a model request; it does
+not spend ChatGPT tokens. Canonical sessions reconcile when they become dirty, independently of
+the disposable HTML site. An already-published site is refreshed in the background no more than
+once every 30 minutes, to avoid competing with live user work. Opening the Archive requests an
+immediate site-only refresh. That refresh reuses hash-verified search fragments and bounded HTML
+segments for unchanged chats, and reads only their validated manifests; changed chats are rendered
+from their canonical events. A changed chat-token map (for example a newly inserted chat), missing
+or modified cached fragments, or an explicit full Rebuild falls back to event scanning as required
+to preserve correct cross-chat anchors and repair tampered disposable output. The full Rebuild also
+verifies event-file integrity and refreshes the separate local search index. No worker or external
+AI is invoked by any of these archive-maintenance operations.
+
 Its conversation list defaults to newer-first using each archive session's canonical `updatedAt`.
 The compact order control switches between `Newer first` and `Older first`; a Swedish browser uses
 `Nyare först` and `Äldre först`. Reordering only moves sidebar links: chat hash tokens, the active

@@ -535,6 +535,8 @@ function loadWorker(options: {
   tabsSendMessage?: (tabId: number, message: Record<string, unknown>) => Promise<unknown>;
   windowsGet?: (windowId: number) => Promise<{ focused?: boolean }>;
   manifest?: Record<string, unknown>;
+  /** Answer chrome.tabs.get for registered tabs, as the pre-reload repair gate requires. */
+  describeKnownTabs?: boolean;
 }): WorkerHarness {
   const runtimeReload = vi.fn();
   let listener: ((message: any, sender: any, sendResponse: (value: any) => void) => boolean) | null = null;
@@ -611,7 +613,10 @@ function loadWorker(options: {
       create: tabsCreate,
       query: tabsQuery,
       update: tabsUpdate,
-      get: options.tabsGet ?? vi.fn(async () => {
+      // Opt-in: registered tabs are as Chrome describes them; anything else is unavailable.
+      get: options.tabsGet ?? vi.fn(async (id: number) => {
+        const known = options.describeKnownTabs ? knownTabs.get(id) : undefined;
+        if (known) return { ...known };
         throw new Error('tab state unavailable in this harness');
       }),
       sendMessage: tabsSendMessage,
@@ -875,7 +880,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 
   it('browser-only recovery waits for the missing chat and then reloads its exact existing tab', async () => {
     const { fetch, asked } = appWith(OTHER, true);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(41);
     await worker.send({ type: 'bind', conversationId: CHAT }, 41);
     await worker.fireAlarm(); await worker.fireAlarm();
@@ -891,7 +896,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
   });
   it('reloads the exact tab holding the chat the app named, and reports it once', async () => {
     const { fetch, asked, actions, claims } = appWith(CHAT);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(21);
     await worker.send({ type: 'bind', conversationId: CHAT }, 21);
     await worker.registerTab(22);
@@ -916,7 +921,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
     const { fetch, asked, actions, claims } = appWith(CHAT, false, 'compaction');
     const tabsSendMessage = vi.fn(async (_tabId: number, message: Record<string, unknown>) =>
       message.type === 'clf-resume-compaction' ? { accepted } : { ok: true });
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
     await worker.registerTab(21);
     await worker.send({ type: 'bind', conversationId: CHAT }, 21);
 
@@ -943,7 +948,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       }
       return { ok: true };
     });
-    const worker = loadWorker({
+    const worker = loadWorker({ describeKnownTabs: true,
       local: new FakeStorageArea(paired),
       session: new FakeStorageArea(),
       fetch,
@@ -976,7 +981,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       if (message.type === 'clf-browser-repair-state') return await new Promise<never>(() => undefined);
       return { ok: true };
     });
-    const worker = loadWorker({
+    const worker = loadWorker({ describeKnownTabs: true,
       local: new FakeStorageArea(paired),
       session: new FakeStorageArea(),
       fetch,
@@ -995,7 +1000,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 
   it('defers browser repair when Chrome cannot prove the page is safe to reload', async () => {
     const { fetch, asked, claims } = appWith(CHAT);
-    const worker = loadWorker({
+    const worker = loadWorker({ describeKnownTabs: true,
       local: new FakeStorageArea(paired),
       session: new FakeStorageArea(),
       fetch,
@@ -1032,7 +1037,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       if (message.type === 'clf-recorder-ping') return { ok: true, recorderVersion: 12 };
       return { ok: true };
     });
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
     await worker.registerTab(24);
     await worker.send({ type: 'bind', conversationId: CHAT }, 24);
     armed = true;
@@ -1074,7 +1079,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       if (message.type === 'clf-recorder-ping') return { ok: true, recorderVersion: 12 };
       return { ok: true };
     });
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch, tabsSendMessage });
     await worker.registerTab(26);
     await worker.send({ type: 'bind', conversationId: CHAT }, 26);
 
@@ -1106,7 +1111,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       });
       return response(200, { ok: true });
     });
-    const worker = loadWorker({
+    const worker = loadWorker({ describeKnownTabs: true,
       local: new FakeStorageArea(paired),
       session: new FakeStorageArea(),
       fetch,
@@ -1129,7 +1134,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 
   it('does not touch the tab when final repair authority is revoked after handout', async () => {
     const { fetch, asked, claims, revokeClaim } = appWith(CHAT);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(23);
     await worker.send({ type: 'bind', conversationId: CHAT }, 23);
     revokeClaim();
@@ -1152,7 +1157,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
    */
   it('reloads the registry-bound copy when one chat has two tabs', async () => {
     const { fetch, asked } = appWith(CHAT);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(31);
     await worker.send({ type: 'bind', conversationId: CHAT }, 31);
     await worker.registerTab(32);
@@ -1172,7 +1177,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
   /** A reload that throws reports that attempt as failed, then the next pass retries it. */
   it('retries a repair whose reload failed', async () => {
     const { fetch, asked, failedActions, arm } = appWith(null);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(51);
     await worker.send({ type: 'bind', conversationId: CHAT }, 51);
     await worker.fireAlarm();
@@ -1193,7 +1198,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
   /** A missing exact chat is opened once after the same fresh scan that prevents duplicates. */
   it('opens the exact chat when the scan proves this browser is not holding it', async () => {
     const { fetch, asked, actions } = appWith(OTHER);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(41);
     await worker.send({ type: 'bind', conversationId: CHAT }, 41);
 
@@ -1206,10 +1211,11 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
   });
 
   /**
-   * Automatic compaction selects its exact tab before reload while preserving
-   * OS focus on the user's current app, even when Chrome is minimized.
+   * Automatic compaction selects its exact tab while preserving OS focus on the user's current
+   * app, even when Chrome is minimized. Selection follows the reload: the pre-reload gate
+   * refuses any selected tab, so a repair can never reload the tab in front of the human.
    */
-  it('selects the repair tab before reload without activating the Chrome window', async () => {
+  it('selects the repair tab after reload without activating the Chrome window', async () => {
     let outstanding: string | null = CHAT;
     let token = '';
     let minted = 0;
@@ -1227,7 +1233,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       }
       return response(404, {});
     });
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(51);
     await worker.send({ type: 'bind', conversationId: CHAT }, 51);
 
@@ -1238,7 +1244,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
     const raised = worker.tabsUpdate.mock.invocationCallOrder.find(
       (_order, index) => worker.tabsUpdate.mock.calls[index]?.[1]?.active === true
     );
-    expect(raised).toBeLessThan(worker.tabsReload.mock.invocationCallOrder[0]!);
+    expect(raised).toBeGreaterThan(worker.tabsReload.mock.invocationCallOrder[0]!);
 
     await worker.fireAlarm();
     expect(worker.tabsCreate).toHaveBeenCalledWith({ url: `https://chatgpt.com/c/${OTHER}`, active: true });
@@ -1268,7 +1274,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
       }
       return response(404, {});
     });
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(71);
     await worker.send({ type: 'bind', conversationId: CHAT }, 71);
 
@@ -1295,7 +1301,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
    */
   it('keeps its maintenance alarm running and asks the app on every pass while it is paired, tabs or none', async () => {
     const { fetch, asked } = appWith(null);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.fireAlarm();
     expect(asked).toEqual(['status']);
     expect(worker.alarmCreate).toHaveBeenCalledWith('clf-bridge-drain', { delayInMinutes: 0.5 });
@@ -1336,7 +1342,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
   });
 
   it('keeps a recovery alarm armed while tokenless unless the user disconnected', async () => {
-    const waiting = loadWorker({
+    const waiting = loadWorker({ describeKnownTabs: true,
       local: new FakeStorageArea({}),
       session: new FakeStorageArea(),
       fetch: async () => response(503, {})
@@ -1344,7 +1350,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
     for (let turn = 0; turn < 4; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
     expect(waiting.alarmCreate).toHaveBeenCalledWith('clf-bridge-drain', { delayInMinutes: 0.5 });
 
-    const disconnectedWorker = loadWorker({
+    const disconnectedWorker = loadWorker({ describeKnownTabs: true,
       local: new FakeStorageArea({ disconnected: true }),
       session: new FakeStorageArea(),
       fetch: async () => response(503, {})
@@ -1393,7 +1399,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
    */
   it('comes round at Chrome’s alarm floor while it holds a chat, so a repair waits at most one pass', async () => {
     const { fetch, asked, arm } = appWith(null);
-    const worker = loadWorker({ local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
+    const worker = loadWorker({ describeKnownTabs: true, local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch });
     await worker.registerTab(61);
     await worker.send({ type: 'bind', conversationId: CHAT }, 61);
 
@@ -1484,6 +1490,8 @@ describe('post-install Companion document proof', () => {
     const tabId = 121;
     const documentId = `document-${tabId}-0`;
     const statusBodies: Array<{ documents?: unknown }> = [];
+    const tabsSendMessage = vi.fn(async (_tabId: number, message: { type?: string }) =>
+      message?.type === 'clf-recovery-document-ping' ? { ok: true, registered: true } : { ok: true });
     const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
       const url = new URL(input);
       if (url.pathname === '/hello') {
@@ -1498,7 +1506,7 @@ describe('post-install Companion document proof', () => {
       }
       if (url.pathname === '/status') {
         statusBodies.push(JSON.parse(String(init.body ?? '{}')));
-        return response(200, { ok: true, repairs: [], recoveryMonitoring: false });
+        return response(200, { ok: true, repairs: [], recoveryMonitoring: false, companionRecoveryDocumentRequired: true });
       }
       return response(200, { ok: true });
     });
@@ -1510,12 +1518,14 @@ describe('post-install Companion document proof', () => {
       local: new FakeStorageArea(paired),
       session,
       fetch,
-      tabsQuery: async () => [{ id: tabId, windowId: 7, url: 'https://chatgpt.com/' }]
+      tabsQuery: async () => [{ id: tabId, windowId: 7, url: 'https://chatgpt.com/' }],
+      tabsSendMessage
     });
 
     await worker.fireAlarm();
     expect(statusBodies.length).toBeGreaterThan(0);
     expect(statusBodies.at(-1)?.documents).toEqual([]);
+    expect(tabsSendMessage).toHaveBeenCalledWith(tabId, { type: 'clf-recovery-document-ping' }, undefined);
 
     // Chrome supplies documentId on MessageSender; the page cannot choose it. Registering that
     // exact live document in this worker lifetime is the boundary that makes it reportable.
@@ -4913,8 +4923,9 @@ it.each(['idle', 'selected', 'selected-before-proof', 'selected-during-proof', '
  */
 it.each([
   ['unattributed', { ok: true, streaming: true }, 0],
-  ['unattributed', { ok: true, streaming: false }, 1],
-  ['unattributed', null, 1],
+  ['unattributed', { ok: true, streaming: false, conversationId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }, 1],
+  ['unattributed', { ok: true, streaming: false, conversationId: 'ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee' }, 0],
+  ['unattributed', null, 0],
   // Upstream chat-on-steroids 8b01399, a231d58, c8721d1: interrupted-response recovery keeps a
   // still-visible error's reload, and retires the episode without navigation once it is gone.
   ['assistant-error', { ok: true, streaming: true, assistantError: true }, 1],
@@ -4922,7 +4933,7 @@ it.each([
   ['assistant-error', { ok: true, streaming: false, assistantError: false }, 0],
   ['assistant-error', { ok: true, streaming: true, assistantError: false }, 0],
   ['assistant-error', { ok: true, streaming: false }, 1],
-  ['assistant-error', null, 1],
+  ['assistant-error', null, 0],
   ['silence', { ok: true, streaming: true }, 1]
 ])('an attribution repair for reason %s and page status %j reloads %i time(s)', async (reason, status, reloads) => {
   const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -4936,17 +4947,228 @@ it.each([
     conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
     browserRepairProtected: async () => false,
     createChatTab: vi.fn(), call, tabReply: async () => status,
-    chrome: { tabs: { query: async () => [tab], reload, update: vi.fn() } },
+    chrome: { tabs: { query: async () => [tab], get: async () => tab, reload, update: vi.fn() } },
     CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
   });
   await repair([{ conversationId, token: `stream-${reason}`, reason, focus: false }], {});
   expect(reload).toHaveBeenCalledTimes(reloads);
   const reported = call.mock.calls.map((args: unknown[]) => String(args[0]));
-  if (reason === 'assistant-error' && status?.ok === true && status.streaming !== true &&
+  if (reason === 'assistant-error' && status === null) {
+    // No page answer is no evidence a reload is safe: kept, reported once as a blocker.
+    expect(reported.some((url) => url.includes('repaired=') && url.includes('repairAction=blocked&why=status-unknown'))).toBe(true);
+  } else if (reason === 'assistant-error' && status?.ok === true && status.streaming !== true &&
       'assistantError' in status && status.assistantError === false) {
     expect(reported.some((url) => url.includes('repaired=') && url.includes('repairAction=preserved'))).toBe(true);
     expect(reported.filter((url) => url.includes('repairFailed='))).toHaveLength(0);
   } else {
     expect(reported.filter((url) => url.includes('repairFailed='))).toHaveLength(1 - reloads);
+    // A stand-down reports that nothing was reloaded, never a failed reload.
+    if (reloads === 0) expect(reported.some((url) => url.includes('repairFailed=') && url.includes('repairAction=preserved'))).toBe(true);
   }
+});
+
+it('does not claim or reload a selected ChatGPT tab merely to recover missing tool attribution', async () => {
+  const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const tab = { id: 76, active: true, url: `https://chatgpt.com/c/${conversationId}` };
+  const reload = vi.fn();
+  const call = vi.fn(async () => ({ ok: true, data: { ok: true } }));
+  const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+    backgroundSource.indexOf('\nfunction conversationStillOpen('));
+  const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+    tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
+    conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
+    browserRepairProtected: async () => false,
+    createChatTab: vi.fn(), call, tabReply: async () => ({ ok: true, streaming: false }),
+    chrome: { tabs: { query: async () => [tab], reload, update: vi.fn() } },
+    CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+  });
+  await repair([{ conversationId, token: 'selected-unattributed', reason: 'unattributed', focus: false }], {});
+  expect(reload).not.toHaveBeenCalled();
+  expect(call).not.toHaveBeenCalled();
+});
+
+it('does not reload an unattributed tab that becomes selected while page safety is being checked', async () => {
+  const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const tab = { id: 76, active: false, audible: false, url: `https://chatgpt.com/c/${conversationId}` };
+  const reload = vi.fn();
+  const call = vi.fn(async (url: string) => url === '/browser-repair/claim' ? { ok: true, data: { ok: true } } : { ok: true });
+  const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+    backgroundSource.indexOf('\nfunction conversationStillOpen('));
+  const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+    tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
+    conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
+    browserRepairProtected: async () => false,
+    createChatTab: vi.fn(), call,
+    tabReply: async () => {
+      tab.active = true;
+      return { ok: true, streaming: false, conversationId };
+    },
+    chrome: { tabs: { query: async () => [{ ...tab, active: false }], get: async () => tab, reload, update: vi.fn() } },
+    CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+  });
+  await repair([{ conversationId, token: 'selected-during-unattributed', reason: 'unattributed', focus: false }], {});
+  expect(reload).not.toHaveBeenCalled();
+  expect(call.mock.calls.some((args: unknown[]) => String(args[0]).includes('repairAction=preserved'))).toBe(true);
+});
+
+/**
+ * c6 Stage 3 dogfood: automatic recovery reloaded ChatGPT tabs after assistant transport failure
+ * and missing attribution. Every reason able to reload shares one pre-reload gate: a tab the user
+ * selects (or that starts a call, a draft or a navigation) while the repair's probes await is
+ * never reloaded, and the handout is preserved rather than reported as a reload.
+ */
+describe.each(['unattributed', 'assistant-error', 'silence', 'goal', 'compaction', 'identity-probe', 'no-tab'])(
+  'pre-reload safety gate for %s recovery', (reason) => {
+    const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    function harness(change: 'none' | 'selected-after-probe' | 'selected-during-claim' | 'audible' | 'draft' | 'navigation' | 'tab-gone') {
+      const tab: Record<string, unknown> = { id: 76, active: false, audible: false, url: `https://chatgpt.com/c/${conversationId}` };
+      const reload = vi.fn();
+      const update = vi.fn();
+      const call = vi.fn(async (url: string) => {
+        if (url !== '/browser-repair/claim') return { ok: true };
+        // Every reason awaits its claim between the first probe and the reload.
+        if (change === 'selected-during-claim') tab.active = true;
+        return { ok: true, data: { ok: true } };
+      });
+      let probes = 0;
+      const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+        backgroundSource.indexOf('\nfunction conversationStillOpen('));
+      const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+        tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
+        conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
+        browserRepairProtected: async () => {
+          probes += 1;
+          if (probes === 1 && change === 'selected-after-probe') tab.active = true;
+          if (probes === 1 && change === 'audible') tab.audible = true;
+          if (probes === 1 && change === 'navigation') tab.pendingUrl = 'https://chatgpt.com/';
+          return probes > 1 && change === 'draft';
+        },
+        createChatTab: vi.fn(), call,
+        tabReply: async () => {
+          // Every reason's own probe permits the reload, so only the shared gate can stop it.
+          return { ok: true, streaming: false, assistantError: true, accepted: false, conversationId };
+        },
+        foregroundTabAllowsSelection: async () => true,
+        chrome: { tabs: {
+          query: async () => [{ ...tab, active: false, audible: false, pendingUrl: undefined }],
+          get: async () => { if (change === 'tab-gone') throw new Error('No tab with id'); return { ...tab }; },
+          reload, update
+        } },
+        CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+      });
+      return { repair, reload, update, call };
+    }
+
+    it('reloads an inactive, quiet, exact tab once (control)', async () => {
+      const { repair, reload, call } = harness('none');
+      await repair([{ conversationId, token: `gate-${reason}`, reason, focus: false }], {});
+      expect(reload).toHaveBeenCalledExactlyOnceWith(76);
+      expect(call.mock.calls.some((args: unknown[]) => String(args[0]).includes('repaired='))).toBe(true);
+    });
+
+    it.each(['selected-after-probe', 'selected-during-claim', 'audible', 'draft', 'navigation', 'tab-gone'] as const)(
+      'preserves the tab when its state changes before the reload: %s', async (change) => {
+        const { repair, reload, update, call } = harness(change);
+        await repair([{ conversationId, token: `gate-${reason}-${change}`, reason, focus: true }], {});
+        expect(reload).not.toHaveBeenCalled();
+        expect(update).not.toHaveBeenCalled();
+        const reported = call.mock.calls.map((args: unknown[]) => String(args[0]));
+        expect(reported.some((url) => url.includes('repairFailed=') && url.includes('repairAction=preserved'))).toBe(true);
+        expect(reported.some((url) => url.includes('repaired='))).toBe(false);
+      });
+  });
+
+it.each(['silence', 'assistant-error', 'goal', 'compaction', 'identity-probe', 'no-tab'])(
+  'never claims or reloads an already selected ChatGPT tab for %s recovery', async (reason) => {
+    const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const tab = { id: 76, active: true, url: `https://chatgpt.com/c/${conversationId}` };
+    const reload = vi.fn();
+    const call = vi.fn(async () => ({ ok: true, data: { ok: true } }));
+    const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+      backgroundSource.indexOf('\nfunction conversationStillOpen('));
+    const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+      tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
+      conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
+      browserRepairProtected: async () => false,
+      createChatTab: vi.fn(), call, tabReply: async () => ({ ok: true, streaming: false, assistantError: true, conversationId }),
+      chrome: { tabs: { query: async () => [tab], get: async () => tab, reload, update: vi.fn() } },
+      CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+    });
+    await repair([{ conversationId, token: `selected-${reason}`, reason, focus: false }], {});
+    expect(reload).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+/**
+ * Installed c6, 2026-10-23 (worker-65): interrupted-response recovery reloaded the same broken
+ * "Error in message stream" card twice and ended on "Something went wrong" with a 401 for the
+ * chat's history. The page's failure kind now decides: only an ended-turn stream failure keeps
+ * the one reload; an interrupted live answer is continued in place; anything else is kept.
+ */
+describe('interrupted-response recovery by page failure kind', () => {
+  const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  function harness(status: Record<string, unknown> | null, change: 'none' | 'selected' | 'draft' | 'audible' = 'none') {
+    const tab: Record<string, unknown> = { id: 76, active: false, audible: false, url: `https://chatgpt.com/c/${conversationId}` };
+    const reload = vi.fn();
+    const call = vi.fn(async (url: string) => url === '/browser-repair/claim' ? { ok: true, data: { ok: true } } : { ok: true });
+    let probes = 0;
+    const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+      backgroundSource.indexOf('\nfunction conversationStillOpen('));
+    const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+      tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
+      conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
+      browserRepairProtected: async () => (probes += 1) > 1 && change === 'draft',
+      createChatTab: vi.fn(), call,
+      tabReply: async () => {
+        if (change === 'selected') tab.active = true;
+        if (change === 'audible') tab.audible = true;
+        return status;
+      },
+      chrome: { tabs: { query: async () => [{ ...tab }], get: async () => ({ ...tab }), reload, update: vi.fn() } },
+      CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+    });
+    return { run: () => repair([{ conversationId, token: 'kind-token', reason: 'assistant-error', focus: false }], {}), reload, call };
+  }
+  const reported = (call: ReturnType<typeof vi.fn>) => call.mock.calls.map((args: unknown[]) => String(args[0]));
+  const page = (kind: string | null, extra: Record<string, unknown> = {}) =>
+    ({ ok: true, conversationId, assistantError: kind === 'stream-interrupted' || kind === 'stream-failed', streaming: kind === 'stream-interrupted', assistantErrorKind: kind, ...extra });
+
+  it('continues an interrupted live answer in place: no reload, one continued receipt', async () => {
+    const { run, reload, call } = harness(page('stream-interrupted'));
+    await run();
+    expect(reload).not.toHaveBeenCalled();
+    expect(reported(call).filter(url => url.includes('repairAction=continued'))).toHaveLength(1);
+  });
+
+  it('keeps the one reload for a current failure on an already-ended turn', async () => {
+    const { run, reload, call } = harness(page('stream-failed'));
+    await run();
+    expect(reload).toHaveBeenCalledExactlyOnceWith(76);
+    expect(reported(call).some(url => url.includes('repairAction=reloaded'))).toBe(true);
+  });
+
+  it.each([
+    ['conversation-unavailable', page('conversation-unavailable', { assistantError: false })],
+    ['status-unknown', null],
+    ['status-unknown', { ok: false }]
+  ] as const)('never reloads a %s page and reports it once as a blocker', async (why, status) => {
+    const { run, reload, call } = harness(status as Record<string, unknown> | null);
+    await run();
+    expect(reload).not.toHaveBeenCalled();
+    expect(reported(call).filter(url => url.includes(`repairAction=blocked&why=${why}`))).toHaveLength(1);
+  });
+
+  it('keeps the page and retries later when it moved to another conversation during the probe', async () => {
+    const { run, reload, call } = harness(page('stream-failed', { conversationId: 'ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee' }));
+    await run();
+    expect(reload).not.toHaveBeenCalled();
+    expect(reported(call).some(url => url.includes('repairFailed=') && url.includes('repairAction=preserved'))).toBe(true);
+  });
+
+  it.each(['selected', 'draft', 'audible'] as const)('does not reload an ended-turn failure whose tab became %s during recovery', async (change) => {
+    const { run, reload, call } = harness(page('stream-failed'), change);
+    await run();
+    expect(reload).not.toHaveBeenCalled();
+    expect(reported(call).some(url => url.includes('repairAction=preserved'))).toBe(true);
+  });
 });

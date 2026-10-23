@@ -97,6 +97,18 @@ such as a queued heartbeat finding, is not by itself a Force Send blocker. A cha
 or voice ownership can still refuse the browser's final Send. The UI can display a refusal reason;
 the queued original remains reviewable. See the [Force Send playbook](11-debugging-playbooks.md).
 
+**2.4.4 c3 delivery-row controls:** A browser pickup timeout after 60 seconds
+is a *definite pre-Send failure* only if the original user outbox row still has
+no owner, offer, native Send authorization, message id or delivery receipt.
+Such a failed `auto` row shows **Force Send + Dismiss**, with native checks
+still authoritative. It does not simultaneously show generic Retry, which
+restores text to the composer rather than re-offering the original row. A
+claimed or potentially sent failure shows **Restore to composer + Dismiss**
+instead of Force Send; no automatic re-send is permitted. Recovery buttons
+share a separated flex action rail, not overlapping absolute coordinates.
+Dismiss hides the visible notice without modifying a possible receipt.
+This UI correction does **not** change the browser pickup timeout itself.
+
 Direct-send admission belongs to each durable session. A queued restart wake or ambiguous receipt
 in another conversation cannot occupy Eve's composer. New-chat openings with no session retain
 one shared composer slot. This does not cancel old messages, relax exact target checks, or replay

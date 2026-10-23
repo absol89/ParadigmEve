@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const logWarn = vi.hoisted(() => vi.fn());
 const spawned: Array<{ file: string; args: string[] }> = [];
 vi.mock('node:child_process', () => ({
   spawn: (file: string, args: string[]) => {
@@ -43,7 +44,7 @@ vi.mock('electron', () => ({
     relaunch: (options: { execPath?: string }) => relaunched.push(options)
   }
 }));
-vi.mock('../src/main/logger.js', () => ({ logInfo: () => undefined, logWarn: () => undefined }));
+vi.mock('../src/main/logger.js', () => ({ logInfo: () => undefined, logWarn }));
 
 const { APP_VERSION } = await import('../src/main/version.js');
 const { isNewer } = await import('../src/shared/types.js');
@@ -166,6 +167,7 @@ async function fakeGithub(input: string | URL): Promise<Response> {
 const assetFetches = (): string[] => publicFetch.mock.calls.map(([url]) => String(url)).filter((url) => url !== LATEST_API);
 
 beforeEach(() => {
+  logWarn.mockClear();
   userData = mkdtempSync(path.join(tmpdir(), 'cos-private-update-'));
   packaged = true;
   spawned.length = 0;
@@ -715,6 +717,75 @@ describe('the GitHub Latest release of absol89/ParadigmEve', () => {
     await asPlatform('win32', undefined, () => checkForUpdates());
     expect(updateStatus()).toMatchObject({ latest: null, stage: 'failed' });
     expect(updateStatus().error).toMatch(/could not check GitHub releases: network unreachable/);
+  });
+
+  it('logs a failed GitHub request once instead of repeating the same cached failure every minute', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const start = Date.UTC(2026, 9, 21, 10, 15);
+    const requests = () => publicFetch.mock.calls.filter(([url]) => String(url) === LATEST_API).length;
+    const warnings = () => logWarn.mock.calls.map(([message]) => String(message))
+      .filter(message => message.startsWith('update check failed:'));
+    latest = new Error('fetch failed');
+    await asPlatform('win32', undefined, async () => {
+      for (let minute = 0; minute < 60; minute++) {
+        now.mockReturnValue(start + minute * 60_000);
+        await checkForUpdates();
+        expect(updateStatus()).toMatchObject({
+          stage: 'failed',
+          error: 'could not check GitHub releases: fetch failed'
+        });
+      }
+      expect(requests()).toBe(1);
+      expect(warnings()).toEqual(['update check failed: could not check GitHub releases: fetch failed']);
+
+      now.mockReturnValue(start + 6 * 60 * 60_000);
+      await checkForUpdates();
+      expect(requests()).toBe(2);
+      expect(warnings()).toHaveLength(2); // A new actual failed request deserves its own warning.
+    });
+  });
+
+  it('reports changed failures on new real requests, and clears failed status when GitHub recovers', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const start = Date.UTC(2026, 9, 21, 10);
+    const warnings = () => logWarn.mock.calls.map(([message]) => String(message))
+      .filter(message => message.startsWith('update check failed:'));
+    await asPlatform('win32', undefined, async () => {
+      now.mockReturnValue(start);
+      latest = new Error('DNS unreachable');
+      await checkForUpdates();
+      now.mockReturnValue(start + 6 * 60 * 60_000);
+      latest = new Error('TLS handshake failed');
+      await checkForUpdates();
+      expect(warnings()).toEqual([
+        'update check failed: could not check GitHub releases: DNS unreachable',
+        'update check failed: could not check GitHub releases: TLS handshake failed'
+      ]);
+
+      now.mockReturnValue(start + 12 * 60 * 60_000);
+      latest = null; // GitHub returns 404: no stable Latest, a valid empty result.
+      await checkForUpdates();
+      expect(updateStatus()).toMatchObject({ stage: 'idle', error: null });
+      now.mockReturnValue(start + 12 * 60 * 60_000 + 60_000);
+      await checkForUpdates();
+      expect(warnings()).toHaveLength(2);
+    });
+  });
+
+  it('does not repeat a cached GitHub failure warning while a private build is usable', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const start = Date.UTC(2026, 9, 21, 10);
+    latest = new Error('fetch failed');
+    privateBuild();
+    await asPlatform('win32', undefined, async () => {
+      for (let minute = 0; minute < 5; minute++) {
+        now.mockReturnValue(start + minute * 60_000);
+        await checkForUpdates();
+        expect(updateStatus()).toMatchObject({ latest: NEXT, stage: 'ready', error: null });
+      }
+      expect(logWarn.mock.calls.map(([message]) => String(message))
+        .filter(message => message.includes('the GitHub check failed'))).toHaveLength(1);
+    });
   });
 
   it('asks GitHub again only after six hours', async () => {

@@ -52,9 +52,11 @@ const DEFAULT_STATIC_REFRESH_DEBOUNCE_MS = 1_000;
  * working session (2026-10-12, rss swinging 200-320 MiB). Opening the archive still refreshes it at
  * once (refreshStaticSite), so a background pass only keeps an already-open page roughly current.
  */
-const DEFAULT_STATIC_REFRESH_MIN_INTERVAL_MS = 5 * 60_000;
+// A local archive commit must not compete with the human's active Eve work every five minutes.
+// The Archive Browser can still request an immediate refresh when opened.
+const DEFAULT_STATIC_REFRESH_MIN_INTERVAL_MS = 30 * 60_000;
 const STATIC_GENERATION_RE = /^g-[a-f0-9]{32}$/u;
-const STATIC_GENERATION_FILE_RE = /^(?:search|chat-\d+|chat-\d+-segment-\d+)\.js$/u;
+const STATIC_GENERATION_FILE_RE = /^(?:search|search-\d+|chat-\d+|chat-\d+-segment-\d+)\.js$/u;
 const STATIC_SEGMENT_TARGET_BYTES = 512 * 1024;
 const STATIC_SEGMENT_TEXT_CHARS = 64 * 1024;
 const STATIC_SHELL_GENERATION_SCAN_BYTES = 2 * 1024 * 1024;
@@ -142,6 +144,16 @@ interface ArchiveDerivedSessionHeader {
   sessionId: string;
   state: 'complete' | 'partial';
   manifest: ArchiveSessionManifest;
+}
+
+/** Only small metadata/hashes live in memory; no transcript or search text is cached in RAM. */
+interface CachedStaticChat {
+  generation: string;
+  index: number;
+  token: string;
+  manifestHash: string;
+  segmentHashes: string[];
+  searchHash: string;
 }
 
 function asError(value: unknown): Error {
@@ -475,6 +487,12 @@ export class ArchiveRuntime {
   private readonly reconcileRetryTimers = new Map<string, { at: number; timer: NodeJS.Timeout }>();
   private sourceRevision = 0;
   private derivedRevision = 0;
+  /** Wall-clock publication time of a static site an earlier process left on disk. */
+  private staticPublishedAt: number | null = null;
+  /** Dirtied canonical sessions since the last successful static publication. */
+  private readonly staticDirtySessions = new Set<string>();
+  private staticChatCache = new Map<string, CachedStaticChat>();
+  private staticTokenMap = '';
 
   constructor(readonly options: ArchiveRuntimeOptions) {
     if (!path.isAbsolute(options.archiveRoot)) throw new Error('ARCHIVE_RUNTIME_ROOT_MUST_BE_ABSOLUTE');
@@ -521,6 +539,7 @@ export class ArchiveRuntime {
   /** Subscribe before enumerating history so a commit racing the seed becomes a dirty follow-up. */
   async start(options: { seed?: boolean } = {}): Promise<number> {
     await this.initialize();
+    await this.restoreStaticPublication();
     if (!this.unsubscribe && this.source.subscribeCommitted) {
       this.unsubscribe = this.source.subscribeCommitted(sessionId => this.queueSessionReconcile(sessionId));
     }
@@ -597,12 +616,16 @@ export class ArchiveRuntime {
         if (snapshot) {
           if (snapshot.summary.id !== sessionId) throw new Error(`ARCHIVE_RUNTIME_SESSION_ID_MISMATCH: ${sessionId}`);
           const projection = await this.projectCurrentSession(snapshot);
-          await this.store.publishSession(projection);
+          const previous = await this.store.readSessionManifest(sessionId).catch(() => null);
+          const manifest = await this.store.publishSession(projection);
           this.lastReconciledSessionId = sessionId;
           this.lastReconciledAt = this.now();
-          this.sourceRevision += 1;
           this.lastError = null;
-          this.scheduleStaticRefresh();
+          if (this.staticEvidenceChanged(previous, manifest)) {
+            this.staticDirtySessions.add(sessionId);
+            this.sourceRevision += 1;
+            this.scheduleStaticRefresh();
+          }
         }
       } catch (error) {
         this.recordError(error);
@@ -642,7 +665,7 @@ export class ArchiveRuntime {
    * `searchIndex: false` republishes only the static site: the search index is the slow part of a
    * full rebuild (over two minutes of three on a 447-chat archive, 2026-10-09) and the site does not use it.
    */
-  rebuildDerived(options: { searchIndex?: boolean } = {}): Promise<ArchiveDerivedResult> {
+  rebuildDerived(options: { searchIndex?: boolean; incrementalSite?: boolean } = {}): Promise<ArchiveDerivedResult> {
     this.assertOpen();
     const run: Promise<ArchiveDerivedResult> = this.derivedQueue.catch(() => undefined).then(async () => {
       await this.initialize();
@@ -654,8 +677,9 @@ export class ArchiveRuntime {
         // Set the gate before draining: commits arriving after this point stay dirty but cannot
         // start a new writer. Reconciles that already owned a pass finish before derived reads.
         await this.drain();
+        const dirtySessions = new Set(this.staticDirtySessions);
         this.recordDiagnostic('derived rebuild start ' + memorySummary());
-        const headers = await this.readDerivedSessionHeaders();
+        const headers = await this.readDerivedSessionHeaders(options.incrementalSite === true && this.staticChatCache.size > 0);
         this.recordDiagnostic('derived rebuild headers ready ' + headers.length + ' session(s) ' + memorySummary());
         const index = options.searchIndex === false && this.lastIndexStats
           ? this.lastIndexStats
@@ -668,7 +692,8 @@ export class ArchiveRuntime {
         const viewHeaders = headers.map(header => this.archiveViewHeader(header));
         viewHeaders.sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
         this.recordDiagnostic('derived rebuild HTML streaming chats=' + viewHeaders.length + ' ' + memorySummary());
-        const htmlBytes = await this.publishStaticArchive(target, headers, viewHeaders);
+        const htmlBytes = await this.publishStaticArchive(target, headers, viewHeaders, options.incrementalSite === true, dirtySessions);
+        for (const id of dirtySessions) this.staticDirtySessions.delete(id);
         this.recordDiagnostic('derived rebuild HTML published bytes=' + htmlBytes + ' ' + memorySummary());
         this.lastIndexStats = index;
         this.lastDerivedAt = this.now();
@@ -705,16 +730,53 @@ export class ArchiveRuntime {
    * five-second status poll can only observe generations that main has actually published; without
    * this bridge an already-open archive remains stale until another Open/Rebuild IPC happens.
    */
-  private scheduleStaticRefresh(): void {
-    if (this.disposed || this.derivedSourceAt === null || this.staticRefreshTimer) return;
+  private scheduleStaticRefresh(afterFailure = false): void {
+    if (this.disposed || this.staticRefreshTimer) return;
+    // A site published by an earlier process is just as much an already-published archive as one
+    // this process built; only an archive that has never been published waits for an Open.
+    if (this.derivedSourceAt === null && this.staticPublishedAt === null) return;
     // Coalesce every commit until the minimum interval since the last published site has passed.
-    const sinceLast = this.lastDerivedAt === null ? Number.POSITIVE_INFINITY : this.now() - this.lastDerivedAt;
-    const delay = Math.max(this.staticRefreshDebounceMs, this.staticRefreshMinIntervalMs - sinceLast);
+    // A failed refresh keeps the previous valid site and retries after one whole interval.
+    const sinceLast = afterFailure ? 0
+      : this.lastDerivedAt !== null ? this.now() - this.lastDerivedAt
+        : Date.now() - this.staticPublishedAt!;
+    const delay = Math.max(this.staticRefreshDebounceMs, this.staticRefreshMinIntervalMs - Math.max(0, sinceLast));
     this.staticRefreshTimer = setTimeout(() => {
       this.staticRefreshTimer = null;
       if (this.disposed || !this.staticSiteStale()) return;
-      void this.refreshStaticSite()?.catch(error => this.recordError(error));
+      void this.refreshStaticSite()?.catch(error => {
+        this.recordError(error);
+        if (this.staticSiteStale()) this.scheduleStaticRefresh(true);
+      });
     }, delay);
+  }
+
+  /**
+   * The published site's generation outlives this process; `derivedSourceAt` does not. Without
+   * this, commits after a restart/install marked the site stale but never scheduled a refresh,
+   * so a site published before the restart stayed behind until someone opened the Archive.
+   */
+  private async restoreStaticPublication(): Promise<void> {
+    if (this.derivedSourceAt !== null || this.staticPublishedAt !== null) return;
+    try {
+      const target = this.staticSiteTarget();
+      if (!await publishedStaticGeneration(target.archiveRoot, target.indexPath)) return;
+      this.staticPublishedAt = (await fs.stat(target.indexPath)).mtimeMs;
+    } catch {
+      // No readable published site: there is nothing already published to keep current.
+    }
+  }
+
+  /**
+   * Whether a reconcile changed what the static site shows. Canonical projections are an exact
+   * append-only prefix, so an identical manifest means identical evidence; the startup seed then
+   * no longer dirties every chat. A session newer than a site an earlier process published is
+   * dirty even when this process changed nothing: that process committed it and exited before
+   * its bounded refresh ran.
+   */
+  private staticEvidenceChanged(previous: ArchiveSessionManifest | null, next: ArchiveSessionManifest): boolean {
+    if (!previous || JSON.stringify(previous) !== JSON.stringify(next)) return true;
+    return this.derivedSourceAt === null && this.staticPublishedAt !== null && next.updatedAt > this.staticPublishedAt;
   }
 
   /**
@@ -731,7 +793,7 @@ export class ArchiveRuntime {
       return this.runningDerived;
     }
     if (!this.staticSiteStale()) return null;
-    const run = this.rebuildDerived({ searchIndex: false });
+    const run = this.rebuildDerived({ searchIndex: false, incrementalSite: true });
     this.pendingSiteRefresh = run;
     void run.catch(() => undefined).finally(() => {
       if (this.pendingSiteRefresh === run) this.pendingSiteRefresh = null;
@@ -1141,9 +1203,18 @@ export class ArchiveRuntime {
     return { ...retained, kind, ...(fileName ? { fileName } : {}), ...(providerAssetId ? { providerAssetId } : {}) };
   }
 
-  private async readDerivedSessionHeaders(): Promise<ArchiveDerivedSessionHeader[]> {
+  private async readDerivedSessionHeaders(incremental: boolean): Promise<ArchiveDerivedSessionHeader[]> {
     const headers: ArchiveDerivedSessionHeader[] = [];
     for (const sessionId of await this.store.listSessionIds()) {
+      if (incremental) {
+        // No event-file scan just to populate a lightweight sidebar row. A missing or damaged
+        // manifest is examined through the original full integrity path below.
+        const manifest = await this.store.readSessionManifest(sessionId);
+        if (manifest) {
+          headers.push({ sessionId, state: manifest.captureState === 'complete' ? 'complete' : 'partial', manifest });
+          continue;
+        }
+      }
       const session = await this.store.readSession(sessionId, 0);
       if (!session.manifest || session.state === 'missing') continue;
       headers.push({ sessionId, state: session.state, manifest: session.manifest });
@@ -1219,11 +1290,17 @@ export class ArchiveRuntime {
   private async publishStaticArchive(
     target: ArchiveStaticSiteTarget,
     headers: readonly ArchiveDerivedSessionHeader[],
-    viewHeaders: readonly ArchiveViewChatHeader[]
+    viewHeaders: readonly ArchiveViewChatHeader[],
+    incremental: boolean,
+    dirtySessions: ReadonlySet<string>
   ): Promise<number> {
     const sourceById = new Map(headers.map(header => [header.sessionId, header]));
     const tokenByChatId = archiveChatTokenMap(viewHeaders);
+    // Tokens and cross-chat links contain positional indices. If a new/renamed/deleted chat
+    // changes that map, every old segment must be re-rendered to preserve correct links.
+    const tokenMap = JSON.stringify([...tokenByChatId]);
     const previousPublishedGeneration = await publishedStaticGeneration(target.archiveRoot, target.indexPath);
+    const reuseAllowed = incremental && tokenMap === this.staticTokenMap && previousPublishedGeneration !== null;
     const generation = `g-${randomUUID().replaceAll('-', '')}`;
     const dataRoot = path.join(target.siteRoot, 'data');
     const generationRoot = path.join(dataRoot, generation);
@@ -1232,6 +1309,9 @@ export class ArchiveRuntime {
     const searchPath = path.join(generationRoot, 'search.js');
     const relativeSearchPath = `data/${generation}/search.js`;
     const lazyChats: Array<ArchiveViewChatHeader & { chunkPath: string; segmentCount: number }> = [];
+    const nextCache = new Map<string, CachedStaticChat>();
+    let reused = 0;
+    let rendered = 0;
     let published = false;
     try {
       await atomicWriteStream(target.archiveRoot, searchPath, async searchAppend => {
@@ -1242,9 +1322,45 @@ export class ArchiveRuntime {
           const token = tokenByChatId.get(viewHeader.id);
           if (!token) throw new Error(`ARCHIVE_RUNTIME_DERIVED_TOKEN_MISSING: ${viewHeader.id}`);
           await searchAppend(`${scriptString(token)}:Object.freeze([\n`);
+          const fragmentPath = path.join(generationRoot, `search-${index}.js`);
+          const manifestHash = createHash('sha256').update(JSON.stringify(source.manifest)).digest('hex');
+          const old = reuseAllowed && !dirtySessions.has(viewHeader.id) ? this.staticChatCache.get(viewHeader.id) : undefined;
+          let cached: CachedStaticChat | undefined;
+          if (old && old.generation === previousPublishedGeneration && old.token === token && old.manifestHash === manifestHash) {
+            const filenames = [
+              [`search-${old.index}.js`, `search-${index}.js`, old.searchHash],
+              ...old.segmentHashes.map((hash, segment) => [
+                `chat-${old.index}-segment-${segment}.js`, `chat-${index}-segment-${segment}.js`, hash
+              ])
+            ];
+            // Refuse a missing, moved, symlinked or edited local projection. Re-render that
+            // chat instead of copying an unverified executable fragment into a new generation.
+            const verified: Array<{ source: string; destination: string; hash: string }> = [];
+            for (const [fromName, toName, hash] of filenames) {
+              const from = path.join(dataRoot, old.generation, fromName!);
+              if (await ensureArchiveFile(target.archiveRoot, from, { createParents: false }) !== 'present' ||
+                  await sha256File(from) !== hash) break;
+              verified.push({ source: from, destination: path.join(generationRoot, toName!), hash: hash! });
+            }
+            if (verified.length === filenames.length) {
+              for (const file of verified) {
+                await ensureArchiveFile(target.archiveRoot, file.destination, { createParents: false });
+                await fs.copyFile(file.source, file.destination);
+                if (await ensureArchiveFile(target.archiveRoot, file.destination, { createParents: false }) !== 'present' ||
+                    await sha256File(file.destination) !== file.hash) {
+                  throw new Error('ARCHIVE_RUNTIME_REUSED_FRAGMENT_INTEGRITY_FAILED');
+                }
+              }
+              cached = { ...old, generation, index };
+              reused += 1;
+            }
+          }
+          if (!cached) {
+            rendered += 1;
           let segmentIndex = 0;
           let segmentBytes = 0;
           let segmentParts: string[] = [];
+          const segmentHashes: string[] = [];
           const flushSegment = async (empty = false): Promise<void> => {
             if (segmentParts.length === 0 && !empty) return;
             const html = segmentParts.length > 0
@@ -1255,38 +1371,45 @@ export class ArchiveRuntime {
             await atomicWriteStream(target.archiveRoot, segmentPath, async append => {
               await append(staticSegmentCall(token, currentSegment, html));
             });
+            segmentHashes.push(await sha256File(segmentPath));
             segmentIndex += 1;
             segmentBytes = 0;
             segmentParts = [];
           };
 
-          await this.store.scanSessionEvents(source.sessionId, {
-            collectLimit: 0,
-            onEvent: async event => {
-              const item = await this.viewItem(event);
-              if (!item) return;
-              // Search the lightweight prose the static transcript actually presents, but keep
-              // tool arguments/results out of this eagerly loaded corpus. Heavy transcript HTML
-              // is split into bounded local segments and only one segment is mounted at a time.
-              if ((item.kind === 'message' || item.kind === 'notice') && item.text) {
-                await searchAppend(`${scriptString(staticSearchText(item.text))},\n`);
+          await atomicWriteStream(target.archiveRoot, fragmentPath, async appendFragment => {
+            await this.store.scanSessionEvents(source.sessionId, {
+              collectLimit: 0,
+              onEvent: async event => {
+                const item = await this.viewItem(event);
+                if (!item) return;
+                // The eager search fragment contains only safe, normalized message prose.
+                // Transcript/tool HTML remains split into lazy local segments.
+                if ((item.kind === 'message' || item.kind === 'notice') && item.text) {
+                  await appendFragment(`${scriptString(staticSearchText(item.text))},\n`);
+                }
+                for (const html of renderArchiveTranscriptItemParts(item, tokenByChatId, STATIC_SEGMENT_TEXT_CHARS)) {
+                  const bytes = Buffer.byteLength(html, 'utf8');
+                  if (segmentParts.length > 0 && segmentBytes + bytes > STATIC_SEGMENT_TARGET_BYTES) await flushSegment();
+                  segmentParts.push(html);
+                  segmentBytes += bytes;
+                  if (segmentBytes >= STATIC_SEGMENT_TARGET_BYTES) await flushSegment();
+                }
               }
-              for (const html of renderArchiveTranscriptItemParts(item, tokenByChatId, STATIC_SEGMENT_TEXT_CHARS)) {
-                const bytes = Buffer.byteLength(html, 'utf8');
-                if (segmentParts.length > 0 && segmentBytes + bytes > STATIC_SEGMENT_TARGET_BYTES) await flushSegment();
-                segmentParts.push(html);
-                segmentBytes += bytes;
-                if (segmentBytes >= STATIC_SEGMENT_TARGET_BYTES) await flushSegment();
-              }
-            }
+            });
           });
           if (segmentParts.length > 0) await flushSegment();
           if (segmentIndex === 0) await flushSegment(true);
+          cached = { generation, index, token, manifestHash, segmentHashes, searchHash: await sha256File(fragmentPath) };
+          }
+          nextCache.set(viewHeader.id, cached);
           lazyChats.push({
             ...viewHeader,
             chunkPath: `data/${generation}/chat-${index}-segment-0.js`,
-            segmentCount: segmentIndex
+            segmentCount: cached.segmentHashes.length
           });
+          // Stream locally retained search fragments, never keep all chat text in RAM.
+          for await (const part of createReadStream(fragmentPath, { encoding: 'utf8' })) await searchAppend(part);
           await searchAppend(']),\n');
         }
         await searchAppend('});\n');
@@ -1299,6 +1422,9 @@ export class ArchiveRuntime {
       });
       const htmlBytes = await atomicWriteStream(target.archiveRoot, target.indexPath, async append => append(html));
       published = true;
+      this.staticChatCache = nextCache;
+      this.staticTokenMap = tokenMap;
+      this.recordDiagnostic(`derived rebuild static fragments reused=${reused} rendered=${rendered}`);
       await this.writeStaticStatus(this.pendingSiteRefresh !== null && this.pendingSiteRefresh !== this.runningDerived, generation);
       const removed = await cleanupStaticGenerations(target.archiveRoot, dataRoot, generation, previousPublishedGeneration);
       if (removed > 0) this.recordDiagnostic(`derived rebuild cleaned ${removed} stale static generation(s)`);

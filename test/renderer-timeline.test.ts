@@ -1341,6 +1341,15 @@ it('offers Force send for an unclaimed reboot timeout without replacing a newer 
   const pending = force!.closest('.pending-message')!;
   expect(pending.classList.contains('has-delivery-retry')).toBe(true);
   expect(pending.querySelector('.pending-message-status')).not.toBeNull();
+  // A failed pickup is definitively unclaimed: the live outbox UUID can be
+  // force-sent after Main rechecks authority. The old renderer also rendered
+  // Restore/Retry *on top of* Force Send at right:28px; never show both.
+  const controls = pending.querySelector('.pending-message-actions')!;
+  expect([...controls.children].map(button => button.getAttribute('aria-label'))).toEqual([
+    'Force send', 'Dismiss delivery notice'
+  ]);
+  expect(pending.querySelector('[aria-label="Retry delivery"]')).toBeNull();
+  expect(controls.querySelectorAll('button')).toHaveLength(2);
   force!.click();
   await settle();
   expect(api.forceSendInput).toHaveBeenCalledExactlyOnceWith(row.id);
@@ -1349,6 +1358,37 @@ it('offers Force send for an unclaimed reboot timeout without replacing a newer 
   live.inputs[0] = { ...row, state: 'browser', owner: 'claimed-document', offeredAt: T0, error: undefined };
   await append([]);
   expect(w.document.querySelector('#inputQueue [aria-label="Force send"]')).toBeNull();
+});
+
+it('uses a spaced action rail for pickup failures but never offers Force Send after an ambiguous browser claim', async () => {
+  const app = await boot([]);
+  const { w, live, append } = app;
+  const row: InputEntry = {
+    id: 'e1234567-1234-4234-8234-123456789abc',
+    sessionId: summary([]).id, text: 'Unclaimed timeout', mode: 'auto', dueAt: T0,
+    model: null, reasoningEffort: null, state: 'failed', transportIntent: 'browser',
+    owner: null, createdAt: T0, conversationId: 'chat-b',
+    error: 'Not sent: the browser did not pick up this message within 60 seconds.'
+  };
+  live.inputs = [row];
+  await append([]);
+  let rail = w.document.querySelector<HTMLElement>('#inputQueue .pending-message-actions')!;
+  expect(rail.closest('.pending-message')?.classList.contains('is-delivery-error')).toBe(true);
+  expect(rail.querySelectorAll('button')).toHaveLength(2);
+  expect([...rail.querySelectorAll('button')].map(button => button.getAttribute('aria-label')))
+    .toEqual(['Force send', 'Dismiss delivery notice']);
+
+  live.inputs[0] = { ...row, state: 'cancelled', owner: 'claimed-browser', offeredAt: T0,
+    error: 'Delivery confirmation timed out. The message may already have reached ChatGPT.' };
+  await append([]);
+  rail = w.document.querySelector<HTMLElement>('#inputQueue .pending-message-actions')!;
+  expect([...rail.querySelectorAll('button')].map(button => button.getAttribute('aria-label')))
+    .toEqual(['Retry delivery', 'Dismiss delivery notice']);
+  expect(rail.querySelector('[aria-label="Force send"]')).toBeNull();
+  const stylesheet = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'styles.css'), 'utf8');
+  expect(stylesheet).toMatch(/\.pending-message-actions\s*\{[^}]*display:\s*inline-flex;[^}]*gap:\s*6px;/u);
+  expect(stylesheet).toMatch(/\.pending-message\.is-delivery-error \.pending-message-actions\s*\{[^}]*position:\s*static;/u);
+  expect(stylesheet).toMatch(/\.pending-message \.pending-message-actions \.dock-action\s*\{[^}]*position:\s*static;/u);
 });
 
 it('does not steal a newer New Chat draft when an older queued send is acknowledged', async () => {

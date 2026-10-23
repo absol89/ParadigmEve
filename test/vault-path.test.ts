@@ -64,6 +64,26 @@ it('lists and reads only current top-level Markdown pages', async () => {
   expect(manual).not.toMatch(/notes\.txt|workspace\.json|# hidden/);
 });
 
+it('keeps historical manual pages readable without injecting them as live %how instructions', async () => {
+  await fs.writeFile(path.join(vault, 'README.md'), [
+    '# Historical release information',
+    '## Historical 2.4.0 snapshot',
+    'Old instructions are not current.',
+    '## Current ownership boundaries',
+    'Follow the exact owner of each action.',
+    '## Existing deep references',
+    'Old v2.4.0 release notes'
+  ].join('\n'));
+  const { readVaultManualText, readHowOpeningManualText } = await import('../src/main/vault-path.js');
+  expect(await readVaultManualText()).toContain('Old v2.4.0 release notes');
+  const opening = await readHowOpeningManualText();
+  expect(opening).toContain('ParadigmEve 2.4.4');
+  expect(opening).toContain('Follow the exact owner of each action.');
+  expect(opening).toContain('/paradigmeve-manual/02-runtime.md');
+  expect(opening).not.toContain('Old v2.4.0 release notes');
+  expect(opening).not.toContain('Historical 2.4.0 snapshot');
+});
+
 it('fails closed on traversal, nested paths, non-Markdown files, and symlink escapes', async () => {
   const { resolveVaultManualReadPath } = await import('../src/main/vault-path.js');
   for (const requested of [

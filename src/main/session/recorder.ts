@@ -13,7 +13,7 @@
  * choose an owner.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { userTitle } from './title.js';
 import type {
@@ -28,10 +28,12 @@ import type {
   StoredText,
   ToolCallRecord,
   ToolOutcome,
+  WorkerExecutionReceipt,
   TurnOutcome
 } from '../../shared/session.js';
 import { estimateTokens, originTitle } from '../../shared/session.js';
 import { getConfig } from '../config.js';
+import { durableStoreReady, readDurableStrict, writeDurableNow } from '../durable.js';
 import { logInfo, logWarn } from '../logger.js';
 import { redactCredentialText } from '../redaction.js';
 import { currentCall, emptyEvidence, runningToolCalls, type CallEvidence } from '../mcp/call-context.js';
@@ -1245,6 +1247,144 @@ function safeJson(value: unknown): string {
 }
 
 // -------------------------------------------------------------- tool calls
+
+/**
+ * Execution authority is independent of optional conversation recording. A worker's
+ * effect must have a durable intent before its handler runs; an unfinished intent
+ * restored after a crash is UNKNOWN, never permission to run the handler again.
+ *
+ * The immutable invocation is the connector request id plus the tool/action digest.
+ * A new request id for the same action cannot bypass an unknown effect in that run.
+ */
+export interface WorkerExecutionIdentity {
+  conversationId: string | null;
+  sessionId: string | null;
+  principalKind: 'chatgpt' | 'local-agent';
+  workerId: string;
+  runId: string;
+  invocationId: string;
+  tool: string;
+  args: unknown;
+}
+
+const WORKER_RECEIPTS_STATE = 'worker-execution-receipts';
+const MAX_WORKER_RECEIPTS = 10_000;
+let workerReceipts: WorkerExecutionReceipt[] | null = null;
+let workerReceiptsQueue: Promise<void> = Promise.resolve();
+
+function serializeWorkerReceipts<T>(fn: () => Promise<T>): Promise<T> {
+  const work = workerReceiptsQueue.then(fn);
+  workerReceiptsQueue = work.then(() => undefined, () => undefined);
+  return work;
+}
+
+function stableAction(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(stableAction).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.entries(value as Record<string, unknown>)
+      .filter(([, part]) => part !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, part]) => JSON.stringify(key) + ':' + stableAction(part)).join(',') + '}';
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+async function loadWorkerReceipts(): Promise<WorkerExecutionReceipt[]> {
+  if (!durableStoreReady()) throw new Error('WORKER_RECEIPT_STORAGE_UNAVAILABLE');
+  if (workerReceipts) return workerReceipts;
+  const stored = await readDurableStrict<unknown>(WORKER_RECEIPTS_STATE);
+  if (stored !== null && (!Array.isArray(stored) || stored.some(row =>
+    !row || typeof row !== 'object' ||
+    typeof row.id !== 'string' ||
+    (row.conversationId !== null && typeof row.conversationId !== 'string') ||
+    (row.sessionId !== null && typeof row.sessionId !== 'string') ||
+    !['chatgpt', 'local-agent'].includes(row.principalKind) ||
+    typeof row.runId !== 'string' ||
+    typeof row.workerId !== 'string' || typeof row.invocationId !== 'string' ||
+    typeof row.tool !== 'string' || typeof row.actionDigest !== 'string' ||
+    !Number.isFinite(row.admittedAt) ||
+    !['admitted', 'completed', 'refused', 'unknown'].includes(row.state)
+  ))) throw new Error('WORKER_RECEIPT_STATE_INVALID');
+  const rows = (stored ?? []) as WorkerExecutionReceipt[];
+  if (rows.some(row => row.state === 'admitted')) {
+    // This process did not observe an authoritative result. Commit the fence
+    // before admitting any new work, including a retry from the same worker.
+    const recovered = rows.map(row => row.state === 'admitted'
+      ? { ...row, state: 'unknown' as const, settledAt: Date.now() } : row);
+    await writeDurableNow(WORKER_RECEIPTS_STATE, recovered);
+    workerReceipts = recovered;
+  } else {
+    workerReceipts = rows;
+  }
+  return workerReceipts;
+}
+
+export async function admitWorkerExecution(input: WorkerExecutionIdentity):
+  Promise<{ accepted: true; id: string } | { accepted: false; reason: string }> {
+  return serializeWorkerReceipts(async () => {
+    const validCaller = input.principalKind === 'chatgpt'
+      ? Boolean(input.conversationId && input.sessionId)
+      : input.principalKind === 'local-agent' && input.conversationId === null;
+    if (!validCaller || !/^worker-\d+$/.test(input.workerId) ||
+        !input.runId || !input.invocationId || !input.tool) {
+      return { accepted: false, reason: 'WORKER_RECEIPT_IDENTITY_REQUIRED' };
+    }
+    const rows = await loadWorkerReceipts();
+    const actionDigest = createHash('sha256').update(input.tool + '\0' + stableAction(input.args)).digest('hex');
+    const id = createHash('sha256').update([
+      input.principalKind, input.conversationId ?? '', input.sessionId ?? '',
+      input.workerId, input.runId,
+      input.invocationId, actionDigest
+    ].join('\0')).digest('hex');
+    const duplicate = rows.find(row => row.id === id);
+    if (duplicate) return { accepted: false, reason: `WORKER_RECEIPT_ALREADY_${duplicate.state.toUpperCase()}` };
+    if (rows.some(row => row.workerId === input.workerId &&
+        row.invocationId === input.invocationId && row.runId !== input.runId)) {
+      return { accepted: false, reason: 'WORKER_RECEIPT_STALE_INVOCATION' };
+    }
+    if (rows.some(row => row.runId === input.runId && row.workerId === input.workerId &&
+        row.actionDigest === actionDigest && (row.state === 'unknown' || row.state === 'admitted'))) {
+      return { accepted: false, reason: 'WORKER_RECEIPT_EFFECT_UNKNOWN' };
+    }
+    // Retain all prior receipts, especially unknown ones. Exhaustion refuses
+    // admission rather than silently evicting the one fence a restart needs.
+    if (rows.length >= MAX_WORKER_RECEIPTS) {
+      return { accepted: false, reason: 'WORKER_RECEIPT_CAPACITY_REACHED' };
+    }
+    const receipt: WorkerExecutionReceipt = {
+      id, conversationId: input.conversationId, sessionId: input.sessionId,
+      principalKind: input.principalKind,
+      workerId: input.workerId, runId: input.runId, invocationId: input.invocationId,
+      tool: input.tool, actionDigest, state: 'admitted', admittedAt: Date.now()
+    };
+    const next = [...rows, receipt];
+    await writeDurableNow(WORKER_RECEIPTS_STATE, next);
+    workerReceipts = next;
+    return { accepted: true, id };
+  });
+}
+
+export async function settleWorkerExecution(
+  id: string, state: 'completed' | 'refused' | 'unknown', outcome?: ToolOutcome,
+  resultDigest?: string
+): Promise<void> {
+  await serializeWorkerReceipts(async () => {
+    const rows = await loadWorkerReceipts();
+    const row = rows.find(entry => entry.id === id);
+    if (!row || row.state !== 'admitted') throw new Error('WORKER_RECEIPT_NOT_ADMITTED');
+    const next = rows.map(entry => entry.id === id
+      ? { ...entry, state, settledAt: Date.now(), ...(outcome ? { outcome } : {}),
+          ...(resultDigest ? { resultDigest } : {}) } : entry);
+    await writeDurableNow(WORKER_RECEIPTS_STATE, next);
+    workerReceipts = next;
+  });
+}
+
+/** Test-only restart simulation; production state remains on disk. */
+export function resetWorkerExecutionReceiptsForTests(): void {
+  workerReceipts = null;
+  workerReceiptsQueue = Promise.resolve();
+}
 
 export interface ToolContentPart {
   type: string;

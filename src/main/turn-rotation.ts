@@ -29,6 +29,10 @@ export interface RotationDeps {
 export const ROTATION_MESSAGE =
   'Continue the task from where you are. (ParadigmEve starts a fresh turn every so often so long work stays reliable; nothing else changed.)';
 
+/** The one in-place Continue after ChatGPT broke off a live answer; see bridge confirmRepair. */
+export const RECOVERY_CONTINUE_MESSAGE =
+  'Continue the task from where you stopped. (ChatGPT interrupted your previous response; ParadigmEve stopped it without reloading the chat. Do not repeat work or tool actions you already completed.)';
+
 const REFUSED_RETRY_MS = 60_000;
 const UNTAKEN_RETRY_MS = 5 * 60_000;
 const MAX_FILED_PER_TURN = 2;

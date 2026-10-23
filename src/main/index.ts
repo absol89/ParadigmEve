@@ -977,8 +977,15 @@ void app.whenReady().then(async () => {
           logInfo(`chat review heartbeat deferred: ${error.message.replace(/^HEARTBEAT_REVIEW_BACKOFF:\s*/, '')}`);
           return;
         }
-        // A held handoff (PRIME_TRANSFER_IN_PROGRESS) retries every minute for as long as it lasts;
-        // 68 identical lines on 2026-10-20. Say it once, and again when it changes or clears.
+        // Compact & Resume deliberately holds the Prime family while ownership transfers. The
+        // heartbeat keeps its durable debt and retries every minute, so this is expected deferral,
+        // not a reliability warning. Say it once, and `onResult` reports when normal review resumes.
+        if (error.message.startsWith('PRIME_TRANSFER_IN_PROGRESS')) {
+          if (error.message === lastHeartbeatError) return;
+          lastHeartbeatError = error.message;
+          logInfo(`chat review heartbeat deferred during Compact & Resume: ${error.message}`);
+          return;
+        }
         if (error.message === lastHeartbeatError) return;
         lastHeartbeatError = error.message;
         logWarn(`chat review heartbeat could not run: ${error.message}`);

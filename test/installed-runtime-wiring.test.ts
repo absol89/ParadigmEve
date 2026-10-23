@@ -60,6 +60,17 @@ describe('installed schedules + requests production wiring', () => {
     }
   });
 
+  it('treats a Compact & Resume heartbeat ownership hold as expected deferral, not a warning', () => {
+    const index = readFileSync(path.join(mainRoot, 'index.ts'), 'utf8');
+    const start = index.indexOf("if (error.message.startsWith('PRIME_TRANSFER_IN_PROGRESS'))");
+    expect(start).toBeGreaterThan(0);
+    const info = index.indexOf('chat review heartbeat deferred during Compact & Resume', start);
+    const warning = index.indexOf('logWarn(`chat review heartbeat could not run:', start);
+    expect(info).toBeGreaterThan(start);
+    expect(warning).toBeGreaterThan(info);
+    expect(index.slice(info, warning)).toContain('return;');
+  });
+
   it('keeps update_plan projection-only so it cannot manufacture user signoff', () => {
     const planTool = readFileSync(path.join(mainRoot, 'mcp', 'plan-tool.ts'), 'utf8');
     expect(planTool).not.toMatch(/\barchivePlan\s*\(/u);

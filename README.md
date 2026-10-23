@@ -10,7 +10,7 @@ Eve connects a ChatGPT conversation to real files, local tools, durable Plans, a
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Downloads</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.4.3.md">2.4.3 release notes</a>
+  <a href="docs/release-notes/v2.4.4.md">2.4.4 release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -68,7 +68,7 @@ ParadigmEve requires an eligible ChatGPT account and Chrome/Chromium, Edge, or B
 
 ## Release status
 
-**2.4.3 is a public source release** and the first public release of the 2.4.2 work (2.4.2 was a pre-release only): optional local recording, dedicated Eve Browser link routing, an Archive Browser that opens long chats at the newest part, and heartbeat, tab and session reliability fixes. A Git tag alone does **not** establish successful CI jobs or downloadable packages. Read the [2.4.3 release notes](docs/release-notes/v2.4.3.md) for verified scope and limitations, and use [Releases](https://github.com/absol89/ParadigmEve/releases) for actual downloads.
+**2.4.4 source release preparation:** The cumulative reliability line adds sanitized cloud-transcription diagnostics, updater warning suppression, incremental Archive maintenance, a current `%how` guide, guarded failed-message actions, exact worker identity, protected browser recovery and Compact & Resume fixes. The installed c7 Windows x64 debug candidate passed bounded dogfood, but source changes afterward still require exact-commit packaging and acceptance. The [2.4.4 notes](docs/release-notes/v2.4.4.md) distinguish those evidence levels. Until the source tag and CI are verified, the last confirmed public source tag is **v2.4.3**. A Git tag never implies downloadable packages; use [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) for actual downloads.
 
 ## Build and contribute
 

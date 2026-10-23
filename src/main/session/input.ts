@@ -903,7 +903,7 @@ const ROTATION_UNTAKEN_MS = 4 * 60_000;
  * own. Filed only for the exact running turn, never beside another pending message of this chat,
  * never for a blocked or compacting chat.
  */
-export function fileRotationInput(sessionId: string, turnId: string, startedAt: number): Promise<InputEntry | null> {
+export function fileRotationInput(sessionId: string, turnId: string, startedAt: number, text = ROTATION_MESSAGE): Promise<InputEntry | null> {
   return serial(async () => {
     const current = await load();
     if (current.some(row => row.sessionId === sessionId && !terminal(row))) return null;
@@ -911,7 +911,7 @@ export function fileRotationInput(sessionId: string, turnId: string, startedAt: 
     if (!session?.conversationId || session.endedAt !== null || session.activeTurnId !== turnId ||
         isChatBlocked(session.conversationId) || compactingConversation(session.conversationId)) return null;
     const now = Date.now();
-    const entry: InputEntry = { id: randomUUID(), sessionId, text: ROTATION_MESSAGE, mode: 'auto', dueAt: now,
+    const entry: InputEntry = { id: randomUUID(), sessionId, text, mode: 'auto', dueAt: now,
       model: null, reasoningEffort: null, purpose: 'rotation', directTurn: { id: turnId, startedAt },
       transportIntent: 'browser', state: 'queued', owner: null, createdAt: now, conversationId: session.conversationId };
     await commit(append(current, entry));
@@ -2103,7 +2103,12 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     }
     await transition(current, current.map((row) => row === entry ? claimed : row),
       entry.state === 'queued' && entry.automation && conversationId && entry.purpose !== 'decision' ? [claimed] : [], 'before-send');
-    logInfo(`input ${id}: browser claimed after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
+    const claimedAt = Date.now();
+    const offeredSince = browserOfferedSince.get(id);
+    logInfo(
+      `input ${id}: browser claimed row_age_ms=${Math.max(0, claimedAt - entry.createdAt)} ` +
+      `pickup_wait_ms=${offeredSince === undefined ? 'unknown' : Math.max(0, claimedAt - offeredSince)}`
+    );
     // An Ollama-started chat is about to get its first ChatGPT conversation. Hold the recorder,
     // as Compact & Resume does, so that new conversation is not filed as a separate chat before
     // the receipt binds it to this session.
@@ -2197,7 +2202,11 @@ export function acknowledgeBrowserInput(id: string, owner: string, conversationI
     const next = acknowledged.state === 'sent' ? retireUntouchedDuplicateRestartWakes(acknowledgedRows, acknowledged) : acknowledgedRows;
     await transition(current, next,
       entry.state !== 'cancelled' && !entry.sessionId && entry.automation && deliveredConversation && entry.purpose !== 'decision' ? [acknowledged] : [], 'after-send');
-    logInfo(`input ${id}: browser acknowledged after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
+    const acknowledgedAt = Date.now();
+    logInfo(
+      `input ${id}: browser acknowledged row_age_ms=${Math.max(0, acknowledgedAt - entry.createdAt)} ` +
+      `claim_to_ack_ms=${Math.max(0, acknowledgedAt - (entry.offeredAt ?? entry.createdAt))}`
+    );
     await publishHistory();
     return true;
   });
@@ -2466,7 +2475,7 @@ export function claimLocalInput(id: string, owner: string, conversationId: strin
     if (entry.sessionId && current.some(row => row.id !== id && row.sessionId === entry.sessionId && ['browser', 'tool'].includes(row.state))) return null;
     const claimed: InputEntry = { ...entry, state: 'browser', owner, conversationId, offeredAt: entry.offeredAt ?? Date.now() };
     await commit(current.map(row => row === entry ? claimed : row));
-    logInfo(`input ${id}: local provider claimed after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
+    logInfo(`input ${id}: local provider claimed row_age_ms=${Math.max(0, Date.now() - entry.createdAt)}`);
     return { ...claimed };
   });
 }

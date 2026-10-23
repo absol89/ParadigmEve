@@ -2,12 +2,12 @@
 
 Back to [vault index](README.md).
 
-This page is the **2.4.1 source and acceptance guide** (2.4.1 builds on the 2.4.0 checkpoint). It records
+This page contains historical **2.4.1 source and acceptance evidence** and a current feature checklist. The current development source line is **2.4.4** on `release/2.4.4`; c2 was installed and hash-verified, while c3 delivery-action source changes require separate package/installed acceptance. Candidate packaging and installed acceptance are separate checks. It records
 verified source, local candidate evidence and the checks still needed before
 calling a feature installed or a downloadable release ready. A Git tag, a local
 installer and a live acceptance run are different evidence levels.
 
-## Current product state
+## Historical 2.4.1 product state (not current 2.4.4 installation evidence)
 
 - Current tagged source: **`v2.4.1`** on public `main` and `release/2.4.1` (2026-10-17; the
   GitHub release page shows the tagged commit): onboarding fixes on top of `v2.4.0`. A Windows
@@ -206,6 +206,19 @@ for the mechanics.
   that old assistant section around Send; current-generation ownership must be proved first.
 
 ### Known gaps in the current line
+
+- In 2.4.4 c2 dogfood, archive startup still performed a full index of 11,487
+  documents across 35 sessions and reached approximately 921 MiB RSS. Static
+  site-only refresh reused 34 chats and regenerated one, but full lifecycle
+  indexing still needs resource optimization and installed acceptance.
+- The 2.4.4 c3 failed-message action UI separates **Force Send** on an
+  unclaimed pre-Send timeout from manual composer restoration on ambiguous
+  delivery. It fixes overlapping controls, not the browser's underlying
+  60-second pickup failure. Verify narrow windows and original-row identity
+  in a running c3 installation before calling it accepted.
+- Prime's exact request/page-evidence attribution and Request Trail Plan
+  refreshes, and Brave's strict UIA browser-root compatibility, remain
+  unresolved in this candidate line; do not claim source tests fix them.
 
 - `usage.js` is not re-injected into ChatGPT tabs that stay open across a Companion update; such a tab
   keeps the previous stream reader until it is reloaded while idle.

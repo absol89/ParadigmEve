@@ -649,15 +649,26 @@ describe('durable user input ownership', () => {
     expect((await listInputs()).find(entry => entry.id === row.id)?.state).toBe('sent');
   });
   it('offers and claims an ordinary follow-up after the recorded turn already completed', async () => {
+    const logged: string[] = [];
+    const stop = onLog(entry => logged.push(entry.message));
     binding.activeTurnId = null;
     binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'completed-greeting', time: now };
     now += 69000;
-    const row = await enqueueInput(input({ text: 'Read one file', dueAt: now }));
-    // offeredAt is claim metadata, not proof that /status has published the offer.
-    expect(row.offeredAt).toBeUndefined();
-    expect(await pendingBrowserInputs()).toEqual([{ id: row.id, conversationId: binding.conversationId }]);
-    const claim = await claimBrowserInput(row.id, 'exact-browser-document', binding.conversationId, true);
-    expect(claim).toMatchObject({ state: 'browser', owner: 'exact-browser-document', offeredAt: now });
+    try {
+      const row = await enqueueInput(input({ text: 'Read one file', dueAt: now }));
+      // offeredAt is claim metadata, not proof that /status has published the offer.
+      expect(row.offeredAt).toBeUndefined();
+      expect(await pendingBrowserInputs()).toEqual([{ id: row.id, conversationId: binding.conversationId }]);
+      now += 900;
+      noteBrowserInputsOffered([row.id], now);
+      now += 125;
+      const claim = await claimBrowserInput(row.id, 'exact-browser-document', binding.conversationId, true);
+      expect(claim).toMatchObject({ state: 'browser', owner: 'exact-browser-document', offeredAt: now });
+      expect(logged).toContain(`input ${row.id}: browser claimed row_age_ms=1025 pickup_wait_ms=125`);
+      now += 375;
+      expect(await acknowledgeBrowserInput(row.id, 'exact-browser-document', binding.conversationId, 'native-user-message')).toBe(true);
+      expect(logged).toContain(`input ${row.id}: browser acknowledged row_age_ms=1400 claim_to_ack_ms=375`);
+    } finally { stop(); }
   });
 
   it('persists reordered finish tasks and uses that order at the tool boundary', async () => {

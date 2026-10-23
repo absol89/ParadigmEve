@@ -47,6 +47,17 @@ Questions:
 
 Never automatically replay an ambiguous browser send.
 
+For a red **“Not sent: the browser did not pick up this message within 60
+seconds”** row, distinguish the original queue record from what the browser
+actually observed. If the row is still owned by nobody and has no offer,
+Send authorization, message id or receipt, the 2.4.4 c3 UI should show one
+**Force Send** action and **Dismiss**, in separate non-overlapping positions.
+If any browser claim or uncertain Send exists, **Force Send must disappear**;
+only manual **Restore to composer** and **Dismiss** are appropriate. Preserve
+the current composer draft, do not force-click a send to debug the row, and
+do not treat disappearance of an Activity warning as proof of delivery.
+See `test/renderer-timeline.test.ts` and `test/session-input.test.ts`.
+
 ### Force Send seems unavailable or refuses to send
 
 Check `src/main/session/input.ts::forceBrowserInput`, `forceSendRefusal`,

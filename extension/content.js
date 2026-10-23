@@ -932,14 +932,24 @@
       at: Date.now()
     };
   }
+  // ChatGPT can replace MAIN-world fetch after page ready. Rearm the passive request-id observer
+  // at the native Send event itself, before ChatGPT's own click/submit/Enter handler can start
+  // /conversation. This reads no prompt and grants no browser/tool authority; usage.js merely
+  // restores its wrapper when the provider replaced it. Keeping the legacy event name also lets
+  // newer content.js repair already-open c7 documents without stacking another MAIN observer.
+  const rearmRequestObserver = () => window.dispatchEvent(new Event('cos-resume-send-observer'));
   // Registered through `listen` so a retired recorder stops capturing native sends.
   listen(document, 'click', (event) => {
     const button = CLF_DOM.sendButton?.();
-    if (button && event.target && button.contains(event.target)) rememberUserSend();
+    if (button && event.target && button.contains(event.target)) {
+      rearmRequestObserver();
+      rememberUserSend();
+    }
   }, true);
   listen(document, 'submit', (event) => {
     const composer = CLF_DOM.composer();
     if (composer && event.target && typeof event.target.contains === 'function' && event.target.contains(composer)) {
+      rearmRequestObserver();
       rememberUserSend();
     }
   }, true);
@@ -952,7 +962,10 @@
       event.key === 'Enter' &&
       !event.shiftKey &&
       !event.isComposing
-    ) rememberUserSend();
+    ) {
+      rearmRequestObserver();
+      rememberUserSend();
+    }
   }, true);
 
   /**
@@ -8869,6 +8882,20 @@
     return { current: false, why };
   }
 
+  /**
+   * What the page's failure admits, for interrupted-response recovery in background.js:
+   * `conversation-unavailable` (ChatGPT could not load the chat: never reload it),
+   * `stream-interrupted` (a current failure while ChatGPT still shows Stop: stop and continue in
+   * place), `stream-failed` (a current failure whose turn already ended), or null (none current).
+   */
+  function assistantErrorKind(diagnosis) {
+    const unavailable = CLF_DOM.errors().some(error =>
+      error.kind === 'conversation-unavailable' && !isStale(error.node));
+    if (unavailable) return 'conversation-unavailable';
+    if (!diagnosis.current) return null;
+    return CLF_DOM.generating() ? 'stream-interrupted' : 'stream-failed';
+  }
+
   /** Whether a node is in, or below, the last turn on the page: nothing newer was rendered after it. */
   function inLatestTurn(node) {
     const turns = document.querySelectorAll(TURN_SECTION);
@@ -8899,8 +8926,16 @@
   function resumePendingCompactionFromRepair(expectedConversationId) {
     const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
     if (!alive || !expectedConversationId || conversationId !== expectedConversationId ||
-        CLF_DOM.conversationId() !== expectedConversationId || !source ||
-        (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved')) return false;
+        CLF_DOM.conversationId() !== expectedConversationId || !source) return false;
+    // Installed c7 dogfood, 2026-10-23: the five-minute writing pickup reloaded the still-live
+    // handoff stream while it was preparing this very Compact & Resume brief. A dispatched source
+    // must never be sent again, but a responsive document can still acknowledge that its provider
+    // turn/local tool work is alive so background.js does not fall through to reload. Once that
+    // work is actually gone, decline and leave the existing bounded ended-turn recovery intact.
+    if (source.state === 'dispatched-unresolved') {
+      return Boolean(CLF_DOM.generating() || pendingTools > 0);
+    }
+    if (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved') return false;
     // A source answer ChatGPT broke off ("Connection interrupted. Waiting for the complete
     // answer") never settles in this document, so the ticket cannot be sent from it. Declining
     // hands the pickup to its reload instead of leaving a ticket unsent behind that card.
@@ -11028,10 +11063,6 @@
     const authorizeBootstrapSend = () => {
       bootstrapClickReached = true;
       bootstrapClickedAt = Date.now();
-      // ChatGPT can replace MAIN-world fetch after its page-ready boundary. Restore the
-      // passive stream observer synchronously before this one already-authorized Resume
-      // click; a later DOM user row must not be its only possible receipt.
-      if (boot.type === 'resume') window.dispatchEvent(new Event('cos-resume-send-observer'));
       if (attempt && boot.type === 'worker') attempt.phase = 'dispatching';
       return true;
     };
@@ -12174,6 +12205,21 @@
         sendResponse({ ok: true });
         return false;
       }
+      if (message.type === 'clf-recovery-document-ping') {
+        // A restarted Companion worker cannot trust storage.session's old document owner as proof
+        // that this page is alive in the new generation. Re-offer the current browser-issued
+        // MessageSender.documentId without changing ChatGPT state. background.js uses this only
+        // while the app has an explicit recovery fence open; normal observation still registers
+        // lazily through ask().
+        const recoveryEpoch = epoch;
+        void sendToWorker({ type: 'register_document', navigationEpoch: recoveryEpoch })
+          .then((registered) => sendResponse({
+            ok: registered?.ok === true,
+            registered: registered?.ok === true,
+            ...(registered?.error ? { error: registered.error } : {})
+          }), () => sendResponse({ ok: false, registered: false, error: 'worker_unreachable' }));
+        return true;
+      }
       if (message.type === 'clf-recorder-ping') {
         const commandId = typeof message.commandId === 'string' ? message.commandId : '';
         const draft = Boolean((CLF_DOM.composer()?.textContent || '').trim() || CLF_DOM.hasComposerAttachments());
@@ -12243,6 +12289,8 @@
         const assistantError = diagnosis.current;
         sendResponse({
           ok: true,
+          // Which recovery the visible failure admits; see assistantErrorKind().
+          assistantErrorKind: assistantErrorKind(diagnosis),
           // Which check set a reported error aside, so a kept broken page says why in the app log.
           ...(diagnosis.why ? { assistantErrorWhy: diagnosis.why } : {}),
           // ChatGPT's own account that a response is streaming right now, as opposed to the

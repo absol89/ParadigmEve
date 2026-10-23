@@ -1171,3 +1171,60 @@ it('lets the orchestrator act only on a revision the user sent', async () => {
   ] });
   expect(spokenSend!.sentRevision).toBe(spokenSend!.revision);
 });
+
+/**
+ * c6 Stage 3: the live catalog is one >512 KiB JSON line holding hundreds of archived records,
+ * live finished Plans and a few unfinished ones. Archival must move exactly the ready Plan of
+ * the named session; active, still-open ("blocked"/awaiting-user) and foreign Plans, and every
+ * archived history record, keep every field unchanged.
+ */
+it('archives only the exact ready Plan in a mixed >512 KiB single-line catalog', async () => {
+  const { readDurable } = await import('../src/main/durable.js');
+  async function agentPlan(title: string, conversationId: string, status: 'completed' | 'in_progress' | 'pending') {
+    const session = await createSession({ title, conversationId });
+    const plan = { plan: [{ step: `${title} step`, status, details: `${title} details` }] };
+    expect(await updateSessionPlan(session.id, conversationId, plan, Date.now())).toBe(true);
+    return { session, plan: (await syncSessionAgentPlan(session.id, conversationId, title, plan))! };
+  }
+  const ready = await agentPlan('Ready worker', 'ready-chat', 'completed');
+  const active = await agentPlan('Active worker', 'active-chat', 'in_progress');
+  const blocked = await agentPlan('Blocked worker', 'blocked-chat', 'pending');
+  const foreign = await agentPlan('Foreign worker', 'foreign-chat', 'completed');
+
+  // Pad with archived history cloned from a real record, so the catalog crosses the generic
+  // 512 KiB read ceiling the heartbeat reviewer can no longer rely on.
+  const catalog = (await readDurable<{ version: number; plans: Array<Record<string, unknown>> }>('plans'))!;
+  const template = catalog.plans.find(plan => plan.id === foreign.plan.id)!;
+  const history = Array.from({ length: 2_000 }, (_, index) => ({
+    ...template,
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    title: `Archived history ${index}`,
+    provenance: { ...(template.provenance as Record<string, unknown>), sessionId: 'archived-history-session' },
+    createdAt: 500,
+    archivedAt: 1_000 + index,
+    updatedAt: 1_000 + index
+  }));
+  await writeDurableNow('plans', { ...catalog, plans: [...catalog.plans, ...history] });
+  const before = (await readDurable<typeof catalog>('plans'))!;
+  const line = JSON.stringify(before);
+  expect(line).not.toContain('\n');
+  expect(Buffer.byteLength(line)).toBeGreaterThan(512 * 1024);
+
+  await expect(archivePlan(active.plan.id)).rejects.toThrow('not ready to archive');
+  await expect(archivePlan(blocked.plan.id)).rejects.toThrow('not ready to archive');
+  expect(await archiveFinishedPlansForSession(ready.session.id)).toBe(1);
+
+  const after = (await readDurable<typeof catalog>('plans'))!;
+  expect(after.plans).toHaveLength(before.plans.length);
+  const byId = new Map(after.plans.map(plan => [plan.id, plan]));
+  for (const plan of before.plans) {
+    if (plan.id === ready.plan.id) continue;
+    // The serializer may reorder keys; every field value must be unchanged.
+    expect(byId.get(plan.id as string)).toEqual(plan);
+  }
+  const archived = byId.get(ready.plan.id)!;
+  expect(archived.archivedAt).toEqual(expect.any(Number));
+  expect(archived.provenance).toEqual(before.plans.find(plan => plan.id === ready.plan.id)!.provenance);
+  const library = await listPlans();
+  expect(library.live.map(plan => plan.id).sort()).toEqual([active.plan.id, blocked.plan.id, foreign.plan.id].sort());
+});

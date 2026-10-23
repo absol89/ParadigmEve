@@ -131,6 +131,31 @@ export interface FileChange {
 export type ToolOutcome = 'ok' | 'process_exit_nonzero' | 'tool_rejected' | 'tool_execution_error' | 'tool_internal_error';
 
 /**
+ * App-owned, durable worker effect boundary. This ledger is separate from
+ * optional chat recording; a missing result after restart means unknown,
+ * never authority to invoke the same external action again.
+ */
+export interface WorkerExecutionReceipt {
+  id: string;
+  /** Absent for a local model that has no ChatGPT conversation. */
+  conversationId: string | null;
+  /** Absent when local chat recording is disabled. Never synthesize a session. */
+  sessionId: string | null;
+  principalKind: 'chatgpt' | 'local-agent';
+  workerId: string;
+  runId: string;
+  invocationId: string;
+  tool: string;
+  actionDigest: string;
+  state: 'admitted' | 'completed' | 'refused' | 'unknown';
+  admittedAt: number;
+  settledAt?: number;
+  outcome?: ToolOutcome;
+  /** Exact wire-result hash without retaining raw sensitive result data. */
+  resultDigest?: string;
+}
+
+/**
  * How confident the recorder is that this call belongs to the session it landed in.
  *
  * Four grades, strongest first. `agent` is caller identity. `turn` is per-call evidence

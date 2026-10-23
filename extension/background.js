@@ -3328,6 +3328,24 @@ async function maintainOnce() {
   // Before this pass starts any page or input work of its own; the durable app rows are offered
   // again to the reloaded worker.
   if (await reloadForCompanionBuild(reply.data)) return;
+  if (reply.data.companionRecoveryDocumentRequired === true) {
+    // `tabDocuments` survives service-worker suspension, but installer recovery intentionally
+    // requires proof from this exact worker generation. Ask every current page that did not make
+    // this pass's document census to re-register using Chrome's MessageSender.documentId. If the
+    // isolated-world recorder is absent, repair it in place; never reload the ChatGPT tab merely
+    // to manufacture recovery evidence. Successful registration schedules the next maintenance
+    // pass through register_document, where /status can satisfy the app-side recovery fence.
+    const documentedTabs = new Set(documents.map(entry => entry.tab));
+    for (const tab of observedTabs) {
+      if (!tab || !Number.isInteger(tab.id) || tab.discarded === true || documentedTabs.has(tab.id)) continue;
+      let registered = false;
+      try {
+        const proof = await tabReply(tab.id, { type: 'clf-recovery-document-ping' });
+        registered = proof?.ok === true && proof.registered === true;
+      } catch { /* A missing receiver falls through to safe in-place recorder restoration. */ }
+      if (!registered) await restoreChatgptTab(tab.id, { allowReload: false });
+    }
+  }
   connectWakeSocket();
   // Quoted back exactly as they arrived. A token names the handout being answered, so that a
   // receipt this pass sends late cannot close a repair the app has since raised for a different
@@ -3588,6 +3606,11 @@ async function performBrowserRepairs(repairs, policy) {
     // Chrome's audible bit is a fail-safe for a live Voice call the page could not describe in
     // time: a reload would end the call. Leave the repair unclaimed for a later pass.
     if (target && target.audible === true) continue;
+    // No repair reason makes a selected human ChatGPT tab safe to destroy. In c4 an unattributed
+    // request reloaded the selected Prime tab and interrupted its provider turn; silence, error,
+    // Goal, compaction and identity recovery have the same destructive edge. Wait for the user to
+    // leave this tab rather than claim/reload it as a repair side effect.
+    if (target && target.active === true) continue;
     if (target && await browserRepairProtected(target, conversationId)) continue;
     // `/status` only hands the repair out. The tab scan above can take long enough for the user
     // to Block/Stop the chat, or for its durable source identity to be superseded. Claim this
@@ -3599,14 +3622,6 @@ async function performBrowserRepairs(repairs, policy) {
     });
     if (!claim.ok || claim.data?.ok !== true) continue;
     try {
-      // Select the working tab within Chrome without stealing OS focus from the
-      // desktop app. Inside a focused Chrome window, though, tab selection *is* a visible focus
-      // steal, so never replace the human's current foreground tab for recovery presentation.
-      if (target && focus) {
-        if (await foregroundTabAllowsSelection(target)) {
-          await chrome.tabs.update(target.id, { active: true });
-        }
-      }
       if (target && (reason === 'unattributed' || reason === 'assistant-error')) {
         // An attribution refresh exists to make a live page report again, not to rescue a broken
         // one, and a reload mid-stream ends that stream ("Resume stream unavailable", or "could not
@@ -3620,15 +3635,46 @@ async function performBrowserRepairs(repairs, policy) {
         // error keeps the reload (upstream chat-on-steroids 8b01399, a231d58, c8721d1).
         const documentId = typeof tabDocuments[String(target.id)] === 'string' ? tabDocuments[String(target.id)] : null;
         const status = await tabReply(target.id, { type: 'clf-page-status' }, documentId ? { documentId } : undefined);
+        if (reason === 'unattributed') {
+          // Missing request attribution is an observation failure, not proof that navigation is
+          // safe. Require the exact current page to answer positively; unknown/stale evidence is
+          // preserved and retried instead of being turned into a destructive recovery side effect.
+          if (status?.ok !== true || status.conversationId !== conversationId || status.streaming === true) {
+            await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=preserved`);
+            continue;
+          }
+        }
         if (status?.ok === true && status.streaming === true &&
             (reason !== 'assistant-error' || status.assistantError === false)) {
-          await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=${repairAction}`);
+          // Nothing was reloaded: say so, so the app does not report a failed reload.
+          await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=preserved`);
           continue;
         }
-        if (reason === 'assistant-error' && status?.ok === true && status.assistantError === false) {
+        if (reason === 'assistant-error' && status?.ok === true && status.assistantError === false &&
+            status.assistantErrorKind !== 'conversation-unavailable') {
           const why = typeof status.assistantErrorWhy === 'string' ? status.assistantErrorWhy.slice(0, 24) : '';
           await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=preserved${why ? `&why=${encodeURIComponent(why)}` : ''}`);
           continue;
+        }
+        if (reason === 'assistant-error') {
+          // Installed c6, 2026-10-23 (worker-65): two interrupted-response reloads landed on the
+          // same "Error in message stream" card and then on "Something went wrong" with a 401 for
+          // the chat's own history; upstream #1405 measured the same. Only a page that answered
+          // for this exact chat with a current failure on an already-ended turn keeps the one
+          // reload the app grants per question. Everything else is kept as it is.
+          const blocked = why => call(`/status?repaired=${encodeURIComponent(token)}&repairAction=blocked&why=${why}`);
+          if (status?.ok !== true) { await blocked('status-unknown'); continue; }
+          if (status.conversationId && status.conversationId !== conversationId) {
+            await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=preserved`);
+            continue;
+          }
+          if (status.assistantErrorKind === 'conversation-unavailable') { await blocked('conversation-unavailable'); continue; }
+          if (status.assistantErrorKind === 'stream-interrupted') {
+            // ChatGPT still shows Stop: the app files one durable Continue for this exact turn,
+            // and its delivery stops the answer first. Nothing here navigates or sends.
+            await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=continued`);
+            continue;
+          }
         }
       }
       if (target && reason === 'compaction') {
@@ -3646,8 +3692,21 @@ async function performBrowserRepairs(repairs, policy) {
           continue;
         }
       }
-      if (target) await chrome.tabs.reload(target.id);
-      else {
+      if (target) {
+        if (await browserRepairReloadVetoed(target, conversationId)) {
+          await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=preserved`);
+          continue;
+        }
+        await chrome.tabs.reload(target.id);
+        // Select the working tab within Chrome without stealing OS focus from the desktop app,
+        // and only after the reload: the gate above refuses a selected tab, so the tab this pass
+        // reloads is never one the human (or this pass) had in front. Inside a focused Chrome
+        // window tab selection *is* a visible focus steal, so never replace the human's current
+        // foreground tab for recovery presentation.
+        if (focus && await foregroundTabAllowsSelection(target)) {
+          await chrome.tabs.update(target.id, { active: true });
+        }
+      } else {
         await createChatTab(`https://chatgpt.com/c/${encodeURIComponent(conversationId)}`, policy.background === true, focus);
       }
     } catch {
@@ -3659,6 +3718,23 @@ async function performBrowserRepairs(repairs, policy) {
     }
     await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=${repairAction}`);
   }
+}
+
+/**
+ * The last check before any automatic repair reload, whatever its reason.
+ *
+ * The first safety probe, the claim and the page-status/compaction probes all await, and the
+ * user can select the tab, start typing or a Voice call, or navigate it in that time. Repeat the
+ * exact-document protection probe (draft, typing, voice, app-owned composer work, conversation
+ * change; no answer is protection) and then re-read Chrome's native tab state last, so nothing
+ * after it awaits before the reload. A tab Chrome cannot describe is not proven safe.
+ */
+async function browserRepairReloadVetoed(target, conversationId) {
+  if (await browserRepairProtected(target, conversationId)) return true;
+  let latest;
+  try { latest = await chrome.tabs.get(target.id); } catch { return true; }
+  return !latest || latest.active === true || latest.audible === true || Boolean(latest.pendingUrl) ||
+    latest.status === 'loading' || conversationForTab(latest) !== conversationId;
 }
 
 function conversationStillOpen(conversationId) {

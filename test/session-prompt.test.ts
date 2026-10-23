@@ -133,6 +133,22 @@ it('drops optional %how Vault context before an ultra-tight budget can truncate 
   expect(text).not.toContain(VAULT_CONTEXT_MARKER);
 });
 
+it('injects only current-version %how guidance, not historical 2.4.0 release instructions', async () => {
+  const request = 'What can Eve do today?';
+  const text = await prepareSessionPrompt([
+    '# Eve Thread prompt · how',
+    VAULT_CONTEXT_MARKER,
+    '--- Current request ---',
+    request
+  ].join('\n'));
+  expect(text).toContain('# ParadigmEve 2.4.4 — current %how quick reference');
+  expect(text).toContain('/paradigmeve-manual/10-current-state-and-acceptance.md');
+  expect(text).not.toContain('2.4.0');
+  expect(text).not.toContain('## Historical 2.4.1');
+  expect(text).not.toContain('## 2.4.0');
+  expect(userPromptText(text)?.endsWith(request)).toBe(true);
+});
+
 it('uses durable session ownership through resume and worker inheritance, never an unrelated selected project', async () => {
   await fs.mkdir(path.join(directory, 'one')); await fs.mkdir(path.join(directory, 'two'));
   const one = await addProject(path.join(directory, 'one')), two = await addProject(path.join(directory, 'two'));

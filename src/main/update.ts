@@ -156,7 +156,11 @@ export function checkForUpdates(): Promise<void> {
     .catch((err: Error) => {
       staged = null;
       set({ latest: null, stage: 'failed', error: err.message, releaseUrl: null });
-      logWarn(`update check failed: ${err.message}`);
+      if (github?.error && err.message === `could not check GitHub releases: ${github.error}`) {
+        reportGithubFailureOnce(`update check failed: ${err.message}`);
+      } else {
+        logWarn(`update check failed: ${err.message}`);
+      }
     })
     .finally(() => {
       if (pass === run) pass = null;
@@ -278,7 +282,7 @@ async function runPass(): Promise<void> {
     set({ latest: null, stage: 'idle', error: null, releaseUrl: null });
     return;
   }
-  if (remote.error) logWarn(`update: the GitHub check failed (${remote.error}); using the local private feed`);
+  if (remote.error) reportGithubFailureOnce(`update: the GitHub check failed (${remote.error}); using the local private feed`);
 
   const label = chosen.source === 'github' ? `release ${chosen.version} (GitHub Latest)` : `private build ${chosen.version}`;
   logInfo(`update: ${label} is available; this app is ${APP_VERSION}`);
@@ -335,6 +339,14 @@ interface GithubRelease {
 
 /** The last GitHub answer, reused until it is six hours old. */
 let github: { at: number; release: GithubRelease | null; error: string | null; digests: Map<string, string> | null } | null = null;
+/** Every failed request deserves one warning, but replaying its six-hour cached answer does not. */
+let reportedGithubFailureAt: number | null = null;
+
+function reportGithubFailureOnce(message: string): void {
+  if (!github?.error || reportedGithubFailureAt === github.at) return;
+  reportedGithubFailureAt = github.at;
+  logWarn(message);
+}
 
 async function githubRelease(): Promise<{ release: GithubRelease | null; error: string | null }> {
   if (github && Date.now() - github.at < GITHUB_RECHECK_MS) return github;
@@ -536,5 +548,6 @@ export function resetUpdateForTests(): void {
   pass = null;
   runAfterInstall = false;
   github = null;
+  reportedGithubFailureAt = null;
   listeners.clear();
 }

@@ -343,7 +343,28 @@ var CLF_DOM = (() => {
   // The other added wordings are Chat On Steroids 2.1.35's.
   function transportFailure(value) {
     const line = String(value || '').replace(/\s+/g, ' ').trim();
-    return /^(?:message delivery timed out(?:\. please try again\.?)?|connection interrupted\.? waiting for the complete answer\.?|this response couldn['’]t load\.?|chatgpt stream recovery polling timed out\.?|stream cache expired\.?|unknown error occurred\.?|there was an error generating (?:a|the) response\.?|error in message stream\.?|network error\.?|a network error occurred\.?(?: please check your connection and try again\.?)?|resume stream unavailable\.?|something went wrong\.?|something went wrong while generating the response(?:\. if this issue persists please contact us through our help center at help\.openai\.com\.?)?\.?)(?: retry)?$/i.test(line);
+    return /^(?:message delivery timed out(?:\. please try again\.?)?|connection interrupted\.? waiting for the complete answer\.?|this response couldn['’]t load\.?|chatgpt stream recovery polling timed out\.?|stream cache expired\.?|unknown error occurred\.?|there was an error generating (?:a|the) response\.?|error in message stream\.?|network error\.?|a network error occurred\.?(?: please check your connection and try again\.?)?|resume stream unavailable\.?|something went wrong while generating the response(?:\. if this issue persists please contact us through our help center at help\.openai\.com\.?)?\.?)(?: retry)?$/i.test(line);
+  }
+
+  /**
+   * ChatGPT's page-level "could not load this conversation" card, outside any assistant turn.
+   *
+   * Installed c6 (2026-10-23, worker-65): after two interrupted-response reloads the worker chat
+   * showed "Something went wrong. Please try again" with Retry while its own conversation fetch
+   * answered 401. That is the history/access failure upstream #1405 measured after reloads, not a
+   * broken answer stream, and a reload is how it gets worse. It is recorded, never reloaded.
+   * Inside an assistant turn the generic wording still names that turn's stream failure.
+   */
+  function conversationLoadFailure(value) {
+    const line = String(value || '').replace(/\s+/g, ' ').trim();
+    return /^(?:something went wrong\.?(?: please try again(?: later)?\.?)?|could not load this (?:chatgpt )?conversation\.?|unable to load conversation(?: [0-9a-f-]{8,})?\.?|conversation not found\.?)(?: retry)?$/i.test(line);
+  }
+
+  /** Recognised page-level failure notice: a broken answer stream, or the conversation itself. */
+  function pageNotice(value) {
+    if (transportFailure(value)) return { recoverable: true, kind: 'transport' };
+    if (conversationLoadFailure(value)) return { recoverable: false, kind: 'conversation-unavailable' };
+    return null;
   }
 
   /**
@@ -365,7 +386,8 @@ var CLF_DOM = (() => {
         if (node.closest && node.closest(OWN_SURFACES)) return null;
         const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
         if (value.length >= 500) return null;
-        if (displayed(node) && transportFailure(value)) return { text: value, node };
+        const notice = displayed(node) ? pageNotice(value) : null;
+        if (notice) return { text: value, node, ...notice };
       }
       return null;
     }, null);
@@ -390,7 +412,7 @@ var CLF_DOM = (() => {
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         const raw = node.nodeValue || '';
-        if (raw.length < 8 || raw.length > 300 || !/interrupted|couldn|timed out|went wrong|error|expired|unavailable/i.test(raw)) continue;
+        if (raw.length < 8 || raw.length > 300 || !/interrupted|couldn|could not|unable to load|not found|timed out|went wrong|error|expired|unavailable/i.test(raw)) continue;
         const start = node.parentElement;
         if (!start || (start.closest && start.closest(
           `${PROSE}, ${USER_HOLDER}, ${OWN_SURFACES}, [contenteditable="true"], textarea, form, [aria-hidden="true"], [hidden]`
@@ -399,10 +421,11 @@ var CLF_DOM = (() => {
         for (let up = 0; element && up < 4 && element !== root; up++, element = element.parentElement) {
           const value = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
           if (value.length >= 300) break;
-          if (!transportFailure(value)) continue;
+          const notice = pageNotice(value);
+          if (!notice) continue;
           if (!seen.has(element) && displayed(element)) {
             seen.add(element);
-            found.push({ text: value, node: element });
+            found.push({ text: value, node: element, ...notice });
           }
           break;
         }
@@ -767,7 +790,7 @@ var CLF_DOM = (() => {
           // identity/content is captured from ChatGPT's message model by fiber.js; this DOM
           // fallback is used only for local lifecycle/compaction decisions.
           const value = parts[parts.length - 1];
-          if (!transportFailure(value)) {
+          if (!transportFailure(value) && !conversationLoadFailure(value)) {
             out.push({
               id: `assistant:${turn.id || index}`,
               role: 'assistant',
@@ -1590,8 +1613,9 @@ var CLF_DOM = (() => {
         // Provider live regions also announce successful settings/actions changes. Only the
         // existing transport classifier makes an announcement a chat error. A failed send
         // can precede an assistant section, so recognized failures still need no turn id.
-        if (!transportFailure(value)) continue;
-        out.push({ text: value, node, turnId: null, recoverable: true });
+        const notice = pageNotice(value);
+        if (!notice) continue;
+        out.push({ text: value, node, turnId: null, ...notice });
         texts.add(value);
       }
       // The current full-width failure card has no alert role. Its exact Retry control is
@@ -1601,12 +1625,12 @@ var CLF_DOM = (() => {
         const failure = retryFailure(button);
         if (!failure || texts.has(failure.text)) continue;
         texts.add(failure.text);
-        out.push({ ...failure, turnId: null, recoverable: true });
+        out.push({ ...failure, turnId: null });
       }
       for (const failure of plainNoticeFailures()) {
         if (texts.has(failure.text)) continue;
         texts.add(failure.text);
-        out.push({ ...failure, turnId: null, recoverable: true });
+        out.push({ ...failure, turnId: null });
       }
       for (const turn of turns()) {
         if (turn.role !== 'assistant') continue;
@@ -1614,9 +1638,9 @@ var CLF_DOM = (() => {
           for (const markdown of section.querySelectorAll(PROSE)) {
             if (markdown.closest(USER_UNIT)) continue;
             const value = text(markdown, 500).replace(/\s+/g, ' ').trim();
-            if (!value || !transportFailure(value) || texts.has(value)) continue;
+            if (!value || !(transportFailure(value) || conversationLoadFailure(value)) || texts.has(value)) continue;
             texts.add(value);
-            out.push({ text: value, node: markdown, turnId: turn.id, turn, recoverable: true });
+            out.push({ text: value, node: markdown, turnId: turn.id, turn, recoverable: true, kind: 'transport' });
           }
         }
       }

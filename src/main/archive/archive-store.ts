@@ -498,6 +498,19 @@ export class ArchiveStore {
     return { sessionId, state: partial ? 'partial' : 'complete', manifest, events: eventScan.events, issues };
   }
 
+  /**
+   * Lightweight, validated local summary for a previously reconciled archive session.
+   * Used only for incremental disposable static-site refreshes: it does not certify
+   * events.jsonl integrity. Explicit full rebuilds must still call readSession().
+   */
+  async readSessionManifest(sessionId: string): Promise<ArchiveSessionManifest | null> {
+    const directory = sessionDirectory(this.archiveRoot, sessionId);
+    if (await ensureArchiveDirectory(this.archiveRoot, directory, false) === 'missing') return null;
+    const raw = await readJson(this.archiveRoot, path.join(directory, 'manifest.json'));
+    const manifest = parseArchiveSessionManifest(raw);
+    return manifest?.sessionId === sessionId ? manifest : null;
+  }
+
   async listSessionIds(): Promise<string[]> {
     const root = path.join(this.archiveRoot, 'sessions');
     if (await ensureArchiveDirectory(this.archiveRoot, root, false) === 'missing') return [];

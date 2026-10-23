@@ -2012,7 +2012,12 @@ async function callerNow(
   const window = base.requestId ? (options.exact ? SPAWN_EVIDENCE_MS : IDENTITY_EVIDENCE_MS) : PRIME_EVIDENCE_MS;
   const exactBeforeWait = base.conversationId ?? freshCallOrigin('agents', startedAt, base.requestId);
   let heartbeatContinuity: { sessionId: string; conversationId: string } | null = null;
-  if (!exactBeforeWait && base.requestId && options.reviewKey) {
+  // A worker-lane epoch prints its key only into the app-owned reviewer's task; Prime never
+  // receives it. Resolving that key to the coordinator therefore turned the reviewer's own
+  // unattributed `agents` call into Prime (installed c6, 2026-10-23: worker-67's report to Prime
+  // revived Prime's dormant run and failed as Prime messaging itself). Only a legacy Prime-lane
+  // key, which the coordinator itself received, may recover the coordinator's lineage.
+  if (!exactBeforeWait && base.requestId && options.reviewKey && !(await chatReviewRequiresWorker(options.reviewKey))) {
     const candidate = await resolveChatReviewContinuity(options.reviewKey);
     // The heartbeat key proves an ordinary coordinator, not automatically a broker owner.
     // Reattach agents only when that exact conversation is already the Prime of a retained

@@ -13,6 +13,7 @@ import { WebSocket } from 'ws';
 import sharp from 'sharp';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_VERSION, BRIDGE_PROTOCOL } from '../src/main/version.js';
+import { RECOVERY_CONTINUE_MESSAGE } from '../src/main/turn-rotation.js';
 import { userPromptText } from '../src/shared/user-prompt.js';
 import { currentCoreInstructions } from '../src/main/mcp/instructions.js';
 import { foldProgress, type SessionEvent } from '../src/shared/session.js';
@@ -687,10 +688,16 @@ describe('who is allowed to talk to it', () => {
     beginCompanionRecoveryEvidence();
     expect((await request('GET', '/recovery', { auth: null })).body.ready).toBe(false);
 
+    const needsDocument = await request('POST', '/status', {
+      body: { openConversations: [], documents: [] }
+    });
+    expect(needsDocument.body.companionRecoveryDocumentRequired).toBe(true);
+
     const fresh = await request('POST', '/status', {
       body: { openConversations: [], documents: [{ tab: 9, documentId: 'fresh-attempt-document' }] }
     });
     expect(fresh.status).toBe(200);
+    expect(fresh.body.companionRecoveryDocumentRequired).toBe(false);
     expect((await request('GET', '/recovery', { auth: null })).body.ready).toBe(true);
   });
 
@@ -7114,10 +7121,18 @@ describe('unattributed activity recovery', () => {
         'Trying to reload chat to recover missing connector attribution…'
       ]);
 
-      await maintenance(retry!.token, 'reloaded');
+      // A streaming page is left alone; the row says so instead of claiming a failed reload.
+      await request('GET', `/status?repairFailed=${encodeURIComponent(retry!.token)}&repairAction=preserved`);
+      expect(foldProgress(await snapshots()).map((event) => event.kind === 'progress' ? event.message.text : '')).toEqual([
+        'Kept the chat open instead of reloading while recovering missing connector attribution: it is still answering. Will check again.'
+      ]);
+      const again = await maintenance();
+      expect(chatOf(again)).toBe(PRIME);
+
+      await maintenance(again!.token, 'reloaded');
       // Replaying the same receipt is harmless: only the still-handed token can update the row.
       const recorded = (await snapshots()).length;
-      await maintenance(retry!.token, 'reloaded');
+      await maintenance(again!.token, 'reloaded');
       expect(await snapshots()).toHaveLength(recorded);
       expect(foldProgress(await snapshots()).map((event) => event.kind === 'progress' ? event.message.text : '')).toEqual([
         'Reloaded chat to recover missing connector attribution.'
@@ -7707,6 +7722,120 @@ describe('unattributed activity recovery', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('interrupted-response recovery without repeated reloads (installed c6, worker-65)', () => {
+    const streamError = (turnId: string | null, text = 'Error in message stream Retry'): unknown =>
+      ({ kind: 'chat_error', time: Date.now(), text, turnId, recoverable: true });
+    // Each case must refuse (or file) a Continue for its own reason, not a sibling's pending row.
+    beforeEach(async () => {
+      const { resetInputForTests } = await import('../src/main/session/input.js');
+      resetInputForTests();
+    });
+    async function receipt(token: string, action: string, why?: string): Promise<void> {
+      const reply = await request('GET', `/status?repaired=${encodeURIComponent(token)}&repairAction=${action}${why ? `&why=${why}` : ''}`);
+      expect(reply.status).toBe(200);
+    }
+    async function recoveryInputs(turnId: string): Promise<Array<{ text: string; purpose?: string; directTurn?: { id: string } }>> {
+      const { listInputs } = await import('../src/main/session/input.js');
+      return (await listInputs()).filter(row => row.purpose === 'rotation' && row.directTurn?.id === turnId);
+    }
+
+    it('spends one reload per recorded turn even when the reloaded page ends it failed and names it', async () => {
+      vi.useFakeTimers();
+      try {
+        await pair();
+        spawn({ workers: [{ task: 'hold the run open' }], caller: { conversationId: PRIME } });
+        await events(PRIME, [openTurn('g-broken-turn')]);
+        // 15:44:46: the first sighting carries no turn id.
+        await events(PRIME, [streamError(null), streamError(null, 'Error in message stream')]);
+        const first = await maintenance();
+        expect(first?.reason).toBe('assistant-error');
+        expect(await maintenance(first!.token, 'reloaded')).toBeNull();
+
+        // 15:48:10: the reloaded page ends the same turn as failed and now names it.
+        await vi.advanceTimersByTimeAsync(BROWSER_RECOVERY_COOLDOWN_MS + 30_000);
+        await events(PRIME, [endTurn('g-broken-turn', 'failed'), streamError('g-broken-turn')]);
+        expect(await maintenance()).toBeNull();
+
+        // A new recorded turn (a revival or the user's next message) earns its own remedy.
+        await vi.advanceTimersByTimeAsync(BROWSER_RECOVERY_COOLDOWN_MS);
+        await events(PRIME, [openTurn('g-next-turn'), streamError('g-next-turn')]);
+        expect(chatOf(await maintenance())).toBe(PRIME);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('never queues recovery for a parked worker chat', async () => {
+      await pair();
+      spawn({ workers: [{ task: 'parked worker' }], caller: { conversationId: PRIME } });
+      expect(bindConversation('worker-1', WORKER)).toBe(true);
+      await events(WORKER, [openTurn('worker-turn')]);
+      finishAgent({ conversationId: WORKER }, 'parked: silent for two minutes');
+      expect(agentInfoForOwnedConversation(WORKER)?.state).toBe('sleeping');
+      await events(WORKER, [streamError('worker-turn')]);
+      expect(await maintenance()).toBeNull();
+    });
+
+    it('stops and continues an interrupted live answer in place, exactly once', async () => {
+      vi.useFakeTimers();
+      try {
+        await pair();
+        spawn({ workers: [{ task: 'hold the run open' }], caller: { conversationId: PRIME } });
+        await events(PRIME, [openTurn('g-live-turn')]);
+        await events(PRIME, [streamError('g-live-turn', 'Connection interrupted. Waiting for the complete answer')]);
+        const repair = await maintenance();
+        expect(repair?.reason).toBe('assistant-error');
+        await receipt(repair!.token, 'continued');
+        const filed = await recoveryInputs('g-live-turn');
+        expect(filed).toHaveLength(1);
+        expect(filed[0]).toMatchObject({ text: RECOVERY_CONTINUE_MESSAGE, directTurn: { id: 'g-live-turn' } });
+
+        // The same failure again: no reload and no second Continue.
+        await vi.advanceTimersByTimeAsync(BROWSER_RECOVERY_COOLDOWN_MS + 30_000);
+        await events(PRIME, [streamError('g-live-turn', 'Connection interrupted. Waiting for the complete answer')]);
+        expect(await maintenance()).toBeNull();
+        expect(await recoveryInputs('g-live-turn')).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('files no Continue once the interrupted turn has already ended, and does not reload instead', async () => {
+      vi.useFakeTimers();
+      try {
+        await pair();
+        spawn({ workers: [{ task: 'hold the run open' }], caller: { conversationId: PRIME } });
+        await events(PRIME, [openTurn('g-ended-turn'), streamError('g-ended-turn', 'Message delivery timed out. Please try again.')]);
+        const repair = await maintenance();
+        await events(PRIME, [endTurn('g-ended-turn', 'failed')]);
+        await receipt(repair!.token, 'continued');
+        expect(await recoveryInputs('g-ended-turn')).toEqual([]);
+        await vi.advanceTimersByTimeAsync(BROWSER_RECOVERY_COOLDOWN_MS + 30_000);
+        await events(PRIME, [streamError('g-ended-turn')]);
+        expect(await maintenance()).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each(['conversation-unavailable', 'status-unknown'])('keeps a %s page without reloading it again for the same turn', async (why) => {
+      vi.useFakeTimers();
+      try {
+        await pair();
+        spawn({ workers: [{ task: 'hold the run open' }], caller: { conversationId: PRIME } });
+        await events(PRIME, [openTurn(`g-${why}`), streamError(`g-${why}`)]);
+        const repair = await maintenance();
+        await receipt(repair!.token, 'blocked', why);
+        await vi.advanceTimersByTimeAsync(BROWSER_RECOVERY_COOLDOWN_MS + 30_000);
+        await events(PRIME, [streamError(`g-${why}`)]);
+        expect(await maintenance()).toBeNull();
+        expect(await recoveryInputs(`g-${why}`)).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('offers one stale-composer recovery for a completed ordinary chat after 69 idle seconds', async () => {

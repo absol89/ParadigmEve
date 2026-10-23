@@ -1322,9 +1322,15 @@ describe('self-maintenance settings authority', () => {
       // The raw catalog carries data outside this epoch's batch. A spelling that escapes the
       // scoped projection would leak this sentinel, even if the regular batch assertion passed.
       const unrelatedRawPlan = 'foreign-plan-contents-must-never-reach-heartbeat-worker';
-      await fs.writeFile(path.join(stateDir, 'plans.json'), JSON.stringify({ plans: [
-        { id: 'expected-reviewed-plan' }, { id: 'unrelated-private-plan', title: unrelatedRawPlan }
-      ] }));
+      // Production's single-line catalog has exceeded the 512 KiB generic read cap.
+      // The worker must receive the current review batch, regardless of raw file size,
+      // without leaking unrelated data or asking for an unbounded read budget.
+      const oversizedRawCatalog = JSON.stringify({ plans: [
+        { id: 'expected-reviewed-plan' },
+        { id: 'unrelated-private-plan', title: unrelatedRawPlan, historicalNotes: 'x'.repeat(600 * 1024) }
+      ] });
+      expect(Buffer.byteLength(oversizedRawCatalog)).toBeGreaterThan(512 * 1024);
+      await fs.writeFile(path.join(stateDir, 'plans.json'), oversizedRawCatalog);
       // The scoped projection uses the validated state/Plan owners, not arbitrary JSON
       // from the managed file. Set up matching durable fixtures under this test's own temp dir.
       initDurableStore(base);
@@ -1366,6 +1372,7 @@ describe('self-maintenance settings authority', () => {
       expect(textOf(second)).toContain('expected-reviewed-plan');
       expect(textOf(second)).toContain('current heartbeat Plan batch only');
       expect(textOf(second)).not.toContain('unrelated-private-plan');
+      expect(textOf(second).length).toBeLessThan(256 * 1024);
 
       // The sandbox strips trailing separators before resolving the file. The heartbeat read
       // exception and the scoped projection must classify those spellings identically; a raw

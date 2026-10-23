@@ -3949,28 +3949,10 @@ async function refreshInputQueue(): Promise<void> {
     else receipt.append(icon(['sent', 'tool'].includes(entry.state) ? 'i-check' : 'i-clock'));
     receipt.hidden = !entry.error && ['sent', 'tool'].includes(entry.state) && hasLaterModelActivity(entry.deliveredAt ?? entry.offeredAt ?? entry.createdAt);
     row.append(receipt);
-    if (notice(entry)) {
-      row.append(dockAction(() => t("Dismiss delivery notice"), 'i-x', () => dismissInputNotice(entry.id)));
-      const retry = dockAction(() => t("Retry delivery"), 'i-retry', () => {});
-      retry.classList.add('delivery-retry');
-      row.classList.add('has-delivery-retry');
-      const unqueuedPlan = entry.stages !== undefined && !entry.stagesApplied;
-      ui(retry, 'title', () => unqueuedPlan ? t("Retry stage one with the complete plan and queued checkpoints") : t("Restore this message to the composer for review and sending"));
-      retry.onclick = () => {
-        if (unqueuedPlan) { void retryPlannedInput(entry); return; }
-        const input = $<HTMLTextAreaElement>('chatInput');
-        if (input.value.trim() || imageDrafts.get(draftKey())?.length) { toast(t("Send or clear your current draft before retrying this message.")); return; }
-        input.value = entry.text;
-        if (entry.images?.length) imageDrafts.set(draftKey(), [...entry.images]);
-        if (entry.attachments?.length) imageDrafts.set(draftKey(), [...(entry.images ?? []), ...entry.attachments]);
-        rememberDraft(); paintComposerImages(); paintDeliveryControls(); input.focus();
-        dismissInputNotice(entry.id);
-      };
-      row.append(retry);
-    }
-    // Force Send is an *authored* recovery for an untouched outbox row, not a retry
-    // of a click with an unknown result. Main will recheck all of this under the
-    // durable outbox lock and the Companion still owns the actual native Send.
+    // A browser-pickup timeout can be force-sent only when *nothing* has claimed
+    // or authorized its native Send. Keep that single recovery action distinct
+    // from restoring a failed draft; presenting both used to stack two icons in
+    // the same absolute position and obscured which action was safe.
     const pickupFailure = entry.state === 'failed' &&
       (entry.error?.startsWith('Not sent: the browser did not pick up this message') ||
         entry.error?.startsWith('Not sent: the browser did not connect'));
@@ -3979,6 +3961,34 @@ async function refreshInputQueue(): Promise<void> {
       !entry.restartWake && !entry.recoveryTurnId && !entry.finishOwner &&
       entry.owner === null && entry.offeredAt === undefined &&
       entry.sendAuthorizedAt === undefined && entry.deliveredAt === undefined && !entry.messageId;
+    const actions = el('div', 'pending-message-actions');
+    const hasNotice = notice(entry);
+    if (hasNotice) {
+      // Force Send owns an untouched outbox UUID and does not replace the user's
+      // current draft. For an ambiguous or claimed failure, offer only the
+      // explicit composer-restoration path (never an automatic resend).
+      if (!canForce) {
+        const retry = dockAction(() => t("Retry delivery"), 'i-retry', () => {});
+        retry.classList.add('delivery-retry');
+        row.classList.add('has-delivery-retry');
+        const unqueuedPlan = entry.stages !== undefined && !entry.stagesApplied;
+        ui(retry, 'title', () => unqueuedPlan ? t("Retry stage one with the complete plan and queued checkpoints") : t("Restore this message to the composer for review and sending"));
+        retry.onclick = () => {
+          if (unqueuedPlan) { void retryPlannedInput(entry); return; }
+          const input = $<HTMLTextAreaElement>('chatInput');
+          if (input.value.trim() || imageDrafts.get(draftKey())?.length) { toast(t("Send or clear your current draft before retrying this message.")); return; }
+          input.value = entry.text;
+          if (entry.images?.length) imageDrafts.set(draftKey(), [...entry.images]);
+          if (entry.attachments?.length) imageDrafts.set(draftKey(), [...(entry.images ?? []), ...entry.attachments]);
+          rememberDraft(); paintComposerImages(); paintDeliveryControls(); input.focus();
+          dismissInputNotice(entry.id);
+        };
+        actions.append(retry);
+      }
+    }
+    // Force Send is an *authored* recovery for an untouched outbox row, not a retry
+    // of a click with an unknown result. Main will recheck all of this under the
+    // durable outbox lock and the Companion still owns the actual native Send.
     if (canForce) {
       const force = dockAction(() => t("Force send"), 'i-send', () => {});
       force.classList.add('delivery-retry');
@@ -3993,7 +4003,7 @@ async function refreshInputQueue(): Promise<void> {
           else toast(t("This message changed or its chat is not available. No message was sent."));
         } finally { void refreshInputQueue(); }
       };
-      row.append(force);
+      actions.append(force);
     }
     if (['queued', 'browser'].includes(entry.state)) {
       const cancel = dockAction(() => t("Cancel delivery"), 'i-x', () => {});
@@ -4003,14 +4013,18 @@ async function refreshInputQueue(): Promise<void> {
         if (result) dismissInputNotice(entry.id);
         void refreshInputQueue();
       };
-      row.append(cancel);
+      actions.append(cancel);
     }
-    if (entry.state === 'queued' && entry.error?.startsWith('Message queued. Browser startup failed:')) {
+    if (!canForce && entry.state === 'queued' && entry.error?.startsWith('Message queued. Browser startup failed:')) {
       const retry = dockAction(() => t("Retry browser"), 'i-retry', () => {});
       retry.classList.add('delivery-retry');
       retry.onclick = async () => { retry.setAttribute('disabled', ''); await run(api.retryInputBrowser(entry.id)); void refreshInputQueue(); };
-      row.append(retry);
+      actions.append(retry);
     }
+    // Dismiss stays consistently at the far right, apart from the recovery
+    // action. It hides the notice only, and never authorizes or resends input.
+    if (hasNotice) actions.append(dockAction(() => t("Dismiss delivery notice"), 'i-x', () => dismissInputNotice(entry.id)));
+    if (actions.childElementCount) row.append(actions);
     return row;
   }));
   $('timelineEmpty').hidden = events.length > 0 || rows.length > 0;

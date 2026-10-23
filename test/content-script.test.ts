@@ -7532,6 +7532,28 @@ describe('a stop button that goes missing while the turn is still running', () =
     expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ assistantError: true });
   });
 
+  // Installed c6, 2026-10-23 (worker-65): the recovery the page admits depends on what it shows.
+  it('tells interrupted-response recovery which failure kind the page shows', async () => {
+    live = await harness();
+    userTurn(live.document, 'turn-kind-user', 'continue the receipts work');
+    startGenerating(live.document);
+    const turn = assistantTurn(live.document, 'turn-kind', []);
+    live.hook.observe(); await settle();
+    const card = (text: string) => { const node = live!.document.createElement('div'); node.setAttribute('role', 'alert'); node.textContent = text; return node; };
+    turn.append(card('Connection interrupted. Waiting for the complete answer'));
+    live.hook.observe(); await settle();
+    // ChatGPT still shows Stop: stop and continue in place.
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ assistantError: true, assistantErrorKind: 'stream-interrupted' });
+    stopGenerating(live.document);
+    live.hook.observe(); await settle();
+    // The turn already ended on the failure.
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ assistantError: true, assistantErrorKind: 'stream-failed' });
+    // ChatGPT could no longer load the conversation: that wins over the stream failure.
+    live.document.body.append(card('Something went wrong. Please try again'));
+    live.hook.observe(); await settle();
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ assistantErrorKind: 'conversation-unavailable' });
+  });
+
   it('reports a stalled live turn but leaves recovery authority with the app', async () => {
     live = await harness();
     userTurn(live.document, 'turn-stalled-user', 'do the long thing');
@@ -14233,6 +14255,7 @@ the carried handoff behind a lost reply`;
   it('carries the exact worker command into first-call correlation before the native user row mounts (upstream #474)', async () => {
     const workerChat = '24242424-3535-4646-8787-989898989898';
     const requestId = 'f0f00003-1111-4111-8111-111111111111';
+    let observerRearms = 0;
     live = await harness(
       'https://chatgpt.com/?clf=cmd-early-correlation',
       {
@@ -14248,7 +14271,10 @@ the carried handoff behind a lost reply`;
         } })
       },
       (document, dom) => {
+        document.defaultView!.addEventListener('cos-resume-send-observer', () => { observerRearms++; });
         document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+          // The passive MAIN request-id observer is rearmed before this provider click can start.
+          expect(observerRearms).toBe(1);
           dom.reconfigure({ url: `https://chatgpt.com/c/${workerChat}` });
           // The provider request can start from the click before React mounts the native user row
           // that the bootstrap waits on. Publish that real ordering while the receipt is unresolved.
@@ -14267,6 +14293,7 @@ the carried handoff behind a lost reply`;
 
     await settle(200);
 
+    expect(observerRearms).toBe(1);
     expect(live.sent.filter((message) => message.type === 'correlate')).toContainEqual(expect.objectContaining({
       conversationId: workerChat,
       agent: 'worker-1',
@@ -15353,6 +15380,20 @@ describe('the context meter and automatic compaction', () => {
     expect(startedCompactions(live)).toEqual([]);
     expect(live.sent.some(message => message.type === 'compact' && message.sourceDispatch)).toBe(false);
     expect(stop.isConnected).toBe(true);
+    expect(await live.runtimeMessage({
+      type: 'clf-resume-compaction',
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    })).toEqual({ accepted: state === 'dispatched-unresolved' });
+    if (state === 'dispatched-unresolved') {
+      // A live dispatched handoff is protected, but an ended one still leaves the watchdog's
+      // existing bounded recovery available. Neither branch can re-send the source prompt.
+      stopGenerating(live.document);
+      live.hook.observe(); await settle();
+      expect(await live.runtimeMessage({
+        type: 'clf-resume-compaction',
+        conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+      })).toEqual({ accepted: false });
+    }
   });
 
   it.each([[120_000, true], [8 * 60_000, false]] as const)(
@@ -16101,6 +16142,17 @@ app-owned prompt`, { sent: false });
  * runtime.onInstalled a no-op — leaving the document with a recorder that can never send.
  */
 describe('one live isolated-world recorder per document', () => {
+  it('re-registers its browser-issued document identity when recovery asks for fresh proof', async () => {
+    live = await harness();
+    live.sent.length = 0;
+
+    await expect(live.runtimeMessage({ type: 'clf-recovery-document-ping' })).resolves.toMatchObject({
+      ok: true,
+      registered: true
+    });
+    expect(live.sent[0]).toMatchObject({ type: 'register_document' });
+  });
+
   it('reports the recorder protocol version rather than the unrelated Fiber protocol version', async () => {
     live = await harness();
 

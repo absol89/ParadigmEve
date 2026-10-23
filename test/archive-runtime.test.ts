@@ -275,6 +275,85 @@ describe('ArchiveRuntime', () => {
     expect(status).toContain('"updating":false');
   });
 
+  it('reuses unchanged local static fragments without rescanning unrelated chats', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const a = 'session-static-unchanged';
+    const b = 'session-static-updated';
+    const sessions: Record<string, CurrentSessionArchiveSnapshot> = {
+      [a]: { summary: summary(a, 'Alpha'), events: [{ ...user(1, 'ALPHA UNCHANGED'), messageId: 'alpha-user' } as SessionEvent] },
+      [b]: { summary: summary(b, 'Beta'), events: [{ ...user(1, 'BETA OLD'), messageId: 'beta-user' } as SessionEvent] }
+    };
+    const diagnostics: string[] = [];
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test',
+      onDiagnostic: message => diagnostics.push(message),
+      source: { listSessionIds: async () => Object.keys(sessions), readSession: async id => sessions[id] ?? null, readAsset: async () => null }
+    });
+    await runtime.start();
+    await runtime.drain();
+    await runtime.rebuildDerived();
+
+    const scanned = vi.spyOn(runtime.store, 'scanSessionEvents');
+    sessions[b] = { summary: { ...summary(b, 'Beta'), updatedAt: 500 }, events: [
+      { ...user(1, 'BETA OLD'), messageId: 'beta-user' } as SessionEvent,
+      { ...assistant(2, 'BETA NEW ONLY', true), messageId: 'beta-new', time: 500 } as SessionEvent
+    ] };
+    runtime.queueSessionReconcile(b);
+    await runtime.drain();
+    scanned.mockClear(); // Measure static refresh, not required canonical append-only verification.
+    await runtime.refreshStaticSite();
+    expect(scanned).toHaveBeenCalledTimes(1);
+    expect(scanned.mock.calls[0]?.[0]).toBe(b);
+    expect(diagnostics).toContain('derived rebuild static fragments reused=1 rendered=1');
+    const generated = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    const chunks = await Promise.all(generated.chunks.map(file => fs.readFile(file, 'utf8')));
+    expect(chunks.join('\n')).toContain('ALPHA UNCHANGED');
+    expect(chunks.join('\n')).toContain('BETA NEW ONLY');
+    expect(generated.search).toContain('beta new only');
+    expect(generated.search).toContain('alpha unchanged');
+
+    // A manual full rebuild is still an independent evidence repair/verification pass.
+    scanned.mockClear();
+    await runtime.rebuildDerived();
+    // Both manifest integrity checks, full text indexing, and transcript rendering are intentional.
+    expect(scanned).toHaveBeenCalledTimes(6);
+  });
+
+  it('does not reuse a corrupted local static fragment, or an obsolete cross-chat token map', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const a = 'session-fragment-corruption-a';
+    const b = 'session-fragment-corruption-b';
+    const sessions: Record<string, CurrentSessionArchiveSnapshot> = {
+      [a]: { summary: summary(a, 'Alpha'), events: [{ ...user(1, 'ALPHA SAFE'), messageId: 'alpha-safe' } as SessionEvent] },
+      [b]: { summary: summary(b, 'Beta'), events: [{ ...user(1, 'BETA SAFE'), messageId: 'beta-safe' } as SessionEvent] }
+    };
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test',
+      source: { listSessionIds: async () => Object.keys(sessions), readSession: async id => sessions[id] ?? null, readAsset: async () => null }
+    });
+    await runtime.start(); await runtime.drain(); await runtime.rebuildDerived();
+    const first = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    await fs.writeFile(first.chunks[0]!, 'CORRUPTED-CACHE');
+    const scanned = vi.spyOn(runtime.store, 'scanSessionEvents');
+    sessions[b] = { summary: { ...summary(b, 'Beta'), updatedAt: 600 }, events: [
+      { ...user(1, 'BETA SAFE'), messageId: 'beta-safe' } as SessionEvent,
+      { ...assistant(2, 'BETA UPDATED', true), messageId: 'beta-updated', time: 600 } as SessionEvent
+    ] };
+    runtime.queueSessionReconcile(b); await runtime.drain();
+    scanned.mockClear();
+    await runtime.refreshStaticSite();
+    expect(scanned).toHaveBeenCalledTimes(2); // Unsafe Alpha cache cannot be carried forward.
+    const repaired = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+    expect((await Promise.all(repaired.chunks.map(file => fs.readFile(file, 'utf8')))).join('')).not.toContain('CORRUPTED-CACHE');
+
+    // A new chat changes positional token mappings; no old chat's links may be reused.
+    scanned.mockClear();
+    const c = 'session-fragment-corruption-c';
+    sessions[c] = { summary: summary(c, 'Aardvark'), events: [{ ...user(1, 'NEW CHAT'), messageId: 'new-chat' } as SessionEvent] };
+    runtime.queueSessionReconcile(c); await runtime.drain();
+    scanned.mockClear();
+    await runtime.refreshStaticSite();
+    expect(scanned).toHaveBeenCalledTimes(3);
+  });
+
   it('automatically republishes an already-open static archive after a durable session commit', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-live-static-sync';
@@ -356,6 +435,99 @@ describe('ArchiveRuntime', () => {
     await runtime.refreshStaticSite();
     expect(runtime.staticSiteStale()).toBe(false);
     await runtime.dispose();
+  });
+
+  /**
+   * Installed c6, 2026-10-23: the Archive published, newer Prime messages committed, and after a
+   * restart/install the published site never caught up, because only the process that built a
+   * site scheduled background refreshes for it.
+   */
+  describe('static site freshness across a restart', () => {
+    const id = 'session-prime-restart';
+    const later = Date.now() + 60_000;
+    const older = (): SessionEvent[] => [{ ...user(1, 'PRIME BEFORE RESTART'), messageId: 'prime-old' } as SessionEvent];
+    const newer = (): SessionEvent[] => [
+      ...older(),
+      { ...user(2, 'PRIME AFTER PUBLISH'), messageId: 'prime-new-user', time: later } as SessionEvent,
+      { ...assistant(3, 'PRIME REPLY AFTER PUBLISH', true), messageId: 'prime-new-reply', time: later + 1 } as SessionEvent
+    ];
+    function runtimeFor(archiveRoot: string, current: () => CurrentSessionArchiveSnapshot, options: { interval?: number } = {}) {
+      let listener: ((sessionId: string) => void) | null = null;
+      const runtime = new ArchiveRuntime({
+        archiveRoot, writerVersion: 'runtime-test',
+        staticRefreshDebounceMs: 0, staticRefreshMinIntervalMs: options.interval ?? 0,
+        source: {
+          listSessionIds: async () => [id], readSession: async () => current(), readAsset: async () => null,
+          subscribeCommitted: next => { listener = next; return () => { listener = null; }; }
+        }
+      });
+      return { runtime, commit: () => listener?.(id) };
+    }
+    async function siteText(runtime: ArchiveRuntime): Promise<string> {
+      const generated = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
+      return (await Promise.all(generated.chunks.map(chunk => fs.readFile(chunk, 'utf8')))).join('\n');
+    }
+
+    it('publishes messages committed before the restart, exactly once, without an Archive open', async () => {
+      const archiveRoot = await tempArchiveRoot();
+      let current: CurrentSessionArchiveSnapshot = { summary: summary(id, 'Prime'), events: older() };
+      const first = runtimeFor(archiveRoot, () => current, { interval: 60 * 60_000 });
+      await first.runtime.start(); await first.runtime.drain(); await first.runtime.rebuildDerived();
+      // Newer Prime messages commit; the bounded interval defers the refresh past the restart.
+      current = { summary: { ...summary(id, 'Prime'), updatedAt: later + 1 }, events: newer() };
+      first.commit(); await first.runtime.drain();
+      expect(await siteText(first.runtime)).not.toContain('PRIME AFTER PUBLISH');
+      await first.runtime.dispose();
+
+      const second = runtimeFor(archiveRoot, () => current);
+      await second.runtime.start(); await second.runtime.drain();
+      await vi.waitFor(async () => expect(second.runtime.status().lastDerivedAt).not.toBeNull(), { timeout: 15_000 });
+      const text = await siteText(second.runtime);
+      expect(text.split('PRIME AFTER PUBLISH')).toHaveLength(2);
+      expect(text.split('PRIME REPLY AFTER PUBLISH')).toHaveLength(2);
+      await second.runtime.dispose();
+    });
+
+    it('also follows commits that arrive after the restart', async () => {
+      const archiveRoot = await tempArchiveRoot();
+      let current: CurrentSessionArchiveSnapshot = { summary: summary(id, 'Prime'), events: older() };
+      const first = runtimeFor(archiveRoot, () => current);
+      await first.runtime.start(); await first.runtime.drain(); await first.runtime.rebuildDerived();
+      await first.runtime.dispose();
+
+      const second = runtimeFor(archiveRoot, () => current);
+      await second.runtime.start(); await second.runtime.drain();
+      // Nothing changed: the startup seed alone does not republish the whole site.
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect(second.runtime.status().lastDerivedAt).toBeNull();
+
+      current = { summary: { ...summary(id, 'Prime'), updatedAt: later + 1 }, events: newer() };
+      second.commit(); await second.runtime.drain();
+      await vi.waitFor(async () => expect(second.runtime.staticSiteStale()).toBe(false), { timeout: 15_000 });
+      expect((await siteText(second.runtime)).split('PRIME REPLY AFTER PUBLISH')).toHaveLength(2);
+      await second.runtime.dispose();
+    });
+
+    it('keeps the previous valid site when a background refresh fails, and retries it', async () => {
+      const archiveRoot = await tempArchiveRoot();
+      let current: CurrentSessionArchiveSnapshot = { summary: summary(id, 'Prime'), events: older() };
+      const { runtime, commit } = runtimeFor(archiveRoot, () => current);
+      await runtime.start(); await runtime.drain(); await runtime.rebuildDerived();
+      const shellBefore = await fs.readFile(runtime.staticSiteTarget().indexPath, 'utf8');
+      const publish = vi.spyOn(runtime as unknown as { publishStaticArchive: () => Promise<number> }, 'publishStaticArchive');
+      let failed = false;
+      publish.mockImplementationOnce(async () => {
+        expect(await fs.readFile(runtime.staticSiteTarget().indexPath, 'utf8')).toBe(shellBefore);
+        failed = true;
+        throw new Error('simulated static publication failure');
+      });
+      current = { summary: { ...summary(id, 'Prime'), updatedAt: later + 1 }, events: newer() };
+      commit(); await runtime.drain();
+      await vi.waitFor(() => expect(failed).toBe(true), { timeout: 15_000 });
+      await vi.waitFor(async () => expect(runtime.staticSiteStale()).toBe(false), { timeout: 15_000 });
+      expect((await siteText(runtime)).split('PRIME AFTER PUBLISH')).toHaveLength(2);
+      await runtime.dispose();
+    });
   });
 
   it('publishes a page-authored user row once no app receipt can still arrive', async () => {

@@ -13,6 +13,83 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.4] — Reliability, provenance, protected recovery and archive freshness
+
+**Source release preparation (2026-10-23):** The cumulative 2.4.4 fixes are being
+checkpointed for a source tag. The installed c7 debug build is not the final source:
+native Send attribution rearming, live Compact & Resume protection and truthful
+input pickup diagnostics were added afterward. A tag is not a published installer.
+Consult each candidate's COMMIT.txt for its exact source and validation.
+
+### Cumulative reliability fixes after Candidate 3
+
+- Exact Companion caller proof and worker/run/invocation checks prevent shared Eve
+  permission or unattributed calls from impersonating Prime or a worker. Worker-lane
+  heartbeat continuity cannot acquire Prime identity; unknown identity fails closed.
+- Browser recovery requires fresh exact-page evidence and vetoes selected, audible,
+  draft-bearing, generating, navigating and uncertain tabs before any reload.
+  Conversation-unavailable pages are retained, while interrupted live answers use a
+  bounded Continue path without replaying the original input.
+- Native Send re-arms the passive request-ID observer before click, submit or Enter;
+  Compact & Resume repair preserves an old chat still generating its handoff.
+- Archive publication restores restart freshness, reuses unchanged static fragments,
+  retries failed refreshes and retains the previous valid site. Generic reads remain
+  bounded at 512 KiB; Plan tests cover oversized single-line catalogs.
+- Durable input logs distinguish row age from actual browser pickup and claim-to-ACK
+  latency. Heartbeat transfer deferrals are informational rather than spurious failures.
+- c7 was installed and dogfooded with exact Prime and worker attribution. The
+  later source fixes require a new exact-commit package and installed acceptance.
+- Durable worker execution intent/lease/restart receipts remain a separate release
+  gate until implemented and verified; ambiguous effects must never be replayed.
+
+### Candidate 3 — Fixed
+
+- **No overlapping delivery action icons.** Failed-message recovery buttons use
+  a spaced, fixed-size flex action rail with Dismiss at the far right instead
+  of competing absolute offsets. Only one recovery action is offered:
+  **Force Send** for an untouched user input that timed out *before* browser
+  pickup/Send authorization, or **Restore to composer** for an ambiguous or
+  otherwise failed delivery. Native Force Send still validates the exact
+  session, model/effort, browser ownership, drafts and Send safety; this does
+  not automatically retry, create a new message id, or change the 60-second
+  pickup timeout.
+- Regression tests cover action exclusivity, icon spacing, retained drafts and
+  refusal of Force Send following a browser claim. Source check: 374 focused
+  tests across renderer, input and startup suites plus TypeScript passed;
+  installed c3 behavior still requires separate dogfooding.
+
+### Candidate 2 — Installed observation (not full acceptance)
+
+- A locally installed c2 payload matched its packaged `app.asar` hash.
+  An archive site-only refresh reused **34 unchanged chats** and re-rendered
+  one; however, unconditional startup full indexing still scanned **11,487**
+  documents across 35 sessions with peak reported RSS around **921 MiB**.
+  Startup/shutdown full rebuilds, Prime request attribution/Request Trail,
+  and Brave UI Automation remain unaddressed by c3 and need separate work.
+
+### Candidate 2 — Changed
+
+- Archive Browser retains per-chat verified local search/transcript fragments and
+  re-renders only dirty conversations when navigation remains stable. A corrupt
+  cached fragment, changed positional chat map, or explicit full Rebuild retains
+  the full verification/rebuild path. Automatic static-site refresh runs at most
+  once every 30 minutes; opening Archive still requests an immediate refresh.
+  Archiving and HTML generation are local operations, not model requests.
+- `%how` startup guidance refers to the current candidate and relevant Vault
+  pages rather than injecting 2.4.0/2.4.1 history as current instructions.
+
+### Fixed
+
+- Cloud transcription subprocess errors now produce safe, actionable HTTP
+  status/category details for Eve rather than hiding every OpenAI failure behind
+  “All available transcription avenues failed: cloud”. A per-job receipt and
+  Activity entry support later troubleshooting without API keys or response bodies.
+- Audio POSTs are not automatically replayed on an ambiguous failure; only
+  avenues explicitly enabled by the user can be selected as fallback.
+- The updater no longer repeats a six-hour-cached GitHub fetch failure warning
+  on every one-minute local-feed poll. Public Latest release and checksum
+  authorization behavior is unchanged.
+
 ## [2.4.3] — Reliability, archive choice and navigation
 
 **Status (2026-10-20):** Public source release `v2.4.3` on `main`. App and Companion declare

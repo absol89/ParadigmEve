@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { app } from 'electron';
 import { rawPromises as fs } from './rawfs.js';
+import { APP_VERSION } from './version.js';
 
 export const VAULT_MANUAL_ROOT = 'paradigmeve-manual';
 export const VAULT_CONTEXT_MARKER = '[[PARADIGMEVE_PACKAGED_VAULT:v1]]';
@@ -151,7 +152,7 @@ export async function expandVaultManualReadGlob(requested: string): Promise<stri
   return (await listVaultManualPages()).filter((page) => matcher.test(page.name)).map((page) => page.virtual);
 }
 
-/** Current manual as one ordered block for `%how` opening context. */
+/** Complete historical and current manual, available on demand through the read-only Vault. */
 export async function readVaultManualText(): Promise<string> {
   const pages = await Promise.all((await listVaultManualPages()).map(async (page) => {
     const text = await fs.readFile(page.real, 'utf8');
@@ -159,4 +160,29 @@ export async function readVaultManualText(): Promise<string> {
     return `\n\n<!-- ${page.name} -->\n${text.trim()}`;
   }));
   return pages.join('').trim();
+}
+
+/**
+ * `%how` needs the current operating model, not the first 96k of accumulated
+ * release-history notes. Older release evidence remains readable on demand;
+ * never promote it to current startup instructions just because it appears
+ * earlier in the alphabetical Vault bundle.
+ */
+export async function readHowOpeningManualText(): Promise<string> {
+  const pages = await listVaultManualPages();
+  const index = pages.find(page => page.name === 'README.md');
+  const raw = index ? await fs.readFile(index.real, 'utf8') : '';
+  if (raw.includes('\0')) throw new Error('Vault index is not UTF-8 text');
+  const start = raw.indexOf('## Current ownership boundaries');
+  const end = raw.indexOf('## Existing deep references', start);
+  const guide = start >= 0 && end > start ? raw.slice(start, end).trim() : '';
+  const pageList = pages.filter(page => page.name !== 'README.md').map(page => `- /${VAULT_MANUAL_ROOT}/${page.name}`).join('\n');
+  return [
+    `# ParadigmEve ${APP_VERSION} — current %how quick reference`,
+    'This version is the running app\'s compiled version, not proof of public release, installation acceptance or every live feature.',
+    'Answer the current question first. Read the relevant manual page below when its details matter; distinguish historical release evidence from current installed behavior.',
+    guide,
+    '## Full manual pages (read on demand; older release history is not a current-version instruction)',
+    pageList
+  ].filter(Boolean).join('\n\n');
 }

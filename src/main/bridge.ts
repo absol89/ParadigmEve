@@ -9,7 +9,7 @@ import { pendingChatModelRequest, observeChatModels, requestChatModels } from '.
 import { completeCompanionSetupStep, configureSetupAutomation, pendingCompanionSetupStep } from './setup-automation.js';
 import { isProModel } from '../shared/chat-models.js';
 import type { SessionSummary } from '../shared/session.js';
-import { considerTurnRotation, type RotationDeps } from './turn-rotation.js';
+import { RECOVERY_CONTINUE_MESSAGE, considerTurnRotation, type RotationDeps } from './turn-rotation.js';
 import { publishBrowserDecision, authorizeBrowserInput, noteBrowserReady, noteBrowserInputsOffered, sessionInputPolicy, collectRecordedBrowserDecision, restartRecoveryPending, type InputActivity } from './session/input.js';
 import { pendingPluginRefreshes, claimPluginRefresh, requireManualPluginRefresh, completePluginRefresh, failPluginRefresh } from './plugin-refresh.js';
 import { attachBrowserWake, wakeBrowserWork } from './browser-wake.js';
@@ -2292,7 +2292,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const repairFailed = url.searchParams.get('repairFailed');
     const repairAction = url.searchParams.get('repairAction');
     const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ||
-      repairAction === 'preserved' ? repairAction : null;
+      repairAction === 'preserved' || repairAction === 'continued' || repairAction === 'blocked' ? repairAction : null;
     if (repaired) {
       const why = url.searchParams.get('why');
       await confirmRepair(repaired.slice(0, 64), action, why && /^[a-z-]{1,24}$/.test(why) ? why : null);
@@ -2360,6 +2360,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         repairs: repairFailed ? [] : await takePendingRepairs(),
         ...tabPolicy,
         recoveryMonitoring: browserRecoveryMonitoring(),
+        // Installer/update recovery needs one browser-supplied live document from this exact
+        // Companion generation before it can call the profile restored. A service-worker restart
+        // deliberately clears the process-local document map, so tell the Companion when it must
+        // ask its already-open pages to re-register. This is evidence work only: it grants no
+        // reload/open authority and disappears as soon as the current attempt is satisfied.
+        companionRecoveryDocumentRequired: recoveryAttempt?.acceptingEvidence === true && !companionRecoveryReady(),
         // The build this app materialized for Chrome. A Companion running another build reloads
         // into it on its own, but only while this app runs no tool call and every ChatGPT page
         // reports itself idle: chats that merely have an agent or a Goal are usually just waiting.
@@ -6689,6 +6695,8 @@ interface Repair {
   progress?: { sessionId: string; seq: number; time: number; text: string; turnId: string | null };
   /** Store-owned lease held only after the browser's final action claim succeeds. */
   bindingAuthorityRelease?: () => void;
+  /** `assistant-error` only: the authored question this failure belongs to; see turnRepairSpent. */
+  assistantKey?: string;
 }
 
 /**
@@ -6761,7 +6769,33 @@ const lastBrowserRecoveryReason = new Map<string, Repair['reason']>();
  * Written only once the browser confirms the action, so a handout nobody carried out spends
  * nothing.
  */
-const turnRepairSpent = new Map<string, { sessionId: string; turnKey: string }>();
+const turnRepairSpent = new Map<string, { sessionId: string; turnKey: string; at: number }>();
+
+/**
+ * The turn a transport failure belongs to, as the canonical session recorded it: its latest
+ * `turn_start`, else its latest user message. The page's live state and error wording are not
+ * it: on installed c6 (2026-10-23, worker-65) the first sighting of one broken turn carried no
+ * turn id, the reloaded page then ended that same turn as `failed`, and both changes read as a
+ * new turn, which spent a second reload on the same broken answer. The recorded turn start
+ * (`g-1y4bc9p8zeu5r-0-1` there) survived the reload. A user message alone is not enough: a
+ * worker's revival arrives as an agent message, so its new turns would share a stale key.
+ */
+async function assistantRepairKey(sessionId: string): Promise<string> {
+  try {
+    const [start] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start'] });
+    if (start?.kind === 'turn_start' && start.turnId) return `turn:${start.turnId}`;
+    const [question] = await readRecentEvents(sessionId, 1, { kinds: ['user_message'] });
+    if (question?.kind === 'user_message' && question.messageId) return `user:${question.messageId}`;
+  } catch { /* Unreadable history: one shared key, so the budget still holds. */ }
+  return 'page';
+}
+
+/** A parked or finished worker has nothing for recovery to bring back; its revival owns its page. */
+function workerRestingFor(conversationId: string): boolean {
+  const worker = agentInfoForOwnedConversation(conversationId);
+  return worker?.role === 'worker' &&
+    (worker.state === 'sleeping' || worker.state === 'finished' || worker.state === 'failed');
+}
 
 /** The identity of the turn a chat is on right now, for the error reload's budget. */
 function turnKeyFor(live: { activeTurnId: string | null; endedTurns: number } | undefined): string {
@@ -6808,7 +6842,8 @@ function queueBrowserRecovery(
   episode: string,
   reason: Repair['reason'],
   endedTurns = 0,
-  now = Date.now()
+  now = Date.now(),
+  assistantKey?: string
 ): boolean {
   // A blocked chat is one the user took this app's hands off, and every repair here is a hand
   // going back on: a reload restarts the rogue page's turn machinery, and a reopen gives a
@@ -6820,15 +6855,20 @@ function queueBrowserRecovery(
   if (!sessionId || isChatBlocked(conversationId) || stopRequestedFor(conversationId)) return false;
   // A reload ends a live Voice call. No repair is worth that; it waits for the call to end.
   if (voiceActive(conversationId, now)) return false;
+  // Installed c6 reloaded worker-65 a second time 84 s after it was parked. A resting worker has
+  // no turn to recover; waking it (with its own durable message) is the only thing that opens or
+  // uses its page again.
+  if (workerRestingFor(conversationId)) return false;
   // The turn's one error reload, already spent. Checked before the episode and state guards
   // below because it outlives both: those forget a repair the moment its episode changes, and
   // the whole point here is that a *new* error on the same broken turn buys nothing.
   if (reason === 'assistant-error') {
-    // Read against the turn the chat is on *now*: the release in retireSpentRepairs runs on
-    // the browser's pass, and an error on the next turn can arrive before that pass does.
+    // Spent for this authored question unless an attributed local tool call since then proves
+    // the remedy got the answer working again; a page cannot manufacture that.
+    if (!assistantKey) return false;
     const spent = turnRepairSpent.get(conversationId);
-    const live = liveConversations().find((entry) => entry.conversationId === conversationId);
-    if (spent && turnKeyFor(live) === spent.turnKey) return false;
+    const progressed = spent !== undefined && (lastAttributedCallAt.get(conversationId) ?? 0) > spent.at;
+    if (spent?.sessionId === sessionId && spent.turnKey === assistantKey && !progressed) return false;
     if (spent) turnRepairSpent.delete(conversationId);
   }
   const held = repairsInFlight.get(conversationId);
@@ -6872,7 +6912,8 @@ function queueBrowserRecovery(
     token: '',
     // Names the chat it reloads: Compact & Resume moves the session on, and the page paints the
     // row only in this chat, not before the first message of the chat the session moved to.
-    progressId: `browser-repair:${conversationId}:${randomBytes(9).toString('base64url')}`
+    progressId: `browser-repair:${conversationId}:${randomBytes(9).toString('base64url')}`,
+    ...(assistantKey ? { assistantKey } : {})
   };
   repairsInFlight.set(conversationId, repair);
   // Queue publication owns the pickup notification, just as the input outbox does.
@@ -7099,7 +7140,10 @@ async function noteRecoveryObservations(
       }
       break;
     }
-    const episode = `assistant-error:${item.turnId ?? 'page'}:${(item.text ?? '').slice(0, 240)}`;
+    // One authored question owns the transport episode, whichever wording or turn id the page
+    // reports it with, before or after a reload.
+    const assistantKey = sessionId ? await assistantRepairKey(sessionId) : 'page';
+    const episode = `assistant-error:${assistantKey}`;
     // How many turns this chat will have finished once the broken turn is over. The turn that
     // just failed is still open here - its own end is the very next one to arrive - so counting
     // only the ends already in hand would have the failure retire its own repair a few seconds
@@ -7110,7 +7154,7 @@ async function noteRecoveryObservations(
     const endedTurns = (live?.endedTurns ?? 0) + (live?.activeTurnId ? 1 : 0);
     if (
       sessionId &&
-      queueBrowserRecovery(conversationId, sessionId, episode, 'assistant-error', endedTurns, now)
+      queueBrowserRecovery(conversationId, sessionId, episode, 'assistant-error', endedTurns, now, assistantKey)
     ) {
       logInfo(`bridge: assistant transport failure — asking the browser to recover ${conversationId}`);
     }
@@ -7892,14 +7936,8 @@ function retireSpentRepairs(): void {
     const entry = live.get(conversationId);
     if (entry && entry.endedTurns > repair.endedTurns) deleteBrowserRepair(conversationId, repair);
   }
-  // The budget is released by the chat being on a different turn than the one it was charged
-  // to — the user sent the next message — and by nothing else. Not by an attributed call: a
-  // join that came back proves the reload worked, which is a reason not to need another one,
-  // never a reason to be handed one.
-  for (const [conversationId, spent] of turnRepairSpent) {
-    const entry = live.get(conversationId);
-    if (entry && turnKeyFor(entry) !== spent.turnKey) turnRepairSpent.delete(conversationId);
-  }
+  // The error budget is not released here: it is keyed by the authored question, which the next
+  // queueBrowserRecovery compares (a page's own turn state changes across a reload).
 }
 
 /**
@@ -8372,9 +8410,59 @@ function dropBrowserRepair(conversationId: string, repair: Repair): void {
  * this app is no longer waiting on - an older turn's, or one already re-queued - matches
  * nothing and closes nothing, which is the only safe reading of it.
  */
-async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | null, why: string | null = null): Promise<void> {
+type RepairAction = 'reloaded' | 'reopened' | 'resumed' | 'preserved' | 'continued' | 'blocked';
+
+/** Spends this question's one transport remedy, whatever form the browser chose for it. */
+function chargeAssistantRepair(conversationId: string, repair: Repair): void {
+  if (repair.reason !== 'assistant-error') return;
+  const live = liveConversations().find((entry) => entry.conversationId === conversationId);
+  turnRepairSpent.set(conversationId, {
+    sessionId: repair.sessionId, turnKey: repair.assistantKey ?? turnKeyFor(live), at: Date.now()
+  });
+}
+
+/** Why the browser kept a broken page instead of reloading it, in the chat's own timeline. */
+const ASSISTANT_BLOCKERS: Readonly<Record<string, string>> = {
+  'conversation-unavailable': 'ChatGPT could not load this conversation',
+  'status-unknown': 'the page did not answer its safety check',
+  'stop-unavailable': 'the answer can no longer be stopped and continued in place',
+  'continue-refused': 'an in-place Continue could not be filed for this exact turn'
+};
+
+/**
+ * An interrupted live answer recovers in its own page: Stop, then one durable Continue for the
+ * exact running turn (Chat On Steroids 2.1.36, issue #1405: a reload returned to the same card or
+ * to "Could not load this ChatGPT conversation"). The Continue is the existing direct-turn
+ * rotation input: browser-only, one per session, dropped when its turn changes or the page does
+ * not take it, and never re-sent once its send is authorized.
+ */
+async function continueInterruptedAnswer(conversationId: string, repair: Repair): Promise<boolean> {
+  const session = await getSession(repair.sessionId).catch(() => null);
+  if (!session || session.conversationId !== conversationId || !session.activeTurnId) return false;
+  const [start] = await readRecentEvents(repair.sessionId, 1, { kinds: ['turn_start'] }).catch(() => []);
+  const startedAt = start?.kind === 'turn_start' && start.turnId === session.activeTurnId ? start.time : Date.now();
+  return (await fileRotationInput(repair.sessionId, session.activeTurnId, startedAt, RECOVERY_CONTINUE_MESSAGE)) !== null;
+}
+
+async function confirmRepair(token: string, action: RepairAction | null, why: string | null = null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state === 'handed' || repair.state === 'claimed') && repair.token === token) {
+      if (repair.reason === 'assistant-error' && (action === 'continued' || action === 'blocked')) {
+        // Nothing was reloaded. Either way this question's remedy is spent, so a repeat sighting
+        // of the same failure neither reloads nor files a second Continue.
+        releaseBrowserRepairAuthority(repair);
+        chargeAssistantRepair(conversationId, repair);
+        let blocker = action === 'blocked' ? ASSISTANT_BLOCKERS[why ?? ''] ?? 'its state is not safe to reload' : null;
+        if (action === 'continued' && !(await continueInterruptedAnswer(conversationId, repair))) {
+          blocker = ASSISTANT_BLOCKERS['continue-refused']!;
+        }
+        logInfo(`bridge: assistant-error recovery for ${conversationId} kept the page: ${blocker ?? 'stopping and continuing in place'}`);
+        await updateRepairProgress(conversationId, repair, blocker
+          ? `Kept the chat open without reloading while recovering ${repairReason(repair)}: ${blocker}. Check this chat before continuing it.`
+          : 'Stopping the interrupted response and asking the chat to continue, without reloading.');
+        repairsInFlight.delete(conversationId);
+        return;
+      }
       // The page recovered on its own: nothing was reloaded, so the turn keeps its one
       // assistant-error reload for a failure that does need it (upstream c8721d1).
       if (action === 'preserved' && repair.reason === 'assistant-error') {
@@ -8385,6 +8473,8 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'r
         return;
       }
       releaseBrowserRepairAuthority(repair);
+      // A requested reload is not proof of one (2026-10-22): record what the browser did.
+      logInfo(`bridge: browser repair for ${conversationId} (${repair.reason}) done: ${action ?? 'unreported action'}`);
       repair.state = 'done';
       lastBrowserRecoveryAt.set(conversationId, Date.now());
       lastBrowserRecoveryReason.set(conversationId, repair.reason);
@@ -8414,12 +8504,8 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'r
           goalActiveFor(conversationId) ? GOAL_SILENCE_LISTEN_MS : CHAT_SILENCE_MS
         );
       }
-      if (repair.reason === 'assistant-error') {
-        // Charged to the turn the chat is on when the reload lands, running or not, and
-        // released when it is on another one — see turnRepairSpent.
-        const live = liveConversations().find((entry) => entry.conversationId === conversationId);
-        turnRepairSpent.set(conversationId, { sessionId: repair.sessionId, turnKey: turnKeyFor(live) });
-      }
+      // Charged to the authored question the failure belongs to — see turnRepairSpent.
+      chargeAssistantRepair(conversationId, repair);
       await updateRepairProgress(
         conversationId,
         repair,
@@ -8431,14 +8517,17 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'r
 }
 
 /** An exact browser action failed; keep the episode queued and replace its one debug row. */
-async function failRepairAttempt(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | null): Promise<void> {
+async function failRepairAttempt(token: string, action: RepairAction | null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state !== 'handed' && repair.state !== 'claimed') || repair.token !== token) continue;
     releaseBrowserRepairAuthority(repair);
+    logInfo(`bridge: browser repair for ${conversationId} (${repair.reason}) not done: ${action === 'preserved' ? 'page still streaming, kept open' : `${action ?? 'action'} failed`}; kept queued`);
     await updateRepairProgress(
       conversationId,
       repair,
-      `${action === 'reopened' ? 'Reopen' : action === 'resumed' ? 'Resume' : 'Reload'} failed while recovering ${repairReason(repair)}; will retry.`
+      action === 'preserved'
+        ? `Kept the chat open instead of reloading while recovering ${repairReason(repair)}: it is still answering. Will check again.`
+        : `${action === 'reopened' ? 'Reopen' : action === 'resumed' ? 'Resume' : 'Reload'} failed while recovering ${repairReason(repair)}; will retry.`
     );
     repair.state = 'queued';
     repairsInFlight.delete(conversationId);
