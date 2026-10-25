@@ -50,12 +50,16 @@ export function registerPlanTool(reg: SurfaceRegistrar): void {
           const activeReview = await currentChatReviewPlanEvidence();
           const selectedByCurrentDebt = activeReview?.targets.some(target => target.planId === projected.id) === true;
           if (!selectedByCurrentDebt) {
-            await archiveExactReadyEvePlan({
+            const cleanup = await archiveExactReadyEvePlan({
               planId: projected.id,
               updatedAt: projected.updatedAt,
               provenance: projected.provenance,
               sessionId
             });
+            if (cleanup !== 'archived' && cleanup !== 'already-archived' && cleanup !== 'not-ready' &&
+                cleanup !== 'authority-disabled') {
+              logWarn(`update_plan: exact heartbeat Activity cleanup deferred (${cleanup}) for Plan ${projected.id}`);
+            }
           }
         } catch (error) {
           // The Plan update itself is already durable. Housekeeping races fail closed and the next

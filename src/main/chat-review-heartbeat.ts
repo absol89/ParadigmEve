@@ -18,6 +18,7 @@ import {
 } from '../shared/plans.js';
 import type { SessionSummary } from '../shared/session.js';
 import { currentAgentConversationId } from './agent-identity.js';
+import { getConfig } from './config.js';
 import { readDurable, readDurableStrict, writeDurableNow } from './durable.js';
 import { logInfo, logWarn } from './logger.js';
 import {
@@ -179,6 +180,8 @@ type Dependencies = {
   writePendingSpool: (index: number, finding: ChatReviewPrimeFinding) => Promise<void>;
   readPendingSpool: (index: number) => Promise<ChatReviewPrimeFinding | null>;
   plans: () => Promise<PlanLibrary>;
+  /** Current user authority, rechecked at final receipt; tests can inject an exact value. */
+  archiveAuthority: () => boolean;
   planFence: <T>(targets: readonly PlanReviewExpectation[], commit: () => Promise<T>) => Promise<T>;
   makeKey: () => string;
   agentConversation: () => string | null;
@@ -460,6 +463,7 @@ const defaults: Dependencies = {
     return finding;
   },
   plans: listPlans,
+  archiveAuthority: () => getConfig().eveAuthority?.archiveCompletedWork === true,
   planFence: withPlanReviewValidationFence,
   makeKey: () => `heartbeat:${randomUUID()}`,
   agentConversation: currentAgentConversationId,
@@ -1009,6 +1013,11 @@ export function completeChatReviewHeartbeat(
         if (live) {
           if (!samePlanTarget(target, acknowledgement) || !samePlanTarget(planTarget(live), acknowledgement)) return 'rejected';
           liveExpectations.push({ planId: live.id, updatedAt: live.updatedAt, provenance: live.provenance });
+          // An acknowledged ready Eve Activity is not proof that its authorized exact archive
+          // succeeded. Do not quietly close the epoch while that same revision remains Live.
+          // Human/manual Plans and authority-disabled Eve Activity remain explicit boundaries.
+          if (receipt.result === 'completed' && acknowledgement.classification === 'ready-to-archive' &&
+              live.audience === 'eve' && live.readyToArchive && deps.archiveAuthority()) return 'rejected';
           if (acknowledgement.classification === 'stale-checklist') {
             if (!acknowledgement.staleItemIds?.length) return 'rejected';
             staleReconciliations.push({

@@ -133,12 +133,15 @@ export function registerChatReviewPlanTool(reg: SurfaceRegistrar): void {
           const archiveUpdatedAt = mutationResult.plan?.updatedAt ?? expectedUpdatedAt;
           if (reviewed?.audience === 'eve' && reviewed.readyToArchive &&
               reviewed.updatedAt === archiveUpdatedAt && reviewed.provenance?.sessionId) {
-            await archiveExactReadyEvePlan({
+            const cleanup = await archiveExactReadyEvePlan({
               planId,
               updatedAt: archiveUpdatedAt,
               provenance: reviewed.provenance,
               sessionId: reviewed.provenance.sessionId
             });
+            if (cleanup === 'stale' || cleanup === 'not-ready' || cleanup === 'not-eve') {
+              return fail(`CHAT_REVIEW_ARCHIVE_DEFERRED: exact reviewed Eve Plan could not be archived (${cleanup}). Review its current revision/source before completing this heartbeat; no unrelated Plan was changed.`);
+            }
           }
         }
         return ok(acknowledgement === 'acknowledged'

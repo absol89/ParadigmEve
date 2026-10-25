@@ -125,8 +125,10 @@ import {
   requestWorkerBootstraps,
   requestWorkerRevivals,
   statusForCaller,
+  statusForSharedEvePrime,
   stageFinishAgent,
   stageMessages,
+  stageSharedEvePrimeMessages,
   stageSpawn,
   swarmRunning,
   swarmStateForCaller,
@@ -170,7 +172,7 @@ import { registerSessionTool as registerSessionSearchReadTool } from './session-
 import { registerPinsTool } from './pins-tool.js';
 import { registerScheduleTool } from './schedule-tool.js';
 import { chatReviewRequiresWorker, completeChatReviewHeartbeat, currentChatReviewPlanEvidence, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
-import { currentCallMayUseEveAuthority } from '../eve-access.js';
+import { currentCallMayUseEveAuthority, sharedEveOwnerForCurrentCall } from '../eve-access.js';
 import { lanPeerMessagingStatus, lanPeerRuntimeAvailable, sendLanPeerMessage } from '../lan-peer-runtime.js';
 import { ArtifactFetchError } from './artifact-fetch.js';
 import { ArtifactTargetError } from './artifact-target.js';
@@ -1763,11 +1765,15 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Shared installation permission is not proof that this request came from Prime.
           // Both directions of worker messaging require an exact caller or the narrowly
           // verified heartbeat continuity identity, even when Prime is the recipient.
-          const caller = await callerNow(startedAt, { reviewKey: input.review_key });
-          await measureSleepingWorkers(caller);
+          const caller = await callerNow(startedAt, { reviewKey: input.review_key, allowSharedPrime: true });
+          const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+          if (sharedOwner) await measureSleepingWorkers({ conversationId: sharedOwner });
+          else await measureSleepingWorkers(caller);
           // One call, one identity resolution, one all-or-nothing delivery: a prime
           // redirecting its whole run cannot end up with two of its three messages sent.
-          const staged = stageMessages(caller, items);
+          const staged = sharedOwner
+            ? stageSharedEvePrimeMessages(sharedOwner, items)
+            : stageMessages(caller, items);
           let accepted = false;
           try {
             let durable = false;
@@ -1792,10 +1798,10 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Reopening a sleeping worker's chat is a browser side effect, so it happens only
           // after the broker revision that reserved its slot is durable — exactly as a spawn's
           // tabs do. Nothing has been typed into that chat yet at this point.
-          const runId = caller.conversationId ? currentRunId(caller.conversationId) : null;
+          const runId = currentRunId(sharedOwner ?? caller.conversationId ?? undefined);
           if (woken.length > 0 && runId) requestWorkerRevivals(woken, runId);
           if (runId) requestActiveWorkerMessageDelivery([...new Set(sent.map((message) => message.to))], runId);
-          for (const message of sent) await recordAgentMessage(message, 'sent', caller.conversationId);
+          for (const message of sent) await recordAgentMessage(message, 'sent', sharedOwner ?? caller.conversationId);
           return {
             content: [
               {
@@ -1804,7 +1810,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                   `Queued for ${[...new Set(sent.map((message) => message.to))].join(', ')}.` +
                   (woken.length > 0
                     ? ` Waking ${woken.join(', ')} in ${woken.length === 1 ? 'the same chat' : 'their existing chats'}.`
-                    : '')
+                    : '') +
+                  (sharedOwner ? ' Shared Eve connector authority was used; sender is shared-eve and this caller remains Unattributed.' : '')
               }
             ],
             structuredContent: {
@@ -1877,9 +1884,10 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
         // and `identify` is what decides whether this caller is one of them. An unrelated
         // chat is told AGENTS_BUSY and nothing else — not who the prime is, not how many
         // workers there are, not what any of them are doing.
-        const caller = await callerNow(startedAt, { reviewKey: input.review_key });
-        await measureSleepingWorkers(caller);
-        const status = statusForCaller(caller);
+        const caller = await callerNow(startedAt, { reviewKey: input.review_key, allowSharedPrime: true });
+        const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+        if (!sharedOwner) await measureSleepingWorkers(caller);
+        const status = sharedOwner ? statusForSharedEvePrime(sharedOwner) : statusForCaller(caller);
         const me = status.self;
         const state = status.state;
         const failed = state.agents.filter((info) => info.state === 'failed');
@@ -1913,7 +1921,9 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               {
                 type: 'text' as const,
                 text:
-                `You are ${me.id === PRIME_ID ? agentName() : me.id}.\n` +
+                (sharedOwner
+                  ? `Shared Eve connector authority: showing ${agentName()}'s worker family. The calling chat is Unattributed, not proven as Prime.\n`
+                  : `You are ${me.id === PRIME_ID ? agentName() : me.id}.\n`) +
                 state.agents
                   .map(
                     (info) => {
@@ -1994,9 +2004,17 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
  * The proven identity is then adopted for the rest of the call, so this result is recorded
  * against the right agent and carries the right inbox.
  */
+function sharedEveCoordinatorForCurrentCall(reviewKey?: string): string | null {
+  // A worker-lane heartbeat key is never an Eve-operator credential, even when account-wide
+  // operation is enabled. This path carries authority only, not conversation identity.
+  if (reviewKey || getConfig().multiAgent.allowUnattributedCalls !== true) return null;
+  const owner = sharedEveOwnerForCurrentCall();
+  return owner && primeForOwnedConversation(owner) === owner ? owner : null;
+}
+
 async function callerNow(
   startedAt: number,
-  options: { exact?: boolean; reviewKey?: string } = {}
+  options: { exact?: boolean; reviewKey?: string; allowSharedPrime?: boolean } = {}
 ): Promise<Caller> {
   const base = currentCaller();
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
@@ -2022,11 +2040,14 @@ async function callerNow(
   // A sole Prime is only a page on which the missing proof might become visible. Trigger the
   // existing browser-recovery path before entering the event-driven wait, but never adopt the
   // candidate as caller identity: only the exact request-id correlation below may do that.
-  if (!exactBeforeWait && !heartbeatContinuity && base.requestId) requestPrimeIdentityRecovery(base.requestId);
+  const sharedPrime = options.allowSharedPrime
+    ? sharedEveCoordinatorForCurrentCall(options.reviewKey)
+    : null;
+  if (!exactBeforeWait && !heartbeatContinuity && base.requestId && !sharedPrime) requestPrimeIdentityRecovery(base.requestId);
   const exactResolved =
     exactBeforeWait ??
     heartbeatContinuity?.conversationId ??
-    (await awaitFreshCallOrigin('agents', startedAt, window, {
+    (await awaitFreshCallOrigin('agents', startedAt, sharedPrime ? Math.min(window, 1500) : window, {
       exact: options.exact,
       // ChatGPT's own id for this request, when it sent one. It names the conversation
       // outright, so two workers calling at the same moment are no longer a hard case.
@@ -2063,13 +2084,14 @@ async function callerNow(
     // conversations still hit AGENTS_BUSY exactly as before.
     await repairPrimeFromResumeShadow(exactResolved);
   }
-  if (!resolved) {
+  if (!resolved && !sharedPrime) {
     logWarn(
       base.requestId
         ? `agents caller not identified: no page evidence matched HTTP request ${base.requestId.slice(0, 20)}…`
         : 'agents caller not identified: this MCP request carried no request id and page evidence was insufficient'
     );
   }
+  if (sharedPrime && !resolved) logWarn('agents: separate shared-Eve worker-family authority available; caller remains Unattributed');
   await adoptAgent(agentForCaller(caller));
   return caller;
 }

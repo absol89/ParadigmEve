@@ -18,6 +18,7 @@ import type { AgentInfo, AgentMessage, AgentState, ReasoningEffort, SwarmState }
 import { HEARTBEAT_REVIEW_WORKER_MARKER, REASONING_EFFORTS, isReasoningEffort } from '../shared/session.js';
 import { AGENT_BACKEND_IDS, agentBackendExecutionStatus, type AgentBackendId } from '../shared/agent-backends.js';
 import { getConfig } from './config.js';
+import { currentAgentConversationId } from './agent-identity.js';
 import { getChatModels } from './chat-models.js';
 import { CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, configuredChatModelRequest, type ChatModelOption } from '../shared/chat-models.js';
 import { DEFAULT_CORE_CONNECTOR_NAME } from '../shared/types.js';
@@ -955,6 +956,21 @@ export function statusForCaller(caller: Caller): CallerSwarmStatus {
   throw new AgentError(
     'No sub-agent run or worker history belongs to this conversation. Call agents action=spawn to start one.'
   );
+}
+
+/** Account-authorized status of the installation's existing Prime family, not caller identity. */
+export function statusForSharedEvePrime(ownerConversationId: string): CallerSwarmStatus {
+  requireSharedEvePrime(ownerConversationId);
+  return statusForCaller({ conversationId: ownerConversationId });
+}
+
+function requireSharedEvePrime(ownerConversationId: string): void {
+  if (!getConfig().multiAgent.allowUnattributedCalls ||
+      !ownerConversationId ||
+      currentAgentConversationId() !== ownerConversationId ||
+      primeForOwnedConversation(ownerConversationId) !== ownerConversationId) {
+    throw new IdentityLostError();
+  }
 }
 
 /**
@@ -2226,10 +2242,42 @@ export function stageMessages(
   }
 }
 
+/**
+ * Explicit shared-Eve operator route. The connector proof is checked by the MCP owner; this
+ * broker fence verifies the user's opt-in and exact installed Prime family again. A shared
+ * operator is NEVER a ChatGPT conversation or worker, and durable message provenance says so.
+ */
+export function stageSharedEvePrimeMessages(
+  ownerConversationId: string,
+  items: ReadonlyArray<{ to: string; text: string }>
+): StagedAgentMessages {
+  requireSharedEvePrime(ownerConversationId);
+  if (!items.length || items.length > MAX_BATCH_MESSAGES) throw new AgentError('Invalid shared Eve message batch');
+  const caller = { conversationId: ownerConversationId };
+  let run = runForCaller(caller);
+  let resumedDormant = false;
+  if (!run) {
+    const dormant = dormantRunForPrime(ownerConversationId);
+    if (dormant) {
+      if (!(run = reactivateDormantRun(dormant))) {
+        throw new AgentError('PRIME_TRANSFER_IN_PROGRESS: worker family is moving; no message was queued.');
+      }
+      resumedDormant = true;
+    }
+  }
+  try {
+    return stageMessagesActive(caller, items, resumedDormant, 'shared-eve');
+  } catch (error) {
+    if (resumedDormant) parkRun(run, 'a shared Eve message was rejected before a worker was woken');
+    throw error;
+  }
+}
+
 function stageMessagesActive(
   caller: Caller,
   items: ReadonlyArray<{ to: string; text: string }>,
-  resumedDormant: boolean
+  resumedDormant: boolean,
+  senderLabel?: 'shared-eve'
 ): StagedAgentMessages {
   const run = runForCaller(caller);
   const from = requireMember(caller);
@@ -2319,7 +2367,7 @@ function stageMessagesActive(
     const already = perRecipient.get(to.info.id) ?? 0;
     assertRoom(to, already + 1);
     perRecipient.set(to.info.id, already + 1);
-    planned.push({ to, message: newMessage(from.info.id, to.info.id, trimmed) });
+    planned.push({ to, message: newMessage(senderLabel ?? from.info.id, to.info.id, trimmed) });
   }
 
   for (const { to, message } of planned) {

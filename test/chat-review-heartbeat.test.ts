@@ -1703,6 +1703,7 @@ describe('chat review heartbeat', () => {
       uniqueSession: async () => coordinator,
       blocked: () => false,
       plans: async () => library,
+      archiveAuthority: () => true, // An explicitly ready human Plan remains manual even when Eve cleanup is enabled.
       planFence: openPlanFence
     };
     await runChatReviewHeartbeat(now, {
@@ -1721,6 +1722,55 @@ describe('chat review heartbeat', () => {
     library = { live: [], done: [current] };
     expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('completed');
     expect(requiredState(state).planSweep?.remainingPlanIds).toEqual([]);
+  });
+
+  it('will not quietly complete a review while enabled Eve archive authority leaves an acknowledged exact Activity Live', async () => {
+    const now = 81_000_000;
+    const coordinator = session({ id: 'prime-archive-deferral', conversationId, lastToolCallAt: now - 1 });
+    const doneItem = { id: planUuid(90_102), text: 'Done', status: 'done' as const };
+    let current = plan(62, {
+      audience: 'eve', items: [doneItem], readyToArchive: true, nextItemId: null,
+      provenance: { kind: 'plan', sessionId: 'source-eve', conversationId: 'source-eve-chat' }
+    });
+    let library: PlanLibrary = { live: [current], done: [] };
+    let state: ChatReviewHeartbeatState | null = null;
+    const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+    let allowed = true;
+    const base = {
+      readState: async () => state,
+      writeState,
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      plans: async () => library,
+      archiveAuthority: () => allowed,
+      planFence: openPlanFence
+    };
+    await runChatReviewHeartbeat(now, {
+      ...base,
+      sessions: async () => [coordinator],
+      enqueue: vi.fn(async () => undefined),
+      makeKey: () => 'heartbeat:archive-deferral'
+    });
+    const pending = requiredState(state).debt!;
+    expect(await acknowledgeChatReviewPlan({
+      key: pending.key, sessionId: pending.sessionId, conversationId: pending.conversationId,
+      planId: current.id, expectedUpdatedAt: current.updatedAt, classification: 'ready-to-archive'
+    }, { dependencies: base })).toBe('acknowledged');
+    const acknowledgedState = structuredClone(requiredState(state));
+    expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('rejected');
+    expect(state).toEqual(acknowledgedState);
+    expect(writeState).toHaveBeenCalledTimes(2);
+
+    allowed = false;
+    expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('completed');
+    expect(requiredState(state).debt).toBeUndefined();
+
+    // An already-archived exact Activity is also safe with archive authority enabled.
+    const archivedAt = current.updatedAt + 1;
+    current = { ...current, updatedAt: archivedAt, archivedAt, section: 'done', readyToArchive: false };
+    library = { live: [], done: [current] };
+    allowed = true;
+    expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('already-completed');
   });
 
   it('does not advance Plan rotation when final receipt persistence fails', async () => {

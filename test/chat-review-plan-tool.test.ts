@@ -181,6 +181,7 @@ describe('chat_review_plan lifecycle tool', () => {
     fixture.acknowledge.mockClear();
     fixture.completeItems.mockClear();
     fixture.archiveExact.mockClear();
+    fixture.archiveExact.mockResolvedValue('archived');
     fixture.pendingHousekeeping.mockClear();
     fixture.reconcileHousekeeping.mockClear();
     fixture.listPlans.mockClear();
@@ -240,6 +241,22 @@ describe('chat_review_plan lifecycle tool', () => {
       provenance: fixture.reviewedPlan.provenance,
       sessionId: 'source-session'
     });
+  });
+
+  it('reports exact Eve archive drift instead of quietly acknowledging successful cleanup', async () => {
+    fixture.reviewedPlan = {
+      id: PLAN_ID,
+      updatedAt: 10,
+      provenance: { kind: 'plan', sessionId: 'source-session', conversationId: 'source-conversation' },
+      audience: 'eve',
+      readyToArchive: true,
+      archivedAt: null
+    };
+    fixture.archiveExact.mockResolvedValue('stale');
+    const reply = await registered().handler({ ...input, classification: 'ready-to-archive' });
+    expect(reply.isError).toBe(true);
+    expect(reply.content[0].text).toContain('CHAT_REVIEW_ARCHIVE_DEFERRED');
+    expect(fixture.archiveExact).toHaveBeenCalledTimes(1);
   });
 
   it('never auto-archives a reviewed human Plan', async () => {

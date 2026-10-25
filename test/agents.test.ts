@@ -2897,6 +2897,103 @@ describe('through the MCP endpoint', () => {
     }
   });
 
+  it('lets opted-in shared Eve coordinate only its retained Prime family without claiming chat identity', async () => {
+    const ownerConversation = 'c-prime-shared-opt-in';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: ownerConversation });
+    restoreAgentIdentity({ version: 1, conversationId: ownerConversation });
+    try {
+      const status = await agentsWithRequestId('wfr_opted_shared_status', 'status');
+      expect(status).toContain('Shared Eve connector authority');
+      expect(status).toContain('Unattributed');
+      expect(status).toContain('worker-1');
+
+      const message = await agentsWithRequestId('wfr_opted_shared_message', 'message', {
+        to: 'worker-1', text: 'Please report the bounded read-only audit.'
+      });
+      expect(message).toContain('Queued for worker-1');
+      expect(message).toContain('Unattributed');
+      expect(pendingCount('worker-1')).toBe(1);
+      expect(offerMessages('worker-1')[0]?.from).toBe('shared-eve');
+
+      // Shared Eve is a narrow operating authority, never proof to spawn a new
+      // family, finish a worker, or impersonate an attributed worker conversation.
+      const spawnResult = await agentsWithRequestId('wfr_opted_shared_spawn', 'spawn', {
+        workers: [{ task: 'must not spawn from an unattributed caller' }]
+      });
+      expect(spawnResult).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      const finishResult = await agentsWithRequestId('wfr_opted_shared_finish', 'finish', {
+        result: 'must not finish from shared Eve'
+      });
+      expect(finishResult).toContain('WORKER_IDENTITY_LOST');
+      expect(swarmStateForCaller({ conversationId: ownerConversation }).agents).toHaveLength(2);
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('does not borrow shared Prime access when the installation has no retained Prime family', async () => {
+    await setEnabled(true, 3, true);
+    restoreAgentIdentity({ version: 1, conversationId: 'c-owner-without-broker-family' });
+    try {
+      const status = await agentsWithRequestId('wfr_opted_shared_no_family', 'status');
+      expect(status).toContain('WORKER_IDENTITY_LOST');
+      expect(status).not.toContain('worker-1');
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('scopes shared coordination to the installed owner with colliding worker names', async () => {
+    const ownerA = 'c-shared-owner-a';
+    const ownerB = 'c-shared-owner-b';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: ownerA });
+    spawn({ caller: { conversationId: ownerB }, workers: [{ task: 'Independent family' }] });
+    restoreAgentIdentity({ version: 1, conversationId: ownerA });
+    try {
+      const status = await agentsWithRequestId('wfr_shared_two_families_status', 'status');
+      expect(status).toContain('Shared Eve connector authority');
+      const message = await agentsWithRequestId('wfr_shared_two_families_message', 'message', {
+        to: 'worker-1', text: 'Only installation owner A should receive this.'
+      });
+      expect(message).toContain('Queued for worker-1');
+      expect(pendingCount('worker-1', currentRunId(ownerA)!)).toBe(1);
+      expect(pendingCount('worker-1', currentRunId(ownerB)!)).toBe(0);
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('never borrows Prime for a worker-lane review key even when shared coordination is opted in', async () => {
+    const owner = 'c-shared-worker-review';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: owner });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    const key = 'heartbeat:shared-worker-lane-negative';
+    await recordChatObservations(owner, [
+      { kind: 'user_message', time: Date.now(), text: 'coordinator', messageId: 'shared-worker-lane-source' }
+    ]);
+    const summary = await findSessionByConversation(owner, { requireUnique: true });
+    await writeDurableNow('chat-review-heartbeat', {
+      debt: { key, sinceAt: 100, untilAt: 200, sessionId: summary!.id, conversationId: owner, reviewLane: 'worker' }
+    });
+    try {
+      const text = await agentsWithRequestId('wfr_shared_worker_review', 'message', {
+        to: 'worker-1', text: 'MUST NOT QUEUE', review_key: key
+      });
+      expect(text).toContain('WORKER_IDENTITY_LOST');
+      expect(pendingCount('worker-1')).toBe(0);
+    } finally {
+      await writeDurableNow('chat-review-heartbeat', {});
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
   it('reattaches a scheduled heartbeat call only through its exact durable Prime lineage', async () => {
     const heartbeatPrime: Caller = { conversationId: 'c-prime-heartbeat' };
     startSwarm(1, heartbeatPrime);
