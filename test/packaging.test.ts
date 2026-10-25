@@ -168,14 +168,14 @@ describe('cross-platform packaging targets', () => {
     expect(ipc).toContain('if (lanPeerRuntimeAvailable(BUILD_FLAVOR))');
   });
 
-  it('pins Electron 43.7.11 exactly and proves packaged runners use those runtime bytes', () => {
+  it('pins Electron 43.8.3 exactly and proves packaged runners use those runtime bytes', () => {
     const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
     const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
     const smoke = readFileSync(path.join(root, 'scripts', 'smoke-packaged-runtime.mjs'), 'utf8');
 
-    expect(pkg.devDependencies.electron).toBe('43.7.11');
-    expect(lock.packages?.['']?.devDependencies?.electron).toBe('43.7.11');
-    expect(lock.packages?.['node_modules/electron']?.version).toBe('43.7.11');
+    expect(pkg.devDependencies.electron).toBe('43.8.3');
+    expect(lock.packages?.['']?.devDependencies?.electron).toBe('43.8.3');
+    expect(lock.packages?.['node_modules/electron']?.version).toBe('43.8.3');
     expect(smoke).toContain('const expectedElectronVersion = sourcePackage.devDependencies?.electron;');
     expect(smoke).toContain('electron: process.versions.electron');
     expect(smoke).toContain('runtime.electron !== expectedElectronVersion');
