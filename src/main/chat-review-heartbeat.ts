@@ -8,13 +8,22 @@
  * executes user work itself and never commandeers Prime's foreground browser turn.
  */
 import { randomUUID } from 'node:crypto';
-import { PLAN_CATALOG_MAX, planIdSchema, type PlanLibrary, type PlanView } from '../shared/plans.js';
+import {
+  PLAN_CATALOG_MAX,
+  planIdSchema,
+  planProvenanceSchema,
+  type PlanLibrary,
+  type PlanProvenance,
+  type PlanView
+} from '../shared/plans.js';
 import type { SessionSummary } from '../shared/session.js';
 import { currentAgentConversationId } from './agent-identity.js';
 import { readDurable, readDurableStrict, writeDurableNow } from './durable.js';
 import { logInfo, logWarn } from './logger.js';
 import {
   listPlans,
+  planReviewScopeDigest,
+  reconcileReviewedPlanItems,
   withPlanReviewValidationFence,
   type PlanReviewExpectation
 } from './plans.js';
@@ -35,6 +44,7 @@ export const CHAT_REVIEW_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const CHAT_REVIEW_RETRY_MS = 60 * 1000;
 export const CHAT_REVIEW_PLAN_BATCH_SIZE = 4;
 const CHAT_REVIEW_PLAN_CATALOG_MAX = PLAN_CATALOG_MAX;
+const CHAT_REVIEW_RECONCILIATION_MAX = 512;
 const STATE = 'chat-review-heartbeat';
 
 export interface ChatReviewPlanTarget {
@@ -47,6 +57,7 @@ export interface ChatReviewPlanTarget {
 
 export const CHAT_REVIEW_PLAN_CLASSIFICATIONS = [
   'ready-to-archive',
+  'stale-checklist',
   'tbd',
   'blocked',
   'superseded',
@@ -56,6 +67,8 @@ export type ChatReviewPlanClassification = (typeof CHAT_REVIEW_PLAN_CLASSIFICATI
 
 export interface ChatReviewPlanAck extends ChatReviewPlanTarget {
   classification: ChatReviewPlanClassification;
+  /** Non-mutating review evidence: exact currently-open items the source proves complete. */
+  staleItemIds?: string[];
   mutationRequest?: ChatReviewPlanMutationRequest;
 }
 
@@ -67,6 +80,15 @@ export interface ChatReviewPlanMutationRequest {
 
 export interface ChatReviewPlanSweep {
   remainingPlanIds: string[];
+}
+
+export interface ChatReviewPlanReconciliation extends ChatReviewPlanTarget {
+  heartbeatKey: string;
+  coordinatorSessionId: string;
+  itemIds: string[];
+  scopeDigest: string;
+  createdAt: number;
+  provenance?: PlanProvenance;
 }
 
 export interface ChatReviewDebt extends ChatReviewAttention {
@@ -113,6 +135,8 @@ export interface ChatReviewHeartbeatState {
   debt?: ChatReviewDebt;
   lastReceipt?: ChatReviewCompletionReceipt;
   planSweep?: ChatReviewPlanSweep;
+  /** Source-proven stale checklist items waiting for the exact ordinary Prime to reconcile. */
+  planReconciliations?: ChatReviewPlanReconciliation[];
   pendingFinding?: ChatReviewPrimeFinding;
   /** Overflow custody for previous still-pending findings; file per index, not a lossy ring. */
   findingSpoolRead?: number;
@@ -210,9 +234,18 @@ function parsePlanAck(value: unknown): ChatReviewPlanAck | null {
       completedItemIds: [...request.completedItemIds].sort()
     };
   }
+  let staleItemIds: string[] | undefined;
+  if (row.staleItemIds !== undefined) {
+    if (!Array.isArray(row.staleItemIds) || row.staleItemIds.length === 0 || row.staleItemIds.length > 100 ||
+        !row.staleItemIds.every(safePlanId) || new Set(row.staleItemIds).size !== row.staleItemIds.length) return null;
+    staleItemIds = [...row.staleItemIds].sort();
+  }
+  if ((classification === 'stale-checklist') !== Boolean(staleItemIds) ||
+      (staleItemIds && mutationRequest)) return null;
   return {
     ...target,
     classification: classification as ChatReviewPlanClassification,
+    ...(staleItemIds ? { staleItemIds } : {}),
     ...(mutationRequest ? { mutationRequest } : {})
   };
 }
@@ -223,6 +256,29 @@ function parsePlanSweep(value: unknown): ChatReviewPlanSweep | null {
   if (!Array.isArray(ids) || ids.length > CHAT_REVIEW_PLAN_CATALOG_MAX || !ids.every(safePlanId) ||
       new Set(ids).size !== ids.length) return null;
   return { remainingPlanIds: [...ids] };
+}
+
+function parsePlanReconciliation(value: unknown): ChatReviewPlanReconciliation | null {
+  const target = parsePlanTarget(value);
+  if (!target || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.heartbeatKey !== 'string' || row.heartbeatKey.length === 0 || row.heartbeatKey.length > 512 ||
+      typeof row.coordinatorSessionId !== 'string' || row.coordinatorSessionId.length < 8 || row.coordinatorSessionId.length > 160 ||
+      !Array.isArray(row.itemIds) || row.itemIds.length === 0 || row.itemIds.length > 100 ||
+      !row.itemIds.every(safePlanId) || new Set(row.itemIds).size !== row.itemIds.length ||
+      typeof row.scopeDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(row.scopeDigest) ||
+      !safeTime(row.createdAt)) return null;
+  const provenance = row.provenance === undefined ? undefined : planProvenanceSchema.safeParse(row.provenance);
+  if (provenance !== undefined && !provenance.success) return null;
+  return {
+    ...target,
+    heartbeatKey: row.heartbeatKey,
+    coordinatorSessionId: row.coordinatorSessionId,
+    itemIds: [...row.itemIds].sort(),
+    scopeDigest: row.scopeDigest.toLowerCase(),
+    createdAt: row.createdAt,
+    ...(provenance === undefined ? {} : { provenance: provenance.data })
+  };
 }
 
 /** Positive recorder evidence that this coordinator has no live turn to finish the owed review. */
@@ -331,6 +387,17 @@ const defaults: Dependencies = {
       const planSweep = parsePlanSweep(value.planSweep);
       if (!planSweep) throw new Error('The durable chat review Plan sweep is invalid');
       state.planSweep = planSweep;
+    }
+    if (value.planReconciliations !== undefined) {
+      if (!Array.isArray(value.planReconciliations) || value.planReconciliations.length > CHAT_REVIEW_RECONCILIATION_MAX) {
+        throw new Error('The durable chat review Plan reconciliations are invalid');
+      }
+      const reconciliations = value.planReconciliations.map(parsePlanReconciliation);
+      if (reconciliations.some(item => item === null) ||
+          new Set((reconciliations as ChatReviewPlanReconciliation[]).map(item => item.planId)).size !== reconciliations.length) {
+        throw new Error('The durable chat review Plan reconciliations are invalid');
+      }
+      state.planReconciliations = reconciliations as ChatReviewPlanReconciliation[];
     }
     if (value.pendingFinding !== undefined) {
       const pendingFinding = parsePendingFinding(value.pendingFinding);
@@ -457,13 +524,20 @@ function selectPlanReviewBatch(
 ): { sweep: ChatReviewPlanSweep; targets: ChatReviewPlanTarget[]; snapshots: ChatReviewPlanSnapshot[] } {
   const checked = checkedPlanLibrary(library);
   const liveById = new Map(checked.live.map(plan => [plan.id, plan]));
-  let remainingPlanIds = (state?.planSweep?.remainingPlanIds ?? []).filter(id => liveById.has(id));
+  const pendingReconciliationIds = new Set((state?.planReconciliations ?? [])
+    .filter(reconciliation => {
+      const live = liveById.get(reconciliation.planId);
+      return Boolean(live && samePlanTarget(planTarget(live), reconciliation));
+    })
+    .map(reconciliation => reconciliation.planId));
+  let remainingPlanIds = (state?.planSweep?.remainingPlanIds ?? [])
+    .filter(id => liveById.has(id) && !pendingReconciliationIds.has(id));
   if (remainingPlanIds.length === 0) {
     // listPlans() already has stable Live ordering. Keep that ordering within each audience while
     // putting human commitments before worker/helper bookkeeping at the start of every cycle.
     remainingPlanIds = [
-      ...checked.live.filter(plan => plan.audience === 'human').map(plan => plan.id),
-      ...checked.live.filter(plan => plan.audience === 'eve').map(plan => plan.id)
+      ...checked.live.filter(plan => plan.audience === 'human' && !pendingReconciliationIds.has(plan.id)).map(plan => plan.id),
+      ...checked.live.filter(plan => plan.audience === 'eve' && !pendingReconciliationIds.has(plan.id)).map(plan => plan.id)
     ];
   }
   const selected = remainingPlanIds.slice(0, CHAT_REVIEW_PLAN_BATCH_SIZE).map(id => liveById.get(id)!);
@@ -479,6 +553,7 @@ function stateWithDebt(state: ChatReviewHeartbeatState | null, debt: ChatReviewD
     ...(state?.lastCompletedAt === undefined ? {} : { lastCompletedAt: state.lastCompletedAt }),
     ...(state?.lastReceipt ? { lastReceipt: state.lastReceipt } : {}),
     ...(state?.planSweep ? { planSweep: state.planSweep } : {}),
+    ...(state?.planReconciliations?.length ? { planReconciliations: state.planReconciliations } : {}),
     ...(state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
     ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
     ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
@@ -709,6 +784,8 @@ export interface ChatReviewPlanAcknowledgementInput {
   planId: string;
   expectedUpdatedAt: number;
   classification: ChatReviewPlanClassification;
+  /** Non-mutating worker review evidence. Valid only with classification=stale-checklist. */
+  staleItemIds?: readonly string[];
   /** Exact Companion request identity for safely recognizing a replay after a bounded Plan mutation. */
   requestId?: string;
   /** Canonical mutation arguments. Required with `options.mutate`, omitted for non-mutating acks. */
@@ -754,6 +831,13 @@ function sameMutationRequest(left: ChatReviewPlanMutationRequest, right: ChatRev
     left.completedItemIds.every((itemId, index) => itemId === right.completedItemIds[index]);
 }
 
+function sameStaleItemIds(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  if (!left || !right) return left === right;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
 /** Persist one exact Plan review against the current revision/source of this heartbeat's fixed batch. */
 export function acknowledgeChatReviewPlan(
   input: ChatReviewPlanAcknowledgementInput,
@@ -766,6 +850,10 @@ export function acknowledgeChatReviewPlan(
         !(CHAT_REVIEW_PLAN_CLASSIFICATIONS as readonly string[]).includes(input.classification)) return 'rejected';
     const mutationRequest = mutationRequestFromInput(input, options.mutate);
     if (mutationRequest === 'invalid') return 'rejected';
+    const staleItemIds = input.staleItemIds === undefined ? undefined : [...input.staleItemIds].sort();
+    if ((input.classification === 'stale-checklist') !== Boolean(staleItemIds?.length) ||
+        (staleItemIds && (staleItemIds.length > 100 || !staleItemIds.every(safePlanId) ||
+          new Set(staleItemIds).size !== staleItemIds.length || options.mutate))) return 'rejected';
     const state = await deps.readState();
     const debt = state?.debt;
     if (!debt || debt.key !== input.key || debt.planBatch === undefined || debt.planAcks === undefined ||
@@ -786,6 +874,10 @@ export function acknowledgeChatReviewPlan(
     const currentLive = library.live.find(plan => plan.id === input.planId);
     const current = currentLive ?? library.done.find(plan => plan.id === input.planId);
     if (!current || current.updatedAt !== input.expectedUpdatedAt) return 'rejected';
+    if (staleItemIds) {
+      const currentItems = new Map(current.items.map(item => [item.id, item]));
+      if (staleItemIds.some(id => !currentItems.has(id) || currentItems.get(id)!.status === 'done')) return 'rejected';
+    }
     const beforeMutation = planTarget(current);
     // Live revision/source drift means the prompt snapshot is stale. Reject this attempt and let
     // the durable retry path refresh the target before the coordinator reviews it again. Archived
@@ -799,10 +891,12 @@ export function acknowledgeChatReviewPlan(
     const acknowledgement: ChatReviewPlanAck = {
       ...afterTarget,
       classification: input.classification,
+      ...(staleItemIds ? { staleItemIds } : {}),
       ...(mutationRequest ? { mutationRequest } : {})
     };
     if (previous && samePlanTarget(previous, acknowledgement)) {
-      if (previous.classification !== acknowledgement.classification) return 'rejected';
+      if (previous.classification !== acknowledgement.classification ||
+          !sameStaleItemIds(previous.staleItemIds, acknowledgement.staleItemIds)) return 'rejected';
       if (!samePlanTarget(batchTarget, afterTarget)) {
         const planBatch = debt.planBatch.map((target, index) => index === batchIndex ? afterTarget : target);
         await deps.writeState(stateWithDebt(state, { ...debt, planBatch }));
@@ -898,6 +992,7 @@ export function completeChatReviewHeartbeat(
     if (!coordinator || !receiptMatchesDebt(receipt, debt, coordinator) || !planBatchBelongsToSweep(state, debt)) return 'rejected';
     let planSweep = state?.planSweep;
     let liveExpectations: PlanReviewExpectation[] = [];
+    let planReconciliations = [...(state?.planReconciliations ?? [])];
     if (debt.planBatch !== undefined) {
       if (!planSweep || debt.planAcks === undefined || debt.planAcks.length !== debt.planBatch.length) return 'rejected';
       const acknowledgementById = new Map(debt.planAcks.map(ack => [ack.planId, ack]));
@@ -906,6 +1001,7 @@ export function completeChatReviewHeartbeat(
       const library = checkedPlanLibrary(await deps.plans());
       const liveById = new Map(library.live.map(plan => [plan.id, plan]));
       const archivedIds = new Set(library.done.map(plan => plan.id));
+      const staleReconciliations: ChatReviewPlanReconciliation[] = [];
       liveExpectations = [];
       for (const target of debt.planBatch) {
         const acknowledgement = acknowledgementById.get(target.planId)!;
@@ -913,17 +1009,35 @@ export function completeChatReviewHeartbeat(
         if (live) {
           if (!samePlanTarget(target, acknowledgement) || !samePlanTarget(planTarget(live), acknowledgement)) return 'rejected';
           liveExpectations.push({ planId: live.id, updatedAt: live.updatedAt, provenance: live.provenance });
+          if (acknowledgement.classification === 'stale-checklist') {
+            if (!acknowledgement.staleItemIds?.length) return 'rejected';
+            staleReconciliations.push({
+              ...planTarget(live),
+              heartbeatKey: debt.key,
+              coordinatorSessionId: debt.sessionId,
+              itemIds: [...acknowledgement.staleItemIds],
+              scopeDigest: planReviewScopeDigest(live),
+              createdAt: receipt.completedAt,
+              ...(live.provenance ? { provenance: live.provenance } : {})
+            });
+          }
         } else if (!archivedIds.has(target.planId)) {
           return 'rejected';
         }
       }
+      if (receipt.result === 'completed' && staleReconciliations.length) return 'rejected';
       const completedIds = new Set(debt.planBatch.map(target => target.planId));
       planSweep = { remainingPlanIds: planSweep.remainingPlanIds.filter(id => !completedIds.has(id)) };
+      // A current re-review supersedes any older housekeeping obligation for that exact Plan.
+      planReconciliations = planReconciliations.filter(item => !completedIds.has(item.planId));
+      for (const reconciliation of staleReconciliations) planReconciliations.push(reconciliation);
+      if (planReconciliations.length > CHAT_REVIEW_RECONCILIATION_MAX) return 'rejected';
     }
     const nextState: ChatReviewHeartbeatState = {
       lastCompletedAt: debt.untilAt,
       lastReceipt: receipt,
       ...(planSweep ? { planSweep } : {}),
+      ...(planReconciliations.length ? { planReconciliations } : {}),
       ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
       ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
       ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
@@ -962,6 +1076,52 @@ export function completeChatReviewHeartbeat(
       }
     }
     return 'completed';
+  });
+}
+
+export type ChatReviewHousekeepingResult = 'reconciled' | 'already-reconciled' | 'stale';
+
+/** Bounded structured housekeeping owned by one exact ordinary coordinator session. */
+export function listChatReviewPlanReconciliations(sessionId: string): Promise<ChatReviewPlanReconciliation[]> {
+  return serialHeartbeat(async () => {
+    const state = await defaults.readState();
+    return (state?.planReconciliations ?? [])
+      .filter(item => item.coordinatorSessionId === sessionId)
+      .map(item => ({ ...item, itemIds: [...item.itemIds], ...(item.provenance ? { provenance: { ...item.provenance } } : {}) }));
+  });
+}
+
+/**
+ * Consumes one durable stale-checklist obligation. The target comes entirely from durable review
+ * state; the caller supplies only its exact coordinator session and Plan id.
+ */
+export function reconcileChatReviewPlanHousekeeping(
+  sessionId: string,
+  planId: string
+): Promise<ChatReviewHousekeepingResult> {
+  return serialHeartbeat(async () => {
+    if (!sessionId || sessionId.length > 160 || !safePlanId(planId)) return 'stale';
+    const state = await defaults.readState();
+    const reconciliation = state?.planReconciliations?.find(item =>
+      item.coordinatorSessionId === sessionId && item.planId === planId);
+    if (!state || !reconciliation) return 'already-reconciled';
+
+    const result = await reconcileReviewedPlanItems({
+      planId: reconciliation.planId,
+      updatedAt: reconciliation.updatedAt,
+      ...(reconciliation.provenance ? { provenance: reconciliation.provenance } : {}),
+      itemIds: reconciliation.itemIds,
+      scopeDigest: reconciliation.scopeDigest
+    });
+    const remaining = (state.planReconciliations ?? []).filter(item => item.planId !== reconciliation.planId);
+    const nextState: ChatReviewHeartbeatState = { ...state };
+    if (remaining.length) nextState.planReconciliations = remaining;
+    else delete nextState.planReconciliations;
+    // `reconciled` may have changed the Plan before this state commit. If this write fails, the
+    // durable obligation remains; the next retry recognizes the same-scope done items as already
+    // reconciled and removes the obligation without applying the effect twice.
+    await defaults.writeState(nextState);
+    return result;
   });
 }
 
@@ -1196,6 +1356,7 @@ export function runChatReviewHeartbeat(
       await deps.writeState({
         ...(lastCompletedAt === null ? {} : { lastCompletedAt }),
         ...(state?.lastReceipt ? { lastReceipt: state.lastReceipt } : {}),
+        ...(state?.planReconciliations?.length ? { planReconciliations: state.planReconciliations } : {}),
         ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
         ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
         ...(state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),

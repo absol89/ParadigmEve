@@ -3,7 +3,9 @@ import { fail, guard, ok, type SurfaceRegistrar } from './kernel.js';
 import { toolDeclaration } from './tool-declarations.js';
 import { getSession, readRecentEvents, readSessionPlan, updateSessionPlan } from '../session/store.js';
 import type { PlanStepSource } from '../../shared/plans.js';
-import { listPlans, syncSessionAgentPlan } from '../plans.js';
+import { archiveExactReadyEvePlan, listPlans, syncSessionAgentPlan } from '../plans.js';
+import { currentChatReviewPlanEvidence } from '../chat-review-heartbeat.js';
+import { isHeartbeatReviewWorkerCaller } from '../agents.js';
 import { ensureRequestTrailForAcceptedPlan } from '../request-trail-admission.js';
 import { agentPlanUpdateSchema } from '../../shared/agent-plan.js';
 import { logInfo, logWarn } from '../logger.js';
@@ -43,6 +45,24 @@ export function registerPlanTool(reg: SurfaceRegistrar): void {
       return fail(`The chat plan was updated, but its durable Plans projection could not refresh: ${error instanceof Error ? error.message : String(error)}. The chat-local plan was preserved.`);
     }
     if (projected) {
+      if (isHeartbeatReviewWorkerCaller(caller) && projected.provenance?.sessionId === sessionId) {
+        try {
+          const activeReview = await currentChatReviewPlanEvidence();
+          const selectedByCurrentDebt = activeReview?.targets.some(target => target.planId === projected.id) === true;
+          if (!selectedByCurrentDebt) {
+            await archiveExactReadyEvePlan({
+              planId: projected.id,
+              updatedAt: projected.updatedAt,
+              provenance: projected.provenance,
+              sessionId
+            });
+          }
+        } catch (error) {
+          // The Plan update itself is already durable. Housekeeping races fail closed and the next
+          // heartbeat can review the still-Live Activity instead of turning cleanup into task failure.
+          logWarn(`update_plan: heartbeat Activity cleanup deferred: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       const library = await listPlans();
       const resolved = library.live.find(plan => plan.id === projected.id) ??
         library.done.find(plan => plan.id === projected.id) ??

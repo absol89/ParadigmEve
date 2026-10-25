@@ -2,13 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
   authority: true,
+  heartbeatWorker: false,
+  activeTargets: [] as Array<{ planId: string }>,
   sharedOwner: null as string | null,
   currentAgentConversationId: 'conversation-worker' as string | null,
   caller: { sessionId: 'session-worker', conversationId: 'conversation-worker' },
   sessions: new Map<string, any>(),
   accepted: true,
-  projected: { id: 'plan-1', readyToArchive: true, audience: 'human' as 'human' | 'eve', archivedAt: null as number | null },
-  archivePlan: vi.fn(async () => ({ id: 'plan-1', section: 'done' })),
+  projected: {
+    id: 'plan-1', updatedAt: 10,
+    provenance: { kind: 'plan', sessionId: 'session-worker', conversationId: 'conversation-worker' },
+    readyToArchive: true, audience: 'human' as 'human' | 'eve', archivedAt: null as number | null
+  },
+  archiveExact: vi.fn(async () => 'archived'),
   syncSessionAgentPlan: vi.fn(async () => ({ ...fixture.projected })),
   listPlans: vi.fn(async () => ({
     live: fixture.projected.archivedAt === null ? [{ ...fixture.projected }] : [],
@@ -34,12 +40,20 @@ vi.mock('../src/main/session/store.js', () => ({
   readRecentEvents: async () => []
 }));
 
+vi.mock('../src/main/chat-review-heartbeat.js', () => ({
+  currentChatReviewPlanEvidence: vi.fn(async () => ({ targets: fixture.activeTargets }))
+}));
+
+vi.mock('../src/main/agents.js', () => ({
+  isHeartbeatReviewWorkerCaller: () => fixture.heartbeatWorker
+}));
+
 vi.mock('../src/main/eve-access.js', () => ({
   sharedEveOwnerForCurrentCall: () => fixture.sharedOwner
 }));
 
 vi.mock('../src/main/plans.js', () => ({
-  archivePlan: fixture.archivePlan,
+  archiveExactReadyEvePlan: fixture.archiveExact,
   listPlans: fixture.listPlans,
   syncSessionAgentPlan: fixture.syncSessionAgentPlan
 }));
@@ -86,6 +100,8 @@ const complete = { plan: [{ step: 'Finish it', status: 'completed' as const }] }
 describe('update_plan archive boundary', () => {
   beforeEach(() => {
     fixture.authority = true;
+    fixture.heartbeatWorker = false;
+    fixture.activeTargets = [];
     fixture.sharedOwner = null;
     fixture.currentAgentConversationId = 'conversation-worker';
     fixture.caller = { sessionId: 'session-worker', conversationId: 'conversation-worker' };
@@ -96,8 +112,12 @@ describe('update_plan archive boundary', () => {
       origin: { kind: 'worker', fromSessionId: 'session-prime', agentId: 'worker-1', task: 'Finish polish' }
     });
     fixture.accepted = true;
-    fixture.projected = { id: 'plan-1', readyToArchive: true, audience: 'human', archivedAt: null };
-    fixture.archivePlan.mockClear();
+    fixture.projected = {
+      id: 'plan-1', updatedAt: 10,
+      provenance: { kind: 'plan', sessionId: 'session-worker', conversationId: 'conversation-worker' },
+      readyToArchive: true, audience: 'human', archivedAt: null
+    };
+    fixture.archiveExact.mockClear();
     fixture.listPlans.mockClear();
     fixture.syncSessionAgentPlan.mockClear();
     fixture.ensureRequestTrailForAcceptedPlan.mockClear();
@@ -105,11 +125,11 @@ describe('update_plan archive boundary', () => {
   });
 
   it('keeps completed worker Activity live for lifecycle evidence even when Eve archive authority is enabled', async () => {
-    fixture.projected = { id: 'plan-1', readyToArchive: true, audience: 'eve', archivedAt: null };
+    fixture.projected = { ...fixture.projected, readyToArchive: true, audience: 'eve', archivedAt: null };
     const reply = await registeredHandler()(complete);
     expect(fixture.syncSessionAgentPlan).toHaveBeenCalledTimes(1);
     expect(fixture.ensureRequestTrailForAcceptedPlan).toHaveBeenCalledTimes(1);
-    expect(fixture.archivePlan).not.toHaveBeenCalled();
+    expect(fixture.archiveExact).not.toHaveBeenCalled();
     expect(reply.content[0].text).toBe('Plan updated');
   });
 
@@ -123,12 +143,12 @@ describe('update_plan archive boundary', () => {
       plan: fixture.projected
     });
     expect(fixture.projected).toMatchObject({ readyToArchive: true, audience: 'human' });
-    expect(fixture.archivePlan).not.toHaveBeenCalled();
+    expect(fixture.archiveExact).not.toHaveBeenCalled();
     expect(reply.content[0].text).toBe('Plan updated');
   });
 
   it('keeps completed Eve-owned helper Activity live until its lifecycle owner has closure evidence', async () => {
-    fixture.projected = { id: 'plan-1', readyToArchive: true, audience: 'eve', archivedAt: null };
+    fixture.projected = { ...fixture.projected, readyToArchive: true, audience: 'eve', archivedAt: null };
     fixture.sessions.set('session-worker', {
       id: 'session-worker',
       title: 'Helper activity',
@@ -136,16 +156,42 @@ describe('update_plan archive boundary', () => {
     });
     const reply = await registeredHandler()(complete);
     expect(fixture.syncSessionAgentPlan).toHaveBeenCalledTimes(1);
-    expect(fixture.archivePlan).not.toHaveBeenCalled();
+    expect(fixture.archiveExact).not.toHaveBeenCalled();
     expect(reply.content[0].text).toBe('Plan updated');
   });
 
   it('keeps completed Eve Activity live when archive authority is disabled', async () => {
     fixture.authority = false;
-    fixture.projected = { id: 'plan-1', readyToArchive: true, audience: 'eve', archivedAt: null };
+    fixture.projected = { ...fixture.projected, readyToArchive: true, audience: 'eve', archivedAt: null };
     const reply = await registeredHandler()(complete);
     expect(reply.content[0].text).toBe('Plan updated');
-    expect(fixture.archivePlan).not.toHaveBeenCalled();
+    expect(fixture.archiveExact).not.toHaveBeenCalled();
+  });
+
+  it('archives only the exact all-done heartbeat Activity after projection', async () => {
+    fixture.heartbeatWorker = true;
+    fixture.projected = { ...fixture.projected, readyToArchive: true, audience: 'eve', archivedAt: null };
+
+    const reply = await registeredHandler()(complete);
+
+    expect(reply.isError).not.toBe(true);
+    expect(fixture.archiveExact).toHaveBeenCalledExactlyOnceWith({
+      planId: 'plan-1',
+      updatedAt: 10,
+      provenance: fixture.projected.provenance,
+      sessionId: 'session-worker'
+    });
+  });
+
+  it('defers heartbeat Activity cleanup while that Plan is selected by the active review debt', async () => {
+    fixture.heartbeatWorker = true;
+    fixture.activeTargets = [{ planId: 'plan-1' }];
+    fixture.projected = { ...fixture.projected, readyToArchive: true, audience: 'eve', archivedAt: null };
+
+    const reply = await registeredHandler()(complete);
+
+    expect(reply.isError).not.toBe(true);
+    expect(fixture.archiveExact).not.toHaveBeenCalled();
   });
 
   it('does not admit a Request Trail when the exact session rejects a stale plan update', async () => {

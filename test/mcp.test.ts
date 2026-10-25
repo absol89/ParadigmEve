@@ -951,8 +951,8 @@ describe('model-facing surfaces', () => {
 
     // ParadigmEve carries local + enabled Computer-use tools; the legacy Desktop endpoint
     // still contains only its old Computer-use declaration. Both include one code-mode tool.
-    // `schedule` preserves authorized conversation context and owns verified completion. `chat_review_plan`
-    // and `chat_review_complete` are narrow lifecycle tools:
+    // `schedule` preserves authorized conversation context and owns verified completion. `chat_review_plan`,
+    // `chat_review_housekeeping`, and `chat_review_complete` are narrow lifecycle tools:
     // heartbeat Plan acknowledgement and debt completion require exact semantic review, and scheduled
     // work closes only from exact durable task-verification lineage rather than final prose/browser state.
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
@@ -961,10 +961,11 @@ describe('model-facing surfaces', () => {
     // file_action/file_edit schemas while keeping provider-specific tool sets off Core.
     // Debug builds also
     // expose one narrow authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 38 : process.platform === 'darwin' ? 25 : 23);
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 39 : process.platform === 'darwin' ? 26 : 24);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');
+    expect(coreTools.map(tool => tool.name)).toContain('chat_review_housekeeping');
     expect(coreTools.find(tool => tool.name === 'expenses_read')?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false
@@ -989,8 +990,9 @@ describe('model-facing surfaces', () => {
     // Post-2.4 adds the provider-neutral file broker: read-only file_action (inspect/read plus
     // bounded per-format selectors) and its changing half file_edit (one flat object for
     // install_provider/provider_tools/edit). That is deliberate discovery cost in exchange for
-    // keeping all thirteen ArtCraft apps' own tool sets off Core.
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 47_000 : 46_800);
+    // keeping all thirteen ArtCraft apps' own tool sets off Core. Exact heartbeat
+    // housekeeping adds one bounded direct-call lifecycle schema to the Core budget.
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 48_500 : 48_300);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget

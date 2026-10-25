@@ -17,7 +17,7 @@ import { desktopAutomationSupported } from './platform.js';
 import { onSwarmChange, statusForCaller } from './agents.js';
 import type { ChatProviderRoute } from '../shared/session.js';
 
-const CHAT_LIFECYCLE_ONLY = new Set(['chat_review_plan', 'chat_review_complete', 'session_finish']);
+const CHAT_LIFECYCLE_ONLY = new Set(['chat_review_plan', 'chat_review_complete', 'chat_review_housekeeping', 'session_finish']);
 const DELEGATE_TIMEOUT_MS = 10 * 60_000;
 
 function localResult(result: ToolResult): LocalAgentToolResult {

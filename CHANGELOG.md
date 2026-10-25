@@ -13,6 +13,23 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.5] — Exact heartbeat and Plan housekeeping
+
+**Source-only development checkpoint (2026-10-25):** No 2.4.5 installer has been built,
+installed, tagged, pushed, or published as part of this change.
+
+- Read-only heartbeat reviews now distinguish source-proven stale checklist items from
+  intentionally open work and ready-to-archive human Plans. A stale-checklist finding
+  cannot silently close as a completed review.
+- Durable structured reconciliation lets the exact ordinary Prime complete only reviewed
+  items with revision, item identity, full provenance, and source-document fencing.
+- Completed Eve heartbeat Activity uses exact single-Plan archive checks after its final
+  Plan update, subject to the existing archive authority. Human Plans and unrelated
+  same-session Activity are never swept automatically.
+- Added regression coverage for review receipts, reconciliation idempotency, direct-tool
+  authority, source races, and MCP discovery. Full source CI passed before the version
+  transition (6,082 tests, including Computer Use and MCP shutdown).
+
 ## [2.4.4] — Reliability, provenance, protected recovery and archive freshness
 
 **Source release preparation (2026-10-23):** The cumulative 2.4.4 fixes are being

@@ -576,7 +576,7 @@ async function dispatchTracked(
   // handler runs. Recording a late identity cannot recover a discarded anonymous frame.
   const desktopContext = (surface === 'core' || surface === 'desktop') && (name === 'get_window_state' ||
     (WINDOWS_COMPUTER_STATE_INPUT_METHODS as readonly string[]).includes(name));
-  if (!context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning())) && requestId) {
+  if (!context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' || name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning())) && requestId) {
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
@@ -855,7 +855,7 @@ async function dispatchTracked(
               'CALLER_IDENTITY_REQUIRED: this operation needs this chat’s exact workspace, but the connector could not prove which ChatGPT conversation made the call. Retry after the extension reconnects; no file or command was changed.'
             )
           )
-        : nested && (name === 'exec' || name === 'session_finish' || name === 'schedule' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'lan' || isFinish)
+        : nested && (name === 'exec' || name === 'session_finish' || name === 'schedule' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' || name === 'lan' || isFinish)
         ? Promise.resolve(fail('DIRECT_CALL_REQUIRED: call this lifecycle tool directly, outside exec. No action was taken.'))
         : invokeHandler()
   );

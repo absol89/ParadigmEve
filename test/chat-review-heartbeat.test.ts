@@ -1239,6 +1239,54 @@ describe('chat review heartbeat', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('persists exact stale-checklist obligations only with a dispatched receipt and dedupes the unchanged Plan', async () => {
+    const current = plan(91);
+    const pending = debt({ reviewLane: 'worker', planBatch: [planTargetFor(current)], planAcks: [] });
+    const coordinator = session({ id: pending.sessionId, conversationId: pending.conversationId });
+    let state: ChatReviewHeartbeatState = {
+      debt: pending,
+      planSweep: { remainingPlanIds: [current.id] }
+    };
+    const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+    const dependencies = {
+      readState: async () => state,
+      writeState,
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      plans: async () => ({ live: [current], done: [] }),
+      planFence: openPlanFence,
+      sessions: async () => [coordinator],
+      enqueue: vi.fn(async () => undefined),
+      makeKey: () => 'heartbeat:next'
+    };
+    const staleItemIds = [current.items[0]!.id];
+    expect(await acknowledgeChatReviewPlan({
+      key: pending.key, sessionId: pending.sessionId, conversationId: pending.conversationId,
+      planId: current.id, expectedUpdatedAt: current.updatedAt,
+      classification: 'stale-checklist', staleItemIds
+    }, { dependencies })).toBe('acknowledged');
+    const afterAck = structuredClone(state);
+    writeState.mockClear();
+    expect(await completeChatReviewHeartbeat(receipt(pending, { reviewLane: 'worker' }), dependencies)).toBe('rejected');
+    expect(state).toEqual(afterAck);
+    expect(writeState).not.toHaveBeenCalled();
+
+    expect(await completeChatReviewHeartbeat(receipt(pending, {
+      reviewLane: 'worker', result: 'dispatched', finding: 'Exact stale checklist requires Prime reconciliation.'
+    }), dependencies)).toBe('completed');
+    expect(state.debt).toBeUndefined();
+    expect(state.planReconciliations).toMatchObject([{
+      planId: current.id, updatedAt: current.updatedAt,
+      heartbeatKey: pending.key, coordinatorSessionId: pending.sessionId, itemIds: staleItemIds,
+      provenance: current.provenance
+    }]);
+    expect(state.planSweep?.remainingPlanIds).toEqual([]);
+
+    await runChatReviewHeartbeat(pending.untilAt + CHAT_REVIEW_HEARTBEAT_MS + 10, dependencies);
+    expect(state.debt?.planBatch).toEqual([]);
+    expect(state.planReconciliations).toHaveLength(1);
+  });
+
   it('advances Plan rotation only after every exact acknowledgement and an accepted receipt', async () => {
     const now = 30_000_000;
     const coordinator = session({ id: 'prime-rotation', conversationId, lastToolCallAt: now - 1 });
