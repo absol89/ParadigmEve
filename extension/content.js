@@ -11426,9 +11426,18 @@
   }
   function currentStreamSightings(conversation) {
     const now = Date.now();
+    // A slow connector/tool approval can keep one generation alive for longer than the
+    // ordinary 15-minute replay cache. If Eve restarts during that same turn, expiring
+    // its one-shot stream id makes every later MCP call permanently unattributed even
+    // though this exact document still owns the generating conversation. Keep only the
+    // bounded ids of that live generation; idle/foreign evidence still expires normally.
+    const liveConversation = generating && conversationId === conversation &&
+      CLF_DOM.conversationId() === conversation;
     const out = [];
     for (const [requestId, sighting] of streamSightings) {
-      if (sighting.expires <= now) streamSightings.delete(requestId);
+      if (sighting.expires <= now && !(liveConversation && sighting.conversationId === conversation)) {
+        streamSightings.delete(requestId);
+      }
       else if (sighting.conversationId === conversation) out.push({ requestId, messageId: null, createTime: sighting.observedAt / 1000 });
     }
     return out;
@@ -11440,7 +11449,11 @@
     // New chats can receive their stream id before /c/<id>. The existing observer
     // drains a bounded set when that exact route appears; navigation retires it.
     for (const requestId of requestIds) {
-      if (pendingStreamOrigins.has(requestId) || pendingStreamOrigins.size >= 16) continue;
+      if (pendingStreamOrigins.has(requestId)) continue;
+      // A page can keep sixteen older requests waiting through an approval card.
+      // The next response is the one executing now: retire the oldest provisional
+      // sighting instead of silently dropping this newer exact request id (#1865).
+      if (pendingStreamOrigins.size >= 16) pendingStreamOrigins.delete(pendingStreamOrigins.keys().next().value);
       pendingStreamOrigins.set(requestId, { conversationId: claimed, observedAt, deadline: Date.now() + 30_000 });
     }
     flushStreamRequestOrigins();

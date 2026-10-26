@@ -16,6 +16,9 @@
   const post = window.postMessage.bind(window);
   let latest = null;
   let requestOrder = 0, latestOrder = 0;
+  // Two bounded response clones at once; a newer provider response must not be
+  // invisible because a background tab left older streams open (#1865).
+  const originReaders = new Set();
   const CONVERSATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   // OpenAI historically used `wfr_…` connector ids, but live 2026-09-25 also emits UUID-shaped
   // x-request-id / metadata.request_id values. Identity is the exact opaque join key, not its
@@ -87,8 +90,14 @@
     try { url = new URL(response.url); } catch { return; }
     if (url.origin !== location.origin || !/^\/backend-api\/(?:f\/)?conversation$/.test(url.pathname)) return;
     if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) return;
+    if (originReaders.size >= 2) {
+      const oldest = originReaders.values().next().value;
+      originReaders.delete(oldest);
+      void oldest.cancel().catch(() => {});
+    }
     const copy = response.clone(), reader = copy.body?.getReader();
     if (!reader) return;
+    originReaders.add(reader);
     const timer = setTimeout(() => void reader.cancel().catch(() => {}), 90_000);
     const decoder = new TextDecoder();
     const emitted = new Set();
@@ -200,7 +209,7 @@
       buffer += decoder.decode();
       scan(buffer);
     } catch { /* A missing stream observation leaves the existing Fiber path in charge. */ }
-    finally { clearTimeout(timer); void reader.cancel().catch(() => {}); }
+    finally { originReaders.delete(reader); clearTimeout(timer); void reader.cancel().catch(() => {}); }
   }
   let observedFetch = null;
   const inspectedResponses = new WeakSet();
@@ -242,6 +251,10 @@
   // page or observing prompt/request payloads; this event confers no browser or local-tool
   // authority. Keeping the event name lets a newer content.js repair already-open c7 pages.
   window.addEventListener('cos-resume-send-observer', installFetchObserver);
+  window.addEventListener('pagehide', () => {
+    for (const reader of originReaders) void reader.cancel().catch(() => {});
+    originReaders.clear();
+  });
   window.addEventListener('message', (event) => {
     if (event.source === window && event.origin === location.origin && event.data?.type === 'cos-usage-request' && latest) post(latest, location.origin);
   });

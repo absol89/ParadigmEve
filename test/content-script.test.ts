@@ -9848,6 +9848,30 @@ describe('evidence from the page context', () => {
     ]);
   });
 
+  it('retains the newest request after sixteen provisional streams during a provider approval handoff', async () => {
+    const conversationId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    live = await harness('https://chatgpt.com/');
+    const ids = Array.from({ length: 17 }, (_, i) => `wfr_approval_handoff_${i}`);
+    for (const requestId of ids) {
+      live.window.dispatchEvent(new live.window.MessageEvent('message', {
+        source: live.window as unknown as Window,
+        origin: 'https://chatgpt.com',
+        data: { type: 'cos-request-origin', conversationId, requestIds: [requestId] }
+      }));
+    }
+    await settle();
+    expect(live.sent.filter(message => message.type === 'correlate')).toEqual([]);
+
+    live.window.history.replaceState({}, '', `/c/${conversationId}`);
+    live.hook.observe();
+    await settle();
+    const correlated = live.sent.filter(message => message.type === 'correlate')
+      .flatMap(message => message.calls.map((call: any) => call.requestId));
+    expect(correlated).toContain(ids[16]);
+    expect(correlated).not.toContain(ids[0]);
+    expect(correlated).toHaveLength(16);
+  });
+
   /**
    * Upstream chat-on-steroids #432 (2026-09-26): a chat started by hand from a tab that already
    * showed another chat stayed Unattributed. ChatGPT publishes the request id before the new chat
@@ -9893,6 +9917,50 @@ describe('evidence from the page context', () => {
     await settle();
     expect(correlations()).toHaveLength(2);
     expect(correlations()[1]).toMatchObject({ conversationId: chat, calls: [expect.objectContaining({ requestId, messageId: null })] });
+  });
+
+  it('retains a live generating turn request after the ordinary replay TTL during app restart', async () => {
+    const chat = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const requestId = 'wfr_long_running_worker_review';
+    live = await harness(`https://chatgpt.com/c/${chat}`);
+    startGenerating(live.document);
+    live.hook.observe();
+    await settle();
+    live.window.dispatchEvent(new live.window.MessageEvent('message', {
+      source: live.window as unknown as Window, origin: 'https://chatgpt.com',
+      data: { type: 'cos-request-origin', conversationId: chat, requestIds: [requestId] }
+    }));
+    await settle();
+    const correlations = () => live!.sent.filter(message => message.type === 'correlate' &&
+      message.calls.some((call: any) => call.requestId === requestId));
+    expect(correlations()).toHaveLength(1);
+
+    // The page and its Stop control are still the same live generation after 34 minutes.
+    live.advance(34 * 60_000);
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ generating: true });
+    await live.runtimeMessage({ type: 'clf-recorder-reconnect', conversationId: chat });
+    await settle();
+    expect(correlations()).toHaveLength(2);
+    expect(correlations()[1]).toMatchObject({ conversationId: chat, calls: [expect.objectContaining({ requestId })] });
+  });
+
+  it('expires an old stream request after the turn settles, even if its chat remains open', async () => {
+    const chat = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const requestId = 'wfr_idle_stream_expires';
+    live = await harness(`https://chatgpt.com/c/${chat}`);
+    live.window.dispatchEvent(new live.window.MessageEvent('message', {
+      source: live.window as unknown as Window, origin: 'https://chatgpt.com',
+      data: { type: 'cos-request-origin', conversationId: chat, requestIds: [requestId] }
+    }));
+    await settle();
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ generating: false });
+    const before = live.sent.filter(message => message.type === 'correlate' &&
+      message.calls.some((call: any) => call.requestId === requestId)).length;
+    live.advance(34 * 60_000);
+    await live.runtimeMessage({ type: 'clf-recorder-reconnect', conversationId: chat });
+    await settle();
+    expect(live.sent.filter(message => message.type === 'correlate' &&
+      message.calls.some((call: any) => call.requestId === requestId))).toHaveLength(before);
   });
 
   it('retires fresh-chat stream proof when another concrete route wins first', async () => {

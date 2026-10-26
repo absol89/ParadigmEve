@@ -62,10 +62,41 @@ function harness() {
     if (String(init.method || 'GET').toUpperCase() === 'POST' && new URL(url).origin === 'https://chatgpt.com' && /^\/backend-api\/(?:f\/)?conversation$/.test(new URL(url).pathname)) await inspected;
     else await new Promise(resolve => setTimeout(resolve, 0));
   }
+  async function openSse() {
+    let cancelled = false;
+    let waiting: ((result: { done: boolean; value?: Uint8Array }) => void) | null = null;
+    const queued: Array<{ done: boolean; value?: Uint8Array }> = [];
+    const reader = {
+      read: () => cancelled ? Promise.resolve({ done: true }) : queued.length > 0
+        ? Promise.resolve(queued.shift()!)
+        : new Promise<{ done: boolean; value?: Uint8Array }>(resolve => { waiting = resolve; }),
+      cancel: async () => {
+        cancelled = true;
+        if (waiting) { const resolve = waiting; waiting = null; resolve({ done: true }); }
+      }
+    };
+    response = {
+      url: 'https://chatgpt.com/backend-api/conversation', ok: true,
+      headers: { get: () => 'text/event-stream' },
+      clone: () => ({ body: { getReader: () => reader } })
+    };
+    const expected = response;
+    expect(await window.fetch('/backend-api/conversation', { method: 'POST' })).toBe(expected);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return {
+      cancelled: () => cancelled,
+      push: (data: string) => {
+        const value = { done: false, value: new TextEncoder().encode(data) };
+        if (waiting) { const resolve = waiting; waiting = null; resolve(value); }
+        else queued.push(value);
+      }
+    };
+  }
   return {
     posts,
     feed,
     feedSse,
+    openSse,
     replaceFetch: (wrapExisting = false) => {
       const previous = window.fetch;
       const replacement = (...args: unknown[]) => wrapExisting ? previous(...args) : Promise.resolve(response);
@@ -74,6 +105,7 @@ function harness() {
     },
     ready: () => { document.readyState = 'interactive'; dispatch('DOMContentLoaded', {}); },
     resumeSend: () => dispatch('cos-resume-send-observer', {}),
+    pagehide: () => dispatch('pagehide', {}),
     currentFetch: () => window.fetch,
     holdNextBody: () => { let release = () => {}; nextBodyGate = new Promise<void>(resolve => { release = resolve; }); return () => release(); },
     advance: (ms: number) => { now += ms; },
@@ -193,6 +225,24 @@ describe('MAIN-world usage projection', () => {
     ]);
     expect(JSON.stringify(h.posts)).not.toContain('private prompt');
     expect(JSON.stringify(h.posts)).not.toContain('tool args');
+  });
+
+  it('retires the oldest cloned stream reader and observes the newest after a third response', async () => {
+    const h = harness();
+    const oldest = await h.openSse();
+    const middle = await h.openSse();
+    const newest = await h.openSse();
+    expect(oldest.cancelled()).toBe(true);
+    expect(middle.cancelled()).toBe(false);
+    expect(newest.cancelled()).toBe(false);
+    const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    newest.push(`data: {"conversation_id":"${conversationId}","metadata":{"request_id":"wfr_after_allow_once"}}\n\n`);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.posts).toContainEqual({ type: 'cos-request-origin', conversationId,
+      requestIds: ['wfr_after_allow_once'], observedAt: expect.any(Number) });
+    h.pagehide();
+    expect(middle.cancelled()).toBe(true);
+    expect(newest.cancelled()).toBe(true);
   });
 
   it('accepts the current UUID-shaped opaque request id from the same exact stream metadata field', async () => {
