@@ -3612,6 +3612,32 @@ describe('through the MCP endpoint', () => {
     expect(pendingCount('worker-1')).toBe(1);
   });
 
+  it('waits for late worker-to-Prime message proof instead of adopting shared Eve operator authority', async () => {
+    await setEnabled(true, 3, true);
+    try {
+      startSwarm(1);
+      startWorker('worker-1');
+      const requestId = 'wfr_shared_worker_to_prime_late';
+      const pending = agentsWithRequestId(requestId, 'message', {
+        to: 'prime', text: 'Evidence-backed heartbeat blocker'
+      });
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await recordChatObservations('c-worker-1', [
+        { kind: 'turn_start', time: Date.now(), turnId: 't-shared-worker-late' },
+        { kind: 'tool_evidence', time: Date.now(), turnId: 't-shared-worker-late',
+          calls: [{ messageId: 'm-shared-worker-late', tool: 'agents',
+            order: 0, answered: false, requestId }] }
+      ]);
+      const reply = await pending;
+      expect(reply).toContain('Queued for prime');
+      expect(reply).not.toContain('AGENTS_BUSY');
+      expect(reply).not.toContain('cannot message itself');
+      expect(pendingCount('prime')).toBe(1);
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
   it('publishes no message when its durable acceptance barrier fails, and a retry queues exactly one', async () => {
     startSwarm(1);
     const snapshots: Array<ReturnType<typeof snapshotSwarm>> = [];

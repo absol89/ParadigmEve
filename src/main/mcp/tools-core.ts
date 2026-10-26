@@ -1774,7 +1774,12 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Shared installation permission is not proof that this request came from Prime.
           // Both directions of worker messaging require an exact caller or the narrowly
           // verified heartbeat continuity identity, even when Prime is the recipient.
-          const caller = await callerNow(startedAt, { reviewKey: input.review_key, allowSharedPrime: true });
+          // Messages may come from a worker even with account-wide Eve permission enabled.
+          // Give its exact page/request-id join a chance before considering shared operator
+          // authority; otherwise a late worker->Prime report is misrouted as Prime->Prime.
+          const caller = await callerNow(startedAt, {
+            reviewKey: input.review_key, allowSharedPrime: true, preferExact: true
+          });
           const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
           if (sharedOwner) await measureSleepingWorkers({ conversationId: sharedOwner });
           else await measureSleepingWorkers(caller);
@@ -1839,7 +1844,9 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           }
           // Finish is worker-only. Shared Eve authority is intentionally not a caller identity:
           // without exact page/request proof, fail closed instead of misclassifying a worker as Prime.
-          const caller = await callerNow(startedAt, { allowSharedPrime: true });
+          const caller = await callerNow(startedAt, {
+            allowSharedPrime: true, preferExact: !input.worker_id
+          });
           const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall() : null;
           if (input.worker_id && !sharedOwner) return fail('SHARED_EVE_TARGET_ONLY: worker_id is only for an unattributed shared-Eve finish; no worker was finished.');
           if (sharedOwner && !input.worker_id) return fail('SHARED_EVE_WORKER_TARGET_REQUIRED: supply worker_id to finish a named worker without page attribution; no worker was finished.');
@@ -2031,7 +2038,7 @@ function sharedEveCoordinatorForCurrentCall(reviewKey?: string): string | null {
 
 async function callerNow(
   startedAt: number,
-  options: { exact?: boolean; reviewKey?: string; allowSharedPrime?: boolean } = {}
+  options: { exact?: boolean; reviewKey?: string; allowSharedPrime?: boolean; preferExact?: boolean } = {}
 ): Promise<Caller> {
   const base = currentCaller();
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
@@ -2061,7 +2068,7 @@ async function callerNow(
     ? sharedEveCoordinatorForCurrentCall(options.reviewKey)
     : null;
   const pageAttributionOptional = getConfig().multiAgent.allowUnattributedCalls === true &&
-    !options.reviewKey && sharedEveOwnerForCurrentCall() !== null;
+    !options.reviewKey && !options.preferExact && sharedEveOwnerForCurrentCall() !== null;
   if (!exactBeforeWait && !heartbeatContinuity && base.requestId && !pageAttributionOptional) requestPrimeIdentityRecovery(base.requestId);
   const exactResolved =
     exactBeforeWait ??

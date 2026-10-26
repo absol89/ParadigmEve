@@ -560,15 +560,6 @@ async function dispatchTracked(
   }
   const isFinish = isFinishCall(name, args);
   const startedAt = context.startedAt;
-  // With the user's account-wide unattributed-call setting enabled, the authenticated
-  // connector may execute without a Companion request-id join. Keep the audit caller
-  // unproven; do not borrow a fabricated conversation or session identity. work_context is
-  // deliberately the exception: it is the caller-identity synchronization barrier, so when
-  // a Companion is present it waits for this exact request id before reporting identity. A
-  // phone/other browser with no Companion still falls back after the same bounded evidence
-  // window; it never needs the extension installed.
-  const pageAttributionOptional = getConfig().multiAgent.allowUnattributedCalls === true &&
-    inboundToolEvidence() && Boolean(requestId) && !context.caller.localPrincipal && name !== 'work_context';
   // Cheap, non-blocking ingress identity. When the page has already reported this exact
   // request id, identity-sensitive handlers (workspace/session/agents) see it before they
   // touch state. If the page is one tick late this stays null; only handlers that actually
@@ -590,7 +581,16 @@ async function dispatchTracked(
   // handler runs. Recording a late identity cannot recover a discarded anonymous frame.
   const desktopContext = (surface === 'core' || surface === 'desktop') && (name === 'get_window_state' ||
     (WINDOWS_COMPUTER_STATE_INPUT_METHODS as readonly string[]).includes(name));
-  if (!pageAttributionOptional && !context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' || name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning())) && requestId) {
+  const needsExactCallerAttempt = desktopContext || name === 'exec' || name === 'update_plan' ||
+    name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' ||
+    name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning());
+  // Account-wide Eve access authorizes independent connector operations without installing
+  // the Companion on every device. It does NOT make per-chat state anonymous: Plan review,
+  // update_plan, input/observation and relative workspace tools still need the same bounded
+  // exact request-id lookup before their handler decides which session they belong to.
+  // On a device without the Companion, the wait ends unproven and existing shared-access or
+  // fail-closed handler policy applies; it never invents the current Prime as caller.
+  if (!context.caller.conversationId && needsExactCallerAttempt && requestId) {
     const identityWaitStartedAt = Date.now();
     if (BUILD_FLAVOR === 'debug') {
       logInfo(`identity timing: request ${requestId.slice(0, 8)} tool ${name} waiting for exact Companion evidence`);

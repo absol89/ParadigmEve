@@ -4171,6 +4171,37 @@ describe('exec_command and write_stdin', () => {
 });
 
 describe('agent-maintained plans over MCP', () => {
+  it('waits for the exact worker/Prime session on a late Plan call even with account-wide access enabled', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const source = await createSession({ conversationId: 'plan-shared-late-owner' });
+    const requestId = 'wfr_plan_shared_late_owner';
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      setTimeout(() => observeRequestCorrelation({
+        requestId, conversationId: 'plan-shared-late-owner', sessionId: source.id,
+        messageId: 'msg-plan-shared-late-owner', tool: 'update_plan', observedAt: Date.now()
+      }), 60).unref?.();
+      const reply = await modern('tools/call', { name: 'update_plan', arguments: {
+        plan: [{ step: 'Preserve exact Plan owner', status: 'in_progress' }]
+      } }, { 'x-request-id': `${requestId}/att1` });
+      expect(failed(reply), textOf(reply)).toBe(false);
+      expect((await readSessionPlan(source.id))?.plan).toEqual([
+        { step: 'Preserve exact Plan owner', status: 'in_progress' }
+      ]);
+      // No Companion elsewhere on the account must never silently adopt this session.
+      const foreign = await modern('tools/call', { name: 'update_plan', arguments: { plan: [] } },
+        { 'x-request-id': 'wfr_plan_shared_without_companion/att1' });
+      expect(failed(foreign)).toBe(true);
+      expect(textOf(foreign)).toContain('Exact chat identity');
+      expect((await readSessionPlan(source.id))?.plan).toHaveLength(1);
+      const read = await core('tools/call', { name: 'read', arguments: { paths: ['/workspace/src/app.ts'] } });
+      expect(failed(read), textOf(read)).toBe(false);
+    } finally {
+      await saveConfig(previous);
+    }
+  });
+
   it('uses exact request proof without workers, refuses foreign targets and retired chats', async () => {
     ctx.sessionTools = true;
     ctx.agentTools = false;
