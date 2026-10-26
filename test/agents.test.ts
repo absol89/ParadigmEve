@@ -2887,7 +2887,7 @@ describe('through the MCP endpoint', () => {
       const spawnResult = await agentsWithRequestId('wfr_shared_unproven_spawn', 'spawn', {
         workers: [{ task: 'must not become a new worker under borrowed Prime identity' }]
       });
-      expect(spawnResult).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(spawnResult).toMatch(/NO_EXACT_CHAT_FOR_WORKER_FAMILY|WORKER_IDENTITY_LOST/);
       expect(swarmStateForCaller({ conversationId: ownerConversation })).toEqual(before);
       expect(recovery).toHaveBeenCalledWith(ownerConversation, 'wfr_shared_unproven_message');
       expect(recovery).toHaveBeenCalledWith(ownerConversation, 'wfr_shared_unproven_spawn');
@@ -2897,7 +2897,7 @@ describe('through the MCP endpoint', () => {
     }
   });
 
-  it('lets opted-in shared Eve coordinate only its retained Prime family without claiming chat identity', async () => {
+  it('lets opted-in shared Eve coordinate, spawn and explicitly finish in its retained Prime family without claiming chat identity', async () => {
     const ownerConversation = 'c-prime-shared-opt-in';
     await setEnabled(true, 3, true);
     startSwarm(1, { conversationId: ownerConversation });
@@ -2916,17 +2916,42 @@ describe('through the MCP endpoint', () => {
       expect(pendingCount('worker-1')).toBe(1);
       expect(offerMessages('worker-1')[0]?.from).toBe('shared-eve');
 
-      // Shared Eve is a narrow operating authority, never proof to spawn a new
-      // family, finish a worker, or impersonate an attributed worker conversation.
       const spawnResult = await agentsWithRequestId('wfr_opted_shared_spawn', 'spawn', {
-        workers: [{ task: 'must not spawn from an unattributed caller' }]
+        workers: [{ task: 'test shared Eve coordination' }]
       });
-      expect(spawnResult).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(spawnResult).toContain('Shared Eve connector authority used');
+      expect(spawnResult).toContain('worker-2');
+      expect(spawnResult).toContain('Unattributed');
+      const untargeted = await agentsWithRequestId('wfr_opted_shared_untargeted_finish', 'finish', {
+        result: 'never infer an unknown worker from caller activity'
+      });
+      expect(untargeted).toContain('SHARED_EVE_WORKER_TARGET_REQUIRED');
       const finishResult = await agentsWithRequestId('wfr_opted_shared_finish', 'finish', {
-        result: 'must not finish from shared Eve'
+        worker_id: 'worker-1', result: 'operator-attested completion of worker-1'
       });
-      expect(finishResult).toContain('WORKER_IDENTITY_LOST');
-      expect(swarmStateForCaller({ conversationId: ownerConversation }).agents).toHaveLength(2);
+      expect(finishResult).toContain('Shared Eve connector accepted');
+      expect(finishResult).toContain('Unattributed');
+      const state = swarmStateForCaller({ conversationId: ownerConversation });
+      expect(state.agents).toHaveLength(3);
+      expect(state.agents.find(agent => agent.id === 'worker-1')?.state).toBe('sleeping');
+      expect(offerMessages('prime').some(message => message.from === 'shared-eve')).toBe(true);
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('does not let shared Eve finish an unknown worker target', async () => {
+    const owner = 'c-shared-finish-target';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: owner });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    try {
+      const unknown = await agentsWithRequestId('wfr_shared_bad_finish_target', 'finish', {
+        worker_id: 'worker-999', result: 'must not finish another family'
+      });
+      expect(unknown).toContain('SHARED_EVE_WORKER_TARGET_REQUIRED');
+      expect(swarmStateForCaller({ conversationId: owner }).agents.find(agent => agent.id === 'worker-1')?.state).toBe('invited');
     } finally {
       resetAgentIdentityForTests();
       await setEnabled(true);
@@ -3066,7 +3091,7 @@ describe('through the MCP endpoint', () => {
       const spawned = await agentsWithRequestId('wfr_worker_lane_spawn', 'spawn', {
         workers: [{ task: 'must not spawn under a reviewer key' }], review_key: key
       });
-      expect(spawned).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(spawned).toMatch(/NO_EXACT_CHAT_FOR_WORKER_FAMILY|WORKER_IDENTITY_LOST/);
       expect(swarmStateForCaller(heartbeatPrime)).toEqual(before);
       expect(pendingCount('worker-1')).toBe(0);
     } finally {
@@ -3200,7 +3225,9 @@ describe('through the MCP endpoint', () => {
 
   it('refuses a spawn whose conversation this app cannot prove, and creates nothing', async () => {
     const text = await agents('spawn', { workers: [{ task: 'anything' }] });
-    expect(text).toMatch(/UNIDENTIFIED_CALLER|could not/i);
+    expect(text).toContain('NO_EXACT_CHAT_FOR_WORKER_FAMILY');
+    expect(text).toContain('shared-Eve authority');
+    expect(text).toContain('does not identify this caller');
     expect(swarmRunning()).toBe(false);
     expect(pendingWorkerSpawns()).toEqual([]);
   });
@@ -3254,7 +3281,7 @@ describe('through the MCP endpoint', () => {
     // opaque, single-epoch capability already printed in that exact browser-authored review
     // prompt. It is not an agent/run credential and expires with the durable review debt.
     expect(Object.keys(agentsSchema.properties).filter(field => /key|secret|token/i.test(field))).toEqual(['review_key']);
-    expect(agentsSchema.properties.review_key.description).toMatch(/heartbeat continuity only|current ParadigmEve chat-review prompt/i);
+    expect(agentsSchema.properties.review_key.description).toMatch(/Heartbeat review key for exact continuity with the current ParadigmEve review prompt/i);
     expect(JSON.stringify(agentsSchema)).not.toMatch(/join/i);
   });
 

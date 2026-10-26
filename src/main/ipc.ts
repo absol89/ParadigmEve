@@ -719,6 +719,7 @@ export function registerIpc(
   handle('pets:import', async () => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo('native picker opened by renderer: pets:import');
     const selected = await dialog.showOpenDialog(window, { title: 'Import a pet folder', properties: ['openDirectory'] });
     if (selected.canceled || !selected.filePaths[0]) return null;
     return importPet(selected.filePaths[0]);
@@ -994,6 +995,7 @@ export function registerIpc(
   handle('roots:add', async () => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo('native picker opened by renderer: roots:add');
     const result = await dialog.showOpenDialog(window, {
       title: 'Approve a folder for ChatGPT',
       properties: ['openDirectory']
@@ -1018,6 +1020,7 @@ export function registerIpc(
   const chooseProject = async (expenses: boolean, language = 'en') => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo(`native picker opened by renderer: ${expenses ? 'expenses:chooseProject' : 'projects:chooseProject'}`);
     const result = await dialog.showOpenDialog(window, { title: expenses ? (language === 'sv-SE' ? 'Välj en tom mapp för utgifter' : language === 'es-419' ? 'Elige una carpeta vacía para Gastos' : 'Choose an empty folder for Expenses') : 'Choose a project folder for ChatGPT', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return null;
     const folder = result.filePaths[0];
@@ -1312,6 +1315,7 @@ export function registerIpc(
   handle('transcription:startFile', async payload => {
     const { sessionId } = z.object({ sessionId: z.string().min(8).max(64).nullable() }).strict().parse(payload);
     if (sessionId && !await getSession(sessionId)) throw new Error('The selected conversation is unavailable.');
+    logInfo('native picker opened by renderer: transcription:startFile');
     const selection = await dialog.showOpenDialog({
       title: 'Transcribe recording', properties: ['openFile'],
       filters: [{ name: 'Audio and video', extensions: ['wav', 'mp3', 'm4a', 'mp4', 'mov', 'mkv', 'webm', 'ogg', 'flac', 'aac'] }]
@@ -1379,6 +1383,7 @@ export function registerIpc(
   handle('binary:pick', async () => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo('native picker opened by renderer: binary:pick');
     const result = await dialog.showOpenDialog(window, {
       title: 'Select the tunnel executable',
       properties: ['openFile'],
@@ -1548,6 +1553,7 @@ export function registerIpc(
     return result;
   };
   handle('sessions:files', async () => {
+    logInfo('native picker opened by renderer: sessions:files');
     const chosen = await dialog.showOpenDialog({ title: 'Attach files', properties: ['openFile', 'multiSelections'] });
     if (chosen.canceled) return [];
     if (chosen.filePaths.length > 20) throw new Error('Attach up to 20 files per message');

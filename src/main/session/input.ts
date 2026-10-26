@@ -1175,10 +1175,13 @@ export function restartRecoveryPending(sessionId: string): Promise<boolean> {
   return serial(async () => (await load()).some(row =>
     row.sessionId === sessionId && !!row.recoveryTurnId && !terminal(row)));
 }
-/** True while this exact restart wake is still queued, unclaimed, for the turn it recovers. */
-export function restartRecoveryWaiting(id: string, recoveryTurnId: string): Promise<boolean> {
+/** True while this exact restart wake is still queued, unclaimed, for its open or idle epoch. */
+export function restartRecoveryWaiting(id: string, recoveryTurnId: string | null): Promise<boolean> {
   return serial(async () => (await load()).some(row =>
-    row.id === id && row.recoveryTurnId === recoveryTurnId && row.state === 'queued'));
+    row.id === id && row.state === 'queued' &&
+    (recoveryTurnId === null
+      ? row.restartWake === true && !row.recoveryTurnId
+      : row.recoveryTurnId === recoveryTurnId)));
 }
 const CHAT_REVIEW_ATTENTION_HEADER = '[[PARADIGMEVE-CHAT-REVIEW:v1]]';
 function chatReviewPlanBatchText(review: ChatReviewAttention): string {
@@ -2335,14 +2338,32 @@ export function failUnreachableProjectInput(id: string, sourceConversationId: st
     return true;
   });
 }
+/** A still-queued fresh input reached the exact linked Project home, but its open sidebar
+ * positively excluded that Project after the page remained without a composer. Never infer
+ * deletion from slow loading, a collapsed sidebar or a missing tab. */
+export function failMissingNativeProjectInput(id: string, projectId: string): Promise<boolean> {
+  return serial(async () => {
+    const current = await load();
+    const entry = current.find(row => row.id === id && row.state === 'queued' && row.owner === null &&
+      row.sendAuthorizedAt === undefined && !row.messageId);
+    if (!entry) return false;
+    const destination = await nativeDestination(entry, await target(entry).catch(() => null));
+    if (!destination || destination === 'unknown' || destination.id !== projectId) return false;
+    await commit(current.map(row => row === entry ? { ...row, state: 'failed',
+      error: 'ChatGPT no longer lists the linked Project. Check the Project link and Retry; nothing was sent.' } : row));
+    return true;
+  });
+}
 /** Only a pre-send failure can be declared failed. An ambiguous click stays claimed. */
-export function failBrowserInput(id: string, owner: string, error: string): Promise<boolean> {
+export function failBrowserInput(id: string, owner: string, error: string, detail?: string): Promise<boolean> {
   return serial(async () => {
     const current = await load();
     const entry = current.find((row) => row.id === id && row.owner === owner && row.state === 'browser');
     if (!entry) return false;
-    await commit(current.map((row) => row === entry ? { ...row, state: 'failed', error: error.slice(0, 200) } : row));
-    logWarn(`input ${id}: browser delivery failed after claim — ${error.slice(0, 300)}`);
+    const boundedDetail = detail && /^[a-z][a-z0-9 _-]{0,79}$/.test(detail) ? detail : null;
+    const explanation = (error.slice(0, boundedDetail ? 115 : 200) + (boundedDetail ? ` (${boundedDetail})` : '')).slice(0, 200);
+    await commit(current.map((row) => row === entry ? { ...row, state: 'failed', error: explanation } : row));
+    logWarn(`input ${id}: browser delivery failed after claim — ${explanation}`);
     decisionWaiters.get(id)?.reject(new Error('goal_browser_send_failed'));
     decisionWaiters.delete(id);
     return true;

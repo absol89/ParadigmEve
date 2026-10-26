@@ -7,6 +7,7 @@ const dedicated = vi.hoisted(() => vi.fn(async (_url: string, _browser?: string)
 const running = vi.hoisted(() => vi.fn(async (): Promise<boolean | null> => null));
 const dedicatedWindow = vi.hoisted(() => vi.fn(async (): Promise<boolean | null> => null));
 const restore = vi.hoisted(() => vi.fn(async (): Promise<unknown> => ({ id: 77, restoredPages: true })));
+const preservedRestore = vi.hoisted(() => vi.fn(async (): Promise<'restored' | 'present' | 'unknown'> => 'restored'));
 const conversationOpen = vi.hoisted(() => vi.fn((_conversationId: string): boolean | null => false));
 vi.mock('../src/main/bridge.js', () => ({ bridgeStatus: async () => ({ ...browser }), browserConversationOpen: conversationOpen, browserWakeConnected: () => browser.connected, startBridge: async () => true }));
 vi.mock('../src/main/browser.js', () => ({ openInPreferredBrowser: open, isPreferredBrowserRunning: running }));
@@ -14,9 +15,10 @@ vi.mock('../src/main/setup-assistant.js', () => ({
   openParadigmEveChromeProfile: dedicated,
   paradigmeEveBrowserWindowOpen: dedicatedWindow,
   restoreParadigmEveChromeSessionForRecovery: restore,
+  restoreMissingParadigmEveBrowserAfterInstall: preservedRestore,
 }));
 vi.mock('../src/main/connection.js', () => ({ connect: vi.fn(), getStatus: vi.fn(), onStatusChange: vi.fn() }));
-import { resetBrowserStartupForTests, wakeBrowserUrl } from '../src/main/browser-startup.js';
+import { resetBrowserStartupForTests, restorePreservedCompanionBrowserAfterInstall, wakeBrowserUrl } from '../src/main/browser-startup.js';
 
 // Restore-first cold-start recovery is the Windows dedicated-profile path. Pin the platform so macOS/Linux runners exercise the same Windows branch the fixtures describe;
 // the modules under test read process.platform at call time, never at import.
@@ -24,7 +26,44 @@ const hostPlatform = process.platform;
 beforeAll(() => { Object.defineProperty(process, 'platform', { value: 'win32', configurable: true }); });
 afterAll(() => { Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true }); });
 
-beforeEach(() => { resetBrowserStartupForTests(); config.ui.chatBrowser = 'chrome'; browser.connected = false; browser.present = false; browser.lastSeenAt = null; conversationOpen.mockReset().mockReturnValue(false); open.mockReset().mockResolvedValue('chrome'); dedicated.mockReset().mockResolvedValue(undefined); running.mockReset().mockResolvedValue(false); dedicatedWindow.mockReset().mockResolvedValue(false); restore.mockReset().mockResolvedValue({ id: 77, restoredPages: true }); });
+beforeEach(() => { resetBrowserStartupForTests(); config.ui.chatBrowser = 'chrome'; browser.connected = false; browser.present = false; browser.lastSeenAt = null; conversationOpen.mockReset().mockReturnValue(false); open.mockReset().mockResolvedValue('chrome'); dedicated.mockReset().mockResolvedValue(undefined); running.mockReset().mockResolvedValue(false); dedicatedWindow.mockReset().mockResolvedValue(false); restore.mockReset().mockResolvedValue({ id: 77, restoredPages: true }); preservedRestore.mockReset().mockResolvedValue('restored'); });
+
+it('coalesces repeated install signals and holds concurrent authored startup until the native restore owner settles', async () => {
+  let release!: () => void;
+  preservedRestore.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve('restored'); }));
+  const first = restorePreservedCompanionBrowserAfterInstall();
+  const second = restorePreservedCompanionBrowserAfterInstall();
+  const send = wakeBrowserUrl('https://chatgpt.com/?eve-input=concurrent');
+  await vi.waitFor(() => expect(preservedRestore).toHaveBeenCalledTimes(1));
+  expect(dedicated).not.toHaveBeenCalled();
+  release();
+  await Promise.all([first, second, send]);
+  expect(preservedRestore).toHaveBeenCalledTimes(1);
+  await restorePreservedCompanionBrowserAfterInstall();
+  expect(preservedRestore).toHaveBeenCalledTimes(1);
+});
+
+it('leaves uncertain install census retryable and an already-open browser untouched', async () => {
+  preservedRestore.mockResolvedValueOnce('unknown').mockResolvedValueOnce('present');
+  await expect(restorePreservedCompanionBrowserAfterInstall()).resolves.toBe('unknown');
+  await expect(restorePreservedCompanionBrowserAfterInstall()).resolves.toBe('present');
+  await restorePreservedCompanionBrowserAfterInstall();
+  expect(preservedRestore).toHaveBeenCalledTimes(2);
+  expect(restore).not.toHaveBeenCalled();
+  expect(dedicated).not.toHaveBeenCalled();
+});
+
+it('does not race an authored wake while its initial browser-presence probe is unresolved', async () => {
+  let release!: (value: boolean) => void;
+  running.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+  const authored = wakeBrowserUrl('https://chatgpt.com/?eve-input=first');
+  await vi.waitFor(() => expect(running).toHaveBeenCalledOnce());
+  await expect(restorePreservedCompanionBrowserAfterInstall()).resolves.toBe('unknown');
+  expect(preservedRestore).not.toHaveBeenCalled();
+  release(false);
+  await authored;
+  expect(dedicated).toHaveBeenCalledTimes(1);
+});
 
 it('starts the newly selected family without reusing the old attempt or overriding a connected companion', async () => {
   await wakeBrowserUrl('https://chatgpt.com/?cos-model-catalog=old');

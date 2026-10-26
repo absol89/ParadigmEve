@@ -15,8 +15,12 @@ operation.
 
 ## [2.4.5] — Exact heartbeat and Plan housekeeping
 
-**Source-only development checkpoint (2026-10-25):** No 2.4.5 installer has been built,
-installed, tagged, pushed, or published as part of this change.
+**Development candidate status (2026-10-25):** A local Windows x64 c3 debug candidate was
+built, verified, installed and is running for bounded dogfood. It has not been tagged, pushed,
+published or promoted to Latest. The installed executable and `app.asar` matched the packaged
+candidate, and the materialized Companion files matched the c3 source; current-generation live
+Companion document proof was deferred, so browser-side c3 activation is not claimed from those
+hashes alone.
 
 - Read-only heartbeat reviews now distinguish source-proven stale checklist items from
   intentionally open work and ready-to-archive human Plans. A stale-checklist finding
@@ -27,8 +31,31 @@ installed, tagged, pushed, or published as part of this change.
   Plan update, subject to the existing archive authority. Human Plans and unrelated
   same-session Activity are never swept automatically.
 - Added regression coverage for review receipts, reconciliation idempotency, direct-tool
-  authority, source races, and MCP discovery. Full source CI passed before the version
-  transition (6,082 tests, including Computer Use and MCP shutdown).
+  authority, source races, and MCP discovery.
+- **Provider approval waits are surfaced without taking approval authority.** Connector/tool
+  descriptions now state ChatGPT-side refusals and user-selected worker overrides as facts rather
+  than instructing retries or ranking Eve over ChatGPT's independent approval decisions. The
+  Companion can recognize one pending approval card in the current turn even when **Previous
+  activity** is collapsed; Eve projects a waiting row and a deduplicated desktop-native notice.
+  It does not click an approval button, replay an uncertain effect, or claim mobile notification
+  delivery.
+- **Prime continuity no longer treats shared-Eve attribution gaps as permission to reload.** With
+  user-enabled shared-Eve coordination, an unresolved request-id join may remain auditable as
+  Unattributed while the existing Prime ChatGPT document is preserved.
+- **Compact & Resume cancellation is fenced immediately before successor creation.** A durable
+  one-shot placement authorization makes cancel-first prevent a stale tab and dispatch-first
+  prevent a false successful cancellation. Regression tests cover both orders and keep the
+  successor in the source window without taking foreground focus. The historical file-picker
+  observation remains unassigned; no cause is claimed.
+- **Windows candidate reinstall preserves active ChatGPT tabs.** `-SilentNoFocus` runs the local
+  installer without a foreground NSIS wizard, and the replacement app starts in the background
+  with `--preserve-chatgpt-tabs` so the Companion can refresh at its existing idle fence instead
+  of restarting Chrome or navigating an active page.
+- The exact c3 source snapshot recorded in the local candidate passed `npm run verify:ci`
+  (6,074 main tests), plus 20 Computer Use tests and 2 MCP shutdown tests; Windows x64 packaging
+  also passed. Installed c3 dogfood is not complete live acceptance: current-generation Companion
+  proof was deferred, and the approval-card and cancelled-handoff flows still need bounded live
+  confirmation.
 
 ## [2.4.4] — Reliability, provenance, protected recovery and archive freshness
 

@@ -115,7 +115,9 @@ The launch decision lives in `scripts/windows-installer-acl.nsh` (`customInit` /
 
 `scripts/windows-self-reinstall.ps1`:
 
-1. launches the assisted installer visibly;
+1. launches the assisted installer visibly by default; a specifically requested
+   `-SilentNoFocus` update instead runs signed-off NSIS `/S` with no wizard,
+   preserving the user's active ChatGPT window focus;
 2. accepts only known forward/default actions;
 3. accepts the installer's “ParadigmEve is running” request and lets it close the app;
 4. has a bounded force-stop fallback only if the requested close never retires the app;
@@ -123,15 +125,16 @@ The launch decision lives in `scripts/windows-installer-acl.nsh` (`customInit` /
 6. resolves the executable from `%APPDATA%\ParadigmEve\install-path.txt`, which the NSIS install
    writes from its final `$INSTDIR`; an older install with no marker may fall back once to the
    historical `%LOCALAPPDATA%\Programs\ParadigmEve\ParadigmEve.exe` location;
-7. starts/signals installed Eve in the foreground with one-shot connect + Companion recovery flags,
-   so the normal initial-window path presents Eve maximized instead of leaving the post-install
-   recovery launch tray-only;
-8. materializes the packaged Companion into the stable unpacked-extension folder, then refreshes the
-   dedicated Chrome profile: an open profile restarts through `chrome://restart/`; a closed profile
-   launches with **restore last session**;
-9. if Chrome presents **Restore pages?**, invokes native **Restore** before considering replacement
-   tabs, preserving human tabs and reusing exact restored Eve conversations where identity is proven;
+7. for 2.4.5 c3 updates, starts/signals Eve in the background with one-shot
+   connection and `--preserve-chatgpt-tabs`, leaving the user's foreground work alone;
+8. materializes the packaged Companion into the stable unpacked-extension folder.
+   Chrome's running extension refreshes itself at its existing idle fence, without
+   a browser-profile or ChatGPT-tab restart;
+9. preserves drafts, Voice, streaming, selected model and existing tab/window
+   state while the extension's in-place recorder re-injection is pending;
 10. polls `/recovery` for a current-generation protocol-15 Companion document.
+    If an active page prevents immediate refresh, the install may complete with
+    Companion proof explicitly deferred, never by forcibly reloading that page.
 
 ParadigmEve installs in one place only: `%LOCALAPPDATA%\Programs\ParadigmEve`. The wizard offers no
 folder choice, and the installer overrides `/D=` and any remembered custom path, so updates and
@@ -151,7 +154,7 @@ For a local debug self-test build, pass the suffixed installer explicitly; the c
 npm.cmd run dist:x64 -- --flavor debug
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-self-reinstall.ps1 `
-  -InstallerPath .\release\ParadigmEve-Windows-x64-debug.exe
+  -InstallerPath .\release\ParadigmEve-Windows-x64-debug.exe -SilentNoFocus
 ```
 
 Do not rename a debug artifact to the canonical shipping filename just to satisfy the default. Artifact identity is part of the build-flavor safety boundary.

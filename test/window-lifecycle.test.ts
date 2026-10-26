@@ -218,6 +218,7 @@ describe('Windows login startup', () => {
     const connect = vi.fn();
     const openParadigmEveChromeProfile = vi.fn(async () => undefined);
     const runCompanionBrowserRecovery = vi.fn(() => { void openParadigmEveChromeProfile(); });
+    const runPreservedBrowserStartup = vi.fn(async () => undefined);
     const context = {
       app: { on: (_: string, listener: typeof received) => { received = listener; } },
       windowActivation: { request },
@@ -227,10 +228,14 @@ describe('Windows login startup', () => {
       connect,
       openParadigmEveChromeProfile,
       runCompanionBrowserRecovery,
+      runPreservedBrowserStartup,
+      browserExtensionRequired: () => true,
+      getConfig: () => ({}),
       logWarn: vi.fn(),
       runtimeReady: false,
       forcedConnectPending: false,
-      companionBrowserRecoveryPending: false
+      companionBrowserRecoveryPending: false,
+      preservedBrowserStartupPending: false
     };
     vm.runInNewContext(handler, context);
     received({}, ['app.exe', '--background']);
@@ -247,6 +252,9 @@ describe('Windows login startup', () => {
     expect(connect).toHaveBeenCalledTimes(1);
     expect(runCompanionBrowserRecovery).toHaveBeenCalledTimes(1);
     expect(openParadigmEveChromeProfile).toHaveBeenCalledTimes(1);
+    received({}, ['app.exe', '--background', '--preserve-chatgpt-tabs']);
+    expect(runPreservedBrowserStartup).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
     received({}, ['app.exe']);
     expect(request).toHaveBeenCalledOnce();
     expect(isBackgroundLaunch(['app.exe', '--background=false'])).toBe(false);
@@ -267,6 +275,7 @@ describe('Windows login startup', () => {
     expect(shouldOpenCompanionBrowserOnLaunch(['app.exe'], true)).toBe(true);
     expect(shouldOpenCompanionBrowserOnLaunch(['app.exe'], false)).toBe(false);
     expect(shouldOpenCompanionBrowserOnLaunch(['app.exe', '--background'], true)).toBe(false);
+    expect(shouldOpenCompanionBrowserOnLaunch(['app.exe', '--preserve-chatgpt-tabs'], true)).toBe(false);
 
     const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8');
     expect(main).toContain('shouldOpenCompanionBrowserOnLaunch(process.argv, browserExtensionRequired(getConfig()))');
@@ -275,6 +284,8 @@ describe('Windows login startup', () => {
     expect(main).toContain('if (browserConversationOpen(exactAgent) !== false) return;');
     expect(main).toContain('await openParadigmEveChromeProfile(`https://chatgpt.com/c/${encodeURIComponent(exactAgent)}`);');
     expect(main).toContain('startupBrowserRecovery = restoreForegroundCompanionBrowser().catch((error) =>');
+    expect(main).toContain('if (preservedBrowserStartupPending) {');
+    expect(main).toContain('startupBrowserRecovery = runPreservedBrowserStartup()');
     expect(main).toContain('const exactAgent = currentAgentConversationId();');
     expect(main).toContain('const plan = restartRecoveryPlan;');
     expect(main).toContain('? wakeBrowserUrl(plan.url, true, getConfig().ui.backgroundChats === true, {');
@@ -323,10 +334,11 @@ describe('Windows login startup', () => {
     expect(main).not.toContain("requirePluginRefreshRecovery('core')");
   });
 
-  it('self-reinstall recovery comes back foreground and fences on the current bridge protocol', () => {
+  it('self-reinstall recovery preserves active ChatGPT tabs and fences on the current bridge protocol', () => {
     const controller = readFileSync(new URL('../scripts/windows-self-reinstall.ps1', import.meta.url), 'utf8');
-    expect(controller).toContain("-ArgumentList @('--connect-on-start', '--recover-companion-browser')");
-    expect(controller).not.toContain("-ArgumentList @('--background', '--connect-on-start', '--recover-companion-browser')");
+    expect(controller).toContain("-ArgumentList @('--background', '--connect-on-start', '--preserve-chatgpt-tabs')");
+    expect(controller).toContain("Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -WindowStyle Hidden");
+    expect(controller).not.toContain("-ArgumentList @('--connect-on-start', '--recover-companion-browser')");
     expect(controller).toContain(`$recovery.bridge -eq ${BRIDGE_PROTOCOL}`);
     expect(controller).toContain("Join-Path $env:TEMP 'ParadigmEve-self-reinstall.lock'");
     expect(controller).toContain('[IO.FileShare]::None');

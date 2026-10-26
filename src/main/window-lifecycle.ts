@@ -116,7 +116,10 @@ export function shouldOpenCompanionBrowserOnLaunch(
   argv: readonly string[],
   extensionRequired: boolean
 ): boolean {
-  return extensionRequired && !isBackgroundLaunch(argv);
+  // Upgrade/install may replace Electron while Chrome is holding human drafts or Voice.
+  // The live Companion can update its extension generation after idle checks in place;
+  // neither a profile restart nor an eager duplicate browser opening is justified then.
+  return extensionRequired && !isBackgroundLaunch(argv) && !argv.includes('--preserve-chatgpt-tabs');
 }
 
 export function supportsLoginStartup(platform: NodeJS.Platform, packaged: boolean): boolean {

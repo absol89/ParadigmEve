@@ -70,6 +70,24 @@ export interface PreferredBrowserOpenOptions {
   powershell?: typeof runPowerShell;
 }
 
+/** Launch a Windows Chromium-family browser with the OS minimized startup request. */
+export async function launchWindowsMinimizedBrowser(
+  browser: string,
+  args: readonly string[],
+  powershell: typeof runPowerShell = runPowerShell,
+): Promise<void> {
+  const cwd = path.win32.dirname(browser);
+  // Start-Process joins ArgumentList; supply one correctly quoted Windows command line.
+  // PowerShell literals are a separate escaping boundary.
+  const literal = (value: string): string => `'${value.replace(/'/g, "''")}'`;
+  const argument = (value: string): string => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  if ([browser, ...args].some(value => value.includes('\0'))) throw new Error('Browser launch contains a null byte');
+  const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath ${literal(browser)} -ArgumentList ${literal(args.map(argument).join(' '))} -WorkingDirectory ${literal(cwd)} -WindowStyle Minimized`;
+  // The child gets a real Windows minimized startup request, not Node's console-only windowsHide.
+  const result = await powershell(script, cwd, 10_000);
+  if (result.timedOut || result.exitCode !== 0) throw new Error(`Background browser launch failed: ${result.stderr.slice(0, 300) || 'PowerShell did not complete'}`);
+}
+
 function isExecutableBrowser(candidate: string, platform: NodeJS.Platform): boolean {
   try {
     if (!existsSync(candidate) || !statSync(candidate).isFile()) return false;
@@ -258,17 +276,8 @@ export async function openInPreferredBrowser(
       // owns browser lifetime; the extension adopts that same tab, never a second.
       const cwd = (platform === 'win32' ? path.win32 : path.posix).dirname(browser);
       if (options.backgroundStartup && platform === 'win32') {
-        // Start-Process joins ArgumentList; supply one correctly quoted Windows
-        // command line. PowerShell literals are a separate escaping boundary.
-        const literal = (value: string): string => `'${value.replace(/'/g, "''")}'`;
-        const argument = (value: string): string => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
-        if ([browser, ...args].some(value => value.includes('\0'))) throw new Error('Browser launch contains a null byte');
-        const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath ${literal(browser)} -ArgumentList ${literal(args.map(argument).join(' '))} -WorkingDirectory ${literal(cwd)} -WindowStyle Minimized`;
-        // runPowerShell hides its own console. The child gets a real minimized
-        // startup request, not Node's console-only windowsHide flag. No -Wait:
-        // the owned helper tab, not this wrapper, keeps the browser alive.
-        const result = await (options.powershell ?? runPowerShell)(script, cwd, 10_000);
-        if (result.timedOut || result.exitCode !== 0) throw new Error(`Background browser launch failed: ${result.stderr.slice(0, 300) || 'PowerShell did not complete'}`);
+        // No -Wait: the owned helper tab, not this wrapper, keeps the browser alive.
+        await launchWindowsMinimizedBrowser(browser, args, options.powershell ?? runPowerShell);
       }
       else await launch(browser, args, cwd);
       return browser;

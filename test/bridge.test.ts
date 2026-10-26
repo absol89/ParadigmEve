@@ -49,6 +49,7 @@ const { initSecretsPath, resetSecretsCacheForTests, setSecret } = await import('
 const {
   bridgePort,
   bridgeStatus,
+  sessionControlsFor,
   beginCompanionRecoveryAttempt,
   beginCompanionRecoveryEvidence,
   browserConversationOpen,
@@ -94,6 +95,7 @@ const {
   unpair
 } = await import('../src/main/bridge.js');
 const { flushDurable, initDurableStore, readDurable, writeDurableNow, writeDurableSoon } = await import('../src/main/durable.js');
+const { noteTunnelClientConnected, resetRouteSettleForTests } = await import('../src/main/tunnel/route-settle.js');
 const {
   GOAL_OBJECTIVES_STATE,
   GOAL_REPLIES_STATE,
@@ -369,6 +371,7 @@ beforeEach(async () => {
   resetSwarm();
   resetAgentIdentityForTests();
   resetBridgeForTests();
+  resetRouteSettleForTests();
   opened.length = 0;
   anonymousRedeemIndex = 0;
   // The app opens the chat itself, always: there is no queue for a tab to come and ask.
@@ -2101,6 +2104,44 @@ describe('activity feed', () => {
   });
 });
 
+describe('new core tunnel route settling', () => {
+  it('does not offer or claim an existing-chat outbox row until the bounded route hold ends', async () => {
+    await pair();
+    const chat = 'aabbccdd-0000-4000-8000-00000000c801';
+    const id = 'aabbccdd-0000-4000-8000-00000000c802';
+    const open = await request('POST', '/events', { body: { conversationId: chat, events: [
+      { kind: 'turn_start', time: Date.now() - 1_000, turnId: 'route-open-turn' },
+      { kind: 'turn_end', time: Date.now() - 500, turnId: 'route-open-turn', outcome: 'completed' }
+    ] } });
+    expect(open.status).toBe(200);
+    const { enqueueInput, resetInputForTests } = await import('../src/main/session/input.js');
+    try {
+      await writeDurableNow('session-input', []);
+      resetInputForTests();
+      await enqueueInput({ id, sessionId: open.body.sessionId as string, text: 'Existing chat follow-up',
+        mode: 'auto', dueAt: Date.now(), model: null, reasoningEffort: null });
+      const baseline = await request('POST', '/status', { body: { openConversations: [chat], documents: [], openChatTabs: 1 } });
+      expect(baseline.body.inputs).toEqual(expect.arrayContaining([expect.objectContaining({ id })]));
+      noteTunnelClientConnected();
+      const held = await request('POST', '/status', { body: { openConversations: [chat], documents: [], openChatTabs: 1 } });
+      expect(held.body.inputs).not.toEqual(expect.arrayContaining([expect.objectContaining({ id })]));
+      const blocked = await request('POST', '/input/claim', { body: { id, owner: 'route-test', conversationId: chat } });
+      expect(blocked.body.input).toBeNull();
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 36_000);
+      try {
+        const resumed = await request('POST', '/status', { body: { openConversations: [chat], documents: [], openChatTabs: 1 } });
+        expect(resumed.body.inputs).toEqual(expect.arrayContaining([expect.objectContaining({ id })]));
+        const claimed = await request('POST', '/input/claim', { body: { id, owner: 'route-test', conversationId: chat } });
+        expect(claimed.body.input).toMatchObject({ id, conversationId: chat });
+      } finally { clock.mockRestore(); }
+    } finally {
+      await writeDurableNow('session-input', []);
+      resetInputForTests();
+    }
+  });
+});
+
 // ---------------------------------------------------------------- commands
 
 /**
@@ -2126,8 +2167,8 @@ describe('activity feed', () => {
  * A restart wake the replacement page never admits.
  *
  * The wake waits for the reloaded page to take over the interrupted turn, and Stop and the
- * page's own completion wait for the same takeover. When it never comes, recovery escalates
- * once to Compact & Resume, which does not need it, and never while ChatGPT is answering.
+ * page's own completion wait for the same takeover. A missing recorder after restart is
+ * unknown page state, not proof the provider is idle or can accept a handoff.
  */
 describe('restart recovery escalation', () => {
   const INPUT_ID = 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -2142,7 +2183,8 @@ describe('restart recovery escalation', () => {
     const sessionId = opened.body.sessionId as string;
     // The app restarted: its recorder no longer holds a generating page for this chat.
     if (!options.generating) resetRecorderForTests();
-    await enqueueInput({ id: INPUT_ID, sessionId, text: 'Restart wake', mode: 'auto', dueAt: Date.now(), model: null, reasoningEffort: null });
+    await enqueueInput({ id: INPUT_ID, sessionId, text: 'Restart wake', mode: 'auto', dueAt: Date.now(), model: null, reasoningEffort: null },
+      undefined, { restartWake: true });
     await markRestartRecoveryInput(INPUT_ID, turnId);
     return { sessionId, conversationId, turnId, inputId: INPUT_ID };
   }
@@ -2153,18 +2195,18 @@ describe('restart recovery escalation', () => {
     resetInputForTests();
   });
 
-  it('files a recovery Compact & Resume ticket for the exact stuck turn and opens its chat', async () => {
+  it('never files Compact & Resume from an absent post-restart recorder', async () => {
     const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e501', 'g-stuck-0-3');
     expect((await getSession(target.sessionId))?.activeTurnId).toBe('g-stuck-0-3');
-    expect(await escalateRestartRecovery(target)).toBe('escalated');
-    expect(continuationForSession(target.sessionId)).toMatchObject({ from: target.conversationId, automatic: false, recovery: true });
-    expect(resumeJobFor(target.sessionId)).toMatchObject({ stage: 'handoff-pending', recovery: true, automatic: false });
-    expect(recoveryBrowserWake).toHaveBeenCalledTimes(1);
-    expect(recoveryBrowserWake.mock.calls[0]![0]).toBe(`https://chatgpt.com/c/${target.conversationId}`);
-    // One escalation: the open ticket is the recovery now.
-    expect(await escalateRestartRecovery(target)).toBe('done');
-    expect(recoveryBrowserWake).toHaveBeenCalledTimes(1);
-    abortContinuation(continuationForSession(target.sessionId)!.token, 'test_cleanup');
+    expect(await escalateRestartRecovery(target)).toBe('waiting');
+    expect(continuationForSession(target.sessionId)).toBeNull();
+    expect(recoveryBrowserWake).not.toHaveBeenCalled();
+    // An exact Chrome tab census alone still cannot prove the provider stopped thinking.
+    await request('POST', '/status', { body: {
+      openConversations: [target.conversationId], openChatTabs: 1, documents: []
+    } });
+    expect(await escalateRestartRecovery(target)).toBe('waiting');
+    expect(continuationForSession(target.sessionId)).toBeNull();
   });
 
   it('waits while ChatGPT is still generating in that chat', async () => {
@@ -2186,7 +2228,7 @@ describe('restart recovery escalation', () => {
     expect(recoveryBrowserWake).not.toHaveBeenCalled();
   });
 
-  it('escalates only after the wake has waited, and never for an idle-restart wake', async () => {
+  it('retains the owed wake after the timeout when the source page is unknown', async () => {
     const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e504', 'g-timer-0-4');
     vi.useFakeTimers();
     try {
@@ -2196,9 +2238,70 @@ describe('restart recovery escalation', () => {
       expect(continuationForSession(target.sessionId)).toBeNull();
       await vi.advanceTimersByTimeAsync(2_000);
     } finally { vi.useRealTimers(); }
-    await vi.waitFor(() => expect(continuationForSession(target.sessionId)?.recovery).toBe(true));
-    expect(recoveryBrowserWake).toHaveBeenCalledTimes(1);
-    abortContinuation(continuationForSession(target.sessionId)!.token, 'test_cleanup');
+    expect(continuationForSession(target.sessionId)).toBeNull();
+    expect(recoveryBrowserWake).not.toHaveBeenCalled();
+  });
+
+  it('offers exactly one inactive Prime-tab recovery after two separated complete censuses, not from a heartbeat tab or unknown scan', async () => {
+    const target = await stuckWake('abcdabcd-0000-4000-8000-00000000e505', 'g-absent-0-5');
+    restoreAgentIdentity({ version: 1, conversationId: target.conversationId });
+    const census = (conversations: string[], known = true) => request('POST', '/status', { body: {
+      openConversations: conversations, documents: [], ...(known ? { openChatTabs: conversations.length } : {})
+    } });
+    expect((await census([], false)).body.repairs).toEqual([]);
+    expect((await census([])).body.repairs).toEqual([]);
+    expect((await census([target.conversationId])).body.repairs).toEqual([]);
+    expect((await census([])).body.repairs).toEqual([]);
+    // A repair receipt/diagnostic GET is not another tab census and cannot
+    // reset or advance the two independent POST observations.
+    await request('GET', '/status');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11_000);
+    let offer: any;
+    try {
+      offer = (await census([])).body.repairs;
+    } finally { clock.mockRestore(); }
+    expect(offer).toEqual([expect.objectContaining({
+      conversationId: target.conversationId, reason: 'prime-restart', focus: false
+    })]);
+    const claimed = await request('POST', '/browser-repair/claim', {
+      body: { conversationId: target.conversationId, token: offer[0].token }
+    });
+    expect(claimed.body.ok).toBe(true);
+    // A claim only grants one opening; it does not type or send the restart wake.
+    expect(recoveryBrowserWake).not.toHaveBeenCalled();
+    expect(continuationForSession(target.sessionId)).toBeNull();
+  });
+
+  it('restores a missing idle Prime from its exact restart wake without inventing a handoff', async () => {
+    await pair();
+    const conversationId = 'abcdabcd-0000-4000-8000-00000000e506';
+    const entry = await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'user_message', time: Date.now() - 2_000, messageId: 'idle-prime-question', text: 'Previous work' },
+      { kind: 'turn_start', time: Date.now() - 1_000, turnId: 'idle-prime-turn' },
+      { kind: 'turn_end', time: Date.now() - 500, turnId: 'idle-prime-turn', outcome: 'completed' }
+    ] } });
+    const sessionId = entry.body.sessionId as string;
+    expect((await getSession(sessionId))?.activeTurnId).toBeNull();
+    const { enqueueInput, resetInputForTests } = await import('../src/main/session/input.js');
+    await writeDurableNow('session-input', []);
+    resetInputForTests();
+    await enqueueInput({
+      id: 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeee1', sessionId, text: 'Idle restart wake',
+      mode: 'auto', dueAt: Date.now(), model: null, reasoningEffort: null
+    }, undefined, { restartWake: true });
+    restoreAgentIdentity({ version: 1, conversationId });
+    const scan = () => request('POST', '/status', { body: {
+      openConversations: [], openChatTabs: 0, documents: []
+    } });
+    expect((await scan()).body.repairs).toEqual([]);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11_000);
+    try {
+      expect((await scan()).body.repairs).toEqual([expect.objectContaining({
+        conversationId, reason: 'prime-restart', focus: false
+      })]);
+    } finally { clock.mockRestore(); }
+    expect(continuationForSession(sessionId)).toBeNull();
+    expect(recoveryBrowserWake).not.toHaveBeenCalled();
   });
 });
 
@@ -3181,6 +3284,116 @@ describe('automatic compaction', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /**
+   * 2026-10-25, ticket qmNydd4v: the user's own message replaced the sent handoff request's turn,
+   * the model answered that message with a complete brief no page may collect, and the chat's tools
+   * stayed fenced behind three reloads with no way out but a manual Cancel.
+   */
+  describe('a handoff request replaced before ChatGPT answered it', () => {
+    async function askedTicket(conversationId: string, automatic: boolean) {
+      await pair();
+      await request('POST', '/events', {
+        body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'long prime work', messageId: `m-before-${conversationId.slice(-4)}` }] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic } });
+      const token = filed.body.token as string;
+      const sessionId = filed.body.sessionId as string;
+      expect((await request('POST', '/compact', { body: { conversationId, token, sourceAttempt: true } })).body.allowed).toBe(true);
+      expect((await request('POST', '/compact', { body: { conversationId, token, sourceDispatch: true } })).body.armed).toBe(true);
+      return { token, sessionId };
+    }
+    const requestRow = (token: string) =>
+      ({ kind: 'user_message', time: Date.now(), text: `[[CLF-HANDOFF:${token}]]\n\nWrite a handoff brief.`, messageId: 'm-handoff-request' });
+    const takeRepair = async (): Promise<{ conversationId: string; reason: string } | null> => {
+      await sweepStaleSwarm(Date.now());
+      return (await request('GET', '/status')).body.repairs?.[0] ?? null;
+    };
+
+    it.each([true, false])('cancels the ticket and lifts the tool fence without a reload (automatic: %s)', async (automatic) => {
+      vi.useFakeTimers();
+      try {
+        const conversationId = automatic ? 'a1a1a1a1-0000-4000-8000-00000000ac31' : 'a1a1a1a1-0000-4000-8000-00000000ac32';
+        const { token, sessionId } = await askedTicket(conversationId, automatic);
+        await request('POST', '/events', {
+          body: {
+            conversationId,
+            events: [
+              // The live record's exact order (seq 16237-16242).
+              requestRow(token),
+              // The request itself interrupts the turn before it; that end is not the request's.
+              { kind: 'turn_end', time: Date.now(), turnId: 'turn-before-request', outcome: 'interrupted' },
+              { kind: 'turn_start', time: Date.now(), turnId: 'turn-request' },
+              { kind: 'user_message', time: Date.now(), text: 'I see a broken handoff, debug it', messageId: 'm-debug' },
+              { kind: 'turn_end', time: Date.now(), turnId: 'turn-request', outcome: 'interrupted' },
+              { kind: 'turn_start', time: Date.now(), turnId: 'turn-debug' }
+            ]
+          }
+        });
+        expect(compactingConversation(conversationId)?.token).toBe(token);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(await takeRepair()).toBeNull();
+        expect(continuationByToken(token)).toMatchObject({ state: 'aborted' });
+        expect(compactingConversation(conversationId)).toBeNull();
+        const notes = (await readEvents(sessionId, { kinds: ['note'] }))
+          .filter(event => event.kind === 'note' && /replaced the handoff request/.test(event.message.text));
+        expect(notes).toHaveLength(1);
+        // Nothing comes back for the cancelled ticket, however long the chat stays open.
+        await vi.advanceTimersByTimeAsync(30 * 60_000);
+        expect(await takeRepair()).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps the ordinary capture path when the request turn completed before a later message', async () => {
+      vi.useFakeTimers();
+      try {
+        const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac33';
+        const { token } = await askedTicket(conversationId, true);
+        await request('POST', '/events', {
+          body: {
+            conversationId,
+            events: [
+              requestRow(token),
+              { kind: 'turn_start', time: Date.now(), turnId: 'turn-request' },
+              { kind: 'turn_end', time: Date.now(), turnId: 'turn-request', outcome: 'completed' },
+              { kind: 'user_message', time: Date.now(), text: 'and one more thing', messageId: 'm-after' }
+            ]
+          }
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        await takeRepair();
+        expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary' });
+        expect(compactingConversation(conversationId)?.token).toBe(token);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not cancel while the request turn is still running, even though the request interrupted the turn before it', async () => {
+      vi.useFakeTimers();
+      try {
+        const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac34';
+        const { token } = await askedTicket(conversationId, true);
+        await request('POST', '/events', {
+          body: {
+            conversationId,
+            events: [
+              requestRow(token),
+              { kind: 'turn_end', time: Date.now(), turnId: 'turn-before-request', outcome: 'interrupted' },
+              { kind: 'turn_start', time: Date.now(), turnId: 'turn-request' }
+            ]
+          }
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        await takeRepair();
+        expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('re-drives a handoff that was asked before an app restart, so its successor can commit and lift the source fence', async () => {
@@ -6286,7 +6499,7 @@ ${SAMPLE_BRIEF}` }
     const stored = await captureFrom(HOME);
 
     expect(stored.body.stored).toBe(true);
-    expect(stored.body.placement).toMatchObject({ id: stored.body.commandId, model: null, reasoningEffort: null, active: true });
+    expect(stored.body.placement).toMatchObject({ id: stored.body.commandId, model: null, reasoningEffort: null, active: false, type: 'resume' });
     // The whole point: this app did not ask the operating system where its own chat should go.
     expect(opened).toEqual([]);
     expect(pendingCommands()).toEqual([
@@ -6494,6 +6707,50 @@ describe('targeted open', () => {
     expect((await request('POST', '/commands/redeem', { body: { id: command.id, client: 'tab-1' } })).status).toBe(404);
     expect(opened).toHaveLength(1);
   });
+
+  it.each(['cancel-first', 'dispatch-first'])(
+    'fences Compact & Resume placement against cancellation (%s)',
+    async (order) => {
+      await pair();
+      const conversationId = order === 'cancel-first'
+        ? 'a7a7a7a7-1111-4111-8111-111111111111'
+        : 'b8b8b8b8-2222-4222-8222-222222222222';
+      await request('POST', '/events', { body: {
+        conversationId,
+        events: [{ kind: 'user_message', time: Date.now(), text: 'finish the c3 handoff', messageId: 'm-race' }]
+      } });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true } });
+      expect(filed.status).toBe(202);
+      const token = filed.body.token as string;
+      const capture = await request('POST', '/compact', {
+        body: { conversationId, token, summary: SAMPLE_BRIEF }
+      });
+      expect(capture.status).toBe(200);
+      const placement = capture.body.placement;
+      expect(placement).toMatchObject({ id: capture.body.commandId, type: 'resume', token, active: false });
+      const authorize = () => request('POST', '/commands/placement-authorize', {
+        body: { id: placement.id, token }
+      });
+      const cancel = () => request('POST', '/compact', { body: { conversationId, cancel: true } });
+      if (order === 'cancel-first') {
+        expect((await cancel()).body.cancelled).toBe(true);
+        expect((await authorize()).status).toBe(409);
+        expect((await request('POST', '/commands/redeem', {
+          body: { id: placement.id, client: 'stale-project-page' }
+        })).status).toBe(404);
+      } else {
+        expect((await authorize()).body.authorized).toBe(true);
+        const ledger = await readDurable<any>('bridge-commands');
+        expect(ledger.commands.find((entry: any) => entry.id === placement.id)?.owner).toBe('companion-placement');
+        expect((await cancel()).body.cancelled).toBe(false);
+        expect(continuationByToken(token)?.state).not.toBe('aborted');
+        expect((await redeem(placement.id, 'created-page')).text).toContain('Continuing a ParadigmEve session');
+        expect((await authorize()).status).toBe(409);
+      }
+      // The browser that owns A was given the only placement; no OS fallback may open B.
+      expect(opened).toEqual([]);
+    }
+  );
 
   it('hands a marked page its own command by id, once, and refuses an unknown id', async () => {
     await pair();
@@ -6974,6 +7231,30 @@ describe('unattributed activity recovery', () => {
       // second one of it - the duplicate this path exists to avoid.
       expect(reopened(PRIME)).toEqual([]);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves a Prime document after unresolved attribution when shared-Eve coordination is enabled', async () => {
+    vi.useFakeTimers();
+    const previous = getConfig();
+    try {
+      await saveConfig({
+        ...previous,
+        multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true }
+      });
+      await pair();
+      await events(PRIME, [openTurn('turn-shared-prime')]);
+      await unattributedTurn('req-shared-prime-unattributed');
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await recoveryStatus()).reconnects).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(UNATTRIBUTED_RECONNECT_GRACE_MS);
+      const status = await recoveryStatus();
+      expect(status.reconnects).toEqual([]);
+      expect(status.repairs).toEqual([]);
+      expect(reopened(PRIME)).toEqual([]);
+    } finally {
+      await saveConfig(previous);
       vi.useRealTimers();
     }
   });
@@ -7676,6 +7957,37 @@ describe('unattributed activity recovery', () => {
       text: 'Message delivery timed out. Please try again.', recoverable: true }]);
     const retry = await maintenance();
     expect(retry?.reason).toBe('assistant-error');
+  });
+
+  it('stops unclaimed recovery offers, keeps the verdict across episodes, and resumes only after an exact page poll', async () => {
+    await pair();
+    const reply = await events(PRIME, [openTurn('unclaimed-turn'), { kind: 'chat_error', time: Date.now(),
+      turnId: 'unclaimed-turn', text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    const sessionId = reply.body.sessionId as string;
+    const first = await maintenance();
+    expect(first).toMatchObject({ conversationId: PRIME, reason: 'assistant-error' });
+    for (let attempt = 1; attempt < 10; attempt++) {
+      const next = await maintenance();
+      expect(next?.conversationId).toBe(PRIME);
+      expect(next?.token).not.toBe(first!.token);
+    }
+    expect(await maintenance()).toBeNull();
+    expect((await sessionControlsFor(sessionId)).repairStopped).toBe(true);
+    const history = await readEvents(sessionId);
+    expect(history.some(row => row.kind === 'progress' && row.source === 'app' &&
+      row.message.text.includes('did not claim 10 offers'))).toBe(true);
+
+    // Neither another failure nor empty maintenance can mint ten more attempts.
+    await events(PRIME, [openTurn('unclaimed-next'), { kind: 'chat_error', time: Date.now() + 1,
+      turnId: 'unclaimed-next', text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    for (let attempt = 0; attempt < 12; attempt++) expect(await maintenance()).toBeNull();
+
+    // A page-origin /activity poll is the only reset. Status census is not page proof.
+    await request('GET', `/activity?conversationId=${PRIME}&since=0`);
+    expect((await sessionControlsFor(sessionId)).repairStopped).toBe(false);
+    await events(PRIME, [{ kind: 'chat_error', time: Date.now() + 2, turnId: 'unclaimed-next',
+      text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    expect((await maintenance())?.conversationId).toBe(PRIME);
   });
 
   it('reloads for recognized transport errors, once per user turn', async () => {

@@ -982,6 +982,7 @@ let controlsGeneration = 0;
 let appliedControlsGeneration = 0;
 let controlledSessionId: string | null = null;
 let controlledTurnId: string | null = null;
+let controlledRepairStopped = false;
 let controlledSelection = -1;
 let controlledStopPending = false;
 let controlledFinishWaiting = false;
@@ -1038,6 +1039,8 @@ function pendingComposerInput(): InputEntry | undefined {
       (pendingNewInput?.generation === selectionGeneration && pendingNewInput.id === entry.id) || (!entry.sessionId && !entry.deliveredSessionId && entry.purpose !== 'decision')));
 }
 let durationTimer: number | undefined;
+let lastTimedControlsReadAt = 0;
+let timedControlsRead: Promise<void> | null = null;
 function paintDeliveryControls(): void {
   paintGoalProgress();
   const working = selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledTurnId !== null;
@@ -1276,6 +1279,7 @@ function paintAutomationSwitch(): void {
   paintTaskActions();
 }
 async function refreshSessionControls(): Promise<void> {
+  lastTimedControlsReadAt = Date.now();
   const id = selectedId, generation = ++controlsGeneration, selection = selectionGeneration;
   const planHost = $('agentPlan');
   if (planHost.dataset.sessionId !== (id ?? '')) renderAgentPlan(planHost, id, null);
@@ -1310,6 +1314,7 @@ async function refreshSessionControls(): Promise<void> {
   controlledSessionId = id;
   controlledSelection = selectionGeneration;
   controlledTurnId = controls?.activeTurnId ?? null;
+  controlledRepairStopped = controls?.repairStopped === true;
   goalDraftView = controls?.goalDraft ?? null;
   finishGoalDraftView = controls?.finishGoalDraft ?? null;
   controlledStopPending = controls?.stopPending === true;
@@ -1338,7 +1343,7 @@ async function refreshSessionControls(): Promise<void> {
   paintAutomationSwitch();
   $<HTMLButtonElement>('compactSession').disabled = !!controls.blocked || !!controls.job?.busy;
   $('cancelCompaction').hidden = !controls.job?.busy;
-  ui($('sessionControlStatus'), 'textContent', () => controls.blocked === 'worker' ? t("This worker is managed by your agent.") : controls.blocked === 'blocked' ? t("This chat is blocked.") : controls.job?.busy ? t("Compaction is running in ChatGPT.") : '');
+  ui($('sessionControlStatus'), 'textContent', () => controls.blocked === 'worker' ? t("This worker is managed by your agent.") : controls.blocked === 'blocked' ? t("This chat is blocked.") : controls.repairStopped ? t("Automatic browser recovery stopped; open this chat to resume checks.") : controls.job?.busy ? t("Compaction is running in ChatGPT.") : '');
 }
 
 async function navigateHistory(before: number | null, prepend = false): Promise<void> {
@@ -2781,7 +2786,15 @@ function paintStateLine(): void {
   note.className = `subhead-note${tone ? ` ${tone}` : ''}`;
   // Running state and timer ownership cannot depend on a translated label.
   note.classList.toggle('is-working', working === true);
-  if (visible && ticking) durationTimer = window.setTimeout(paintStateLine, 1000);
+  if (visible && ticking) {
+    // A cached Working caption must not outlive the app's current verdict indefinitely when
+    // the page goes silent. Reuse this existing one-second display timer as a bounded controls
+    // refresh; keep the ordinary selection-generation fence in refreshSessionControls().
+    if (!timedControlsRead && Date.now() - lastTimedControlsReadAt >= 8000) {
+      timedControlsRead = refreshSessionControls().finally(() => { timedControlsRead = null; });
+    }
+    durationTimer = window.setTimeout(paintStateLine, 1000);
+  }
   repaintBadges();
 }
 
@@ -2806,6 +2819,8 @@ function stateLine(): { text: string; tone: '' | 'is-live' | 'is-bad'; working?:
   if (!deps.state()?.config.ui.developerMode) {
     const summary = sessions.find(entry => entry.id === selectedId);
     if (!summary || detailFor !== selectedId) return { text: '', tone: '' };
+    if (controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledRepairStopped)
+      return { text: t("Recovery stopped — browser action was not confirmed."), tone: 'is-bad' };
     const active = controlledSessionId === selectedId && controlledSelection === selectionGeneration ? controlledTurnId : null;
     const lastBoundary = [...events].reverse().find(event => event.kind === 'turn_start' || event.kind === 'turn_end');
     const turnId = active ?? lastBoundary?.turnId;
@@ -2813,7 +2828,7 @@ function stateLine(): { text: string; tone: '' | 'is-live' | 'is-bad'; working?:
     const startedAt = summary.finishTurn?.turnId === turnId ? summary.finishTurn.startedAt
       : events.find(event => event.kind === 'turn_start' && event.turnId === turnId)?.time;
     const endedAt = events.find(event => event.kind === 'turn_end' && event.turnId === turnId)?.time;
-    if (startedAt === undefined) return { text: active ? t("Working…") : '', tone: '', working: !!active };
+    if (startedAt === undefined) return { text: active ? t("Working…") : '', tone: '', working: !!active, ticking: !!active };
     if (!active && endedAt === undefined) return { text: '', tone: '' };
     const seconds = Math.max(0, Math.floor(((active ? Date.now() : endedAt!) - startedAt) / 1000));
     return { text: t("{0} for {1}{2}s", [active ? t("Working") : t("Worked"), seconds >= 60 ? `${Math.floor(seconds / 60)}m ` : '', seconds % 60]), tone: '', working: !!active, ticking: !!active };

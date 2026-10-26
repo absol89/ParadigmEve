@@ -2,6 +2,7 @@ import { offerToolInput, acknowledgeToolInput, TOOL_INPUT_HEADER } from '../sess
 import { createHash, randomUUID } from 'node:crypto';
 import { pluginManager } from '../plugins/manager.js';
 import { WINDOWS_COMPUTER_STATE_INPUT_METHODS } from '../../shared/windows-computer.js';
+import { BUILD_FLAVOR } from '../../shared/build-flavor.js';
 /**
  * The machinery every model-facing tool sits on, independent of which surface it lives on.
  *
@@ -25,6 +26,7 @@ import { WINDOWS_COMPUTER_STATE_INPUT_METHODS } from '../../shared/windows-compu
 
 import { rawPromises as fs } from '../rawfs.js';
 import { beginToolTiming, inboundRequestId, inboundPublication, inboundToolEvidence, noteInboundToolRequest } from './inbound.js';
+import { noteRouteRequestArrived } from '../tunnel/route-settle.js';
 import { McpServer, type ServerContext } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities, type Root } from '../../shared/types.js';
@@ -533,6 +535,9 @@ async function dispatchTracked(
   // Publish local admission before any wait for page identity. The page can then retry a
   // first-call correlation without the handler and browser waiting on one another.
   if (!nested) noteInboundToolRequest(requestId);
+  if (!nested && surface === 'core' && requestId && inboundToolEvidence() && !context.caller.localPrincipal) {
+    noteRouteRequestArrived(requestId);
+  }
   noteTransportIdentity(transportKey);
   const markTiming = beginToolTiming();
   // The existing request owner marks ParadigmEve's authenticated self-test/tunnel probes as
@@ -555,6 +560,15 @@ async function dispatchTracked(
   }
   const isFinish = isFinishCall(name, args);
   const startedAt = context.startedAt;
+  // With the user's account-wide unattributed-call setting enabled, the authenticated
+  // connector may execute without a Companion request-id join. Keep the audit caller
+  // unproven; do not borrow a fabricated conversation or session identity. work_context is
+  // deliberately the exception: it is the caller-identity synchronization barrier, so when
+  // a Companion is present it waits for this exact request id before reporting identity. A
+  // phone/other browser with no Companion still falls back after the same bounded evidence
+  // window; it never needs the extension installed.
+  const pageAttributionOptional = getConfig().multiAgent.allowUnattributedCalls === true &&
+    inboundToolEvidence() && Boolean(requestId) && !context.caller.localPrincipal && name !== 'work_context';
   // Cheap, non-blocking ingress identity. When the page has already reported this exact
   // request id, identity-sensitive handlers (workspace/session/agents) see it before they
   // touch state. If the page is one tick late this stays null; only handlers that actually
@@ -576,11 +590,23 @@ async function dispatchTracked(
   // handler runs. Recording a late identity cannot recover a discarded anonymous frame.
   const desktopContext = (surface === 'core' || surface === 'desktop') && (name === 'get_window_state' ||
     (WINDOWS_COMPUTER_STATE_INPUT_METHODS as readonly string[]).includes(name));
-  if (!context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' || name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning())) && requestId) {
+  if (!pageAttributionOptional && !context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' || name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning())) && requestId) {
+    const identityWaitStartedAt = Date.now();
+    if (BUILD_FLAVOR === 'debug') {
+      logInfo(`identity timing: request ${requestId.slice(0, 8)} tool ${name} waiting for exact Companion evidence`);
+    }
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
     );
+    if (BUILD_FLAVOR === 'debug') {
+      logInfo(
+        `identity timing: request ${requestId.slice(0, 8)} tool ${name} resolved ` +
+        `${context.caller.conversationId ? 'exact' : 'without Companion evidence'} ` +
+        `after ${Math.max(0, Date.now() - identityWaitStartedAt)} ms ` +
+        `(total ${Math.max(0, Date.now() - startedAt)} ms)`
+      );
+    }
   }
   // A run that ended leaves an explicit short-lived lease tombstone for each open worker
   // chat. Resolve exact request identity before ordinary tools too while such leases exist;
@@ -950,6 +976,11 @@ async function dispatchTracked(
     const merged = [typeof own === 'string' ? own : '', supplemental].filter(Boolean).join('\n');
     if (supplemental) delivered = { ...delivered, structuredContent: { ...delivered.structuredContent, supplemental_context: merged } };
   }
+  // The Core surface returns local file, terminal and background output. Its real bytes remain
+  // available to an authorized nested tool call; only the final model-facing result is scrubbed.
+  // Use the same configured-secret and credential projection as Plugins, including structured
+  // content (which ChatGPT may prefer to the text blocks). Recorder sees these delivered bytes.
+  if (surface === 'core' && !nested) delivered = pluginManager.redactResult(delivered) as ToolResult;
   const recorderStartedAt = Date.now();
   // Event duration includes identity/handler/delivery work. Recorder and local HTTP finish
   // are measured separately because a row cannot contain the time of its own later commit.

@@ -45,6 +45,8 @@ export interface TunnelStartOptions {
    */
   label?: string;
   report: (report: TunnelReport) => void;
+  /** Once per newly spawned OpenAI client, not each network reconnection of that process. */
+  onClientFirstConnected?: () => void;
 }
 
 export interface TunnelHandle {
@@ -276,6 +278,7 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
     healthBase: string | null;
     health: TunnelHealth | null;
     shown: 'connected' | 'offline' | 'unknown' | 'unreachable-app' | null;
+    everConnected: boolean;
     /** Consecutive ticks on which the client reported it cannot reach this app's MCP server. */
     appProbeFailures: number;
   }
@@ -298,6 +301,10 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
     if (stopped || current !== run) return;
     const first = run.shown !== 'connected';
     run.shown = 'connected';
+    if (!run.everConnected) {
+      run.everConnected = true;
+      opts.onClientFirstConnected?.();
+    }
     if (first) logInfo(`${tag} connected`);
     // Re-reported on every tick, so the UI can show how fresh the proof is.
     opts.report({
@@ -550,7 +557,8 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
       pollErrors: 0,
       healthBase: null,
       health: null,
-      shown: null
+      shown: null,
+      everConnected: false
     };
     current = run;
 

@@ -188,12 +188,12 @@ Var ParadigmEveLaunchAfterInstall
   ${If} $ParadigmEveLaunchAfterInstall == "1"
     # Launching after Finish is presentation, not consent to publish the MCP tunnel. A fresh
     # install therefore starts with no arguments and follows ui.autoConnect=false. An interactive
-    # update still restores the owned browser/session, but connection state follows the user's
-    # saved auto-connect preference once the replacement process loads config.
+    # update preserves any live ChatGPT tab/draft/Voice work. The Companion's built-in
+    # idle-fenced extension refresh picks up new packaged bytes without a Chrome restart.
     ${if} ${isUpdated}
-      StrCpy $1 "--updated --recover-companion-browser"
+      StrCpy $1 "--updated --background --preserve-chatgpt-tabs"
     ${elseIf} $ParadigmEveHadExistingInstall == "1"
-      StrCpy $1 "--recover-companion-browser"
+      StrCpy $1 "--background --preserve-chatgpt-tabs"
     ${else}
       StrCpy $1 ""
     ${endif}

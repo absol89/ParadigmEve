@@ -6,6 +6,7 @@ const source = readFileSync(new URL('../extension/chatgpt-dom.js', import.meta.u
 interface DomApi {
   insertPrompt(text: string, mode?: boolean | 'append', failure?: (reason: string) => void): boolean;
   enterProject(entry: { id: string; sourceConversationId: string }, current?: () => boolean, failure?: (reason: string) => void): Promise<boolean>;
+  sidebarListsProject(id: string): boolean | null;
   composerActions(): { host: HTMLElement; before: HTMLElement | null } | null;
   composerVisible(): boolean;
   generating(): boolean;
@@ -39,6 +40,35 @@ beforeEach(() => {
   button = document.querySelector('[data-testid="send-button"]')!;
 });
 afterEach(() => { dom.window.close(); vi.useRealTimers(); });
+describe('linked native Project absence evidence', () => {
+  const project = 'g-p-11111111222233334444555555555555';
+  const other = 'g-p-99999999888877776666555555555555';
+  function sidebar(ids: string[], collapsed = 'false', create = true) {
+    const section = document.createElement('section');
+    section.setAttribute('data-app-action-sidebar-section', '');
+    section.setAttribute('data-app-action-sidebar-section-collapsed', collapsed);
+    if (create) section.innerHTML = '<button data-app-action-sidebar-project-create="">New project</button>';
+    for (const id of ids) {
+      const row = document.createElement('div');
+      row.setAttribute('data-app-action-sidebar-project-id', id);
+      section.append(row);
+    }
+    document.body.append(section);
+  }
+  it('proves a listed Project exists, even with a collapsed row, or is absent from one expanded list', () => {
+    sidebar([other, project.toUpperCase()]);
+    expect(api.sidebarListsProject(project)).toBe(true);
+    expect(api.sidebarListsProject('g-p-00000000000000000000000000000000')).toBe(false);
+  });
+  it('does not infer deletion from a closed sidebar, collapsed Projects section or missing project controls', () => {
+    expect(api.sidebarListsProject(project)).toBeNull();
+    sidebar([other], 'true');
+    expect(api.sidebarListsProject(project)).toBeNull();
+    document.querySelector('[data-app-action-sidebar-section]')?.remove();
+    sidebar([other], 'false', false);
+    expect(api.sidebarListsProject(project)).toBeNull();
+  });
+});
 function user(text: string) {
   const section = document.createElement('section');
   section.setAttribute('data-testid', 'conversation-turn-1');

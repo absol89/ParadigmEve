@@ -58,6 +58,7 @@ import {
   type SwarmSnapshot
 } from './agents.js';
 import { flushDurable, initDurableStore, readDurable, readDurableStrict, writeDurableNow, writeDurableSoon } from './durable.js';
+import { restoreRouteHold } from './tunnel/route-settle.js';
 import {
   AGENT_IDENTITY_STATE,
   currentAgentConversationId,
@@ -120,7 +121,7 @@ import { editContextMenuTemplate } from './edit-context-menu.js';
 import { startupSplashDocument } from './startup-splash.js';
 import { readUiLanguage } from './ui-language.js';
 import { openParadigmEveChromeProfile, refreshParadigmEveCompanionForMaintenance, restartParadigmEveChromeForInstallerRecovery, restoreParadigmEveBrowser, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
-import { wakeBrowserUrl } from './browser-startup.js';
+import { restorePreservedCompanionBrowserAfterInstall, wakeBrowserUrl } from './browser-startup.js';
 import { recoverUnclaimedRestartWakes } from './session/input.js';
 import {
   beginRecoveryRun,
@@ -132,6 +133,7 @@ import {
 } from './session/recovery-memory.js';
 import { configureSelfMaintenanceRuntime } from './self-maintenance.js';
 import { claimNativeNotification } from './native-notification-dedupe.js';
+import { setApprovalNotifier } from './approval-wait.js';
 
 // Electron derives userData from package/name casing. Pin the Windows spelling deliberately so
 // Settings, logs and the default self-maintenance root all use AppData\Roaming\ParadigmEve.
@@ -163,6 +165,7 @@ let lastLanPeerLog = '';
 let runtimeReady = false;
 let forcedConnectPending = isForcedConnectLaunch(process.argv);
 let companionBrowserRecoveryPending = isCompanionBrowserRecoveryLaunch(process.argv);
+let preservedBrowserStartupPending = process.argv.includes('--preserve-chatgpt-tabs');
 let companionBrowserRecoveryRunning: Promise<void> | null = null;
 let companionBrowserRecoveryCompleted = false;
 let companionProtocolRepairAttempted = false;
@@ -270,6 +273,16 @@ function runCompanionBrowserRecovery(): Promise<void> {
   });
   companionBrowserRecoveryRunning = work;
   return work;
+}
+
+function runPreservedBrowserStartup(): Promise<void> {
+  preservedBrowserStartupPending = false;
+  return restorePreservedCompanionBrowserAfterInstall().then((result) => {
+    if (result === 'restored') logInfo('Absent dedicated Eve Browser restored minimized after install; existing Chrome session tabs were not replaced');
+    else if (result === 'unknown') logWarn('Dedicated Eve Browser window presence could not be proved after install; preserving browser state without opening another window');
+  }).catch((error) => {
+    logWarn(`could not restore absent Eve Browser after install: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 /**
@@ -504,6 +517,24 @@ setFinishNotifier((title, body, sessionId, turnId) => {
   notice.show();
   return true;
 });
+setApprovalNotifier((sessionId, progressId) => {
+  if (!Notification.isSupported() || !claimNativeNotification(progressId)) return;
+  const notice = new Notification({
+    title: 'Waiting for your approval in ChatGPT',
+    body: 'A tool approval card is pending, possibly under Previous activity. Open this conversation in Eve to review it.'
+  });
+  notice.on('click', () => {
+    // The click is a human action. Show Eve's exact recorded session without
+    // reloading, selecting or opening any ChatGPT browser tab.
+    showWindow();
+    if (!window) return;
+    const target = window.webContents;
+    const open = (): void => { if (!target.isDestroyed()) target.send('session:write', sessionId); };
+    if (target.isLoadingMainFrame()) target.once('did-finish-load', open);
+    else open();
+  });
+  notice.show();
+});
 setBrowserWorkArea(() => screen.getPrimaryDisplay().workArea);
 
 // Electron promises `second-instance` only after its own `ready`, not after our async startup.
@@ -582,9 +613,13 @@ app.on('second-instance', (_event, argv) => {
     forcedConnectPending = true;
     if (runtimeReady) void connect();
   }
-  if (isCompanionBrowserRecoveryLaunch(argv)) {
+  if (!argv.includes('--preserve-chatgpt-tabs') && isCompanionBrowserRecoveryLaunch(argv)) {
     companionBrowserRecoveryPending = true;
     if (runtimeReady) runCompanionBrowserRecovery();
+  }
+  if (argv.includes('--preserve-chatgpt-tabs')) {
+    preservedBrowserStartupPending = true;
+    if (runtimeReady && browserExtensionRequired(getConfig())) void runPreservedBrowserStartup();
   }
   if (!isBackgroundLaunch(argv)) windowActivation.request();
 });
@@ -655,6 +690,7 @@ void app.whenReady().then(async () => {
   await restoreChatModels();
   if (windowActivation.isDisabled()) return;
   await loadConfig();
+  await restoreRouteHold();
   try { await initializeExpensesProjects(); }
   catch (error) { logWarn(`could not initialize Expenses projects: ${error instanceof Error ? error.message : String(error)}`); }
   await pluginManager.initialize(userData);
@@ -999,7 +1035,14 @@ void app.whenReady().then(async () => {
     void connect();
   }
   let startupBrowserRecovery: Promise<unknown> | null = null;
-  if (companionBrowserRecoveryPending) {
+  if (preservedBrowserStartupPending) {
+    // A candidate install never restarts, navigates or focuses a live ChatGPT window.
+    // If the exact dedicated browser is absent, its saved session can be restored minimized.
+    // Present/unknown windows remain untouched for in-place Companion refresh at their idle fence.
+    logInfo('Companion browser profile preserved during upgrade; checking dedicated-window presence');
+    if (browserExtensionRequired(getConfig())) startupBrowserRecovery = runPreservedBrowserStartup();
+    else preservedBrowserStartupPending = false;
+  } else if (companionBrowserRecoveryPending) {
     startupBrowserRecovery = runCompanionBrowserRecovery();
   } else if (restartRecoveryRequested(process.argv, previousRunUnclean)) {
     // Exact Prime startup recovery must join the same browser-startup owner used by bridge repairs.

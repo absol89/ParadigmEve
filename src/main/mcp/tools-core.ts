@@ -129,6 +129,8 @@ import {
   stageFinishAgent,
   stageMessages,
   stageSharedEvePrimeMessages,
+  stageSharedEvePrimeSpawn,
+  stageSharedEveWorkerFinish,
   stageSpawn,
   swarmRunning,
   swarmStateForCaller,
@@ -1574,11 +1576,11 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
     toolDeclaration('agents', () => ({
       title: 'Multi-agent run',
       description:
-        `Run ChatGPT workers for ${agentName()}. App settings supply model/reasoning defaults; pass overrides only when the user explicitly requests them. Reuse a suitable sleeping worker with message before spawn. Sleeping/terminal workers remain in durable history. message routes ${agentName()}↔worker and revives sleeping workers; replies arrive on later tool results, so never poll. status shows full worker history. finish reports the worker result and normally puts it to sleep. If a ParadigmEve heartbeat prompt provides review_key, pass that exact key only on ${agentName()} calls from that heartbeat.`,
+        `ChatGPT worker coordination for ${agentName()}. App settings supply model/reasoning defaults; overrides correspond to explicit user choices. Existing sleeping workers can be revived with message, while sleeping and terminal workers remain in durable history. message routes ${agentName()}↔worker, and replies arrive on subsequent tool results. status shows worker history. finish records a worker report and normally changes it to sleeping. review_key identifies the current ParadigmEve heartbeat review, when present.`,
       inputSchema: z.object({
         action: z.enum(['spawn', 'message', 'status', 'finish']).describe('What to do.'),
         review_key: z.string().min(1).max(512).optional().describe(
-          'Heartbeat continuity only: exact key from the current ParadigmEve review prompt. Omit otherwise; never guess or reuse.'
+          'Heartbeat review key for exact continuity with the current ParadigmEve review prompt, when applicable.'
         ),
         context: z
           .string()
@@ -1603,13 +1605,13 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                 .max(80)
                 .optional()
                 .describe(
-                  'Omit unless the user explicitly requests a model override; app settings supply their default. Overrides require an exact account-observed model id or provider alias; never guess spellings. Invalid choices return observed ids before workers open; the browser confirms availability before sending.'
+                  'Optional user-selected worker model override. Defaults to app settings. An override uses an account-observed model id or provider alias; invalid choices return observed ids, and the browser checks availability.'
                 ),
               reasoning_effort: z
                 .enum(REASONING_EFFORTS)
                 .optional()
                 .describe(
-                  'Omit unless the user explicitly requests a reasoning override; app settings supply their default automatically. Do not ask for a reasoning level just to spawn a worker. Independent of model: it never selects or changes one.'
+                  'Optional user-selected reasoning override. Defaults to app settings and does not select or change a model.'
                 )
             }).strict()
           )
@@ -1617,7 +1619,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           .max(8)
           .optional()
           .describe(
-            'spawn: fresh workers to create only after checking status for a suitable sleeping worker; revive one explicitly with message.'
+            'spawn: new workers; a retained sleeping worker is revivable through message.'
           ),
         messages: z
           .array(
@@ -1630,7 +1632,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           .max(16)
           .optional()
           .describe(
-            'message: atomic batch; prefer this to one call per recipient.'
+            'message: atomic batch of addressed worker messages.'
           ),
         to: z
           .string()
@@ -1646,10 +1648,13 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           .optional()
           .describe(
             'finish: factual handoff under RESULT / CHANGES / VALIDATION / BLOCKERS.'
-          )
+          ),
+        worker_id: z.string().min(1).max(40).optional().describe(
+          'finish: worker to finish when shared-Eve permission is enabled but this call has no exact page identity. This is an explicit target, not identity proof.'
+        )
       })
       .superRefine((input, ctx) => {
-        const reject = (field: 'context' | 'workers' | 'messages' | 'to' | 'text' | 'result' | 'review_key', message: string): void => {
+        const reject = (field: 'context' | 'workers' | 'messages' | 'to' | 'text' | 'result' | 'worker_id' | 'review_key', message: string): void => {
           if (input[field] !== undefined) ctx.addIssue({ code: 'custom', path: [field], message });
         };
         if (input.action !== 'spawn') {
@@ -1661,7 +1666,10 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           reject('to', 'to is only valid with action=message');
           reject('text', 'text is only valid with action=message');
         }
-        if (input.action !== 'finish') reject('result', 'result is only valid with action=finish');
+        if (input.action !== 'finish') {
+          reject('result', 'result is only valid with action=finish');
+          reject('worker_id', 'worker_id is only valid with action=finish');
+        }
         if (input.action === 'finish') reject('review_key', `review_key is only valid for ${agentName()} heartbeat continuity, not worker finish`);
       })
       .strict(),
@@ -1687,11 +1695,11 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // And the identity behind it is the exact kind: a generic connector row would let
           // an uninvolved chat that happened to call something else in the same window
           // become the prime of this run.
-          const staged = stageSpawn({
-            workers: input.workers,
-            context: input.context ?? null,
-            caller: await callerNow(startedAt, { exact: true, reviewKey: input.review_key })
-          });
+          const caller = await callerNow(startedAt, { exact: true, reviewKey: input.review_key, allowSharedPrime: true });
+          const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+          const staged = sharedOwner
+            ? stageSharedEvePrimeSpawn(sharedOwner, input.workers, input.context ?? null)
+            : stageSpawn({ workers: input.workers, context: input.context ?? null, caller });
           let accepted = false;
           try {
             let durable = false;
@@ -1717,7 +1725,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Browser tabs are a publication side effect, never part of planning. They become
           // visible only after the exact broker revision above is durable.
           requestWorkerBootstraps(created.map((worker) => worker.id), runId);
-          await adoptAgent(PRIME_ID);
+          if (!sharedOwner) await adoptAgent(PRIME_ID);
           const invited = created.filter((worker) => worker.state === 'invited');
           const sleeping = created.filter((worker) => worker.state === 'sleeping' && worker.revivable);
           return {
@@ -1725,7 +1733,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               {
                 type: 'text' as const,
                 text:
-                  (becamePrime ? `This conversation is now the ${agentName()} conversation for worker run ${runId}. ` : '') +
+                  (sharedOwner ? 'Shared Eve connector authority used; this caller remains Unattributed. ' :
+                    becamePrime ? `This conversation is now the ${agentName()} conversation for worker run ${runId}. ` : '') +
                   `${created.length} worker(s) matched: ${created.map((info) => `${info.id} (${info.label}, ${info.state}${info.model ? `, model ${info.model}` : ''}${info.reasoningEffort ? `, reasoning ${info.reasoningEffort}` : ''})`).join(', ')}. ` +
                   (invited.length > 0 ? 'New worker chats are opening with their briefs already in them. ' : '') +
                   (defaultNotes?.length ? `${defaultNotes.join(' ')} ` : '') +
@@ -1741,7 +1750,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
             structuredContent: {
               action: 'spawn',
               run_id: runId,
-              self: PRIME_ID,
+              self: sharedOwner ? 'shared-eve' : PRIME_ID,
               became_prime: becamePrime,
               workers: created.map((info) => ({ id: info.id, label: info.label, state: info.state, model: info.model, reasoning_effort: info.reasoningEffort }))
             }
@@ -1830,7 +1839,13 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           }
           // Finish is worker-only. Shared Eve authority is intentionally not a caller identity:
           // without exact page/request proof, fail closed instead of misclassifying a worker as Prime.
-          const staged = stageFinishAgent(await callerNow(startedAt), input.result);
+          const caller = await callerNow(startedAt, { allowSharedPrime: true });
+          const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall() : null;
+          if (input.worker_id && !sharedOwner) return fail('SHARED_EVE_TARGET_ONLY: worker_id is only for an unattributed shared-Eve finish; no worker was finished.');
+          if (sharedOwner && !input.worker_id) return fail('SHARED_EVE_WORKER_TARGET_REQUIRED: supply worker_id to finish a named worker without page attribution; no worker was finished.');
+          const staged = sharedOwner
+            ? stageSharedEveWorkerFinish(sharedOwner, input.worker_id!, input.result)
+            : stageFinishAgent(caller, input.result);
           let accepted = staged.repeat;
           try {
             if (!staged.repeat) {
@@ -1856,7 +1871,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           }
           const { info, report, repeat } = staged;
           if (report) {
-            await recordAgentMessage(report, 'sent', info.conversationId);
+            await recordAgentMessage(report, 'sent', sharedOwner ?? info.conversationId);
           }
           // A retry is answered as a retry. Repeating "marked finished" would read as a
           // second finish and invite the model to keep going until it gets a different
@@ -1865,7 +1880,9 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
             content: [
               {
                 type: 'text' as const,
-                text: repeat
+                text: sharedOwner
+                  ? `Shared Eve connector accepted the explicitly addressed finish for ${info.id}; the calling chat is Unattributed, not proven to be that worker. ${repeat ? 'That result was already recorded; nothing was sent again.' : 'The report was durably queued for Eve.'}`
+                  : repeat
                   ? `${info.id} was already ${info.state} and that result was already queued for ${agentName()}, so nothing was ` +
                     'sent again. Stop working and stop calling tools.'
                   : info.state === 'finished'
@@ -2043,21 +2060,21 @@ async function callerNow(
   const sharedPrime = options.allowSharedPrime
     ? sharedEveCoordinatorForCurrentCall(options.reviewKey)
     : null;
-  if (!exactBeforeWait && !heartbeatContinuity && base.requestId && !sharedPrime) requestPrimeIdentityRecovery(base.requestId);
+  const pageAttributionOptional = getConfig().multiAgent.allowUnattributedCalls === true &&
+    !options.reviewKey && sharedEveOwnerForCurrentCall() !== null;
+  if (!exactBeforeWait && !heartbeatContinuity && base.requestId && !pageAttributionOptional) requestPrimeIdentityRecovery(base.requestId);
   const exactResolved =
     exactBeforeWait ??
     heartbeatContinuity?.conversationId ??
-    (await awaitFreshCallOrigin('agents', startedAt, sharedPrime ? Math.min(window, 1500) : window, {
+    (pageAttributionOptional ? null : await awaitFreshCallOrigin('agents', startedAt, sharedPrime ? Math.min(window, 1500) : window, {
       exact: options.exact,
       // ChatGPT's own id for this request, when it sent one. It names the conversation
       // outright, so two workers calling at the same moment are no longer a hard case.
       requestId: base.requestId
     }));
-  // An authenticated shared-Eve connector request may use ordinary self-contained
-  // tools without Companion page evidence. It must never borrow Prime's broker identity:
-  // a synthetic conversationId would let an unknown caller inspect or mutate a worker
-  // run and make the result look as if Prime had done it. No broker action has a safe
-  // nonmember identity fallback. Keep unrelated shared-Eve permissions unchanged.
+  // The opted-in operator route addresses the retained Prime family directly without
+  // pretending this request was sent by Prime or a worker. Page attribution is now
+  // optional for that route, including spawn and explicitly targeted worker finish.
   const resolved = exactResolved;
   const caller: Caller = {
     ...base,

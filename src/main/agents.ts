@@ -964,6 +964,16 @@ export function statusForSharedEvePrime(ownerConversationId: string): CallerSwar
   return statusForCaller({ conversationId: ownerConversationId });
 }
 
+/** An opted-in account operator can add workers to Eve's retained family without page proof. */
+export function stageSharedEvePrimeSpawn(
+  ownerConversationId: string,
+  workers: SpawnInput['workers'],
+  context: string | null
+): StagedSpawn {
+  requireSharedEvePrime(ownerConversationId);
+  return stageSpawn({ caller: { conversationId: ownerConversationId }, workers, context });
+}
+
 function requireSharedEvePrime(ownerConversationId: string): void {
   if (!getConfig().multiAgent.allowUnattributedCalls ||
       !ownerConversationId ||
@@ -1917,10 +1927,12 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   const conversationId = input.caller.conversationId ?? null;
   if (!conversationId) {
     throw new AgentError(
-      'UNIDENTIFIED_CALLER: this app could not prove which ChatGPT conversation this call came from, so it will not ' +
-        `make this chat the ${configuredAgentName()} conversation for a worker run. No workers were created. The paired browser extension has to be ` +
-        'connected and this conversation has to be showing its connector activity; wait a moment and call ' +
-        'agents action=spawn again.'
+      'NO_EXACT_CHAT_FOR_WORKER_FAMILY: spawning a new chat-owned worker family requires proof of the originating ' +
+        `ChatGPT conversation. This request has no such proof, so it cannot make an arbitrary chat the ${configuredAgentName()} Prime. ` +
+        'No workers were created. Authenticated shared-Eve authority, when enabled in Settings, still permits eligible ' +
+        'self-contained operations and explicitly addressed actions within an existing retained family; it does not ' +
+        'identify this caller as a particular chat. To create a new family, issue spawn from the actual paired ' +
+        'ChatGPT conversation after its exact identity is observed.'
     );
   }
 
@@ -2879,6 +2891,25 @@ function stageFinish(agent: Agent, result: string, acknowledgedMessageIds: reado
 /** Plans an explicit worker finish behind its durable acceptance barrier. */
 export function stageFinishAgent(caller: Caller, result: string): StagedFinish {
   return stageFinish(finishTarget(caller), result);
+}
+
+/**
+ * Explicitly addressed shared-Eve operator finish. The worker id is a routing target, not
+ * evidence that the worker issued the request. Preserve this distinction in the report.
+ */
+export function stageSharedEveWorkerFinish(ownerConversationId: string, workerId: string, result: string): StagedFinish {
+  requireSharedEvePrime(ownerConversationId);
+  const run = runForCaller({ conversationId: ownerConversationId });
+  const target = run?.agents.get(workerId);
+  if (!target || target.info.role !== 'worker' || heartbeatReviewAgent(target)) {
+    throw new AgentError('SHARED_EVE_WORKER_TARGET_REQUIRED: name a non-maintenance worker in Eve\'s current family. No worker was finished.');
+  }
+  const staged = stageFinish(target, result);
+  if (staged.report) {
+    staged.report.from = 'shared-eve';
+    staged.report.text = `[Shared Eve operator report for ${workerId}; caller not proven as worker] ${staged.report.text}`;
+  }
+  return staged;
 }
 
 /**

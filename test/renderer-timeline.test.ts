@@ -150,7 +150,8 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     HTMLInputElement: w.HTMLInputElement,
     HTMLSelectElement: w.HTMLSelectElement,
     HTMLTextAreaElement: w.HTMLTextAreaElement,
-    HTMLButtonElement: w.HTMLButtonElement
+    HTMLButtonElement: w.HTMLButtonElement,
+    HTMLDetailsElement: w.HTMLDetailsElement
   });
   if (!(w.HTMLElement.prototype as any).scrollIntoView) (w.HTMLElement.prototype as any).scrollIntoView = () => {};
 
@@ -1702,6 +1703,48 @@ it('controls the selected session without submitting another user message', asyn
   expect(live.controlCalls.at(-1)).toEqual({ id: summary([]).id, action: 'cancel' });
   w.document.getElementById('newChat')!.click(); await settle();
   expect((w.document.getElementById('sessionControls') as HTMLElement).hidden).toBe(false);
+});
+
+it('refreshes a silent Working state and shows the stopped browser-recovery verdict', async () => {
+  const { w } = await boot([]);
+  const api = (w as any).api;
+  const original = api.getSessionControls;
+  const reads = vi.fn(async (id: string) => ({
+    ok: true, data: { ...(await original(id)).data, repairStopped: true }
+  }));
+  api.getSessionControls = reads;
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 9000);
+  try {
+    await settle(1150);
+    expect(reads).toHaveBeenCalledWith(summary([]).id);
+    expect(w.document.getElementById('chatState')?.textContent).toContain('Recovery stopped');
+    expect(w.document.getElementById('chatState')?.classList.contains('is-working')).toBe(false);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+it('does not project a late timed-controls verdict into a newly selected chat', async () => {
+  const { w } = await boot([]);
+  const api = (w as any).api;
+  let resolveControls: ((reply: any) => void) | null = null;
+  api.getSessionControls = () => new Promise(resolve => { resolveControls = resolve; });
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 9000);
+  try {
+    await settle(1150);
+    expect(resolveControls).not.toBeNull();
+    w.document.getElementById('newChat')!.click();
+    await settle();
+    resolveControls!({ ok: true, data: { sessionId: summary([]).id, activeTurnId: 'held-turn',
+      blocked: '', automation: 'off', objective: '', repairStopped: true } });
+    await settle();
+    expect(w.document.getElementById('chatState')?.textContent).not.toContain('Recovery stopped');
+    expect(w.document.getElementById('sessionControlStatus')?.textContent).not.toContain('recovery stopped');
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 it('offers deliberate helper retry only for the selected source session', async () => {

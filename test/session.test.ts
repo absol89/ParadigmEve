@@ -184,6 +184,21 @@ describe('session store', () => {
     expect(otherMetaAfterRecentRead.events).toBe(1);
   });
 
+  it('reads all queued events in order without forcing that session metadata to disk before shutdown flush', async () => {
+    const session = await createSession({ title: 'metadata batching' });
+    for (let i = 0; i < 3; i++) await appendEvent(session.id, {
+      time: 2000 + i, source: 'app', kind: 'note', message: { text: `step-${i}`, truncated: false, chars: 6 }
+    });
+    const full = await readEvents(session.id);
+    expect(full.filter(row => row.kind === 'note').map(row => row.message.text)).toEqual(['step-0', 'step-1', 'step-2']);
+    const recent = await readRecentEvents(session.id, 3);
+    expect(recent.map(row => row.seq).sort((a, b) => a - b)).toEqual(full.map(row => row.seq).sort((a, b) => a - b));
+    const metadataPath = path.join(sessionsRoot(), session.id, 'meta.json');
+    expect(JSON.parse(await fs.readFile(metadataPath, 'utf8')).events).toBe(0);
+    await flushSessions();
+    expect(JSON.parse(await fs.readFile(metadataPath, 'utf8')).events).toBe(3);
+  });
+
   it('pages backwards over journal and canonical messages without overlapping sequence boundaries', async () => {
     const session = await createSession({ title: 'backward history' });
     for (let i = 0; i < 12; i++) await appendEvent(session.id, {

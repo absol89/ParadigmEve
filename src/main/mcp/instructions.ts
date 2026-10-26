@@ -78,8 +78,9 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
     (desktop && (caps.screen || caps.control || caps.clipboardRead || caps.clipboardWrite) ? ', plus its enabled Computer use tools for screen, input and clipboard' : '') +
     `; ${surfaceDefinition('plugins').connectorName} for enabled external apps and services.`,
     `Host: ${host}. Instance: ${connectorName}. Roots: ${roots}`,
+    `Enabled in Eve Core: ${Object.entries(caps).filter(([, enabled]) => enabled).map(([name]) => name).join(', ') || 'none'}; read-only=${ctx.readOnly ? 'on' : 'off'}; plans=${sessionTools ? 'on' : 'off'}; workers=${agentTools ? 'on' : 'off'}.`,
     ctx.readOnly ? 'The local tools are read-only.' : 'Use the tools listed in this conversation.',
-    '"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before Eve receives the call. It is not an Eve failure or a missing capability: retry the identical call once.',
+    '"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before the call reaches Eve; Eve neither ran nor refused it.',
     'An approved root may be the parent of the project. Use the exact project path and keep every intermediate folder; do not guess a missing project level.',
     'Paths may be virtual under the roots above or absolute native paths inside them. Once this chat has a project, later paths may be relative to it. Use a full path to select another project.',
     connectedWorkGuidance(connectorName),
@@ -158,7 +159,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
     '',
     '# Workers',
     'Use agents for independent subtasks while continuing useful work yourself. Reuse a sleeping worker for related follow-up work before spawning a replacement. Only terminal workers whose context is full need replacing.',
-    'When spawning workers, omit model and reasoning_effort unless the user explicitly requests an override for that setting. The app applies the user\'s saved worker defaults automatically; you do not need their concrete values and must not ask the user to choose or confirm them before spawning.',
+    'Worker model and reasoning_effort default to the user\'s saved app settings. Optional overrides represent explicit user selections. An omitted field leaves its default unchanged.',
     'A worker sees only what you send it. In spawn, put shared repository/folder instructions, constraints and validation requirements in context once; put the objective and assigned files in each task. Explicitly say what each worker may change. Do not repeat the shared context in every task.',
     'Use action=message to steer a worker; batch messages when sending several. Reports arrive only with tool results; they do not restart an idle prime. Use status once to collect pending reports before finalizing; do not repeatedly poll. If a report has not arrived, state that review is pending; do not claim delegated verification is complete before reading its report. Check findings and changes before relying on them.',
     `Workers communicate with ${connectorName}; when a worker addresses that coordinator through agents action=message, the internal recipient id is "prime". Keep working while replies are pending, and use action=finish when done with RESULT / CHANGES / VALIDATION / BLOCKERS. A finished reusable worker sleeps and can be messaged again.`

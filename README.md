@@ -41,6 +41,7 @@ In our hands-on use, **GPT-5.6 Sol Medium and GPT-6 High workflows have seemed m
 
 - **Finish software and file work:** inspect and edit approved project files, run terminal commands and tests, coordinate steps through Plans, and audit the actual results.
 - **Keep complicated tasks moving:** delegate separate pieces to reusable helper chats, preserve the main Eve conversation as coordinator, and pick up after a restart or a long-chat handoff.
+- **Notice when ChatGPT itself needs you:** the 2.4.5 development Companion can detect a current-turn tool approval card even when ChatGPT has collapsed it under **Previous activity**, record the wait, and surface a native notification. Eve does not click or auto-approve the provider card.
 - **Remember useful context on purpose:** save Pins in Threads, create reusable prompts in the `%instructions` category (invoke an individual one by its exact `%name`), group Threads into Quilts (`#name`), and review locally recorded conversation evidence.
 - **Run local and scheduled workflows:** set up routines, use a bounded read-only heartbeat to review recorded requests and Plans, and optionally enable Goal/Loop continuation. The heartbeat reviews; it does **not** autonomously execute discoveries.
 - **Transcribe and work with documents:** supported Windows x64 builds can use local Whisper transcription and speaker diarization, with optional explicitly selected cloud speech recognition. DOCX, XLSX, PDF, and PPTX inspection uses the built-in file broker; editing depends on an available provider and consent. WordCraft and GridCraft are separate developing apps, not bundled full-fidelity editors.
@@ -56,7 +57,7 @@ None of these capabilities require you to enable *every* permission.
 4. At [chatgpt.com/plugins](https://chatgpt.com/plugins), choose **Add → Add custom MCP server** and connect Eve; review its ChatGPT action permissions. Your account must support custom MCP apps.
 5. Give Eve a concrete job. Select your preferred model when offered; Eve must not silently switch it.
 
-See the [setup reference](docs/setup.md) for detailed connection and platform instructions, or [v2.4.1 notes](docs/release-notes/v2.4.1.md) for the previous tagged source.
+See the [setup reference](docs/setup.md) for detailed connection and platform instructions, or [v2.4.4 notes](docs/release-notes/v2.4.4.md) for the current published source line.
 
 ## Privacy, permissions, and limits
 
@@ -68,7 +69,7 @@ ParadigmEve requires an eligible ChatGPT account and Chrome/Chromium, Edge, or B
 
 ## Release status
 
-**2.4.5 source development:** This branch carries the heartbeat and Plan-housekeeping reliability changes on top of the published 2.4.4 source line. The [2.4.5 development notes](docs/release-notes/v2.4.5.md) describe the exact source-only verification. The installed c8 candidate predates this change; no 2.4.5 installer has been built or installed. A source branch or tag never implies downloadable packages; use [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) for actual downloads.
+**2.4.5 development:** This branch builds on the published 2.4.4 source line with heartbeat/Plan housekeeping and worker-coordination reliability work. c1, c2, and c3 were built and installed locally for dogfood; c3 completed full CI (6,074 main tests passed, 44 skipped), Windows packaging checks, installer/executable checksum verification, and initial post-install Prime/worker and data-preservation checks. Its live `/recovery` endpoint subsequently reported `ready:true`, though that same-version response alone does not prove Chrome loaded the exact c3 extension build fingerprint. c3 source recognizes a pending current-turn ChatGPT approval even when **Previous activity** is collapsed, keeps that human wait from being treated as a stalled/silent turn, records one waiting episode with a delayed deduplicated native notice, and never answers or replays the provider decision. It also fences Compact & Resume cancellation against successor-tab creation and changes the candidate reinstall/restart path to preserve existing ChatGPT tabs and stay in the background. Regression tests cover these paths, but a real post-install hidden approval notification and a cancelled handoff remain unverified. See the [2.4.5 development notes](docs/release-notes/v2.4.5.md) for the detailed source boundary. No public tag, GitHub release, Latest promotion, or downloadable 2.4.5 package is implied; use [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) for actual downloads.
 
 ## Build and contribute
 

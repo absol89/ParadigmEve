@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFile } from 'node:fs/promises';
 import { app } from 'electron';
-import { findPreferredBrowser, selectedChatBrowser, WINDOWS_UNTHROTTLED_CHAT_FLAGS } from './browser.js';
+import { findPreferredBrowser, launchWindowsMinimizedBrowser, selectedChatBrowser, WINDOWS_UNTHROTTLED_CHAT_FLAGS } from './browser.js';
 import { act, findUi, listWindows, type WindowInfo } from './computer/index.js';
 import { extensionDir } from './extension-path.js';
 import { cancelCompanionSetupStep, loadUnpackedCompanion, requestCompanionSetupStep } from './setup-automation.js';
@@ -639,18 +639,23 @@ export async function openSetupAssistantLink(url: string): Promise<void> {
 }
 
 /** Launch the ordinary dedicated Chrome profile with caller-owned browser arguments. */
-async function launchParadigmEveChromeProfile(args: string[], browser: ChatBrowser = selectedChatBrowser()): Promise<void> {
+async function launchParadigmEveChromeProfile(args: string[], browser: ChatBrowser = selectedChatBrowser(), backgroundStartup = false): Promise<void> {
   const family = chatBrowserFamily(browser);
   const browserPath = findPreferredBrowser(process.platform, process.env, undefined, undefined, browser);
   if (!browserPath) throw new Error(`${family.label} was not found. Install it or choose another Eve Browser before continuing ParadigmEve setup.`);
   const profile = path.join(app.getPath('userData'), PARADIGMEVE_BROWSER_PROFILE[browser]);
-  const child = spawn(browserPath, [
+  const browserArgs = [
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
     ...(process.platform === 'win32' ? WINDOWS_UNTHROTTLED_CHAT_FLAGS : []),
     ...args,
-  ], { stdio: 'ignore', windowsHide: false });
+  ];
+  if (backgroundStartup && process.platform === 'win32') {
+    await launchWindowsMinimizedBrowser(browserPath, browserArgs);
+    return;
+  }
+  const child = spawn(browserPath, browserArgs, { stdio: 'ignore', windowsHide: false });
   await new Promise<void>((resolve, reject) => {
     child.once('error', reject);
     child.once('spawn', resolve);
@@ -703,6 +708,31 @@ export async function paradigmeEveBrowserWindowOpen(): Promise<boolean | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * The installer preserves all already-open Eve Browser documents. If its dedicated profile has
+ * no native window at all, restore Chrome's saved session quietly instead of leaving Companion
+ * startup permanently deferred. No URL, UI action, profile restart or foreground activation is
+ * allowed on this path. Unknown window identity is not proof of absence.
+ */
+export async function restoreMissingParadigmEveBrowserAfterInstall(): Promise<'restored' | 'present' | 'unknown'> {
+  if (process.platform !== 'win32') return 'unknown';
+  const browser = selectedChatBrowser();
+  for (let check = 0; check < 2; check += 1) {
+    try {
+      const windows = (await listWindows()).windows;
+      if (windows.some((entry) => dedicatedParadigmEveChromeWindow(entry, browser))) return 'present';
+    } catch {
+      return 'unknown';
+    }
+    if (selectedChatBrowser() !== browser) return 'unknown';
+  }
+  // A second exact native census confirmed no dedicated window. Chrome receives no ChatGPT URL:
+  // its own previous session owns which tabs return, with no duplicate Prime/bootstrap tab.
+  await launchParadigmEveChromeProfile(['--restore-last-session'], browser, true);
+  await waitForDedicatedParadigmEveChromeWindow(5000, browser);
+  return 'restored';
 }
 
 /**

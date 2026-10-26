@@ -321,6 +321,48 @@ beforeEach(async () => {
 // ------------------------------------------------------------------- tests
 
 describe('endpoint hardening', () => {
+  it('waits for late exact Companion proof in work_context even when account-wide unattributed calls are allowed', async () => {
+    const previous = getConfig();
+    const requestId = 'wfr_work_context_late_exact';
+    const conversationId = 'conv-work-context-late-exact';
+    try {
+      await saveConfig({
+        ...previous,
+        multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true }
+      });
+      setTimeout(() => {
+        observeRequestCorrelation({
+          requestId,
+          conversationId,
+          sessionId: 'session-work-context-late-exact',
+          messageId: 'message-work-context-late-exact',
+          tool: 'work_context',
+          observedAt: Date.now()
+        });
+      }, 40).unref?.();
+
+      const reply = await modern(
+        'tools/call',
+        { name: 'work_context', arguments: {} },
+        { 'x-request-id': `${requestId}/att1` }
+      );
+      expect(failed(reply), textOf(reply)).toBe(false);
+      expect(reply.body.result?.structuredContent).toMatchObject({
+        callerIdentity: 'proven',
+        conversationId,
+        sessionId: 'session-work-context-late-exact',
+        callerProof: {
+          kind: 'exact_companion',
+          requestId,
+          conversationId,
+          sessionId: 'session-work-context-late-exact'
+        }
+      });
+    } finally {
+      await saveConfig(previous);
+    }
+  });
+
   it('does not expose native paths from uncommon filesystem errors', () => {
     const error = Object.assign(new Error(`ELOOP: too many symbolic links, realpath '${approved}\\loop\\file.txt'`), {
       code: 'ELOOP',
@@ -692,7 +734,7 @@ describe('model-facing surfaces', () => {
     try {
       everything();
       const agentsTool = toolList(await core('tools/list')).find((tool) => tool.name === 'agents')!;
-      expect(agentsTool.description).toContain('Run ChatGPT workers for Eva Å');
+      expect(agentsTool.description).toContain('ChatGPT worker coordination for Eva Å');
       expect(agentsTool.description).toContain('message routes Eva Å↔worker');
       expect(agentsTool.description).not.toMatch(/\bPrime\b/);
     } finally {
@@ -1749,7 +1791,7 @@ describe('capability gating', () => {
     const agentsDescription = (tools.body.result.tools as Array<{ name: string; description?: string }>).find(
       (tool) => tool.name === 'agents'
     )?.description;
-    expect(agentsDescription).toContain('Reuse a suitable sleeping worker with message before spawn');
+    expect(agentsDescription).toContain('Existing sleeping workers can be revived with message');
   });
 
   it('rejects action-specific agent fields instead of silently ignoring them', async () => {
@@ -3930,6 +3972,27 @@ describe('exec_command and write_stdin', () => {
       expect(failed(invalid), textOf(invalid)).toBe(true);
       expect(textOf(invalid)).toMatch(/exactly one of cmd or cmds/i);
     }
+  });
+
+  it('redacts synthetic credentials from final Core file and command results, including structured output', async () => {
+    const secret = 'github_pat_' + 'A'.repeat(48);
+    await fs.writeFile(path.join(approved, 'synthetic-secret-fixture.txt'), `safe line\n${secret}\n`, 'utf8');
+    const read = await core('tools/call', { name: 'read', arguments: {
+      paths: ['/workspace/synthetic-secret-fixture.txt']
+    } });
+    expect(failed(read), textOf(read)).toBe(false);
+    expect(JSON.stringify(read.body.result)).not.toContain(secret);
+    expect(textOf(read)).toContain('[redacted]');
+    expect(textOf(read)).toContain('safe line');
+
+    const command = IS_WINDOWS ? `Write-Output '${secret}'; Write-Output 'safe line'` : `printf '%s\\n' '${secret}' 'safe line'`;
+    const exec = await core('tools/call', { name: 'exec_command', arguments: {
+      cmd: command, workdir: '/workspace', yield_time_ms: 5000
+    } });
+    expect(failed(exec), textOf(exec)).toBe(false);
+    expect(JSON.stringify(exec.body.result)).not.toContain(secret);
+    expect(exec.body.result?.structuredContent?.output).toContain('[redacted]');
+    expect(exec.body.result?.structuredContent?.output).toContain('safe line');
   });
 
   it('reads a batch exit per command, so one search finding nothing is not a failure', async () => {

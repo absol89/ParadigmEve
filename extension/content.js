@@ -2104,7 +2104,12 @@
    * is what makes `lastChangeAt` mean anything.
    */
   function turnStalled() {
-    return turnStartedAt > 0 && Date.now() - lastChangeAt > STALL_MS;
+    return turnStartedAt > 0 && Date.now() - stallClock() > STALL_MS;
+  }
+
+  function stallClock() {
+    if (turnStartedAt > 0 && CLF_DOM.approvalWaiting()) lastChangeAt = Math.max(lastChangeAt, Date.now());
+    return lastChangeAt;
   }
 
   /** The turn section a node is rendered in, or null. */
@@ -2732,7 +2737,7 @@
       // messages keyed by ChatGPT's own message id. Do not emit a second progress stream.
       // Native activity is emitted by refreshFiber() from ChatGPT's stable thought-message
       // identity. DOM rows alone are presentation and never mint durable page_tool ids.
-      if (!stallReported && Date.now() - lastChangeAt > STALL_MS) {
+      if (!stallReported && Date.now() - stallClock() > STALL_MS) {
         stallReported = true;
         emit({ kind: 'chat_error', text: 'No visible progress for ten minutes. The turn is still marked as generating.', turnId, recoverable: true });
       }
@@ -4250,16 +4255,21 @@
         pageConversation &&
         pageConversation !== askedConversation
       );
+      let meaningfulToolProgress = false;
       const fresh = turn.calls.filter((call) => {
         if (!call.requestId || requestOwnersConfirmed.get(call.requestId) !== askedConversation) return false;
         const owner = index === activeTurnIndex ? activeLocalTurnId || '' : '';
         const signature = `${call.tool}\u0000${call.requestId || ''}\u0000${call.answered ? '1' : '0'}\u0000${owner}`;
-        if (callsReported.get(call.messageId) === signature) return false;
-        callsReported.set(call.messageId, signature);
+        const prior = callsReported.get(call.messageId);
+        if (prior?.signature === signature) return false;
+        // A recovered owner/request id is important recording evidence, but it is not a new
+        // answer. Repeated metadata updates must not keep a broken stream alive forever.
+        if (!prior || (!prior.answered && call.answered)) meaningfulToolProgress = true;
+        callsReported.set(call.messageId, { signature, answered: Boolean(call.answered) });
         return true;
       });
       if (fresh.length > 0) {
-        if (generating && index === activeTurnIndex) noteTurnProgress();
+        if (meaningfulToolProgress && generating && index === activeTurnIndex) noteTurnProgress();
         emit({
           kind: 'tool_evidence',
           ...(index === activeTurnIndex ? { turnId: activeLocalTurnId } : {}),
@@ -6444,7 +6454,7 @@
     const forEpoch = epoch;
     const current = () => alive && conversationId === forId && epoch === forEpoch;
     try {
-      const reply = await ask({ type: 'activity', conversationId, since });
+      const reply = await ask({ type: 'activity', conversationId, since, approval: CLF_DOM.approvalWaiting() });
       if (!reply || reply.ok !== true || !reply.data) {
         // Keep waiting only for failures that can genuinely mean "the local app/worker is
         // not reachable yet". A structured application refusal is an answer to the identity
@@ -8684,7 +8694,7 @@
     const forId = conversationId;
     const forEpoch = epoch;
     // A refused duplicate must not revoke the run already awaiting an app reply.
-    if (nativeBusy || !forId || !alive || CLF_DOM.conversationId() !== forId) return;
+    if (nativeBusy || !forId || !alive || CLF_DOM.conversationId() !== forId || activeVoiceSession()) return;
     const forRun = ++nativeRun;
     const current = () =>
       alive &&
@@ -8736,6 +8746,13 @@
       renderControl();
       return;
     }
+    if (activeVoiceSession()) {
+      pressedAt = 0;
+      nativeBusy = false;
+      nativePhase = '';
+      renderControl();
+      return;
+    }
     if (
       (policyData.goal && (policyData.goal.blocked === 'worker' || policyData.goal.blocked === 'blocked')) ||
       policyData.bootstrap === 'worker'
@@ -8769,6 +8786,15 @@
       return;
     }
     if (filed.data.job) job = filed.data.job;
+    if (activeVoiceSession()) {
+      // The durable unsent ticket survives Voice and can be picked up after the call ends.
+      pressedAt = 0;
+      nativeBusy = false;
+      nativePhase = '';
+      renderControl();
+      void pullActivity();
+      return;
+    }
 
     // Activity is only a projection and may predate a completed Send. The fresh ticket
     // owns permission to interrupt: after dispatch, Stop could cancel the handoff itself.
@@ -8806,7 +8832,7 @@
       pressedAt = 0;
       nativeBusy = false;
       nativePhase = '';
-      localError = barrier;
+      localError = activeVoiceSession() ? '' : barrier;
       renderControl();
       void pullActivity();
       return;
@@ -8825,6 +8851,14 @@
     }
     const data = reply.data || {};
     if (data.job) job = data.job;
+    if (activeVoiceSession()) {
+      pressedAt = 0;
+      nativeBusy = false;
+      nativePhase = '';
+      renderControl();
+      void pullActivity();
+      return;
+    }
     // No prompt means the app has already handed one out for this transaction — this tab
     // pressed twice, or reloaded, or its first request's answer was lost. There is nothing
     // to submit: submitting a second instruction would start a second turn, and then two
@@ -9046,6 +9080,7 @@
       epoch === forEpoch &&
       CLF_DOM.conversationId() === forId && sameTurn();
     if (!forId || !current()) return 'This chat changed before compaction could start.';
+    if (activeVoiceSession()) return 'Voice is active; the unsent compaction ticket is waiting.';
     // INTERRUPTING — stop the turn rather than wait it out. That is the whole request, by
     // hand or automatically: this happens because the turn is long, not because it is
     // nearly done.
@@ -9096,6 +9131,7 @@
       return count === 0;
     }, settleMs);
     if (!current()) return 'This chat changed while compaction was waiting for local tools.';
+    if (activeVoiceSession()) return 'Voice is active; the unsent compaction ticket is waiting.';
     if (unavailable) {
       return 'Could not verify that local tools had stopped. Nothing was compacted.';
     }
@@ -9120,7 +9156,7 @@
       nativeBusy = false;
       nativePhase = '';
       pressedAt = 0;
-      localError = why;
+      localError = activeVoiceSession() ? '' : why;
       // A transient page/DOM failure is not a verdict on the durable ticket, manual or automatic.
       // This matters especially just after an app/browser restart: the exact source page can be
       // restored before ChatGPT has mounted its composer, and cancelling here turns a harmless
@@ -9152,6 +9188,7 @@
     if (!current()) return;
     if (!prompt) return void (await abandonBeforeSend('The app did not send the handoff instruction.', true));
     if (!token) return void (await abandonBeforeSend('The app did not send a compaction token, so nothing could be tracked.', true));
+    if (activeVoiceSession()) return void (await abandonBeforeSend('Voice is active; the unsent compaction ticket is waiting.'));
 
     try {
       nativePhase = 'prompting';
@@ -9162,14 +9199,14 @@
       // was being composed; ChatGPT restores that draft on every load. It is this app's text, not
       // the person's, yet it refused every later attempt as "a draft is already in ChatGPT". Its
       // marker is the proof, and attachments still protect a real draft (Chat On Steroids 2.1.34).
-      if (handoffResidue(existing, prompt) && squeeze(existing.textContent) !== squeeze(prompt)) {
-        CLF_DOM.clearPromptExact(existing.textContent);
+      if (handoffResidue(existing, prompt) && squeeze(CLF_DOM.editorAuthoredText(existing)) !== squeeze(prompt)) {
+        CLF_DOM.clearPromptExact(CLF_DOM.editorAuthoredText(existing));
         existing = CLF_DOM.composer();
       }
       const occupiedByOtherDraft =
-        Boolean(existing && (existing.textContent || '').trim()) &&
-        squeeze(existing?.textContent) !== squeeze(prompt);
-      if (squeeze(existing?.textContent) !== squeeze(prompt) && !CLF_DOM.insertPrompt(prompt)) {
+        Boolean(CLF_DOM.editorAuthoredText(existing).trim()) &&
+        squeeze(CLF_DOM.editorAuthoredText(existing)) !== squeeze(prompt);
+      if (squeeze(CLF_DOM.editorAuthoredText(existing)) !== squeeze(prompt) && !CLF_DOM.insertPrompt(prompt)) {
         return void (await abandonBeforeSend(
           'ChatGPT would not accept the handoff instruction — clear the message box and try again.',
           // An occupied composer is durable state: ChatGPT restores drafts across reloads. Leaving
@@ -9182,9 +9219,13 @@
       }
       await Promise.resolve();
       if (!current()) return;
+      if (activeVoiceSession()) {
+        CLF_DOM.clearPromptExact(prompt);
+        return void (await abandonBeforeSend('Voice is active; the unsent compaction ticket is waiting.'));
+      }
       const composer = CLF_DOM.composer();
-      if (!composer || squeeze(composer.textContent) !== squeeze(prompt)) {
-        const occupiedAfterInsert = Boolean(composer && (composer.textContent || '').trim());
+      if (!composer || squeeze(CLF_DOM.editorAuthoredText(composer)) !== squeeze(prompt)) {
+        const occupiedAfterInsert = Boolean(CLF_DOM.editorAuthoredText(composer).trim());
         return void (await abandonBeforeSend(
           'The message box changed before the handoff instruction could be sent. Its draft was preserved; nothing was compacted.',
           occupiedAfterInsert
@@ -9203,6 +9244,10 @@
         localError = replyError(permit) || 'The durable handoff attempt is already owned; reconciling ChatGPT’s marked message.';
         renderControl();
         return;
+      }
+      if (activeVoiceSession()) {
+        CLF_DOM.clearPromptExact(prompt);
+        return void (await abandonBeforeSend('Voice is active; the unsent compaction ticket is waiting.'));
       }
       // The at-most-once cut, and the last thing before the click. Exactly one document takes
       // this transition; past it the prompt may be with ChatGPT already — send() clicks first
@@ -9223,6 +9268,17 @@
         return;
       }
       attemptCrossed = true;
+      if (activeVoiceSession()) {
+        // Dispatch was durably armed before Voice appeared. The click has not happened in this
+        // document, but another document cannot assume that; retain the ambiguous send fence.
+        CLF_DOM.clearPromptExact(prompt);
+        nativeBusy = false;
+        nativePhase = 'waiting';
+        pressedAt = 0;
+        localError = 'Voice started before handoff Send. The durable attempt remains fenced; it will not be sent twice.';
+        renderControl();
+        return;
+      }
       rememberUserSend();
       if (!(await sendSubmittedText(current))) {
         CLF_DOM.clearPromptExact(prompt);
@@ -9271,11 +9327,11 @@
   const HANDOFF_MARKED = /^\s*\[\[CLF-HANDOFF:[A-Za-z0-9_-]{16,64}\]\]/;
   /** A composer holding a handoff request this app typed (any attempt's), and no attachment. */
   function handoffMarked(box) {
-    return Boolean(box && HANDOFF_MARKED.test(box.textContent || '') && !CLF_DOM.hasComposerAttachments());
+    return Boolean(box && HANDOFF_MARKED.test(CLF_DOM.editorAuthoredText(box)) && !CLF_DOM.hasComposerAttachments());
   }
   function handoffResidue(box, prompt) {
     const body = text => String(text || '').replace(HANDOFF_MARKED, '').replace(/\s+/g, '');
-    return handoffMarked(box) && !!body(box.textContent) && body(box.textContent) === body(prompt);
+    return handoffMarked(box) && !!body(CLF_DOM.editorAuthoredText(box)) && body(CLF_DOM.editorAuthoredText(box)) === body(prompt);
   }
   const continuationReconciliations = new Map();
   /**
@@ -11225,7 +11281,7 @@
 
   function currentActivityPullDelay() {
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-    const active = nativeBusy || Boolean(job && job.busy) || pendingTools > 0;
+    const active = nativeBusy || Boolean(job && job.busy) || pendingTools > 0 || CLF_DOM.approvalWaiting();
     // A goal draft lives entirely on this feed — its streamed text is what the stage panel
     // shows, and the finished message only arrives here — so it polls at the live cadence
     // even in a hidden tab, which is exactly the tab this feature runs in.
@@ -11558,6 +11614,15 @@
     const ownsFreshPage = () => !target && onTarget() && markedFresh() && !CLF_DOM.turns().length &&
       (offeredProject ? CLF_DOM.projectHomeId() === offeredProject : location.pathname === '/');
     if (!target && !ownsFreshPage()) return false;
+    // The exact opened Project page can stay on "loading" forever after that Project was
+    // deleted. Only elapsed document time, a missing composer and an *expanded* sidebar
+    // explicitly lacking this id together prove unavailability. No claim or Send has happened.
+    if (!target && offeredProject && CLF_DOM.projectHomeId() === offeredProject &&
+        !CLF_DOM.composerVisible() && performance.now() >= 30_000 &&
+        CLF_DOM.sidebarListsProject(offeredProject) === false) {
+      await ask({ type: 'desktop_input_project_missing', id: message.id, project: offeredProject });
+      return false;
+    }
     desktopInputBusy = true;
     let decision = null;
     let sent = false;
@@ -11595,8 +11660,11 @@
       const reply = await ask({ type: 'desktop_input', id: message.id, conversationId: target, requiresAuthorization: true });
       const input = reply?.data?.input;
       if (!input || !onTarget()) return false;
-      const fail = async (error) => { await ask({ type: 'desktop_input', id: input.id, owner: input.owner, fail: true, error }); return false; };
-      if (recoveryTurnId && input.recoveryTurnId !== recoveryTurnId) return fail('Restart recovery ownership changed before delivery.');
+      const fail = async (error, detail = 'page-prepare-failure') => {
+        await ask({ type: 'desktop_input', id: input.id, owner: input.owner, fail: true, error, detail });
+        return false;
+      };
+      if (recoveryTurnId && input.recoveryTurnId !== recoveryTurnId) return fail('Restart recovery ownership changed before delivery.', 'recovery-owner-changed');
       if (!target) {
         // Destination proof for a fresh chat: exactly the claimed native Project's home, or the
         // site root when the input has none. Never type into the wrong place and call it sent.
@@ -11617,7 +11685,7 @@
         // The offer only wakes this document. The just-committed outbox claim
         // authorizes interrupting this exact tool-free turn, like handoff's Stop
         // then normal Send. A changed question, tool call or lost claim forbids it.
-        if (input.directTurn?.id !== message.directTurn.id || pendingTools > 0) return fail('The turn changed before direct delivery.');
+        if (input.directTurn?.id !== message.directTurn.id || pendingTools > 0) return fail('The turn changed before direct delivery.', 'turn-progressed');
         if (CLF_DOM.generating()) {
           if (turnId !== input.directTurn.id || !CLF_DOM.stopGeneration(onTarget)) return fail('The current answer could not be stopped.');
           userStopped = true;
@@ -11642,7 +11710,7 @@
         const reason = CLF_DOM.modelSelectionFailureReason?.();
         return fail(providerLimitation() || `Requested model or reasoning could not be confirmed${reason ? ` (${reason})` : ''}`);
       }
-      if (!(await CLF_DOM.selectNativeMode(input.nativeMode, onTarget))) return fail(providerLimitation() || 'Requested ChatGPT Think mode could not be confirmed');
+      if (!(await CLF_DOM.selectNativeMode(input.nativeMode, onTarget))) return fail(providerLimitation() || 'Requested ChatGPT Think mode could not be confirmed', 'native-mode-unconfirmed');
       if (!onTarget() || CLF_DOM.generating() || (!freshDraftReplaceable() && (CLF_DOM.composer()?.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return fail('The ChatGPT composer changed before sending');
       if (!CLF_DOM.insertPrompt(input.text, freshDraftReplaceable())) return fail('ChatGPT did not accept the text');
       const sendingTarget = submittedSendLifetime(target, forEpoch);

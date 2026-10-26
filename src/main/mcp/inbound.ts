@@ -38,7 +38,7 @@ const store = new AsyncLocalStorage<{
  * id must be observed on both sides before it becomes ownership evidence. Connector display
  * names are deliberately absent: they are presentation, not technical identity.
  */
-const admittedRequestIds = new Map<string, true>();
+const admittedRequestIds = new Map<string, number>();
 const MAX_ADMITTED_REQUEST_IDS = 50_000;
 
 const admissionListeners = new Set<(requestId: string) => void>();
@@ -52,8 +52,9 @@ export function onInboundToolRequest(listener: (requestId: string) => void): () 
 export function noteInboundToolRequest(requestId: string | null): void {
   if (!requestId) return;
   const first = !admittedRequestIds.has(requestId);
+  const admittedAt = admittedRequestIds.get(requestId) ?? Date.now();
   admittedRequestIds.delete(requestId);
-  admittedRequestIds.set(requestId, true);
+  admittedRequestIds.set(requestId, admittedAt);
   while (admittedRequestIds.size > MAX_ADMITTED_REQUEST_IDS) {
     admittedRequestIds.delete(admittedRequestIds.keys().next().value!);
   }
@@ -66,6 +67,11 @@ export function noteInboundToolRequest(requestId: string | null): void {
 /** Page evidence can confirm only a request the local MCP server actually admitted. */
 export function hasInboundToolRequest(requestId: string): boolean {
   return admittedRequestIds.has(requestId);
+}
+
+/** First local MCP admission for this exact workflow request, for debug timing only. */
+export function inboundToolRequestAt(requestId: string): number | null {
+  return admittedRequestIds.get(requestId) ?? null;
 }
 
 export function resetInboundRequestsForTests(): void {

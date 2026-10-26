@@ -1075,6 +1075,8 @@
   "What should each continuation focus on?": "¿En qué debería centrarse cada continuación?",
   "This worker is managed by your agent.": "Tu agente administra a este agente de trabajo.",
   "This chat is blocked.": "Este chat está bloqueado.",
+  "Automatic browser recovery stopped; open this chat to resume checks.": "Se detuvo la recuperación automática del navegador. Abre este chat para reanudar las comprobaciones.",
+  "Recovery stopped — browser action was not confirmed.": "Se detuvo la recuperación porque no se confirmó la acción del navegador.",
   "Compaction is running in ChatGPT.": "La compactación se está ejecutando en ChatGPT.",
   " … cut, {0} characters in the original": " … recortado, {0} caracteres en el original",
   "Source": "Origen",

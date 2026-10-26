@@ -1080,6 +1080,8 @@
   "What should each continuation focus on?": "Vad ska varje fortsättning fokusera på?",
   "This worker is managed by your agent.": "Den här underagenten hanteras av din agent.",
   "This chat is blocked.": "Den här chatten är blockerad.",
+  "Automatic browser recovery stopped; open this chat to resume checks.": "Automatisk webbläsaråterställning har stoppats. Öppna chatten för att återuppta kontrollerna.",
+  "Recovery stopped — browser action was not confirmed.": "Återställningen har stoppats – webbläsaråtgärden kunde inte bekräftas.",
   "Compaction is running in ChatGPT.": "Komprimering körs i ChatGPT.",
   " … cut, {0} characters in the original": "… klippt, {0} tecken i originalet",
   "Source": "Källa",
