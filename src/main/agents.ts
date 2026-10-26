@@ -707,6 +707,8 @@ export function requestPrimeIdentityRecovery(requestId: string): void {
  * What a caller can offer as proof of who it is. No field is ever an agent id.
  */
 export interface Caller {
+  /** Explicit installation execution owner, distinct from observed worker identity. */
+  attributionSource?: 'installation_prime';
   /**
    * The ChatGPT conversation this call was proven to come from, and the only identity any
    * agent has.
@@ -970,15 +972,16 @@ export function stageSharedEvePrimeSpawn(
   workers: SpawnInput['workers'],
   context: string | null
 ): StagedSpawn {
-  requireSharedEvePrime(ownerConversationId);
+  requireSharedEvePrime(ownerConversationId, true);
   return stageSpawn({ caller: { conversationId: ownerConversationId }, workers, context });
 }
 
-function requireSharedEvePrime(ownerConversationId: string): void {
+function requireSharedEvePrime(ownerConversationId: string, allowNewFamily = false): void {
+  const family = primeForOwnedConversation(ownerConversationId);
   if (!getConfig().multiAgent.allowUnattributedCalls ||
       !ownerConversationId ||
       currentAgentConversationId() !== ownerConversationId ||
-      primeForOwnedConversation(ownerConversationId) !== ownerConversationId) {
+      (family !== ownerConversationId && !(allowNewFamily && family === null))) {
     throw new IdentityLostError();
   }
 }
@@ -2334,7 +2337,9 @@ function stageMessagesActive(
         `FINISH_IN_PROGRESS: ${toId} is still crossing its durable finish barrier${where}. Retry after that finish call settles.`
       );
     }
-    assertRoute(from, to);
+    // An opted-in account operator can explicitly report to Prime without pretending
+    // to be a particular worker. Ordinary Prime self-messaging remains an error.
+    if (!(senderLabel === 'shared-eve' && to.info.id === PRIME_ID)) assertRoute(from, to);
     if (isOver(to.info.state)) {
       throw new AgentError(
         to.info.state === 'failed'

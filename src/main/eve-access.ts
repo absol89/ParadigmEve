@@ -2,12 +2,20 @@ import { currentAgentConversationId } from './agent-identity.js';
 import { isWorkerConversation, retiredWorkerForConversation } from './agents.js';
 import { getConfig } from './config.js';
 import { isGoalDecisionChat } from './goal.js';
-import { currentCall } from './mcp/call-context.js';
+import { currentCall, type CallCaller } from './mcp/call-context.js';
 import { inboundToolEvidence } from './mcp/inbound.js';
 
 /** User-facing account-wide Eve access. Exact caller identity remains preferable when available. */
 export function otherChatEveAccessEnabled(): boolean {
   return getConfig().eveAuthority?.allowOtherChats !== false;
+}
+
+/** Explicit unattributed-call opt-in selects the durable installation owner, never tab recency. */
+export function unattributedPrimeForCurrentCall(caller: CallCaller | undefined = currentCall()?.caller): string | null {
+  if (getConfig().multiAgent.allowUnattributedCalls !== true || !inboundToolEvidence() ||
+      !caller?.requestId || caller.localPrincipal ||
+      (caller.conversationId && caller.attributionSource !== 'installation_prime')) return null;
+  return currentAgentConversationId();
 }
 
 /**

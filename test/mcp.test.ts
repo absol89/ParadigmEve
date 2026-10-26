@@ -31,6 +31,7 @@ import {
   initSessionStore,
   rebindSession,
   readSessionPlan,
+  readEvents,
   upsertMessageEvent,
   writeOverflowText
 } from '../src/main/session/store.js';
@@ -40,7 +41,7 @@ import { initDurableStore, writeDurableNow } from '../src/main/durable.js';
 import { DEFAULT_CAPABILITIES, DESKTOP_CAPABILITIES, type Capabilities, type Root } from '../src/shared/types.js';
 import type { ToolOutcome } from '../src/shared/session.js';
 import { emptyEvidence, noteExec, noteExecStart, noteOutcome, runInCallContext, type CallContext } from '../src/main/mcp/call-context.js';
-import { observeRequestCorrelation } from '../src/main/session/correlation.js';
+import { observeRequestCorrelation, requestCorrelation } from '../src/main/session/correlation.js';
 import { WINDOWS_COMPUTER_METHODS, WINDOWS_COMPUTER_READ_METHODS } from '../src/shared/windows-computer.js';
 import { resetBlockedChatsForTests, setChatBlocked } from '../src/main/session/blocked-chats.js';
 import { resetAgentIdentityForTests, restoreAgentIdentity } from '../src/main/agent-identity.js';
@@ -4171,6 +4172,85 @@ describe('exec_command and write_stdin', () => {
 });
 
 describe('agent-maintained plans over MCP', () => {
+  it('assigns a remote call to the opted-in Prime without fabricating request proof or moving it after late evidence', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const owner = 'prime-fallback-plan-owner';
+    const source = await createSession({ conversationId: owner });
+    const other = await createSession({ conversationId: 'fallback-late-worker' });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    const requestId = 'wfr_prime_fallback_plan';
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      const reply = await modern('tools/call', { name: 'update_plan', arguments: {
+        plan: [{ step: 'Work assigned to Prime', status: 'in_progress' }]
+      } }, { 'x-request-id': requestId });
+      expect(failed(reply), textOf(reply)).toBe(false);
+      expect((await readSessionPlan(source.id))?.plan[0]?.step).toBe('Work assigned to Prime');
+      expect(requestCorrelation(requestId)).toBeNull();
+      const records = (await readEvents(source.id)).filter(event => event.kind === 'tool_call');
+      expect(records.at(-1)).toMatchObject({ call: { requestId, conversationId: owner,
+        attribution: 'installation_prime', attributionMethod: 'installation_prime' } });
+      expect(records.at(-1)?.turnId).toBeUndefined();
+      observeRequestCorrelation({ requestId, conversationId: other.conversationId!, sessionId: other.id,
+        messageId: 'late-fallback-proof', tool: 'update_plan', observedAt: Date.now() });
+      expect((await readEvents(source.id)).filter(event => event.kind === 'tool_call')).toEqual(records);
+      expect(await readSessionPlan(other.id)).toBeNull();
+    } finally {
+      resetAgentIdentityForTests();
+      await saveConfig(previous);
+    }
+  });
+
+  it('keeps exact callers and blocked Prime owners fenced with fallback enabled', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const owner = 'prime-fallback-blocked-owner';
+    const source = await createSession({ conversationId: owner });
+    const exact = await createSession({ conversationId: 'fallback-exact-other' });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      observeRequestCorrelation({ requestId: 'wfr_fallback_exact', conversationId: exact.conversationId!,
+        sessionId: exact.id, messageId: 'fallback-exact-message', tool: 'update_plan', observedAt: Date.now() });
+      const args = { plan: [{ step: 'Exact caller wins', status: 'in_progress' }] };
+      expect(failed(await modern('tools/call', { name: 'update_plan', arguments: args },
+        { 'x-request-id': 'wfr_fallback_exact' }))).toBe(false);
+      expect(await readSessionPlan(source.id)).toBeNull();
+      expect((await readSessionPlan(exact.id))?.plan[0]?.step).toBe('Exact caller wins');
+      setChatBlocked(owner, true);
+      const denied = await modern('tools/call', { name: 'update_plan', arguments: args },
+        { 'x-request-id': 'wfr_fallback_blocked' });
+      expect(failed(denied)).toBe(true);
+      expect(await readSessionPlan(source.id)).toBeNull();
+    } finally {
+      resetBlockedChatsForTests();
+      resetAgentIdentityForTests();
+      await saveConfig(previous);
+    }
+  });
+
+  it('does not assign calls to Prime when the opt-in is off or ingress is an app probe', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const owner = 'prime-fallback-opt-out';
+    const source = await createSession({ conversationId: owner });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: false } });
+      const args = { plan: [{ step: 'Must not write', status: 'in_progress' }] };
+      expect(failed(await modern('tools/call', { name: 'update_plan', arguments: args },
+        { 'x-request-id': 'wfr_fallback_disabled' }))).toBe(true);
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      expect(failed(await modern('tools/call', { name: 'update_plan', arguments: args },
+        { ...selfTestHeaders(), 'x-request-id': 'wfr_fallback_probe' }))).toBe(true);
+      expect(await readSessionPlan(source.id)).toBeNull();
+    } finally {
+      resetAgentIdentityForTests();
+      await saveConfig(previous);
+    }
+  });
+
   it('waits for the exact worker/Prime session on a late Plan call even with account-wide access enabled', async () => {
     ctx.sessionTools = true;
     const previous = getConfig();

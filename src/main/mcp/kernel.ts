@@ -94,7 +94,7 @@ import { anyContinuationOpen, compactingConversation } from '../session/continua
 import { acknowledgeBackgroundExecOutput, backgroundExecRecoveryNotices, offerBackgroundExecOutput } from '../codex/ownership.js';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '../codex/unified-exec-constants.js';
 import { chatUrl, unattributedRepairEta } from '../bridge.js';
-import { sharedEveOwnerForCurrentCall } from '../eve-access.js';
+import { sharedEveOwnerForCurrentCall, unattributedPrimeForCurrentCall } from '../eve-access.js';
 import { conversationAttachment, findSessionByConversation, readOverflowText } from '../session/store.js';
 import type { StoredText, ToolOutcome } from '../../shared/session.js';
 import { archiveWorkerPlansForDeliveredReport } from '../plans.js';
@@ -565,6 +565,21 @@ async function dispatchTracked(
   // touch state. If the page is one tick late this stays null; only handlers that actually
   // require identity wait for their own exact mate. Ordinary absolute reads/execs never wait.
   if (!nested) setCallerConversation(context, callerConversation(name, startedAt, requestId));
+  // Opt-in assigns missing identity to the durable Prime, without inventing page proof.
+  if (!context.caller.conversationId && !nested) {
+    const owner = unattributedPrimeForCurrentCall(context.caller);
+    if (owner) {
+      const session = await findSessionByConversation(owner, { requireUnique: true });
+      const exact = callerConversation(name, startedAt, requestId);
+      if (exact) setCallerConversation(context, exact);
+      else if (session?.conversationId === owner && unattributedPrimeForCurrentCall(context.caller) === owner) {
+        context.caller.conversationId = owner;
+        context.caller.sessionId = session.id;
+        context.caller.attributionSource = 'installation_prime';
+      }
+    }
+  }
+  const primeFallback = context.caller.attributionSource === 'installation_prime';
   // Only calls that need an *existing* per-chat workspace before the handler runs are
   // identity-sensitive here. An absolute read or an exec with an explicit absolute workdir is
   // self-contained and must stay fast; if its exact page mate is late, workspace.ts simply
@@ -682,7 +697,7 @@ async function dispatchTracked(
   // And this call is itself first-hand evidence that its own conversation is alive. That is
   // what undoes a worker given up on because its tab went away — the turn never stopped, so
   // the call arrives from a chat the app had written off, and the write-off was wrong.
-  const alive = supersededConversation ? null : noteAgentAlive(context.caller.conversationId);
+  const alive = supersededConversation || primeFallback ? null : noteAgentAlive(context.caller.conversationId);
   if (alive?.report) await recordAgentMessage(alive.report, 'sent', context.caller.conversationId);
   // A prime message accepted while a worker's tab was closed could not safely be injected while
   // that server-side turn might still be running. If the silence check above has now proved the
@@ -771,9 +786,9 @@ async function dispatchTracked(
   // Refuse and let the model retry once page evidence is healthy instead.
   // The arrival of this exact call acknowledges earlier injected input before the
   // handler reads the queue. New queued input is still offered only with its result.
-  if (!nested) await acknowledgeToolInput(context.caller.sessionId, context.caller.conversationId, requestId, startedAt)
+  if (!nested && !primeFallback) await acknowledgeToolInput(context.caller.sessionId, context.caller.conversationId, requestId, startedAt)
     .catch(() => logWarn('Prior user input receipt could not be saved; its existing claim is preserved'));
-  if (!nested && requestId && !blockedChat && !supersededConversation && !compacting) {
+  if (!nested && !primeFallback && requestId && !blockedChat && !supersededConversation && !compacting) {
     const explicitPoll = name === 'write_stdin' && args && typeof args === 'object'
       ? (args as { session_id?: number }).session_id : undefined;
     await acknowledgeBackgroundExecOutput(context.caller.sessionId, startedAt, explicitPoll);
@@ -781,6 +796,10 @@ async function dispatchTracked(
   let handlerRan = false;
   markTiming('identity');
   const invokeHandler = async (): Promise<ToolResult> => {
+    if (primeFallback && (unattributedPrimeForCurrentCall(context.caller) !== context.caller.conversationId ||
+        (await findSessionByConversation(context.caller.conversationId!, { requireUnique: true }))?.id !== context.caller.sessionId)) {
+      return fail('PRIME_OWNER_CHANGED: Prime ownership or the unattributed-call setting changed before execution. No local tool was run.');
+    }
     let receiptId: string | null = null;
     // A mixed read/write tool's read action is not an external effect even
     // though its top-level MCP declaration cannot carry per-action hints.
@@ -906,7 +925,7 @@ async function dispatchTracked(
   // retry after a lost result. The SDK exposes the JSON-RPC id, but a model-issued retry is
   // a new MCP request with a new id, so that id cannot prove the previous finish result was
   // seen. The broker therefore re-offers rather than assuming; see acknowledgeOffers.
-  const acknowledgedForConversation = supersededConversation || nested
+  const acknowledgedForConversation = supersededConversation || nested || primeFallback
     ? null
     : acknowledgeOffersForConversation(
         context.caller.conversationId,
@@ -936,11 +955,11 @@ async function dispatchTracked(
   const baseResult = surface === 'plugins' && !handlerRan ? pluginManager.redactResult(result) as ToolResult : result;
   let delivered = nested ? baseResult : withUnattributedNotice(
     context.caller.conversationId,
-    withInbox(context.caller.conversationId, context.agent, baseResult, isFinish)
+    primeFallback ? baseResult : withInbox(context.caller.conversationId, context.agent, baseResult, isFinish)
   );
   // Ordinary tools carry direct user input, but only the explicit finish signal
   // advances a planned stage. Successful work is not evidence that a stage is done.
-  const userInput = nested ? { messages: [], reminder: '' } : await offerToolInput(context.caller.sessionId, context.caller.conversationId, context.caller.requestId, startedAt, name === 'session_finish' && !result.isError).catch(() => {
+  const userInput = nested || primeFallback ? { messages: [], reminder: '' } : await offerToolInput(context.caller.sessionId, context.caller.conversationId, context.caller.requestId, startedAt, name === 'session_finish' && !result.isError).catch(() => {
     logWarn('User input could not be attached; the completed tool result is preserved');
     return { messages: [], reminder: '' };
   });
@@ -953,7 +972,7 @@ async function dispatchTracked(
     if (userInput.reminder) attachments.push({ type: 'text', text: '\n\n' + userInput.reminder });
     delivered = { ...delivered, content: [...delivered.content, ...attachments] };
   }
-  if (!nested && handlerRan && !blockedChat && !supersededConversation && !compacting) {
+  if (!nested && !primeFallback && handlerRan && !blockedChat && !supersededConversation && !compacting) {
     delivered = await withBackgroundExecRecovery(context, delivered);
   }
   if (surface === 'plugins' && delivered.content.length > baseResult.content.length) {
@@ -1000,6 +1019,7 @@ async function dispatchTracked(
     bind: context.bindOnAttribution ?? null,
     requestId: context.caller.requestId,
     conversationId: context.caller.conversationId,
+    attributionSource: context.caller.attributionSource,
     sessionId: context.caller.sessionId ?? null,
     // Connector calls come from ChatGPT; an in-process loop that did not name its route stays unknown.
     contentRoute: context.caller.contentRoute ?? (context.caller.localPrincipal ? null : 'chatgpt'),

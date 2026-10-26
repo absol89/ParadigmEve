@@ -1500,6 +1500,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     })), async ({ summary }) => {
       if (!getConfig().ui.finishTool) return { content: [{ type: 'text' as const, text: 'RELEASED: The user disabled finish hold. You may write your final answer.' }] };
       const caller = currentCaller();
+      if (caller.attributionSource === 'installation_prime') return ok('RELEASED: this call is assigned to Prime by your unattributed-call setting. No native chat turn was held or completed.');
       if (!caller.sessionId || !caller.conversationId) return fail('Exact session identity is required');
       if (goalWorkerChat(caller.conversationId)) return fail('Session finish hold is not applicable to workers or decision helpers. Workers report with agents action=finish; decision helpers answer normally.');
       return guard('session_finish', async () => ({ content: [{ type: 'text', text: await announceSessionFinish(caller.sessionId!, summary) }] }));
@@ -1696,7 +1697,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // an uninvolved chat that happened to call something else in the same window
           // become the prime of this run.
           const caller = await callerNow(startedAt, { exact: true, reviewKey: input.review_key, allowSharedPrime: true });
-          const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+          const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+            !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
           const staged = sharedOwner
             ? stageSharedEvePrimeSpawn(sharedOwner, input.workers, input.context ?? null)
             : stageSpawn({ workers: input.workers, context: input.context ?? null, caller });
@@ -1733,7 +1735,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               {
                 type: 'text' as const,
                 text:
-                  (sharedOwner ? 'Shared Eve connector authority used; this caller remains Unattributed. ' :
+                  (sharedOwner ? (caller.attributionSource ? 'Prime fallback enabled; execution is assigned to Prime. ' : 'Shared Eve connector authority used; this caller remains Unattributed. ') :
                     becamePrime ? `This conversation is now the ${agentName()} conversation for worker run ${runId}. ` : '') +
                   `${created.length} worker(s) matched: ${created.map((info) => `${info.id} (${info.label}, ${info.state}${info.model ? `, model ${info.model}` : ''}${info.reasoningEffort ? `, reasoning ${info.reasoningEffort}` : ''})`).join(', ')}. ` +
                   (invited.length > 0 ? 'New worker chats are opening with their briefs already in them. ' : '') +
@@ -1780,7 +1782,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           const caller = await callerNow(startedAt, {
             reviewKey: input.review_key, allowSharedPrime: true, preferExact: true
           });
-          const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+          const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+            !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
           if (sharedOwner) await measureSleepingWorkers({ conversationId: sharedOwner });
           else await measureSleepingWorkers(caller);
           // One call, one identity resolution, one all-or-nothing delivery: a prime
@@ -1825,7 +1828,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                   (woken.length > 0
                     ? ` Waking ${woken.join(', ')} in ${woken.length === 1 ? 'the same chat' : 'their existing chats'}.`
                     : '') +
-                  (sharedOwner ? ' Shared Eve connector authority was used; sender is shared-eve and this caller remains Unattributed.' : '')
+                  (sharedOwner ? (caller.attributionSource ? ' Prime fallback enabled; sender is shared-eve.' : ' Shared Eve connector authority was used; sender is shared-eve and this caller remains Unattributed.') : '')
               }
             ],
             structuredContent: {
@@ -1847,7 +1850,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           const caller = await callerNow(startedAt, {
             allowSharedPrime: true, preferExact: !input.worker_id
           });
-          const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall() : null;
+          const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+            !caller.conversationId ? sharedEveCoordinatorForCurrentCall() : null;
           if (input.worker_id && !sharedOwner) return fail('SHARED_EVE_TARGET_ONLY: worker_id is only for an unattributed shared-Eve finish; no worker was finished.');
           if (sharedOwner && !input.worker_id) return fail('SHARED_EVE_WORKER_TARGET_REQUIRED: supply worker_id to finish a named worker without page attribution; no worker was finished.');
           const staged = sharedOwner
@@ -1888,7 +1892,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               {
                 type: 'text' as const,
                 text: sharedOwner
-                  ? `Shared Eve connector accepted the explicitly addressed finish for ${info.id}; the calling chat is Unattributed, not proven to be that worker. ${repeat ? 'That result was already recorded; nothing was sent again.' : 'The report was durably queued for Eve.'}`
+                  ? `Shared Eve connector accepted the explicitly addressed finish for ${info.id}; the browser caller is not proven to be that worker. ${repeat ? 'That result was already recorded; nothing was sent again.' : 'The report was durably queued for Eve.'}`
                   : repeat
                   ? `${info.id} was already ${info.state} and that result was already queued for ${agentName()}, so nothing was ` +
                     'sent again. Stop working and stop calling tools.'
@@ -1911,7 +1915,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
         const caller = await callerNow(startedAt, {
           reviewKey: input.review_key, allowSharedPrime: true, preferExact: true
         });
-        const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+        const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+          !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
         if (!sharedOwner) await measureSleepingWorkers(caller);
         const status = sharedOwner ? statusForSharedEvePrime(sharedOwner) : statusForCaller(caller);
         const me = status.self;
@@ -1948,7 +1953,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                 type: 'text' as const,
                 text:
                 (sharedOwner
-                  ? `Shared Eve connector authority: showing ${agentName()}'s worker family. The calling chat is Unattributed, not proven as Prime.\n`
+                  ? `Shared Eve connector authority: showing ${agentName()}'s worker family. ${caller.attributionSource ? 'Execution is assigned to Prime by your fallback setting.' : 'The calling chat is Unattributed, not proven as Prime.'}\n`
                   : `You are ${me.id === PRIME_ID ? agentName() : me.id}.\n`) +
                 state.agents
                   .map(
@@ -2043,6 +2048,9 @@ async function callerNow(
   options: { exact?: boolean; reviewKey?: string; allowSharedPrime?: boolean; preferExact?: boolean } = {}
 ): Promise<Caller> {
   const base = currentCaller();
+  // The dispatcher already froze this explicitly authorized execution owner.
+  // Do not reinterpret later page evidence or mark a remote operation as a native turn.
+  if (base.attributionSource === 'installation_prime') return base;
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
   // model cannot absorb, so it gets the longer ceiling; every other `agents` action can be
   // declined and asked again on the next tool call.
@@ -2070,7 +2078,7 @@ async function callerNow(
     ? sharedEveCoordinatorForCurrentCall(options.reviewKey)
     : null;
   const pageAttributionOptional = getConfig().multiAgent.allowUnattributedCalls === true &&
-    !options.reviewKey && !options.preferExact && sharedEveOwnerForCurrentCall() !== null;
+    !options.reviewKey && !options.preferExact && sharedPrime !== null;
   if (!exactBeforeWait && !heartbeatContinuity && base.requestId && !pageAttributionOptional) requestPrimeIdentityRecovery(base.requestId);
   const exactResolved =
     exactBeforeWait ??

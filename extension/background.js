@@ -4462,7 +4462,7 @@ const HANDLERS = {
       await chrome.scripting.executeScript({
         target: { tabId: source.tab, documentIds: [source.documentId] },
         world: 'MAIN',
-        files: ['fiber.js']
+        files: ['fiber.js', 'usage.js']
       });
       return ownsDocument(source) ? { ok: true } : { ok: false, error: 'stale_document' };
     } catch {
@@ -5322,10 +5322,10 @@ async function restoreChatgptTab(id, options = {}) {
     const live = await chrome.tabs.sendMessage(id, { type: 'clf-recorder-ping' });
     if (live && live.ok === true && live.recorderVersion === PAGE_RECORDER_VERSION) {
       // Healthy content.js does not prove the independently running MAIN-world helper is
-      // still present. Request-id ownership depends on fiber.js, and re-executing it is
-      // idempotent because the helper keeps one listener per protocol version.
+      // still present. Exact ownership uses Fiber and the passive stream observer;
+      // both helpers make same-version injection idempotent.
       try {
-        await chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN', files: ['fiber.js'] });
+        await chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN', files: ['fiber.js', 'usage.js'] });
       } catch {
         // The tab can navigate between the ping and repair. Static injection covers it.
       }
@@ -5342,7 +5342,7 @@ async function restoreChatgptTab(id, options = {}) {
     // Keep the React/Fiber reader in ChatGPT's own world, exactly like the static manifest
     // declaration. An older helper may still answer too; the nonce/version gate in
     // content.js makes those replies harmless, and a future version bump rejects them.
-    await chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN', files: ['fiber.js'] });
+    await chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN', files: ['fiber.js', 'usage.js'] });
     await chrome.scripting.executeScript({ target: { tabId: id }, files: ['content.js'] });
     await chrome.scripting.insertCSS({ target: { tabId: id }, files: ['overlay.css'] });
     // Successful injection means this exact tab is recovering. Its document registration will

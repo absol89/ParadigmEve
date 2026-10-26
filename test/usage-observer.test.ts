@@ -18,6 +18,9 @@ function harness() {
       const rows = listeners.get(type) ?? [];
       rows.push({ handler, once: options?.once === true });
       listeners.set(type, rows);
+    },
+    removeEventListener: (type: string, handler: (event: unknown) => void) => {
+      listeners.set(type, (listeners.get(type) ?? []).filter(row => row.handler !== handler));
     }
   };
   const dispatch = (type: string, event: unknown) => {
@@ -25,7 +28,8 @@ function harness() {
     listeners.set(type, rows.filter(row => !row.once));
     for (const row of rows) row.handler(event);
   };
-  runInNewContext(script, { window, document, location: { origin: 'https://chatgpt.com' }, URL, Date: Clock, TextDecoder, setTimeout, clearTimeout });
+  const inject = (source = script) => runInNewContext(source, { window, document, location: { origin: 'https://chatgpt.com' }, URL, Date: Clock, TextDecoder, setTimeout, clearTimeout });
+  inject();
   async function feed(data: unknown, url = 'https://chatgpt.com/backend-api/wham/usage', init: Record<string, unknown> = {}) {
     let done: () => void = () => {};
     const inspected = new Promise<void>(resolve => { done = resolve; });
@@ -93,6 +97,8 @@ function harness() {
     };
   }
   return {
+    inject,
+    markLegacy: () => { (window as typeof window & { __cosUsageObserver?: unknown }).__cosUsageObserver = true; },
     posts,
     feed,
     feedSse,
@@ -114,6 +120,38 @@ function harness() {
 }
 
 describe('MAIN-world usage projection', () => {
+  it('leaves a legacy observer alone until normal reload instead of layering fetch owners', () => {
+    const h = harness();
+    h.markLegacy();
+    const current = h.currentFetch();
+    h.inject();
+    expect(h.currentFetch()).toBe(current);
+  });
+  it('replaces an older observer without disturbing a provider fetch wrapper or retaining readers', async () => {
+    const h = harness();
+    const old = await h.openSse();
+    h.replaceFetch(true);
+    h.inject(script.replace('OBSERVER_VERSION = 2', 'OBSERVER_VERSION = 3'));
+    expect(old.cancelled()).toBe(true);
+    const current = h.currentFetch();
+    h.inject(script.replace('OBSERVER_VERSION = 2', 'OBSERVER_VERSION = 3'));
+    expect(h.currentFetch()).toBe(current);
+    await h.feed({ model_limits: [{ model_slug: 'new-model', remaining: 2 }] });
+    expect(h.posts).toHaveLength(1);
+    h.request();
+    expect(h.posts).toHaveLength(2);
+  });
+
+  it('observes exact resumed conversation streams but rejects unrelated resume routes', async () => {
+    const h = harness();
+    const frame = 'data: {"conversation_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","metadata":{"request_id":"wfr_resume"}}\n\n';
+    await h.feedSse([frame], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation/resume');
+    expect(h.posts).toHaveLength(1);
+    await h.feedSse([frame], { method: 'POST' }, 'https://chatgpt.com/backend-api/conversation/resume');
+    await h.feedSse([frame], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation/resume/other');
+    expect(h.posts).toHaveLength(1);
+  });
+
   it('retains supported model counts without requiring a reset timestamp', async () => {
     const h = harness();
     await h.feed({ model_limits: [{ model_slug: 'model-a', remaining: 3 }, { model_slug: 'model-b', remaining: 0, resets_after: 'invalid' }, { model_slug: 'unknown' }] });

@@ -11,9 +11,17 @@
  */
 (() => {
   'use strict';
-  if (window.__cosUsageObserver) return;
-  window.__cosUsageObserver = true;
-  const post = window.postMessage.bind(window);
+  const OBSERVER_VERSION = 2;
+  const prior = window.__cosUsageObserver;
+  // The pre-version observer owns anonymous listeners that cannot be removed. Let its
+  // document finish normally; layering another owner would grow competing fetch wrappers.
+  // A normal navigation/reload installs this version without interrupting live work.
+  if (prior === true) return;
+  if (prior?.version >= OBSERVER_VERSION) return;
+  if (typeof prior?.dispose === 'function') prior.dispose();
+  let active = true;
+  const readers = new Set();
+  const post = (...args) => { if (active) window.postMessage(...args); };
   let latest = null;
   let requestOrder = 0, latestOrder = 0;
   // Two bounded response clones at once; a newer provider response must not be
@@ -69,6 +77,7 @@
     if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return;
     const copy = response.clone(), reader = copy.body?.getReader();
     if (!reader) return;
+    readers.add(reader);
     const timer = setTimeout(() => void reader.cancel().catch(() => {}), 10000);
     let bytes = 0, text = ''; const decoder = new TextDecoder();
     try {
@@ -79,7 +88,7 @@
       }
       project(JSON.parse(text + decoder.decode()), observedAt, order);
     } catch { /* Unsupported metadata is unavailable, never guessed. */ }
-    finally { clearTimeout(timer); void reader.cancel().catch(() => {}); }
+    finally { readers.delete(reader); clearTimeout(timer); void reader.cancel().catch(() => {}); }
   }
   /**
    * Reads bounded complete SSE events from a clone without changing the page's response.
@@ -88,16 +97,18 @@
   async function inspectRequestOrigins(response, observedAt) {
     let url;
     try { url = new URL(response.url); } catch { return; }
-    if (url.origin !== location.origin || !/^\/backend-api\/(?:f\/)?conversation$/.test(url.pathname)) return;
+    if (url.origin !== location.origin || !/^\/backend-api\/(?:conversation|f\/conversation(?:\/resume)?)$/.test(url.pathname)) return;
     if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) return;
     if (originReaders.size >= 2) {
       const oldest = originReaders.values().next().value;
       originReaders.delete(oldest);
+      readers.delete(oldest);
       void oldest.cancel().catch(() => {});
     }
     const copy = response.clone(), reader = copy.body?.getReader();
     if (!reader) return;
     originReaders.add(reader);
+    readers.add(reader);
     const timer = setTimeout(() => void reader.cancel().catch(() => {}), 90_000);
     const decoder = new TextDecoder();
     const emitted = new Set();
@@ -209,12 +220,12 @@
       buffer += decoder.decode();
       scan(buffer);
     } catch { /* A missing stream observation leaves the existing Fiber path in charge. */ }
-    finally { originReaders.delete(reader); clearTimeout(timer); void reader.cancel().catch(() => {}); }
+    finally { readers.delete(reader); originReaders.delete(reader); clearTimeout(timer); void reader.cancel().catch(() => {}); }
   }
   let observedFetch = null;
   const inspectedResponses = new WeakSet();
   const installFetchObserver = () => {
-    if (window.fetch === observedFetch || typeof window.fetch !== 'function') return;
+    if (!active || window.fetch === observedFetch || typeof window.fetch !== 'function') return;
     // A page wrapper may still call our earlier wrapper. Capture its downstream
     // function per installation; changing a shared pointer would create a cycle.
     const downstreamFetch = window.fetch;
@@ -222,7 +233,9 @@
       // Request order fences late responses, not accounts. No account identity is inferred.
       const observedAt = Date.now(), order = ++requestOrder;
       const result = downstreamFetch.apply(this, args);
+      if (!active) return result;
       void result.then((response) => {
+        if (!active) return;
         if (inspectedResponses.has(response)) return;
         inspectedResponses.add(response);
         void inspect(response, observedAt, order).catch(() => {});
@@ -251,11 +264,24 @@
   // page or observing prompt/request payloads; this event confers no browser or local-tool
   // authority. Keeping the event name lets a newer content.js repair already-open c7 pages.
   window.addEventListener('cos-resume-send-observer', installFetchObserver);
-  window.addEventListener('pagehide', () => {
-    for (const reader of originReaders) void reader.cancel().catch(() => {});
+  const cancelReaders = () => {
+    for (const reader of readers) void reader.cancel().catch(() => {});
+    readers.clear();
     originReaders.clear();
-  });
-  window.addEventListener('message', (event) => {
+  };
+  const onMessage = (event) => {
     if (event.source === window && event.origin === location.origin && event.data?.type === 'cos-usage-request' && latest) post(latest, location.origin);
-  });
+  };
+  window.addEventListener('pagehide', cancelReaders);
+  window.addEventListener('message', onMessage);
+  window.__cosUsageObserver = { version: OBSERVER_VERSION, dispose() {
+    active = false;
+    cancelReaders();
+    window.removeEventListener('DOMContentLoaded', installFetchObserver);
+    window.removeEventListener('cos-resume-send-observer', installFetchObserver);
+    window.removeEventListener('pagehide', cancelReaders);
+    window.removeEventListener('message', onMessage);
+    // Retired wrappers remain transparent if provider instrumentation retains them.
+    // Never replace fetch here: a provider wrapper may own its current value.
+  } };
 })();

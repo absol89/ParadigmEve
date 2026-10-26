@@ -1180,7 +1180,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 
     expect(worker.scriptingExecuteScript.mock.calls).toEqual(expect.arrayContaining([
       [{ target: { tabId: 25 }, files: ['chatgpt-dom.js'] }],
-      [{ target: { tabId: 25 }, world: 'MAIN', files: ['fiber.js'] }],
+      [{ target: { tabId: 25 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }],
       [{ target: { tabId: 25 }, files: ['content.js'] }]
     ]));
     expect(worker.tabsReload).not.toHaveBeenCalled();
@@ -2793,10 +2793,10 @@ describe('extension command delivery', () => {
     });
     expect(worker.scriptingExecuteScript.mock.calls).toEqual([
       [{ target: { tabId: 41 }, files: ['chatgpt-dom.js'] }],
-      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js'] }],
+      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }],
       [{ target: { tabId: 41 }, files: ['content.js'] }],
       [{ target: { tabId: 42 }, files: ['chatgpt-dom.js'] }],
-      [{ target: { tabId: 42 }, world: 'MAIN', files: ['fiber.js'] }],
+      [{ target: { tabId: 42 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }],
       [{ target: { tabId: 42 }, files: ['content.js'] }]
     ]);
     expect(worker.scriptingInsertCSS.mock.calls).toEqual([
@@ -2835,7 +2835,7 @@ describe('extension command delivery', () => {
 
     expect(worker.tabsSendMessage).toHaveBeenCalledWith(41, { type: 'clf-recorder-ping' });
     expect(worker.scriptingExecuteScript.mock.calls).toEqual([
-      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js'] }]
+      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }]
     ]);
     expect(worker.scriptingInsertCSS).not.toHaveBeenCalled();
   });
@@ -2851,7 +2851,7 @@ describe('extension command delivery', () => {
     expect(worker.scriptingExecuteScript).toHaveBeenCalledWith({
       target: { tabId: 73, documentIds: ['document-73-0'] },
       world: 'MAIN',
-      files: ['fiber.js']
+      files: ['fiber.js', 'usage.js']
     });
 
     await worker.navigateTab(73, 'https://example.com/left');
