@@ -3638,6 +3638,56 @@ describe('through the MCP endpoint', () => {
     }
   });
 
+  it('reports the exact worker rather than shared Prime status when its request proof is late', async () => {
+    await setEnabled(true, 3, true);
+    try {
+      startSwarm(1);
+      startWorker('worker-1');
+      const requestId = 'wfr_shared_worker_status_late';
+      const pending = agentsWithRequestId(requestId, 'status');
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await recordChatObservations('c-worker-1', [
+        { kind: 'turn_start', time: Date.now(), turnId: 't-shared-status-late' },
+        { kind: 'tool_evidence', time: Date.now(), turnId: 't-shared-status-late',
+          calls: [{ messageId: 'm-shared-status-late', tool: 'agents',
+            order: 0, answered: false, requestId }] }
+      ]);
+      const reply = await pending;
+      expect(reply).toContain('You are worker-1');
+      expect(reply).not.toContain('Shared Eve connector authority');
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
+  it('finishes only the exact worker after a late request join under shared access', async () => {
+    await setEnabled(true, 3, true);
+    try {
+      startSwarm(1);
+      startWorker('worker-1');
+      const requestId = 'wfr_shared_worker_finish_late';
+      const pending = agentsWithRequestId(requestId, 'finish', {
+        result: 'Reviewed only the assigned session; no user work executed.'
+      });
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await recordChatObservations('c-worker-1', [
+        { kind: 'turn_start', time: Date.now(), turnId: 't-shared-finish-late' },
+        { kind: 'tool_evidence', time: Date.now(), turnId: 't-shared-finish-late',
+          calls: [{ messageId: 'm-shared-finish-late', tool: 'agents',
+            order: 0, answered: false, requestId }] }
+      ]);
+      const reply = await pending;
+      expect(reply).toContain('worker-1 finished its report');
+      expect(reply).not.toContain('SHARED_EVE_WORKER_TARGET_REQUIRED');
+      expect(swarmStateForCaller(prime).agents.find(agent => agent.id === 'worker-1')?.state).toBe('sleeping');
+      expect(offerMessagesForConversation(PRIME_CHAT)?.messages.some(message =>
+        message.text.includes('Reviewed only the assigned session')
+      )).toBe(true);
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
   it('publishes no message when its durable acceptance barrier fails, and a retry queues exactly one', async () => {
     startSwarm(1);
     const snapshots: Array<ReturnType<typeof snapshotSwarm>> = [];

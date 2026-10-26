@@ -1908,7 +1908,9 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
         // and `identify` is what decides whether this caller is one of them. An unrelated
         // chat is told AGENTS_BUSY and nothing else — not who the prime is, not how many
         // workers there are, not what any of them are doing.
-        const caller = await callerNow(startedAt, { reviewKey: input.review_key, allowSharedPrime: true });
+        const caller = await callerNow(startedAt, {
+          reviewKey: input.review_key, allowSharedPrime: true, preferExact: true
+        });
         const sharedOwner = !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
         if (!sharedOwner) await measureSleepingWorkers(caller);
         const status = sharedOwner ? statusForSharedEvePrime(sharedOwner) : statusForCaller(caller);
@@ -2073,7 +2075,11 @@ async function callerNow(
   const exactResolved =
     exactBeforeWait ??
     heartbeatContinuity?.conversationId ??
-    (pageAttributionOptional ? null : await awaitFreshCallOrigin('agents', startedAt, sharedPrime ? Math.min(window, 1500) : window, {
+    // The shared operator fast path is only for calls that do not require a particular
+    // chat. A real worker's page evidence can arrive seconds after MCP admission;
+    // shortening a worker-sensitive call to 1.5s recreates the same misrouting race.
+    (pageAttributionOptional ? null : await awaitFreshCallOrigin('agents', startedAt,
+      sharedPrime && !options.preferExact ? Math.min(window, 1500) : window, {
       exact: options.exact,
       // ChatGPT's own id for this request, when it sent one. It names the conversation
       // outright, so two workers calling at the same moment are no longer a hard case.
