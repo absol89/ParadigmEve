@@ -13,7 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
-import { claimBrowserInput, enqueueInput, failUnreachableProjectInput, listInputs, pendingBrowserInputs, resetInputForTests } from '../src/main/session/input.js';
+import { claimBrowserInput, enqueueInput, failUnreachableProjectInput, failMissingNativeProjectInput, listInputs, pendingBrowserInputs, resetInputForTests } from '../src/main/session/input.js';
 import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { initDurableStore, resetDurableForTests } from '../src/main/durable.js';
 import { createSession, getSession, initSessionStore, resetSessionStoreForTests } from '../src/main/session/store.js';
@@ -152,6 +152,25 @@ describe('the app side of the mapping', () => {
     const offered = (await pendingBrowserInputs()).find(row => row.id === rootInput.id);
     expect(offered).toBeDefined();
     expect(offered!.projectEntry).toBeUndefined();
+  });
+  it('fails only an untouched fresh input to the exact missing linked Project, without replaying a claim', async () => {
+    const project = await addProject(path.join(approved, 'first'));
+    await linkNativeProject(project.id, NATIVE);
+    await noteNativeProjectEntry(NATIVE, ENTRY_CHAT);
+    const missing = await enqueueInput({ id: randomUUID(), projectId: project.id, sessionId: null,
+      text: 'Preserve unsent project work', dueAt: 0, mode: 'auto', model: null, reasoningEffort: null });
+    expect(await failMissingNativeProjectInput(missing.id, OTHER_NATIVE)).toBe(false);
+    expect(await failMissingNativeProjectInput(missing.id, NATIVE)).toBe(true);
+    expect((await listInputs()).find(row => row.id === missing.id)).toMatchObject({
+      state: 'failed', text: 'Preserve unsent project work',
+      error: expect.stringMatching(/no longer lists the linked Project.*nothing was sent/i)
+    });
+    expect(await failMissingNativeProjectInput(missing.id, NATIVE)).toBe(false);
+    const claimed = await enqueueInput({ id: randomUUID(), projectId: project.id, sessionId: null,
+      text: 'Uncertain already claimed send', dueAt: 0, mode: 'auto', model: null, reasoningEffort: null });
+    expect(await claimBrowserInput(claimed.id, 'exact-document', null)).toBeTruthy();
+    expect(await failMissingNativeProjectInput(claimed.id, NATIVE)).toBe(false);
+    expect((await listInputs()).find(row => row.id === claimed.id)?.state).toBe('browser');
   });
 });
 

@@ -23,6 +23,7 @@ vi.mock('../src/main/file-provider-install.js', async (importOriginal) => {
 });
 
 const { initDurableStore } = await import('../src/main/durable.js');
+const { restoreNativeDelegations } = await import('../src/main/native-delegation.js');
 const { pluginManager } = await import('../src/main/plugins/manager.js');
 const { setProviderAcquireOptionsForTests } = await import('../src/main/file-provider-install.js');
 const consent = await import('../src/main/file-provider-consent.js');
@@ -55,6 +56,7 @@ beforeEach(async () => {
   await fs.writeFile(fixturePath.value, FIXTURE);
   await fs.mkdir(path.join(dir, 'workspace'));
   initDurableStore(dir);
+  await restoreNativeDelegations();
   await pluginManager.initialize(dir);
   mock.releases.clear();
   mock.requests.length = 0;

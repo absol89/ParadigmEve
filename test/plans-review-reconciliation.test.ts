@@ -6,6 +6,8 @@ import { initDurableStore, resetDurableForTests } from '../src/main/durable.js';
 import {
   completePlanItemsForReview,
   createPlan,
+  planReviewScopeDigest,
+  reconcileReviewedPlanItems,
   resetPlansForTests,
   setPlanThreadSource,
   withPlanReviewValidationFence
@@ -237,4 +239,41 @@ it('does not invoke a fenced receipt commit when revision or provenance no longe
     provenance: { ...plan.provenance!, label: 'Different source' }
   }], commit)).rejects.toThrow('Plan source changed; refresh');
   expect(commit).not.toHaveBeenCalled();
+});
+
+it('reconciles exact reviewed items once and accepts only same-scope completion replays', async () => {
+  const plan = await createPlan({
+    title: 'Source-reviewed checklist',
+    provenance: { kind: 'message', sessionId: 'review-source', conversationId: 'review-chat', messageId: 'evidence' },
+    items: [{ text: 'Proven finished', status: 'todo' }, { text: 'Still open', status: 'todo' }]
+  });
+  const expectation = {
+    planId: plan.id, updatedAt: plan.updatedAt, provenance: plan.provenance,
+    itemIds: [plan.items[0]!.id], scopeDigest: planReviewScopeDigest(plan)
+  };
+  expect(await reconcileReviewedPlanItems(expectation)).toBe('reconciled');
+  expect(await reconcileReviewedPlanItems(expectation)).toBe('already-reconciled');
+});
+
+it('rejects a source revision change even when its Plan timestamp stays unchanged', async () => {
+  const plan = await createPlan({
+    title: 'Delegated source fence',
+    provenance: {
+      kind: 'message', sessionId: 'source-session', conversationId: 'source-chat',
+      sourceItemId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', sourceRevision: 4
+    },
+    items: [{ text: 'Reviewed item', status: 'todo' }]
+  });
+  const expectation = {
+    planId: plan.id, updatedAt: plan.updatedAt, provenance: plan.provenance,
+    itemIds: [plan.items[0]!.id], scopeDigest: planReviewScopeDigest(plan)
+  };
+  // An exact provenance mismatch is rejected before any Plan mutation.
+  expect(await reconcileReviewedPlanItems({
+    ...expectation, provenance: { ...plan.provenance!, sourceRevision: 5 }
+  })).toBe('stale');
+  expect(await reconcileReviewedPlanItems({
+    ...expectation, provenance: { ...plan.provenance!, sourceItemId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }
+  })).toBe('stale');
+  expect(await reconcileReviewedPlanItems(expectation)).toBe('reconciled');
 });

@@ -1,5 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+// This unit harness tests broker identity and inbox rules without app startup.
+// Delegation lock policy is exercised against a restored ledger separately.
+vi.mock('../src/main/native-delegation.js', () => ({ nativeDelegationBlocksTool: () => false, settleNativeDelegationHolds: async () => undefined }));
 const broker = vi.hoisted(() => ({
   offer: vi.fn(), ack: vi.fn(), bareOffer: vi.fn(), bareAck: vi.fn(), release: vi.fn(), alive: vi.fn(), record: vi.fn(), archive: vi.fn(),
   awaitOrigin: vi.fn(), archiveAuthority: false, heartbeatWorker: false

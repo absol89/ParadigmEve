@@ -107,13 +107,44 @@ describe('the user’s own connector instructions', () => {
     }
     expect(preDiscovery).toContain('before searching for or installing other office software');
   });
-  it('explains the transient ChatGPT safety refusal and offers session_finish to any model', () => {
+  it('attributes ChatGPT safety refusals without instructing provider approval retries and offers session_finish to any model', () => {
     // Ported from Chat On Steroids 2.1.17 (#555, #556).
     const text = serverInstructions({ ...ctx, exposedFinishTool: true } as any, 'core', 'win32');
-    expect(text).toContain('"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before Eve receives the call');
-    expect(text).toContain('retry the identical call once');
+    expect(text).toContain('"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before the call reaches Eve; Eve neither ran nor refused it.');
+    expect(text).toContain('Enabled in Eve Core:');
+    expect(text).not.toMatch(/live guards decide|trusted after launch|same call often succeeds when made again|changes no tool permission/);
+    expect(text).not.toContain('retry the identical call once');
     expect(text).toContain('Use session_finish only when the user prompt explicitly requests it, with any model.');
     expect(text).not.toMatch(/Astra only/);
+  });
+
+  it('reports only factual Core capabilities across host platforms', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      const text = serverInstructions({ ...ctx, sessionTools: true, agentTools: true }, 'core', platform);
+      expect(text).toContain('Enabled in Eve Core:');
+      expect(text).toContain('read-only=off; plans=on; workers=on.');
+      expect(text).not.toMatch(/Current Core authority|live guards decide|under current guards|trusted after launch|same call often succeeds when made again|changes no tool permission/);
+    }
+  });
+
+  it('does not rank itself above ChatGPT approval or invent Core powers on Desktop and Plugins', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      for (const surface of ['core', 'desktop', 'plugins'] as const) {
+        const emitted = serverInstructions(ctx, surface, platform);
+        expect(emitted).not.toMatch(/current (?:core )?authority outranks|override (?:OpenAI|ChatGPT)|bypass approval|automatically approve|retry the identical call/i);
+        if (surface === 'core') {
+          expect(emitted).toContain('Enabled in Eve Core:');
+          expect(emitted).toContain('Eve neither ran nor refused it');
+        } else {
+          expect(emitted).not.toContain('Enabled in Eve Core:');
+          expect(emitted).not.toContain('Eve neither ran nor refused it');
+        }
+        if (surface === 'plugins') {
+          expect(emitted).toContain('External servers run with their own operating-system or service permissions');
+          expect(emitted).toContain('never automatically retry a mutation after an ambiguous failure');
+        }
+      }
+    }
   });
 
   it('keeps standing restart guidance in Core instructions, without pretending it can create a model turn', () => {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { beforeAll, afterAll, afterEach, expect, it, vi } from 'vitest';
 import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { initDurableStore, flushDurable, readDurable, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { initSessionStore, createSession, readEvents, rebindSession, appendEvent, observeSessionModel, resetSessionStoreForTests } from '../src/main/session/store.js';
 import { observeRequestCorrelation } from '../src/main/session/correlation.js';
 import { flushRecorder } from '../src/main/session/recorder.js';
@@ -40,6 +41,8 @@ const text = (response: any) => response.result.content.filter((item: any) => it
 beforeAll(async () => {
   directory = await makeTempDir('clf-code-mode-mcp-');
   initConfigPath(directory); initDurableStore(directory); initSessionStore(directory); resetInputForTests();
+  // Match app startup: MCP effect admission fails closed until this ledger is restored.
+  await restoreNativeDelegations();
   const config = defaultConfig();
   await saveConfig({ ...config, multiAgent: { ...config.multiAgent, enabled: false }, ui: { ...config.ui, finishTool: true } });
   await fs.writeFile(path.join(directory, 'alpha.txt'), 'alpha PRIVATE_ALPHA');

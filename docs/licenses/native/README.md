@@ -37,6 +37,6 @@ rebuilding and replacement. On macOS a modified application copy needs a new loc
 ad-hoc seal; no publisher key is required by this release.
 
 Electron/Chromium notices ship separately as `LICENSE.electron.txt` and
-`LICENSES.chromium.html` in application resources. Electron 43.7.11's source, dependency
-revisions and build scripts are at https://github.com/electron/electron/tree/v43.7.11
+`LICENSES.chromium.html` in application resources. Electron 43.8.4's source, dependency
+revisions and build scripts are at https://github.com/electron/electron/tree/v43.8.4
 (including its DEPS file). Tunnel and ripgrep retain their own notices.

@@ -115,9 +115,9 @@ Build on the target OS. The release workflow uses native runners for all six tar
 
 ### Build macOS from a USB checkout
 
-`BUILD-MAC.command` is a user-local bootstrap for carrying an exact Git checkout to a Mac. It detects Apple silicon versus Intel, verifies that Apple's Command Line Tools/Xcode SDK are present, uses an existing Node 22 installation when available or unpacks a verified Node 22 archive under `~/Library/Caches/ParadigmEve`, clones the exact clean USB commit onto the Mac's local filesystem, runs verification and the native macOS package/smoke checks, then copies the DMG, ZIP and checksums back to the ignored `mac-build-output/` folder on the USB checkout.
+`BUILD-MAC.command` is a user-local bootstrap for carrying an exact Git checkout to a Mac. It detects Apple silicon versus Intel, verifies that Apple's Command Line Tools/Xcode SDK are present, uses an existing patched Node 24.22.1+ installation within the Node 24 line when available or unpacks a verified Node 24.22.1 archive under `~/Library/Caches/ParadigmEve`, clones the exact clean USB commit onto the Mac's local filesystem, runs verification and the native macOS package/smoke checks, then copies the DMG, ZIP and checksums back to the ignored `mac-build-output/` folder on the USB checkout.
 
-The optional ignored `redist/` folder can carry `node-v22.23.2-darwin-arm64.tar.gz` and/or `node-v22.23.2-darwin-x64.tar.gz` (plus the matching `SHASUMS256.txt`). If the matching archive is absent, the bootstrap downloads it from `nodejs.org` and verifies it against Node's published SHA-256 list. The build itself does not require administrator privileges once Apple's native developer tools are installed. If those tools are missing, macOS may require one administrator-authorized Apple installation before rerunning the script.
+The optional ignored `redist/` folder can carry `node-v24.22.1-darwin-arm64.tar.gz` and/or `node-v24.22.1-darwin-x64.tar.gz` (plus the matching `SHASUMS256.txt` for that version). If the matching archive is absent, the bootstrap downloads it from `nodejs.org` and verifies it against Node's published SHA-256 list. The build itself does not require administrator privileges once Apple's native developer tools are installed. If those tools are missing, macOS may require one administrator-authorized Apple installation before rerunning the script.
 
 ---
 

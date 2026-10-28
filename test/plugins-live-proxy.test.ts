@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { initConfigPath, loadConfig, getConfig, updateConfig, effectiveCapabilities } from '../src/main/config.js';
 import { initDurableStore, flushDurable, resetDurableForTests } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { initSessionStore, createSession, readEvents, flushSessions } from '../src/main/session/store.js';
 import { flushRecorder } from '../src/main/session/recorder.js';
 import { observeRequestCorrelation } from '../src/main/session/correlation.js';
@@ -16,6 +17,7 @@ it.runIf(process.env.COS_PLUGIN_LIVE_TEST === '1')('routes upstream Memory throu
   let client: Client | undefined;
   try {
     initConfigPath(directory); await loadConfig(); initDurableStore(directory); initSessionStore(directory);
+    await restoreNativeDelegations();
     await updateConfig(config => ({ ...config, readOnly: false, multiAgent: { ...config.multiAgent, enabled: false } }));
     await pluginManager.initialize(directory);
     const installed = (await pluginManager.install({ catalogId: 'memory' })).plugins[0]!;

@@ -953,6 +953,46 @@ export class ArchiveRuntime {
       events.push(...existing.events.slice(events.length));
     }
 
+    // A page image can arrive after its user text has already become immutable archive
+    // evidence. Preserve that original row and append exact-message image custody as
+    // separate evidence. The static view joins it by the original user event id; neither
+    // the historical words nor their position in the archive ledger are rewritten.
+    const publishedUsers = new Map(existing.events
+      .filter(event => event.kind === 'user_message')
+      .map(event => [event.eventId, event]));
+    const knownEventIds = new Set(events.map(event => event.eventId));
+    for (const source of snapshot.events) {
+      if (source.kind !== 'user_message' || !source.messageId || !source.assets?.length) continue;
+      const targetEventId = sourceEventId(source);
+      const published = publishedUsers.get(targetEventId);
+      if (!published) continue;
+      for (const sourceAsset of source.assets) {
+        if (!sourceAsset.mimeType.startsWith('image/')) continue;
+        const assetId = archiveAssetId(sourceAsset.id);
+        if (published.assets.some(asset => asset.id === assetId && asset.captureState === 'retained')) continue;
+        const eventId = `late-user-image:${createHash('sha256').update(`${targetEventId}\0${assetId}`).digest('hex')}`;
+        if (knownEventIds.has(eventId)) continue;
+        const retained = await this.retainAsset(summary.id, sourceAsset, 'message', context);
+        if (retained.captureState !== 'retained') continue; // Retry when exact bytes become available.
+        events.push({
+          schemaVersion: ARCHIVE_EVENT_SCHEMA_VERSION,
+          sessionId: summary.id,
+          eventSeq: events.length + 1,
+          eventId,
+          at: Math.max(0, source.time),
+          kind: 'late_user_image',
+          actor: 'user',
+          assets: [retained],
+          sourceRefs: [
+            { kind: 'session', id: summary.id, eventSeq: source.seq },
+            { kind: 'other', id: targetEventId }
+          ],
+          payload: { targetEventId }
+        });
+        knownEventIds.add(eventId);
+      }
+    }
+
     const providerConversationIds = uniqueBounded([
       ...summary.chatIds,
       ...(summary.conversationId ? [summary.conversationId] : [])
@@ -1378,10 +1418,28 @@ export class ArchiveRuntime {
           };
 
           await atomicWriteStream(target.archiveRoot, fragmentPath, async appendFragment => {
+            // Two bounded streaming passes keep the transcript in its original order while
+            // displaying late append-only image evidence on its exact historical user row.
+            const lateUserImages = new Map<string, ArchiveAssetRef[]>();
+            await this.store.scanSessionEvents(source.sessionId, {
+              collectLimit: 0,
+              onEvent: event => {
+                if (event.kind !== 'late_user_image' || !event.payload ||
+                    typeof event.payload !== 'object' || Array.isArray(event.payload) || event.assets.length !== 1) return;
+                const target = event.payload.targetEventId;
+                if (typeof target !== 'string' || !target.startsWith('user:') ||
+                    !event.sourceRefs.some(ref => ref.kind === 'other' && ref.id === target)) return;
+                const copies = lateUserImages.get(target) ?? [];
+                if (copies.length < 4) {
+                  copies.push(event.assets[0]!);
+                  lateUserImages.set(target, copies);
+                }
+              }
+            });
             await this.store.scanSessionEvents(source.sessionId, {
               collectLimit: 0,
               onEvent: async event => {
-                const item = await this.viewItem(event);
+                const item = await this.viewItem(event, lateUserImages.get(event.eventId));
                 if (!item) return;
                 // The eager search fragment contains only safe, normalized message prose.
                 // Transcript/tool HTML remains split into lazy local segments.
@@ -1434,9 +1492,11 @@ export class ArchiveRuntime {
     }
   }
 
-  private async viewItem(event: ArchiveEvent): Promise<ArchiveViewTranscriptItem | null> {
+  private async viewItem(event: ArchiveEvent, lateUserImages: readonly ArchiveAssetRef[] = []): Promise<ArchiveViewTranscriptItem | null> {
+    if (event.kind === 'late_user_image') return null;
     const assets: ArchiveViewAsset[] = [];
-    for (const asset of event.assets) assets.push(await this.viewAsset(asset, event.at));
+    const refs = event.kind === 'user_message' ? [...event.assets, ...lateUserImages] : event.assets;
+    for (const asset of refs) assets.push(await this.viewAsset(asset, event.at));
     // A user message carries what the user wrote beside what was sent; the sent text may be wrapped
     // in Eve's provider catch-up context, which the archive reader should not see as the message.
     const recorded = (event.kind === 'user_message' ? payloadString(event.payload, 'authoredText') : null) ?? payloadString(event.payload, 'text');

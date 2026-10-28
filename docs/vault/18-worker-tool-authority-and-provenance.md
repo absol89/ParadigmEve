@@ -287,3 +287,86 @@ Every phase lands with focused regression tests and a checkpointed diff.
 No public merge/tag/push is part of this authorization. A packaged candidate
 is a separate evidence-backed acceptance step, not the definition of
 source completion.
+
+---
+
+> **Implementation contracts.** The sections below moved here unchanged from the former single-file
+> `AGENTS.md` map. Their § numbers are kept so references such as “§14” still resolve; the
+> [Vault index](README.md#former-agentsmd-sections) lists where each section lives.
+
+## 7. One tool call: identity, execution and delivery
+
+**Intent:** run exactly the requested operation under current policy, record its true outcome,
+and deliver pending information only to the conversation that owns it.
+
+```text
+HTTP request -> bounded body / host-origin / secret-path checks
+ -> normalize x-request-id in inbound.ts
+ -> surface registrar and AsyncLocalStorage call context
+ -> exact correlation -> current local session / family / workspace
+ -> blocked, superseded, compaction, worker and live capability guards
+ -> validated tool handler -> structured outcome/evidence
+ -> outer input/inbox/background-result delivery and recording
+ -> local response completion -> later exact-owner receipt where required
+```
+
+The MCP payload has no trustworthy conversation id. Accepted ownership joins the normalized
+HTTP `x-request-id` to native page `metadata.request_id`. `fiber.js` emits bounded allowlisted
+evidence; `content.js` confirms the current route and descriptor; `background.js` validates the
+Chrome sender document/epoch; bridge `/correlations` files exact pairs through recorder and
+reads them back before returning `confirmed[]`. `/events` may publish the same exact evidence.
+Ownership acknowledgement is separate from slow transcript/image writes.
+
+`usage.js` can also project an exact conversation/request pair from a complete live POST
+conversation SSE event before Fiber exposes it. Reads are bounded to 4 MiB / 90 seconds and
+16 request ids; only server metadata is accepted. Content requires the matching route and
+document epoch, using the existing observer for brief fresh-route convergence. Missing stream
+metadata retains the Fiber path. Fetch reattachment at DOM readiness captures each downstream
+wrapper separately and deduplicates responses to avoid recursion through page instrumentation.
+
+For a newly created chat, an exact locally owned provisional Fiber turn can acquire the durable
+native conversation id as the route/server identity materializes. A `WEB:` local id, unmatched
+historical Fiber object, conflicting durable ids, active tab, timing, tool name, arrival order
+or “only generating chat” is never a replacement proof.
+
+`correlation.ts` keeps the first exact request owner and its **local session epoch**. Conflicting
+claims do not overwrite it. Proof has no time TTL but the index is bounded to 50,000 recently
+observed request ids; recorded exact calls reconcile the index on startup even when a snapshot
+already exists. Late proof can repair Unattributed history only to the proved historical owner.
+
+Unresolved requests with an id get the recorder's 20-second production evidence grace. A
+headerless call has no exact proof to await and lands Unattributed immediately. Evidence waits
+open at admission; calls sharing a request serialize in admission order and each resolved
+session serializes its writes. Different chats must not wait behind one global grace timer.
+Already-proven calls await their own recording; unresolved recordings may settle after response.
+
+`allowUnattributedCalls` relaxes only selected ambiguity fences. Identity-sensitive routing,
+code mode, plan updates, agent operations and terminal custody still need their own proof.
+A positively known blocked, retired, ended or superseded caller is refused regardless of that
+preference. Refused historical calls must not revive workers, acknowledge inboxes or grant
+activity to a successor chat.
+
+### Three lifetimes and four outcomes
+
+`runningToolCalls()` covers a handler that can still mutate; it is the compaction safety barrier.
+`settlingToolCalls()`/`inFlightToolCalls()` additionally cover attribution/recording debt.
+`inFlightMcpRequests()` is the wider request lifetime used by shutdown/orphan accounting.
+Unresolved running ownership is conservatively visible; a proven worker call cannot make an
+unrelated prime busy. Do not treat recorder grace as machine mutation still running.
+
+| Tool outcome | Interpretation |
+| --- | --- |
+| `ok` | Operation completed normally. |
+| `process_exit_nonzero` | The program failed; command transport worked. A failing build is not a connector failure. |
+| `tool_rejected` | Intentional validation, permission, identity or lifecycle refusal. |
+| `tool_internal_error` | The tool/runtime failed its own contract; counts as a reliability defect. |
+
+The call context retains the strongest applicable outcome. Model-visible results and recorded
+evidence must agree. Local HTTP success is not proof of remote model comprehension. Offers of
+inbox/input/output data retain custody until their defined receipt; invocation start ordering
+prevents an already-running concurrent call from acknowledging information it could not see.
+
+MCP timing logs separate ingress, admission/identity, handler, delivery, recording and local
+response completion; unresolved recording settles separately. `scripts/benchmark-mcp-latency.mjs`
+compares explicit local/tunnel discovery routes without invoking tools. It does not measure
+remote model receipt.

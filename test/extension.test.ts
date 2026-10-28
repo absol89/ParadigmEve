@@ -777,6 +777,61 @@ function journalOf(session: FakeStorageArea): any[] {
   return Array.isArray(value) ? value : [];
 }
 
+describe('missing linked Project page handout', () => {
+  const id = 'ffffffff-1111-4222-8333-444444444444';
+  const project = 'g-p-11111111222233334444555555555555';
+  const other = 'g-p-99999999888877776666555555555555';
+  it.each([
+    ['exact elected page and marker', 1, `https://chatgpt.com/g/${project}-work/project?eve-input=${id}`, project, true],
+    ['different tab', 2, `https://chatgpt.com/g/${project}/project?eve-input=${id}`, project, false],
+    ['project changed', 1, `https://chatgpt.com/g/${other}/project?eve-input=${id}`, project, false],
+    ['marker absent', 1, `https://chatgpt.com/g/${project}/project`, project, false],
+    ['mismatched claimed id', 1, `https://chatgpt.com/g/${project}/project?eve-input=${id}`, other, false]
+  ] as const)('%s is %s', async (_name, tabId, url, reported, expected) => {
+    const posted: unknown[] = [];
+    const worker = loadWorker({
+      local: new FakeStorageArea({ port: 8765, token: 'paired-token',
+        inputOpenings: { [id]: { tab: 1, stage: 'ready', project } } }),
+      session: new FakeStorageArea(),
+      tabsGet: async () => ({ id: tabId, url }),
+      fetch: async (input, init: any = {}) => {
+        const route = new URL(input).pathname;
+        if (route === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+        if (route === '/input/unreachable') posted.push(JSON.parse(init.body));
+        return response(200, { ok: true });
+      }
+    });
+    await worker.registerTab(tabId);
+    const result = await worker.send({ type: 'desktop_input_project_missing', id, project: reported }, tabId);
+    if (expected) expect(result).toMatchObject({ ok: true });
+    expect(posted).toEqual(expected ? [{ id, projectId: project }] : []);
+  });
+});
+
+describe('bounded pre-Send failure diagnostics', () => {
+  it('forwards internal short codes, including spaces and underscores, but drops arbitrary text', async () => {
+    const posted: any[] = [];
+    const chat = '6adb3318-5500-83eb-afe8-d70d1bd49d1f';
+    const id = 'ffffffff-1111-4222-8333-444444444444';
+    const worker = loadWorker({
+      local: new FakeStorageArea({ port: 8765, token: 'paired-token' }), session: new FakeStorageArea(),
+      tabsGet: async () => ({ id: 1, url: `https://chatgpt.com/c/${chat}` }),
+      fetch: async (input, init: any = {}) => {
+        const route = new URL(input).pathname;
+        if (route === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+        if (route === '/input/fail') posted.push(JSON.parse(init.body));
+        return response(200, { ok: true });
+      }
+    });
+    await worker.registerTab(1);
+    for (const detail of ['send-not-ready', 'turn-progressed by app-tool_call', 'UPPER', 'x'.repeat(81), 'secret.token value']) {
+      await worker.send({ type: 'desktop_input', id, owner: '1:document-1-0:0', fail: true,
+        error: 'Before Send, no message was delivered.', detail });
+      expect(posted.at(-1)?.detail).toBe(['send-not-ready', 'turn-progressed by app-tool_call'].includes(detail) ? detail : undefined);
+    }
+  });
+});
+
 describe('accepted helper tab cleanup', () => {
   for (const outcome of ['accepted', 'rejected', 'navigated', 'pinned', 'busy', 'draft', 'pinned-during-proof'] as const) {
     it(`closes only the exact accepted helper document (${outcome})`, async () => {
@@ -1125,7 +1180,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
 
     expect(worker.scriptingExecuteScript.mock.calls).toEqual(expect.arrayContaining([
       [{ target: { tabId: 25 }, files: ['chatgpt-dom.js'] }],
-      [{ target: { tabId: 25 }, world: 'MAIN', files: ['fiber.js'] }],
+      [{ target: { tabId: 25 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }],
       [{ target: { tabId: 25 }, files: ['content.js'] }]
     ]));
     expect(worker.tabsReload).not.toHaveBeenCalled();
@@ -2154,6 +2209,56 @@ describe('worker settings authority', () => {
     expect(worker.windowsUpdate).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    'checks the durable Compact & Resume cancellation fence before creating a tab (authorized=%s)',
+    async (authorized) => {
+      const order: string[] = [];
+      const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
+        const url = new URL(input);
+        if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+        if (url.pathname === '/compact' && init.method === 'POST') {
+          return response(200, { stored: true, commandId: 'cmd-fenced', placement: {
+            id: 'cmd-fenced', type: 'resume', token: 'handoff-token', active: false, homeConversationId: CHAT
+          } });
+        }
+        if (url.pathname === '/commands/placement-authorize') {
+          order.push('authorize');
+          expect(JSON.parse(String(init.body))).toEqual({ id: 'cmd-fenced', token: 'handoff-token' });
+          return authorized
+            ? response(200, { authorized: true })
+            : response(409, { error: 'placement_no_longer_current' });
+        }
+        if (url.pathname === '/commands/ack') return response(200, { outcome: 'terminal-failure', committed: false });
+        return response(404, {});
+      });
+      let worker!: WorkerHarness;
+      worker = loadWorker({
+        local: new FakeStorageArea(paired), session: new FakeStorageArea(), fetch,
+        tabsGet: async () => ({ id: 45, windowId: 9, index: 2, url: `https://chatgpt.com/c/${CHAT}` }) as never,
+        tabsCreate: async properties => {
+          order.push('create');
+          const opened = String(properties?.url || '');
+          setTimeout(() => {
+            void worker.registerTab(99, 'fenced-successor', opened).then(() =>
+              worker.send({ type: 'redeem', id: 'cmd-fenced', client: 'fenced-page' }, 99, 'fenced-successor', opened)
+            );
+          }, 0);
+          return { id: 99 };
+        }
+      });
+      await worker.registerTab(45);
+      await worker.send({ type: 'bind', conversationId: CHAT }, 45);
+      await worker.send({
+        type: 'compact', conversationId: CHAT, token: 'handoff-token', summary: 'the brief'
+      }, 45);
+      expect(order).toEqual(authorized ? ['authorize', 'create'] : ['authorize']);
+      expect(worker.tabsCreate).toHaveBeenCalledTimes(authorized ? 1 : 0);
+      if (authorized) expect(worker.tabsCreate.mock.calls[0]?.[0]).toMatchObject({ active: false, windowId: 9 });
+      expect(worker.tabsReload).not.toHaveBeenCalled();
+      expect(worker.tabsRemove).not.toHaveBeenCalled();
+    }
+  );
+
   it('prepares a replacement beside a protected source chat without taking its active tab', async () => {
     const fetch = vi.fn(async (input: string, init: Record<string, unknown> = {}) => {
       const url = new URL(input);
@@ -2688,10 +2793,10 @@ describe('extension command delivery', () => {
     });
     expect(worker.scriptingExecuteScript.mock.calls).toEqual([
       [{ target: { tabId: 41 }, files: ['chatgpt-dom.js'] }],
-      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js'] }],
+      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }],
       [{ target: { tabId: 41 }, files: ['content.js'] }],
       [{ target: { tabId: 42 }, files: ['chatgpt-dom.js'] }],
-      [{ target: { tabId: 42 }, world: 'MAIN', files: ['fiber.js'] }],
+      [{ target: { tabId: 42 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }],
       [{ target: { tabId: 42 }, files: ['content.js'] }]
     ]);
     expect(worker.scriptingInsertCSS.mock.calls).toEqual([
@@ -2730,7 +2835,7 @@ describe('extension command delivery', () => {
 
     expect(worker.tabsSendMessage).toHaveBeenCalledWith(41, { type: 'clf-recorder-ping' });
     expect(worker.scriptingExecuteScript.mock.calls).toEqual([
-      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js'] }]
+      [{ target: { tabId: 41 }, world: 'MAIN', files: ['fiber.js', 'usage.js'] }]
     ]);
     expect(worker.scriptingInsertCSS).not.toHaveBeenCalled();
   });
@@ -2746,7 +2851,7 @@ describe('extension command delivery', () => {
     expect(worker.scriptingExecuteScript).toHaveBeenCalledWith({
       target: { tabId: 73, documentIds: ['document-73-0'] },
       world: 'MAIN',
-      files: ['fiber.js']
+      files: ['fiber.js', 'usage.js']
     });
 
     await worker.navigateTab(73, 'https://example.com/left');
@@ -3785,6 +3890,41 @@ describe('extension observation journal', () => {
     expect(worker.tabsUpdate).not.toHaveBeenCalled();
     expect(worker.windowsUpdate).not.toHaveBeenCalled();
     expect(worker.tabsCreate).not.toHaveBeenCalled();
+  });
+
+  it('focuses only the existing exact approval tab after Eve offers a human-click request', async () => {
+    const conversationId = '22222222-3333-4444-5555-666666666666';
+    const owned = { id: 73, windowId: 9, active: false, url: `https://chatgpt.com/c/${conversationId}` };
+    const fetch = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/hello') return response(200, { app: 'chat-on-steroids', paired: true });
+      if (url.pathname === '/activity') return response(200, { approvalFocus: true });
+      return response(200, { ok: true });
+    });
+    const worker = loadWorker({
+      local: new FakeStorageArea({ port: 8765, token: 'paired-token' }),
+      session: new FakeStorageArea(), fetch, tabsGet: async () => owned
+    });
+    await worker.registerTab(73);
+    await worker.send({ type: 'bind', conversationId }, 73);
+    await worker.send({ type: 'activity', conversationId, since: 0, approval: false }, 73);
+    expect(worker.tabsUpdate).not.toHaveBeenCalled();
+    await worker.send({ type: 'activity', conversationId, since: 0, approval: true }, 73);
+    expect(worker.tabsUpdate).toHaveBeenCalledWith(73, { active: true });
+    expect(worker.windowsUpdate).toHaveBeenCalledWith(9, { focused: true });
+    expect(worker.tabsCreate).not.toHaveBeenCalled();
+
+    const mismatched = loadWorker({
+      local: new FakeStorageArea({ port: 8765, token: 'paired-token' }),
+      session: new FakeStorageArea(), fetch,
+      tabsGet: async () => ({ id: 73, windowId: 9, url: `https://chatgpt.com/c/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee` })
+    });
+    await mismatched.registerTab(73);
+    await mismatched.send({ type: 'bind', conversationId }, 73);
+    await mismatched.send({ type: 'activity', conversationId, since: 0, approval: true }, 73);
+    expect(mismatched.tabsUpdate).not.toHaveBeenCalled();
+    expect(mismatched.windowsUpdate).not.toHaveBeenCalled();
+    expect(mismatched.tabsCreate).not.toHaveBeenCalled();
   });
 
   it('refuses a Goal draft while the triggering transcript is still not deliverable', async () => {
@@ -5098,6 +5238,70 @@ it.each(['silence', 'assistant-error', 'goal', 'compaction', 'identity-probe', '
     expect(reload).not.toHaveBeenCalled();
     expect(call).not.toHaveBeenCalled();
   });
+
+describe('exact Prime restart tab recovery', () => {
+  const conversationId = 'aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const existing = { id: 44, windowId: 7, active: true, url: `https://chatgpt.com/c/${conversationId}` };
+  function run(scenario: 'present' | 'absent' | 'late' | 'last-moment' | 'loading' | 'no-window') {
+    const create = vi.fn(async () => ({ id: 45 }));
+    const reload = vi.fn();
+    const claim = vi.fn();
+    const calls: string[] = [];
+    let queries = 0;
+    const chrome = {
+      tabs: {
+        query: vi.fn(async () => {
+          queries += 1;
+          if (scenario === 'present' || (scenario === 'late' && queries >= 2) ||
+              (scenario === 'last-moment' && queries >= 3)) return [existing];
+          if (scenario === 'loading' && queries >= 2) return [{ id: 46, url: 'https://chatgpt.com/', status: 'loading' }];
+          return [];
+        }), create, reload, update: vi.fn()
+      },
+      windows: { getAll: vi.fn(async () => scenario === 'no-window' ? [] : [{ id: 7 }]) }
+    };
+    const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+      backgroundSource.indexOf('\nfunction conversationStillOpen('));
+    const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+      chrome, tabConversations: {}, tabDocuments: {},
+      conversationForTab: (tab: { url?: string }) => tab.url?.split('/c/')[1] ?? null,
+      browserRepairProtected: vi.fn(async () => false),
+      browserRepairReloadVetoed: vi.fn(async () => false),
+      createChatTab: vi.fn(),
+      call: async (url: string) => {
+        calls.push(url);
+        if (url === '/browser-repair/claim') { claim(); return { ok: true, data: { ok: true } }; }
+        return { ok: true };
+      },
+      CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+    });
+    return { repair: () => repair([{ conversationId, token: 'prime-restart-one', reason: 'prime-restart', focus: false }], {}),
+      create, reload, claim, calls, chrome };
+  }
+
+  it('opens the exact Prime as one inactive tab in the existing profile window, without sending', async () => {
+    const h = run('absent');
+    await h.repair();
+    expect(h.create).toHaveBeenCalledExactlyOnceWith({
+      url: `https://chatgpt.com/c/${conversationId}`, windowId: 7, active: false
+    });
+    expect(h.reload).not.toHaveBeenCalled();
+    expect(h.claim).toHaveBeenCalledTimes(1);
+    expect(h.calls.some(url => url.includes('repairAction=reopened'))).toBe(true);
+  });
+
+  it.each(['present', 'late', 'last-moment', 'loading', 'no-window'] as const)(
+    'never opens or reloads when the exact-tab/window census is %s', async scenario => {
+      const h = run(scenario);
+      await h.repair();
+      expect(h.create).not.toHaveBeenCalled();
+      expect(h.reload).not.toHaveBeenCalled();
+      const preserved = h.calls.some(url => url.includes('repairAction=preserved'));
+      expect(preserved).toBe(true);
+      if (scenario === 'present') expect(h.claim).not.toHaveBeenCalled();
+    }
+  );
+});
 
 /**
  * Installed c6, 2026-10-23 (worker-65): interrupted-response recovery reloaded the same broken

@@ -578,6 +578,7 @@
                     <strong>ParadigmEve</strong> connection, so there is no second tunnel or API key.
                     Copy the key right away — the platform will not show it again.
                   </p>
+                  <p class="muted">This connects Eve's tools; it does not pay for ChatGPT model inference.</p>
                   <div class="step-actions">
                     <button
                       class="btn btn-solid"
@@ -858,28 +859,38 @@
                 </div>
                 <h2 class="settings-section-title">Continuation sources</h2>
                 <div class="pane">
-                  <label class="setting" for="goalBackend"><span class="setting-text"><b>Goal response source</b><em>API is the most reliable. Offline uses completion markers and 200 prepared messages.</em></span><select id="goalBackend"><option value="chatgpt">Separate ChatGPT chat</option><option value="api">API key · Most reliable</option><option value="templates">Offline · No API cost</option></select></label>
-                  <label class="setting" for="loopBackend"><span class="setting-text"><b>Loop response source</b><em>Loop keeps going until you switch it off.</em></span><select id="loopBackend"><option value="api">API key · Most reliable</option><option value="chatgpt">Separate ChatGPT chat</option></select></label>
-                  <div class="setting"><span class="setting-text"><b>Goal, Loop and Plan model</b><em>Model for ChatGPT-generated messages and plans. Select GPT-5.6 and High below for planning.</em></span><select id="helperModel" aria-label="Goal, Loop and Plan model"></select></div>
-                  <div class="setting"><span class="setting-text"><b>Goal, Loop and Plan reasoning</b><em>Used with the ChatGPT model above; independent from API reasoning.</em></span><select id="helperReasoning" aria-label="Goal, Loop and Plan reasoning"></select></div>
+                  <label class="setting" for="goalBackend"><span class="setting-text"><b>Goal response source</b><em>ChatGPT uses the signed-in account. Other providers are optional and may charge separately. Offline uses prepared messages.</em></span><select id="goalBackend"><option value="chatgpt">Separate ChatGPT chat</option><option value="api">Other provider (optional)</option><option value="templates">Offline</option></select></label>
+                  <label class="setting" for="loopBackend"><span class="setting-text"><b>Loop response source</b><em>Loop keeps going until you switch it off.</em></span><select id="loopBackend"><option value="api">Other provider (optional)</option><option value="chatgpt">Separate ChatGPT chat</option></select></label>
+                  <div class="setting"><span class="setting-text"><b>Goal, Loop and Plan model</b><em>Choose from the ChatGPT models available to your account.</em></span><select id="helperModel" aria-label="Goal, Loop and Plan model"></select></div>
+                  <div class="setting"><span class="setting-text"><b>Goal, Loop and Plan reasoning</b><em>Used with the account's selected ChatGPT model when ChatGPT is the source.</em></span><select id="helperReasoning" aria-label="Goal, Loop and Plan reasoning"></select></div>
                   <label class="setting"><span class="setting-text"><b>Include tool details in Goal and handoffs</b><em>Goal receives recorded tool arguments and results. Handoff briefs retain tool details.</em></span><input id="goalIncludeToolCalls" type="checkbox" /></label>
                   </div>
-                <h2 class="settings-section-title">Agent execution</h2>
+                <h2 class="settings-section-title">Workers and ChatGPT models</h2>
                 <div class="pane">
-                  <div class="setting">
-                    <span class="setting-text"><b>Build channel</b><em>This installation only offers the execution drivers included in its build.</em></span>
-                    <span class="chip" id="agentBuildFlavor" translate="no">debug</span>
+                  <label class="setting" for="heartbeatExecutionMode"><span class="setting-text"><b>Heartbeat behavior</b><em>Separate from worker settings. Off prevents new review activity. Auditable chat uses a read-only worker. Native subagent requests hosted delegation in Prime; only Prime’s interpreted result is kept.</em></span><select id="heartbeatExecutionMode"><option value="off">OFF</option><option value="auditable-chat">Auditable chat</option><option value="native-subagent">Native subagent</option></select></label>
+                  <p class="muted" id="heartbeatExecutionStatus" role="status">Off — no automatic heartbeat reviews.</p>
+                  <div id="experimentalWorkerControls" class="experimental-worker-panel">
+                    <label class="setting" for="workerExecutionMode"><span class="setting-text"><b>Worker execution</b><em>Choose how new helpers work independently of heartbeat reviews. Existing workers keep their own route; no automatic fallback or model change.</em></span><select id="workerExecutionMode"><option value="chatgpt">ChatGPT workers</option><option value="native">Native subagents</option><option value="openrouter">OpenRouter</option><option value="ollama">Ollama</option></select></label>
+                    <label class="setting" id="experimentalWorkerModelRow" for="experimentalApiWorkerModel" hidden><span class="setting-text"><b>Provider model</b><em>Exact model ID for this provider; it is fixed when a worker starts.</em></span><input id="experimentalApiWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="Select a provider and model" /></label>
+                    <p class="muted" id="experimentalWorkerStatus" role="status">ChatGPT workers keep separate, reusable chats.</p>
                   </div>
-                  <label class="setting" for="agentOrchestratorBackend"><span class="setting-text"><b>Agent driver</b><em>Used when your agent starts new worker work.</em></span><select id="agentOrchestratorBackend"></select></label>
-                  <label class="setting" for="agentWorkerBackend"><span class="setting-text"><b>Worker driver</b><em>Used for newly created workers.</em></span><select id="agentWorkerBackend"></select></label>
-                  <label class="setting" for="ollamaWorkerModel"><span class="setting-text"><b>Ollama worker model</b><em>Exact model id for Ollama workers, for example gemma4:cloud. Chats pick their model in the composer.</em></span><input id="ollamaWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="gemma4:cloud" /></label>
-                  <label class="setting" for="openrouterWorkerModel"><span class="setting-text"><b>OpenRouter worker model</b><em>Exact OpenRouter model id for OpenRouter workers, for example stepfun/step-5-preview. Uses the API provider key below.</em></span><input id="openrouterWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="stepfun/step-5-preview" /></label>
+                  <div class="setting"><span class="setting-text"><b>Available ChatGPT models</b><em id="chatModelStatus">Read model choices from your account.</em></span><button class="btn" id="refreshChatModels" type="button">Refresh</button></div>
+                  <label class="setting" for="workerModel"><span class="setting-text"><b>Default ChatGPT worker model</b><em>Only models offered by the signed-in account; never switched automatically.</em></span><select id="workerModel"><option value="" disabled>No observed choices</option></select></label>
+                  <label class="setting" for="workerReasoning"><span class="setting-text"><b>Default worker reasoning</b><em>Choose in Eve's existing model picker. Free/Go retain ChatGPT's native default.</em></span><select id="workerReasoning"><option value="" disabled>No observed choices</option></select></label>
                   <label class="setting" for="maGptWorkers"><span class="setting-text"><b>GPT worker limit</b><em>Maximum GPT workers active at once for one owner. Requires the Companion extension to be loaded and connected.</em></span><input id="maGptWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
-                  <label class="setting" for="maOllamaLocalWorkers"><span class="setting-text"><b>Local Ollama worker limit</b><em>Maximum workers using models on this computer.</em></span><input id="maOllamaLocalWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
-                  <label class="setting" for="maOllamaCloudWorkers"><span class="setting-text"><b>Ollama Cloud worker limit</b><em>Maximum Ollama Cloud workers active at once.</em></span><input id="maOllamaCloudWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
-                  <p class="muted">ParadigmEve never falls back to a different driver when the selected one is unavailable.</p>
+                  <p class="muted">Choose Chat or Work when opening a chat in ChatGPT. The ChatGPT worker route does not use a separately billed OpenAI inference API or change that choice. The optional native research record does not make tabless subagents an Eve worker executor; ChatGPT Work must delegate from its parent chat.</p>
+                  <details class="worker-legacy-settings"><summary>Advanced: other worker limits and compatibility</summary>
+                    <div class="setting"><span class="setting-text"><b>Build channel</b><em>Only drivers included in this build are offered.</em></span><span class="chip" id="agentBuildFlavor" translate="no">debug</span></div>
+                    <label class="setting" for="agentOrchestratorBackend"><span class="setting-text"><b>Agent driver</b><em>Compatibility control for the owning agent.</em></span><select id="agentOrchestratorBackend"></select></label>
+                    <label class="setting" for="agentWorkerBackend"><span class="setting-text"><b>Legacy worker driver</b><em>Used only when no worker route has been explicitly selected.</em></span><select id="agentWorkerBackend"></select></label>
+                    <label class="setting" for="ollamaWorkerModel"><span class="setting-text"><b>Ollama worker model</b><em>Existing provider configuration.</em></span><input id="ollamaWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="gemma4:cloud" /></label>
+                    <label class="setting" for="openrouterWorkerModel"><span class="setting-text"><b>OpenRouter worker model</b><em>Existing provider configuration.</em></span><input id="openrouterWorkerModel" type="text" maxlength="160" spellcheck="false" placeholder="stepfun/step-5-preview" /></label>
+                    <label class="setting" for="maOllamaLocalWorkers"><span class="setting-text"><b>Local Ollama worker limit</b><em>Maximum workers using models on this computer.</em></span><input id="maOllamaLocalWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
+                    <label class="setting" for="maOllamaCloudWorkers"><span class="setting-text"><b>Ollama Cloud worker limit</b><em>Maximum Ollama Cloud workers active at once.</em></span><input id="maOllamaCloudWorkers" class="num" type="number" min="1" max="8" step="1" /></label>
+                  </details>
+                  <p class="muted">Existing workers keep their original route. An unavailable provider never triggers a fallback.</p>
                 </div>
-                <h2 class="settings-section-title">Ollama</h2>
+                <h2 class="settings-section-title">Ollama (optional)</h2>
                 <div class="pane">
                   <label class="setting" for="ollamaWorkerEndpoint"><span class="setting-text"><b>Ollama endpoint</b><em>Leave blank for the Ollama app on this computer. Once you run ollama signin it also serves cloud models (names ending in :cloud). For Ollama Cloud directly, use https://ollama.com/v1 with an API key.</em></span><input id="ollamaWorkerEndpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" /></label>
                   <label class="setting" for="ollamaChatDirectTools"><span class="setting-text"><b>Use tools directly in Ollama chats</b><em>When off, Ollama keeps the conversation but delegates tool work to workers.</em></span><input id="ollamaChatDirectTools" type="checkbox" /></label>
@@ -911,7 +922,7 @@
                 </div>
                 <h2 class="settings-section-title">Keep the turn open</h2>
                 <div class="pane">
-                  <label class="setting"><span class="setting-text"><b>Plan generation</b><em>Create staged tasks. ChatGPT uses the Goal, Loop and Plan model above; API uses the model and reasoning in API provider settings.</em></span><select id="planBackend"><option value="chatgpt">ChatGPT</option><option value="api">API provider</option></select></label>
+                  <label class="setting"><span class="setting-text"><b>Plan generation</b><em>Create staged tasks. ChatGPT uses your account's model choice; other providers use their own configured model.</em></span><select id="planBackend"><option value="chatgpt">ChatGPT</option><option value="api">Other provider</option></select></label>
                   <label class="setting"><span class="setting-text"><b>Session finish</b><em>Ask Astra to keep the turn open for your next instruction. With Automatic plugin refresh enabled, tool changes refresh the connector after 20 seconds.</em></span><input id="finishTool" type="checkbox" /></label>
                   <label class="setting" for="finishAction"><span class="setting-text"><b>When ChatGPT is wrapping up</b><em>Automatic follow-ups use your Loop instructions and selected Loop source.</em></span><select id="finishAction"><option value="notify">Notify me · Write or Generate Goal</option><option value="goal">Generate and inject Goal</option></select></label>
                   <label class="setting" for="finishLeadMinutes"><span class="setting-text"><b>Requested notice</b><em>A request to the model, not a guaranteed countdown.</em></span><select id="finishLeadMinutes"><option value="3">3 minutes</option><option value="5">5 minutes</option></select></label>
@@ -926,12 +937,6 @@
                   </div>
                   <p class="muted">ChatGPT reads connector instructions once, when it loads the tools, so a change reaches an existing conversation only after the connector is loaded again.</p>
                 </div>
-                <h2 class="settings-section-title">ChatGPT models</h2>
-                <div class="pane">
-                  <div class="setting"><span class="setting-text"><b>Available ChatGPT models</b><em id="chatModelStatus">Read model choices from your account.</em></span><button class="btn" id="refreshChatModels" type="button">Refresh</button></div>
-                  <label class="setting" for="workerModel"><span class="setting-text"><b>Default sub-agent model</b><em>Confirmed in ChatGPT before a worker starts.</em></span><select id="workerModel"><option value="" disabled>No observed choices</option></select></label>
-                  <label class="setting" for="workerReasoning"><span class="setting-text"><b>Default sub-agent reasoning</b><em>Selected independently from the model.</em></span><select id="workerReasoning"><option value="" disabled>No observed choices</option></select></label>
-                  </div>
                 <h2 class="settings-section-title">Browser & history</h2>
                 <div class="pane">
                   <div class="setting" id="archiveRecordingSetting">
@@ -968,12 +973,12 @@
                     <span class="sw"><input type="checkbox" id="autoCompact" aria-labelledby="autoCompactLabel" /><i></i></span>
                   </div>
                   </div>
-                <h2 class="settings-section-title">API provider</h2>
+                <h2 class="settings-section-title">Other providers for Goal and Loop</h2>
                 <div class="pane">
                   <label class="setting" for="goalProvider">
                     <span class="setting-text">
                       <b>Provider</b>
-                      <em>OpenRouter, or your own OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, a gateway) for the API response source.</em>
+                      <em>Optional OpenRouter or your own endpoint (Ollama, vLLM, LM Studio, a gateway). Separate from the ChatGPT subscription and worker model picker.</em>
                     </span>
                     <select id="goalProvider">
                       <option value="openrouter">OpenRouter</option>

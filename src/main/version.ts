@@ -12,7 +12,7 @@
  * "the extension does nothing" into a diagnosable mismatch.
  */
 
-export const APP_VERSION = '2.4.4';
+export const APP_VERSION = '2.4.5';
 
 /**
  * 1 — original observations/activity bridge.

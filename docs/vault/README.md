@@ -20,8 +20,8 @@ Neither path permits automatic duplicate Send. Startup full archive indexing
 and Prime page-evidence/Request Trail attribution remain open reliability work.
 
 Current source/tests and first-hand runtime evidence remain authoritative for what exists today; the
-Vault is the canonical human-readable operational manual. [`AGENTS.md`](../../AGENTS.md) supplies the agent/developer
-bootstrap and implementation contracts. These notes explain **who owns what, how data moves, where
+Vault is the canonical human-readable operational manual and holds the implementation contracts; the short
+[`AGENTS.md`](../../AGENTS.md) is only the agent/developer bootstrap that routes here. These notes explain **who owns what, how data moves, where
 state lives, and what to check when something breaks**. See [Self-reliant AI and the manual](12-self-reliant-ai-and-the-manual.md).
 
 ## Historical 2.4.1 / 2.4.0 acceptance snapshot — not the current release
@@ -45,7 +45,7 @@ The entries below describe earlier tagged source and Windows self-testing. Do no
 1. Read [System map](01-system-map.md) for the whole architecture in one pass.
 2. Read [Current state and acceptance](10-current-state-and-acceptance.md) before changing anything.
 3. Open the subsystem page for the work you are about to touch.
-4. Read the corresponding source file and `AGENTS.md` section before editing.
+4. Read the page's implementation contracts and the corresponding source file before editing.
 5. Preserve the central rule: **repair the earliest wrong identity / ownership / durability boundary instead of adding a second authority.**
 
 ## Vault map
@@ -56,7 +56,7 @@ The entries below describe earlier tagged source and Windows self-testing. Do no
 | [02 — Runtime, browser and recovery](02-runtime-browser-recovery.md) | How does Eve start, pair with Chrome, recover tabs, and survive restart/update? |
 | [03 — MCP, connectors and tools](03-mcp-connectors-and-tools.md) | How does ChatGPT discover tools, what is Core vs Plugins, and where is tool authority checked? |
 | [04 — Sessions, outbox and Compact & Resume](04-sessions-outbox-and-continuation.md) | What is the durable session, how are messages/inputs recorded, and how does chat A become chat B? |
-| [05 — Workers and multi-agent](05-workers-and-multi-agent.md) | How does the configured agent use her worker garden, sleeping reuse, durable messaging and revival? |
+| [05 — Workers and multi-agent](05-workers-and-multi-agent.md) | How does the configured agent use her worker garden, sleeping reuse, durable messaging and revival? See also the [native-subagent eight-lane evidence and experimental mode decision](../native-subagents-evidence-2026-10-26.md). |
 | [06 — Pins, Threads, Quilts and Plans](06-pins-quilts-and-plans.md) | What is the knowledge/work model and what are its persistence rules? |
 | [07 — Plugins and connector refresh](07-plugins-and-connector-refresh.md) | How do external MCP integrations run and how does ChatGPT schema refresh stay safe? |
 | [08 — Persistence, security and filesystem](08-persistence-security-and-filesystem.md) | Where does state live, how does the durable chat archive work, what is encrypted, and how are filesystem/tool boundaries enforced? |
@@ -70,14 +70,39 @@ The entries below describe earlier tagged source and Windows self-testing. Do no
 | [16 — Languages, localization and aliases](16-languages-localization-and-aliases.md) | How do the three app languages, the agent's own name, the setup guide and localized `%`/`#` names work? |
 | [17 — Dynamic Skills and local transcription](17-dynamic-skills-and-local-transcription.md) | How are reusable Skills selected, and how do local CPU/GPU or cloud speech recognition, microphone/system capture and local diarization work? |
 | [18 — Worker tool authority and provenance](18-worker-tool-authority-and-provenance.md) | How will durable Eve-local grants, independent worker tools, exact chat attribution and approval-block recovery be implemented and tested? This is an implementation spec, not an installed feature. |
+| [22 — Native Desktop control](22-native-desktop-control.md) | How do Windows and macOS desktop tools observe and act on native apps, and what keeps that control safe? |
+| [Full feature maturity and copy-best-bits audit spec](../best-bits-audit-spec.md) | How do four concurrent read-only auditors compare every CoS/Eve feature without orphaning Plans, Schedule, the archive, the file broker or localized onboarding? |
+| [26 October 2026 comparison ledger and phased plan](../best-bits-audit-ledger-2026-10-26.md) | Which source-backed features are stronger in CoS or Eve, what is worth adapting, and what remains unverified before any implementation? |
+| [Native ChatGPT subagents: supported boundary and Eve design](../native-chatgpt-subagents-design-2026-10-26.md) | What can Eve genuinely control in hosted Work subagents, what remains Prime-mediated, and what prevents an unsafe c17-derived install? |
 | [Release-visual design and evaluation](release-visual-design.md) | How can Eve or any connected model make an accessible, actionable release explainer rather than an overloaded infographic, and evaluate candidates without inventing a feature? |
 | [Glossary](glossary.md) | Exact meanings of session, conversation, turn, worker, Thread, Quilt, Plan, repair, etc. |
+
+## Former AGENTS.md sections
+
+The single-file `AGENTS.md` map was split into these pages with its section numbers kept, so a
+reference such as “§14” in a page, task note or commit still points somewhere:
+
+| § | Section | Page |
+| --- | --- | --- |
+| 1–2 | Product purpose, vocabulary, invariants; runtime model and identities | [01](01-system-map.md) |
+| 3, 21 | Intent, evidence and checked baseline; known implementation gaps | [10](10-current-state-and-acceptance.md) |
+| 4, 8, 9 | Ownership map; filesystem permissions; projects and project instructions | [08](08-persistence-security-and-filesystem.md) |
+| 5, 13, 14 | Startup and shutdown; extension, models and browser; bridge and recovery | [02](02-runtime-browser-recovery.md) |
+| 6, 10 | MCP surfaces and code mode; files, terminal, patches and images | [03](03-mcp-connectors-and-tools.md) |
+| 7 | One tool call: identity, execution and delivery | [18](18-worker-tool-authority-and-provenance.md) |
+| 11, 12, 15 | Input queue, attachments and Astra finish; recording and usage; Compact & Resume | [04](04-sessions-outbox-and-continuation.md) |
+| 11 (generated workflow) | Generated workflow vs the agent's displayed plan | [06](06-pins-quilts-and-plans.md) |
+| 16 | Multiple prime families and reusable workers | [05](05-workers-and-multi-agent.md) |
+| 17 | Goal and Loop | [13](13-schedules-and-routines.md) |
+| 18 | Renderer and IPC → [01](01-system-map.md); plugins, file broker, connections → [07](07-plugins-and-connector-refresh.md); Native Desktop → [22](22-native-desktop-control.md) | |
+| 19 | Debugging, tests and working here | [11](11-debugging-playbooks.md) |
+| 20 | Build, installation, updater and release | [09](09-build-install-update-release.md) |
+| 22 | Completion and maintenance | root [`AGENTS.md`](../../AGENTS.md) |
 
 ## Existing deep references
 
 Do not duplicate these when they already answer the narrow question well:
 
-- [`AGENTS.md`](../../AGENTS.md) — full product logic, evidence hierarchy and feature contracts.
 - [`docs/tool-surface.md`](../tool-surface.md) — model-facing tool surface and permission behavior.
 - [`docs/plugins.md`](../plugins.md) — external MCP plugin usage and lifecycle.
 - [`docs/chat-review-heartbeat-implementation.md`](../chat-review-heartbeat-implementation.md) — 22-minute semantic review owner.

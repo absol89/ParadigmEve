@@ -21,10 +21,10 @@ const IS_WINDOWS = process.platform === 'win32';
 export const LAUNCHES_WINDOWS_POWERSHELL_5 = IS_WINDOWS && isWindowsPowerShell5(defaultUserShell().shellPath);
 
 /** `windows_shell_guidance()`. */
-export const WINDOWS_SHELL_GUIDANCE = `Windows safety rules:
-- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to \`cmd /c\`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as \`Remove-Item\` / \`Move-Item\` with \`-LiteralPath\`, and avoid string-built shell commands for file operations.
-- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.
-- When using \`Start-Process\` to launch a background helper or service, pass \`-WindowStyle Hidden\` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.`;
+export const WINDOWS_SHELL_GUIDANCE = `Windows shell notes:
+- A filesystem operation composed across PowerShell and \`cmd /c\` or batch builtins can resolve different paths. Native PowerShell cmdlets such as \`Remove-Item\` and \`Move-Item\` support \`-LiteralPath\`; string-built commands have additional quoting hazards.
+- Recursive delete/move operations depend on a verified resolved absolute target inside the intended workspace or explicitly named directory.
+- \`Start-Process -WindowStyle Hidden\` launches background helpers without creating a foreground window. Visible interactive applications may need a foreground window.`;
 
 /**
  * Said on the tool the launch goes through, because `tools/list` is re-sent every turn while the
@@ -90,7 +90,7 @@ export const EXEC_COMMAND_LOGIN_DESCRIPTION =
     : 'True runs the shell with -l/-i semantics; false disables them. Defaults to true.';
 
 export const WRITE_STDIN_DESCRIPTION =
-  'Writes characters to an existing unified exec session and returns recent output. Use the exact returned session ID for input, progress or waiting. Completed background output also follows automatically on later tool responses; after a transient wait failure, retry the same session ID rather than starting replacement work.';
+  'Writes characters to an existing unified exec session and returns recent output. The session ID identifies the original running process. Completed background output may also appear on later tool responses. A transient wait error does not establish that the original process has exited.';
 
 export const WRITE_STDIN_SESSION_ID_DESCRIPTION = 'Identifier of the running unified exec session.';
 

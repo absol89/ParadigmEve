@@ -2,12 +2,41 @@
 import { bridgeStatus, browserConversationOpen, browserWakeConnected } from './bridge.js';
 import { isPreferredBrowserRunning } from './browser.js';
 import { getConfig } from './config.js';
-import { openParadigmEveChromeProfile, paradigmeEveBrowserWindowOpen, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
+import { openParadigmEveChromeProfile, paradigmeEveBrowserWindowOpen, restoreMissingParadigmEveBrowserAfterInstall, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
 
 let waking: { lastSeenAt: number | null; selected: string; kind: 'forward' | 'cold' | 'recovery'; work: Promise<void>; failed: boolean; finished: boolean } | null = null;
+const activeWakeProbes = new Set<Promise<void>>();
+let preservedInstallStartup: Promise<'restored' | 'present' | 'unknown'> | null = null;
+let preservedInstallSettled = false;
+
+/** One quiet, restore-only attempt across the installer's repeated background signals. */
+export function restorePreservedCompanionBrowserAfterInstall(): Promise<'restored' | 'present' | 'unknown'> {
+  if (preservedInstallSettled) return Promise.resolve('present');
+  if (preservedInstallStartup) return preservedInstallStartup;
+  const task = (async () => {
+    // A durable input/recovery may be probing browser absence before it has published `waking`.
+    // Leave that episode to its authored owner; a later installer signal can retry if necessary.
+    if (activeWakeProbes.size > 0) return 'unknown';
+    return restoreMissingParadigmEveBrowserAfterInstall();
+  })();
+  preservedInstallStartup = task;
+  void task.then((result) => { if (result !== 'unknown') preservedInstallSettled = true; }, () => {}).finally(() => {
+    if (preservedInstallStartup === task) preservedInstallStartup = null;
+  });
+  return task;
+}
 /** One browser startup per absence episode, shared by authored sends, discovery and owed recovery. */
-export async function wakeBrowserUrl(url: string, retry = false, _backgroundStartup = false,
+export function wakeBrowserUrl(url: string, retry = false, _backgroundStartup = false,
   authority?: { current(): boolean; exactPrime?: boolean }): Promise<void> {
+  const work = runWakeBrowserUrl(url, retry, _backgroundStartup, authority);
+  activeWakeProbes.add(work);
+  void work.then(() => { activeWakeProbes.delete(work); }, () => { activeWakeProbes.delete(work); });
+  return work;
+}
+async function runWakeBrowserUrl(url: string, retry = false, _backgroundStartup = false,
+  authority?: { current(): boolean; exactPrime?: boolean }): Promise<void> {
+  if (authority && !authority.current()) return;
+  if (preservedInstallStartup) await preservedInstallStartup;
   if (authority && !authority.current()) return;
   const browser = await bridgeStatus();
   if (browserWakeConnected()) { waking = null; return; }
@@ -71,4 +100,4 @@ export async function wakeBrowserUrl(url: string, retry = false, _backgroundStar
   waking = attempt;
   try { await work; } catch (error) { attempt.failed = true; throw error; } finally { attempt.finished = true; }
 }
-export function resetBrowserStartupForTests(): void { waking = null; }
+export function resetBrowserStartupForTests(): void { waking = null; activeWakeProbes.clear(); preservedInstallStartup = null; preservedInstallSettled = false; }

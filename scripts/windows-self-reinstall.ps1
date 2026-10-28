@@ -13,11 +13,9 @@ The assisted installer stays visible. The script clicks only the known forward/d
 chooses a destructive alternative such as Ignore/Cancel and it never changes the install folder
 or per-user/per-machine default.
 
-After installation, the script launches/signals the installed app in the foreground with the
-one-shot --connect-on-start and --recover-companion-browser flags. Foreground launch deliberately
-lets the normal ParadigmEve window startup path present the app (maximized on initial creation)
-while the one-shot flags restore connectivity and the Companion browser. Recovery is retried every
-30 seconds for at most two minutes by default.
+After installation, the script launches/signals the installed app with --connect-on-start and
+--preserve-chatgpt-tabs. The new Companion generation is loaded at its in-place idle fence;
+this controller must not restart Chrome or replace an active user's ChatGPT tabs.
 #>
 [CmdletBinding()]
 param(
@@ -25,7 +23,8 @@ param(
   [int]$RetrySeconds = 30,
   [int]$RecoverySeconds = 120,
   [int]$InstallerTimeoutSeconds = 600,
-  [string]$LogPath
+  [string]$LogPath,
+  [switch]$SilentNoFocus
 )
 
 $ErrorActionPreference = 'Stop'
@@ -190,8 +189,15 @@ function Stop-ParadigmEveFallback {
   $running | Stop-Process -Force -ErrorAction Stop
 }
 
-Write-ReinstallLog "Starting assisted installer: $installer"
-$installerProcess = Start-Process -FilePath $installer -PassThru
+Write-ReinstallLog "Starting $(if ($SilentNoFocus) { 'silent no-focus' } else { 'assisted' }) installer: $installer"
+$installerProcess = if ($SilentNoFocus) {
+  # NSIS /S takes its canonical per-user destination and closes only the installed Eve,
+  # never Chrome. There is no wizard and no OS foreground activation of the user's
+  # active ChatGPT tab/window. The external controller remains alive for verification.
+  Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -WindowStyle Hidden
+} else {
+  Start-Process -FilePath $installer -PassThru
+}
 $installerDeadline = [DateTimeOffset]::Now.AddSeconds($InstallerTimeoutSeconds)
 $closeFallbackAt = $null
 $lastSnapshot = ''
@@ -203,6 +209,12 @@ while (-not $installerProcess.HasExited) {
   }
 
   $installerProcess.Refresh()
+  if ($SilentNoFocus) {
+    # Silent NSIS owns its close/install sequence. Never synthesize a wizard click
+    # or force-stop Chrome while the user has live tabs.
+    Start-Sleep -Milliseconds 400
+    continue
+  }
   $snapshot = [ParadigmEveInstallerUi]::Snapshot([uint32]$installerProcess.Id)
   if ($snapshot -and $snapshot -ne $lastSnapshot) {
     Write-ReinstallLog "Installer state: $snapshot"
@@ -282,8 +294,8 @@ $installedExe = Resolve-InstalledParadigmEveExe
 Write-ReinstallLog "Resolved installed executable: $installedExe"
 
 function Signal-Recovery([int]$Attempt) {
-  Write-ReinstallLog "Recovery attempt ${Attempt}: launching/signalling ParadigmEve visibly with one-shot connect + Companion-browser recovery requests."
-  Start-Process -FilePath $installedExe -ArgumentList @('--connect-on-start', '--recover-companion-browser')
+  Write-ReinstallLog "Recovery attempt ${Attempt}: launching/signalling ParadigmEve with connect and preserve-ChatGPT-tabs requests."
+  Start-Process -FilePath $installedExe -ArgumentList @('--background', '--connect-on-start', '--preserve-chatgpt-tabs')
 }
 
 function Test-RecoveryReady {
@@ -326,4 +338,8 @@ for ($attempt = 1; $attempt -le $attempts; $attempt++) {
   }
 }
 
-throw "ParadigmEve did not restore a current-generation Companion ChatGPT document within $RecoverySeconds seconds. See $logFile"
+if (@(Get-ParadigmEveProcesses).Count -gt 0) {
+  Write-ReinstallLog 'Installed ParadigmEve is running; current Companion document proof is deferred until the existing ChatGPT pages become idle. No Chrome window was restarted or replaced.'
+  exit 0
+}
+throw "ParadigmEve did not restart within $RecoverySeconds seconds. See $logFile"

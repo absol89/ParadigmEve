@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { validateNewRoot } from '../src/main/sandbox.js';
 import { initDurableStore, resetDurableForTests } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { startMcpServer, type McpEndpoint } from '../src/main/mcp/server.js';
 import { initSessionStore, resetSessionStoreForTests, unsetSessionRootForTests } from '../src/main/session/store.js';
 
@@ -29,6 +30,7 @@ it('drains an accepted MCP mutation before closing its response socket', async (
   initConfigPath(dir);
   initSessionStore(dir);
   initDurableStore(dir);
+  await restoreNativeDelegations();
   const cfg = defaultConfig();
   const rootPath = await validateNewRoot(dir, []);
   const roots = [{ name: 'probe', path: rootPath }];

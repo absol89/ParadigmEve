@@ -149,6 +149,13 @@ The runner records that receipt and only then advances the occurrence to running
 Do not infer Started from a timer firing, a browser window opening, an outbox claim, visible assistant
 prose, a Plan, a Pin or a Thread.
 
+Schedule maintenance settles an admitted occurrence from its exact outbox row each minute, and
+again after restart. An ACKed row that missed its Start write starts it then. A row that ended
+without an ACK (failed, or cancelled after a pickup or Send timeout) fails the occurrence as a
+`delivery` failure with the outbox's reason, and the execution receipt shows Failed instead of
+Waiting to start. Nothing is re-sent: if Send had been authorized, the failure says the message may
+have reached ChatGPT. Pickup misses are logged as `input <id>: not picked up` with offer timing.
+
 ## Done requires task-specific durable verification
 
 The unified Core MCP `schedule` tool uses `action="complete"` inside the exact running
@@ -205,3 +212,81 @@ details. `%how` remains a separate Thread activation for broader product guidanc
 - `test/schedule-acceptance-*.test.ts`, `test/schedule-projection.test.ts`,
   `test/schedule-mutations.test.ts`, `test/user-schedule.test.ts` and
   `test/schedule-editor-renderer.test.ts` — acceptance coverage for these boundaries.
+
+---
+
+> **Implementation contracts.** The sections below moved here unchanged from the former single-file
+> `AGENTS.md` map. Their § numbers are kept so references such as “§14” still resolve; the
+> [Vault index](README.md#former-agentsmd-sections) lists where each section lives.
+
+## 17. Goal and Loop: durable intent, replaceable decisions
+
+**Intent:** preserve the original user task and accepted corrections, notice a legitimate
+completion boundary, and decide whether another useful instruction is owed. Goal can stop
+when its finish line is met. Loop continues improving/checking within that task until Off;
+it must not invent an unrelated project just to keep generating.
+
+`goal.ts` owns objectives, chat switches, reply obligations, helper roles and decision attempts.
+`shared/goal.ts` owns bounded prompt/contracts; `goal.ts` projects applicability and the outbox
+owns actual delivery. An objective, an enabled mode, an unfinished reply obligation,
+a provider attempt and a browser send are five different facts.
+
+### Modes, controls and boundaries
+
+Per-chat explicit Off defeats an existing objective. Without an explicit override, effective
+policy derives from the configured master/default and objective. Deliberate On rearms the
+latest eligible stable reply with a new acceptance identity; Off retires that obligation and
+its pending attempt. Objective text survives Off/completion for later reuse. Repeated On → Off
+→ On → Off must operate on current durable authority, not an old callback's enabled snapshot.
+Master Off clears ordinary chat overrides while keeping internal helper-role records.
+
+Ordinary non-Astra Goal/Loop considers verified **completed final answers**, not interrupted
+turns or generic composer idleness. Exact Pro is excluded from synthetic automatic next turns.
+Astra instead uses `session_finish`: both selected modes invoke the Loop decision policy and
+inject through the eligible tool response (§11), never browser-auto-send after its final.
+Decision helpers/planners and workers cannot recursively start their own Goal/Loop driver.
+
+Stop, block, replacement, a newer turn, mode/settings changes and input revision invalidate
+stale decision attempts. User messages/checkpoints take precedence over generated continuation.
+Validate the exact source turn, acceptance and current policy again at publication/delivery.
+The completion of an HTTP/helper request alone never grants send authority.
+Browser draft refusals retain their pickup claim. Read machine errors from the HTTP `data`
+envelope or the transport's top-level failure, then use the existing delayed retry/backoff.
+`chat_still_working` stays on Answer settling; rate limits and transport failures cannot
+release the claim for every activity update to collect again. Off or a new pickup invalidates
+the old delayed retry, and a settled refusal waits for a new authorized episode.
+
+### Three backends, two different helper roles
+
+| Backend/role | Behavior |
+| --- | --- |
+| ChatGPT decision helper | Default driver backend. One reusable helper per source session/role; receives reference history and outputs a decision, never executes that history. |
+| API driver | OpenRouter-compatible default or explicit compatible endpoint/model/key. Supports bounded streamed progress and validated final decision. |
+| Goal templates | Offline explicit terminal-marker policy; only Goal supports this backend. Missing/ambiguous expected markers pause rather than infer completion from prose. |
+| Temporary planner | Captures a new workflow for the user, then retires with exact idle/draft proof; distinct from the persistent decision helper. |
+
+Goal gate, objective and Loop prompts are separately configurable. Default helper selection is
+Sol/high in the checked config, but live account metadata governs whether it can be used.
+API model discovery is bounded and cached by endpoint/key; a list entry does not prove an
+execution succeeded. Secrets remain in the main process's encrypted store. Custom endpoints
+receive the explicitly assembled reference context; local recording is not a promise that
+Goal API requests stay on the device.
+
+The driver context includes canonical authored user messages, stable assistant interim/progress
+and final text. Tool rows are opt-in (`includeToolCalls`, default Off); finish-control calls do
+not recursively dominate the reference. Preserve original task/steering and committed handoff
+provenance under the message budget. Helper prefix digests prove whether a bounded delta is
+valid; changed history/instructions replace context in the same helper instead of spawning
+another helper automatically. Clear temporary-planner answer content before durable state
+publication; it is not a normal recorded executor task.
+
+Provider progress updates one existing timeline row and is never sendable text. Validate the
+final bounded decision schema before publication. Goal may return stop/no reply. Loop requires
+a continuation and has a bounded three-retry invalid-stop policy. API SSE is used when publishing
+progress; legacy plain streaming is compatibility handling, not another driver authority.
+Cancellation/timeout must release only that exact attempt and leave an honest error/retry state.
+
+Reply obligations are durable and bounded (12 hours / 200 rows) with handled tombstones so old
+browser observations do not rearm discharged work. A provisional exact `turn:<id>` observation
+can later gain durable event-sequence evidence. “Invalidating an attempt” must not silently mean
+“the user's continuation is handled.” Current persistence/publication exceptions are in §21.

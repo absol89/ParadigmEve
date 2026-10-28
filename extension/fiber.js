@@ -1283,6 +1283,56 @@
       if (descriptors.length !== 1 || nodes.length === 0) continue;
       for (const node of nodes) exactImageNodes.set(node, descriptors[0]);
     }
+    // Some newer ChatGPT user uploads render from a blob/asset thumbnail rather than an
+    // estuary URL containing their file id. Do not lose their pixels merely because the URL
+    // is opaque. The *message* can still prove ownership: match only the explicitly keyed
+    // user unit, only if every user image pointer has one unique visible img in DOM order,
+    // and never take a node already claimed by an exact file-id match. A generic image in
+    // the exchange, a mismatched count, duplicate user messages or unloaded virtualization
+    // is NOT sufficient evidence; those cases stay metadata-only/unavailable.
+    const userGroups = new Map();
+    for (const descriptor of out) {
+      if (descriptor.providerRole !== 'user') continue;
+      const list = userGroups.get(descriptor.messageId) || [];
+      list.push(descriptor);
+      userGroups.set(descriptor.messageId, list);
+    }
+    for (const [messageId, descriptors] of userGroups) {
+      if (descriptors.every(image => [...exactImageNodes.values()].includes(image))) continue;
+      const userUnits = [];
+      for (const section of sections) {
+        if (!section || !section.querySelectorAll) continue;
+        try {
+          if (section.matches(EXCHANGE) && section.getAttribute('data-turn-key') === messageId) {
+            userUnits.push(...section.querySelectorAll('[data-chatgpt-search-unit-key$=":user"]'));
+          } else if (section.matches(TURN_SECTION) && section.getAttribute('data-turn') === 'user' &&
+              messages.filter(message => message?.author?.role === 'user' && message.id).length === 1 &&
+              messages.some(message => message?.id === messageId && message?.author?.role === 'user')) {
+            userUnits.push(section);
+          }
+        } catch { /* an unreadable page branch cannot prove image ownership */ }
+      }
+      const distinctUnits = [...new Set(userUnits)];
+      if (distinctUnits.length !== 1) continue;
+      const unit = distinctUnits[0];
+      const candidates = [...unit.querySelectorAll('img')].filter(node => node.isConnected && !exactImageNodes.has(node));
+      const unmatched = descriptors.filter(image => ![...exactImageNodes.values()].includes(image));
+      // Partial URL matches are not a reliable ordering witness, so accept positional
+      // evidence only when the *whole* exact user message has no exact URL matches.
+      if (unmatched.length !== descriptors.length || candidates.length !== descriptors.length ||
+          new Set(descriptors.map(image => image.assetId)).size !== descriptors.length) continue;
+      // A contradictory explicit file id is stronger than relative position. Opaque
+      // thumbnails have no provider file id in the URL at all.
+      const contradictoryId = candidates.some(node => {
+        try {
+          const url = new URL(node.currentSrc || node.src, location.href);
+          return url.pathname === '/backend-api/estuary/content' && url.searchParams.has('id');
+        } catch { return true; }
+      });
+      if (contradictoryId) continue;
+      descriptors.sort((left, right) => left.partOrder - right.partOrder);
+      candidates.forEach((node, index) => exactImageNodes.set(node, descriptors[index]));
+    }
     return out;
   }
 
@@ -2028,7 +2078,9 @@
       const section = stampable[at];
       try {
         if (!section || !section.getAttribute) continue;
-        for (const node of section.querySelectorAll(GENERATED_IMAGE + ', img[src*="/backend-api/estuary/content"], [data-clf-fiber-image]')) {
+        // Includes exact-message opaque/blob thumbnails now eligible for user-only
+        // stamps, while desiredImageStamps still decides which nodes are proven.
+        for (const node of section.querySelectorAll('img, [data-clf-fiber-image]')) {
           const wantedImage = desiredImageStamps.get(node);
           const currentImage = node.getAttribute('data-clf-fiber-image');
           if (wantedImage === undefined) {

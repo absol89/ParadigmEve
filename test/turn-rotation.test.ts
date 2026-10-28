@@ -81,3 +81,30 @@ it('files at most two automatic continues for one turn', async () => {
   startedAt = now; now += 31 * 60_000;
   expect(await considerTurnRotation('chat', 'session', 'turn-2', logged())).toBe(true);
 });
+
+it('uses durable prior filings after a scheduler restart and does not offer a third continue', async () => {
+  const lines: string[] = [];
+  now = 39 * 60_000;
+  resetTurnRotationForTests();
+  const durable = { ...deps(),
+    history: vi.fn(async () => ({ filings: 2, lastFiledAt: 34 * 60_000 })),
+    log: (line: string) => lines.push(line)
+  };
+  expect(await considerTurnRotation('chat', 'session', 'turn', durable)).toBe(false);
+  now += 1;
+  expect(await considerTurnRotation('chat', 'session', 'turn', durable)).toBe(false);
+  expect(filed).toHaveLength(0);
+  expect(lines.filter(line => line.includes('giving up'))).toHaveLength(1);
+});
+
+it('serializes concurrent rotation decisions while durable history is loading', async () => {
+  now = 31 * 60_000;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const concurrent = { ...deps(), history: async () => { await gate; return null; } };
+  const first = considerTurnRotation('chat', 'session', 'turn', concurrent);
+  const second = considerTurnRotation('chat', 'session', 'turn', concurrent);
+  release();
+  expect(await Promise.all([first, second])).toEqual([true, false]);
+  expect(filed).toHaveLength(1);
+});

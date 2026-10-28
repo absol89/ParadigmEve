@@ -19,7 +19,7 @@ import { wakeBrowserWork } from '../browser-wake.js';
 import { logInfo, logWarn } from '../logger.js';
 import { noteChatOrigin, rebindConversation } from './recorder.js';
 import { compactingConversation } from './continuation.js';
-import { ROTATION_MESSAGE } from '../turn-rotation.js';
+import { MAX_FILED_PER_TURN, ROTATION_MESSAGE } from '../turn-rotation.js';
 import { claimAgentConversation, currentAgentConversationId, replaceAgentConversation } from '../agent-identity.js';
 import { dispatchHeartbeatReviewWorker, selectedBrokerOwnerConversationId } from '../agents.js';
 import { isAstraModel, isProModel } from '../../shared/chat-models.js';
@@ -176,6 +176,8 @@ const chatReviewPlanSnapshotSchema = z.object({
 export type ChatReviewPlanSnapshot = z.infer<typeof chatReviewPlanSnapshotSchema>;
 const chatReviewAttentionSchema = z.object({
   key: z.string().min(1).max(512),
+  /** Only parent-mediated native reviews carry this marker; ordinary review workers do not. */
+  reviewLane: z.literal('native-parent').optional(),
   sinceAt: z.number().int().nonnegative(),
   untilAt: z.number().int().nonnegative(),
   plans: z.array(chatReviewPlanSnapshotSchema).max(CHAT_REVIEW_PLAN_BATCH_MAX)
@@ -304,8 +306,9 @@ export type InputEntry = z.infer<typeof entrySchema>;
 const STATE = 'session-input';
 const TOOL_INPUT_TEXT_BYTES = 128000;
 export const TOOL_INPUT_HEADER = '\n--- New instructions from the user ---\n';
+export const HEARTBEAT_TOOL_HEADER = '\n--- Internal ParadigmEve heartbeat review (read-only; not a new user instruction) ---\n';
 export interface ToolInputBatch {
-  messages: Array<{ text: string; images: InputImage[] }>;
+  messages: Array<{ text: string; images: InputImage[]; maintenance?: true }>;
   /** One transport instruction after the complete batch, including its images. */
   reminder: string;
 }
@@ -454,6 +457,10 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
     awaitingUserTurnStart };
 }
 async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
+  // A mode switch cannot authorize a c25 heartbeat browser claim that was waiting
+  // to press Send. If it already crossed Send, retain the receipt as ambiguous.
+  if (nativeHeartbeatReview(entry) ||
+      (entry.purpose === 'heartbeat-finding' && getConfig().multiAgent.heartbeatMode === 'native-subagent')) return false;
   if (entry.mode === 'finish' && entry.sessionId && entry.afterTurn !== true) {
     const session = await getSession(entry.sessionId);
     const selection = session?.selectedModel;
@@ -546,7 +553,7 @@ export function hasEligibleToolInput(sessionId: string, finishBoundary = false):
     if (current.some(row => row.sessionId === sessionId && row.state === 'browser')) return false;
     for (const row of current) {
       if (row.sessionId !== sessionId || row.dueAt > Date.now()) continue;
-      if (row.purpose === 'attention' || row.purpose === 'peer' || isLocalProviderInput(row)) continue;
+      if ((row.purpose === 'attention' && !inBandHeartbeat(row)) || row.purpose === 'peer' || isLocalProviderInput(row)) continue;
       if (row.attachments?.length) continue;
       if (row.mode === 'after-turn' || (row.mode === 'finish' && !finishBoundary)) continue;
       if (row.state === 'tool') return true;
@@ -577,10 +584,17 @@ function scheduleBrowserClaimExpiry(rows: InputEntry[]): void {
 // available. Restart discards this evidence and repeats the stable message id.
 const offered = new Map<string, number>();
 const terminal = (row: InputEntry): boolean => ['sent', 'cancelled', 'failed'].includes(row.state);
+/** Native heartbeat maintenance never opens a new browser/user-message turn. */
+const nativeHeartbeatReview = (row: InputEntry): boolean =>
+  row.purpose === 'attention' && row.chatReview?.reviewLane === 'native-parent';
+const inBandHeartbeat = (row: InputEntry): boolean =>
+  row.transportIntent === 'tool' && (nativeHeartbeatReview(row) || row.purpose === 'heartbeat-finding');
 /** Rows answered in-process by a local provider. The browser and tool transports never claim them. */
 /** Rows ParadigmEve answers in-process (Ollama, OpenRouter): never offered to the browser. */
 export const isLocalProviderInput = (row: Pick<InputEntry, 'provider'>): boolean => row.provider === 'ollama' || row.provider === 'openrouter';
-const preparable = (row: InputEntry): boolean => !isLocalProviderInput(row) && (row.state === 'queued' ||
+const preparable = (row: InputEntry): boolean => !nativeHeartbeatReview(row) &&
+  !(row.purpose === 'heartbeat-finding' && getConfig().multiAgent.heartbeatMode === 'native-subagent') &&
+  !inBandHeartbeat(row) && !isLocalProviderInput(row) && (row.state === 'queued' ||
   (row.state === 'browser' && row.requiresAuthorization === true && row.sendAuthorizedAt === undefined));
 const needsHistory = (row: InputEntry): boolean => row.purpose !== 'decision' && !row.historyRecorded &&
   ((row.state === 'tool' && Number.isFinite(row.offeredAt)) || ((row.state === 'sent' || row.state === 'cancelled') && !!row.messageId));
@@ -689,6 +703,24 @@ async function unsentPreparationError(row: InputEntry): Promise<string> {
 
 async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
   const next = await Promise.all(current.map(async (row): Promise<InputEntry> => {
+    // Upgrade only definitely unclaimed c25 heartbeat browser rows. A browser owner,
+    // offer or authorization preserves its original potentially-delivered receipt.
+    if (getConfig().multiAgent.heartbeatMode === 'native-subagent' &&
+        row.state === 'queued' && row.owner === null && row.offeredAt === undefined &&
+        (nativeHeartbeatReview(row) || row.purpose === 'heartbeat-finding') &&
+        (row.mode !== 'auto' || row.transportIntent !== 'tool')) {
+      return { ...row, mode: 'auto', transportIntent: 'tool' };
+    }
+    // The reverse move. A finding queued under Native waits for Prime's next Eve tool call; after
+    // a switch away that wait has no end for an idle Prime, and the heartbeat's own retry returns
+    // this same row. Only an untouched row moves, to an ordinary after-turn browser message. A
+    // Native review prompt is not moved here: its debt is closed by the mode change instead.
+    if (getConfig().multiAgent.heartbeatMode !== 'native-subagent' && row.purpose === 'heartbeat-finding' &&
+        row.transportIntent === 'tool' && row.state === 'queued' && row.owner === null &&
+        row.offeredAt === undefined && row.sendAuthorizedAt === undefined && !row.messageId && row.deliveredAt === undefined) {
+      const { transportIntent: _inBand, ...browserRow } = row;
+      return { ...browserRow, mode: 'after-turn' };
+    }
     if (row.finishOwner && !terminal(row) && !(await finishInputCurrent(row)))
       return { ...row, state: 'cancelled', error: 'Automatic follow-up cancelled because its active turn or setting changed.' };
     if (row.purpose === 'decision') return row;
@@ -720,10 +752,17 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     if (row.state === 'queued' && !isLocalProviderInput(row) && row.mode === 'auto' && !row.finishOwner && row.purpose !== 'attention' && row.purpose !== 'peer' &&
         (row.transportIntent === 'browser' || (!row.transportIntent && !row.sessionId)) &&
         // Do not expire a message that our own turn policy has never allowed the browser to pick up.
-        (await browserInputAllowed(row)) && pickupOverdue(row))
+        (await browserInputAllowed(row)) && pickupOverdue(row)) {
+      // The page declines an offer silently, so this line is the only record of the miss (c29).
+      const now = Date.now();
+      const offeredAt = browserOfferedSince.get(row.id);
+      logWarn(`input ${row.id}: not picked up; failed purpose=${row.purpose ?? 'user'} fresh_chat=${!row.sessionId} ` +
+        `row_age_ms=${now - row.createdAt} offered_ms=${offeredAt === undefined ? 'never' : now - offeredAt} ` +
+        `browser_asked_ms_ago=${browserLastAskedAt === null ? 'never' : now - browserLastAskedAt} browser_ready=${browserReadyAt !== null}`);
       return { ...row, state: 'failed', error: browserReadyAt === null
         ? 'Not sent: the browser did not connect within 5 minutes.'
         : 'Not sent: the browser did not pick up this message within 60 seconds.' };
+    }
     // Native preparation is bounded by the page's 60s upload confirmation plus picker/composer
     // hydration. App-staged attachments are already local bytes by the time the browser owns the
     // claim; keeping that claim for twelve minutes only hides a failed native upload from the user.
@@ -829,7 +868,11 @@ function append(current: InputEntry[], entry: InputEntry, stackDirect = false): 
   // A composer slot belongs to its durable session, just like browser/tool claims.
   // An old or ambiguous delivery in another chat must never make this chat unwritable.
   // Null-session openings share the one new-chat composer until its receipt binds it.
-  if (!stackDirect && entry.purpose !== 'decision' && entry.purpose !== 'schedule' && !queuedFollowup(entry) && current.some(row => row.sessionId === entry.sessionId && row.purpose !== 'decision' && row.purpose !== 'schedule' &&
+  // Native heartbeat rows never use the composer: they ride Prime's next tool result together,
+  // so they neither hold the slot nor wait for it. Holding it let a queued Native finding keep
+  // the next Native review out of the queue until Prime had called twice (c27 dogfood, 11:54).
+  if (!stackDirect && entry.purpose !== 'decision' && entry.purpose !== 'schedule' && !queuedFollowup(entry) && !inBandHeartbeat(entry) &&
+      current.some(row => row.sessionId === entry.sessionId && row.purpose !== 'decision' && row.purpose !== 'schedule' && !inBandHeartbeat(row) &&
       // An already-claimed automatic wake retains exclusive browser custody, but cannot
       // reject the newer human message. Claim-time serialization still prevents two sends.
       !(row.restartWake && row.state === 'browser' && !entry.restartWake && (entry.purpose === undefined || entry.purpose === 'user')) &&
@@ -895,6 +938,38 @@ async function finishInputCurrent(entry: InputEntry): Promise<boolean> {
 }
 /** How long a filed fresh-turn continue may wait for the page before it is dropped. */
 const ROTATION_UNTAKEN_MS = 4 * 60_000;
+const ROTATION_BUDGET_STATE = 'session-turn-rotation-budget';
+const rotationBudgetSchema = z.array(z.object({
+  sessionId: z.string().min(8).max(64),
+  turnId: z.string().min(1).max(256),
+  startedAt: z.number().int().nonnegative(),
+  filings: z.number().int().min(1).max(MAX_FILED_PER_TURN),
+  lastFiledAt: z.number().int().nonnegative()
+}).strict()).max(512);
+type RotationBudget = z.infer<typeof rotationBudgetSchema>[number];
+async function rotationBudgets(): Promise<RotationBudget[]> {
+  const parsed = rotationBudgetSchema.safeParse(await readDurable<unknown>(ROTATION_BUDGET_STATE) ?? []);
+  if (!parsed.success) throw new Error('The durable turn-rotation budget is invalid');
+  return parsed.data;
+}
+function observedRotationBudget(rows: InputEntry[], sessionId: string, turnId: string, startedAt: number) {
+  const attempts = rows.filter(row => row.purpose === 'rotation' && row.text === ROTATION_MESSAGE &&
+    row.sessionId === sessionId && row.directTurn?.id === turnId && row.directTurn.startedAt === startedAt);
+  return { filings: attempts.length, lastFiledAt: Math.max(0, ...attempts.map(row => row.createdAt)) };
+}
+/** The exact app-owned durable filing receipts survive restart; old outbox rows bootstrap c24. */
+export function turnRotationHistory(sessionId: string, turnId: string): Promise<{ filings: number; lastFiledAt: number } | null> {
+  return serial(async () => {
+    const session = await getSession(sessionId);
+    if (!session || session.activeTurnId !== turnId) return null;
+    const ledger = (await rotationBudgets()).find(row => row.sessionId === sessionId && row.turnId === turnId);
+    const observed = (await load()).filter(row => row.sessionId === sessionId && row.purpose === 'rotation' &&
+      row.text === ROTATION_MESSAGE && row.directTurn?.id === turnId);
+    const count = Math.max(ledger?.filings ?? 0, observed.length);
+    return count > 0 ? { filings: count, lastFiledAt: Math.max(ledger?.lastFiledAt ?? 0,
+      ...observed.map(row => row.createdAt)) } : null;
+  });
+}
 /**
  * Files the app's automatic continue for a long running turn (turn-rotation.ts).
  *
@@ -911,6 +986,18 @@ export function fileRotationInput(sessionId: string, turnId: string, startedAt: 
     if (!session?.conversationId || session.endedAt !== null || session.activeTurnId !== turnId ||
         isChatBlocked(session.conversationId) || compactingConversation(session.conversationId)) return null;
     const now = Date.now();
+    if (text === ROTATION_MESSAGE) {
+      const ledger = await rotationBudgets();
+      const saved = ledger.find(row => row.sessionId === sessionId && row.turnId === turnId && row.startedAt === startedAt);
+      const observed = observedRotationBudget(current, sessionId, turnId, startedAt);
+      const spent = Math.max(saved?.filings ?? 0, observed.filings);
+      if (spent >= MAX_FILED_PER_TURN) return null;
+      // Reserve before appending the input. If the later append fails, spending a filing is
+      // conservative; a crash can never reopen an already committed automatic Send attempt.
+      const budget: RotationBudget = { sessionId, turnId, startedAt, filings: spent + 1, lastFiledAt: now };
+      const next = [...ledger.filter(row => row.sessionId !== sessionId), budget].slice(-512);
+      await writeDurableNow(ROTATION_BUDGET_STATE, next);
+    }
     const entry: InputEntry = { id: randomUUID(), sessionId, text, mode: 'auto', dueAt: now,
       model: null, reasoningEffort: null, purpose: 'rotation', directTurn: { id: turnId, startedAt },
       transportIntent: 'browser', state: 'queued', owner: null, createdAt: now, conversationId: session.conversationId };
@@ -1175,10 +1262,13 @@ export function restartRecoveryPending(sessionId: string): Promise<boolean> {
   return serial(async () => (await load()).some(row =>
     row.sessionId === sessionId && !!row.recoveryTurnId && !terminal(row)));
 }
-/** True while this exact restart wake is still queued, unclaimed, for the turn it recovers. */
-export function restartRecoveryWaiting(id: string, recoveryTurnId: string): Promise<boolean> {
+/** True while this exact restart wake is still queued, unclaimed, for its open or idle epoch. */
+export function restartRecoveryWaiting(id: string, recoveryTurnId: string | null): Promise<boolean> {
   return serial(async () => (await load()).some(row =>
-    row.id === id && row.recoveryTurnId === recoveryTurnId && row.state === 'queued'));
+    row.id === id && row.state === 'queued' &&
+    (recoveryTurnId === null
+      ? row.restartWake === true && !row.recoveryTurnId
+      : row.recoveryTurnId === recoveryTurnId)));
 }
 const CHAT_REVIEW_ATTENTION_HEADER = '[[PARADIGMEVE-CHAT-REVIEW:v1]]';
 function chatReviewPlanBatchText(review: ChatReviewAttention): string {
@@ -1195,12 +1285,28 @@ function chatReviewPlanBatchText(review: ChatReviewAttention): string {
     'For each Plan, follow Plan → Source before judging it: use ParadigmEve session search/read on its exact provenance first, then inspect current files/repository/tool history and distinguish stale checklist state from genuinely unfinished work. ' +
     'Do not carry out, delegate, send, install, edit, archive, or otherwise mutate user work. Identify still-valid work only and return exact actionable findings to Prime; Prime remains the only coordinator that may act. Never duplicate work already running, invent completion, archive a human Plan, or silently resolve a user decision.\n' +
     `After reviewing each Plan, explicitly acknowledge that exact target by calling chat_review_plan directly with key ${JSON.stringify(review.key)}, the snapshot id as plan_id, the snapshot updatedAt as expected_updated_at, and one classification: ` +
-    '`ready-to-archive`, `tbd`, `blocked`, `superseded`, or `awaiting-user`. This review-only worker must not include completed_item_ids or mutate/archive a Plan; it reports classification evidence only. ' +
+    '`ready-to-archive`, `stale-checklist`, `tbd`, `blocked`, `superseded`, or `awaiting-user`. Use `stale-checklist` only when exact source evidence proves one or more currently-open checklist items are already complete, and include those exact ids as `stale_item_ids`. `stale_item_ids` are evidence only and never authorize this worker to mutate the Plan. A fully checked human Plan that is simply waiting for the user to archive it is `ready-to-archive`, not `stale-checklist`. This review-only worker must not include completed_item_ids or mutate/archive a Plan; it reports classification evidence only. ' +
     'For Eve/worker Plans, reporting or handing off to Prime is lifecycle evidence, not a Plan checklist step. Do not create or require a Report/Hand off to Prime item. If a legacy Plan still contains only such a trailing handoff item after its real work is complete, treat the last real task plus the archive boundary as the handoff when explicit report proof is unavailable; do not let report-only debt block cleanup. ' +
     'If the Plan revision/source changed or the acknowledgement is rejected, re-read and re-review that Plan before trying again. Every Plan above needs its own valid acknowledgement before the heartbeat receipt can succeed.';
 }
 export function chatReviewAttentionText(review: ChatReviewAttention): string {
   const agentName = getConfig().mcp?.connectorName ?? DEFAULT_CORE_CONNECTOR_NAME;
+  if (review.reviewLane === 'native-parent') {
+    return `${CHAT_REVIEW_ATTENTION_HEADER}\n${agentName} in-band native-subagent heartbeat, owned by this exact Prime chat. ` +
+      `Review locally recorded work from ${new Date(review.sinceAt).toISOString()} through ${new Date(review.untilAt).toISOString()}. ` +
+      `Heartbeat key: ${JSON.stringify(review.key)}.\n` +
+      'You are the host parent. Delegate the read-only classification to a ChatGPT Work native subagent if the host provides that ability inside this turn. ' +
+      'Do not open a separate worker chat or switch models to simulate native delegation. The native child needs no separate Eve identity, saved reasoning, or tools: use bounded local session/Plan evidence from this parent, give the child the review question, and interpret its returned conclusion yourself. ' +
+      'If native delegation is unavailable, report blocked; never claim a child ran. No browser history, browser control, user-file edits, installs, or worker spawns from this maintenance turn.\n' +
+      'Look for unfinished user requests, but check newer user instructions, actual files/tool receipts and work already owned by Prime. Do not wake Prime for work already running or report stale requests as actionable.\n' +
+      chatReviewPlanBatchText(review) + '\n' +
+      `For every selected Plan, the parent must use chat_review_plan with key ${JSON.stringify(review.key)}, exact plan_id, expected_updated_at and classification. ` +
+      'Never pass completed_item_ids; all Plan review acknowledgements are non-mutating. ' +
+      `Then call chat_review_complete directly with key ${JSON.stringify(review.key)} and result=completed (nothing outstanding), ` +
+      'dispatched (new work with finding), blocked (cannot verify or host native delegation unavailable), or failed (execution failed). ' +
+      'For every non-completed result include one concise evidence-bound finding. This parent-authored receipt and finding are the only retained semantic result; native child thinking is not recorded or treated as tool authority. ' +
+      'This maintenance arrived in an existing Eve tool result: no new chat, browser Send, or permission click is required for transport. Your normal final message does not by itself close the review. Do not send a second Prime turn.';
+  }
   return `${CHAT_REVIEW_ATTENTION_HEADER}\nThis is ${agentName}'s 22-minute recovery heartbeat for the always-on assistant. ` +
     `Review recent ChatGPT work from ${new Date(review.sinceAt).toISOString()} through ${new Date(review.untilAt).toISOString()}. ` +
     'This heartbeat has two review obligations before chat_review_complete: the recent-request review for the time window above and the durable-Plan review below. Neither obligation is evidence that every recent chat or Plan needs action.\n' +
@@ -1213,7 +1319,7 @@ export function chatReviewAttentionText(review: ChatReviewAttention): string {
     chatReviewPlanBatchText(review) + '\n' +
     'Do not call agents or spawn/delegate additional workers from this maintenance review; this worker is already the bounded review lane. ' +
     `Only after the recent-request review and every selected Plan target are complete, call chat_review_complete directly with key ${JSON.stringify(review.key)} and result: ` +
-    '`completed` if no newly unowned actionable work remained (including when Prime is already actively doing the task), `dispatched` if a newly actionable finding requiring Prime attention was durably returned without executing it, `blocked` if the review could not safely determine what Prime should do, or `failed` for a real review failure. ' +
+    '`completed` if no newly unowned actionable work or Plan housekeeping remained (including when Prime is already actively doing the task and when a fully checked human Plan is merely waiting at its manual archive boundary), `dispatched` if a newly actionable finding requiring Prime attention was durably returned without executing it, `blocked` if the review could not safely determine what Prime should do, or `failed` for a real review failure. Any `stale-checklist` acknowledgement is actionable housekeeping and therefore requires `dispatched` plus a compact finding naming the exact Plan/revision/items and source-backed reason; it may not close quietly as `completed`. ' +
     'For dispatched, blocked, or failed, include one compact provenance-bound finding for Prime; only completed closes quietly with no finding. ' +
     'That explicit receipt is the only event that completes this heartbeat; browser delivery, an ACK, or ordinary final prose do not clear it. If the receipt is rejected, leave the review pending rather than guessing another chat, session, or key. ' +
     'This review worker does not own Prime coordination. After the exact receipt, finish this review without opening a new Prime turn or taking any action.';
@@ -1231,13 +1337,40 @@ export function legacyChatReviewActivityAt(key: string): Promise<number | null> 
   return serial(async () => {
     const rows = (await load()).filter(row => row.purpose === 'attention' && row.chatReview?.key === key);
     if (!rows.length) return null;
-    return Math.max(...rows.flatMap(row => [row.createdAt, row.offeredAt, row.sendAuthorizedAt, row.deliveredAt]
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))));
+    return Math.max(...rows.map(chatReviewRowActivityAt));
+  });
+}
+function chatReviewRowActivityAt(row: InputEntry): number {
+  return Math.max(...[row.createdAt, row.offeredAt, row.sendAuthorizedAt, row.deliveredAt]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value)));
+}
+
+/**
+ * How far a review prompt for this key has travelled toward Prime, for diagnostics only. It never
+ * grants or withholds anything: `queued` has not left the app, `offered` was put in a tool result
+ * or browser claim, `delivered` has positive receipt evidence (a later Prime call or a send ACK).
+ */
+export function chatReviewTransportStage(key: string): Promise<'none' | 'queued' | 'offered' | 'delivered' | 'closed'> {
+  return serial(async () => {
+    const rows = (await load()).filter(row => row.purpose === 'attention' && row.chatReview?.key === key);
+    if (!rows.length) return 'none';
+    if (rows.some(row => row.state === 'sent' || row.deliveredAt !== undefined || row.messageId)) return 'delivered';
+    if (rows.some(row => !terminal(row) && (row.offeredAt !== undefined || row.state === 'tool' || row.state === 'browser'))) return 'offered';
+    return rows.some(row => !terminal(row)) ? 'queued' : 'closed';
   });
 }
 
 /** Dispatch this heartbeat into the app-owned worker broker, never into Prime's composer. */
 export async function dispatchChatReviewWorker(sessionId: string, review: ChatReviewAttention): Promise<unknown> {
+  // This is the final admission fence for the independent heartbeat choice.
+  // Native Work has no verified unattended child-launch or callback capability.
+  // Never borrow the ordinary worker route or convert a selection into a browser send.
+  const requireAuditable = (): void => {
+    if (getConfig().multiAgent.heartbeatMode !== 'auditable-chat') {
+      throw new Error('HEARTBEAT_MODE_NOT_AUDITABLE: review debt preserved; no worker launched or alternate route selected.');
+    }
+  };
+  requireAuditable();
   const retired = await retireLegacyChatReviewAttention(review.key);
   if (retired === 'ambiguous') {
     throw new Error(`${LEGACY_HEARTBEAT_AMBIGUOUS}: A legacy heartbeat browser send may already have been authorized; worker review is deferred to avoid duplicating the same epoch.`);
@@ -1246,6 +1379,7 @@ export async function dispatchChatReviewWorker(sessionId: string, review: ChatRe
   if (!session?.conversationId || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') {
     throw new Error('Heartbeat review requires one exact ordinary Prime session.');
   }
+  requireAuditable();
   return dispatchHeartbeatReviewWorker(session.conversationId, review.key, async (conversationId) => {
     const worker = await findSessionByConversation(conversationId);
     if (!worker) return null;
@@ -1254,13 +1388,32 @@ export async function dispatchChatReviewWorker(sessionId: string, review: ChatRe
   });
 }
 
+/** Parent-mediated native review: only the exact coordinator outbox, no new worker chat. */
+export function dispatchChatReviewNativeParent(sessionId: string, review: ChatReviewAttention): Promise<InputEntry> {
+  if (review.reviewLane !== 'native-parent') throw new Error('Native review lane required');
+  if (getConfig().multiAgent.heartbeatMode !== 'native-subagent') {
+    throw new Error('HEARTBEAT_MODE_NOT_NATIVE: review debt preserved; no parent prompt or alternate route selected.');
+  }
+  return enqueueChatReviewAttention(sessionId, review, 22 * 60_000);
+}
+
 /**
  * Upgrade fence for heartbeat debt created by builds that injected the review into Prime.
  * A never-authorized browser claim is safe to cancel because the page must re-authorize Send
  * against this durable row. Once Send was authorized, delivery is ambiguous and we must not
  * start a second semantic review for the same key.
+ *
+ * `quietBefore` is the one exit from that hold, and only the heartbeat's mode change passes it.
+ * A Native review handed to Prime in a tool result counts as possibly sent, so switching to
+ * Auditable chat used to hold every later review until that Prime called again, which an idle
+ * Prime never does. When no row for the key has moved since `quietBefore` and no browser claim
+ * is live, the old transport is closed here (`quiet`), in the same transaction as the check, so
+ * a restart cannot offer its dead key to Prime again. Whatever already reached Prime stays as it
+ * is: the caller archives the epoch, and a late receipt under the old key is rejected.
  */
-export function retireLegacyChatReviewAttention(key: string): Promise<'retired' | 'none' | 'ambiguous'> {
+export function retireLegacyChatReviewAttention(
+  key: string, reason: 'legacy-worker' | 'mode-changed' = 'legacy-worker', quietBefore?: number
+): Promise<'retired' | 'none' | 'ambiguous' | 'quiet'> {
   return serial(async () => {
     const current = await load();
     // Terminal rows matter too: a previous build may have marked the browser message sent,
@@ -1273,12 +1426,21 @@ export function retireLegacyChatReviewAttention(key: string): Promise<'retired' 
         // Very old/native rows could be exposed to the page before the app gained the
         // explicit authorization gate. A missing receipt is NOT proof they were unsent.
         (row.offeredAt !== undefined && row.requiresAuthorization !== true))) {
-      return 'ambiguous';
+      if (quietBefore === undefined || matches.some(row => row.state === 'browser') ||
+          matches.some(row => chatReviewRowActivityAt(row) > quietBefore)) return 'ambiguous';
+      const open = new Set(matches.filter(row => !terminal(row)).map(row => row.id));
+      if (open.size) await commit(current.map(row => open.has(row.id)
+        ? { ...row, state: 'cancelled' as const,
+          error: 'Closed after the heartbeat review mode changed. This review may already have reached Prime; its key no longer completes, and the same window is reviewed again.' }
+        : row));
+      return 'quiet';
     }
     const ids = new Set(matches.filter(row => !terminal(row)).map(row => row.id));
     if (ids.size === 0) return 'retired';
     await commit(current.map(row => ids.has(row.id)
-      ? { ...row, state: 'cancelled' as const, error: 'Retired before Send: heartbeat review moved to the read-only worker lane.' }
+      ? { ...row, state: 'cancelled' as const, error: reason === 'mode-changed'
+        ? 'Retired before Send: the heartbeat review mode changed; original obligation remains in the audit ledger.'
+        : 'Retired before Send: heartbeat review moved to the read-only worker lane.' }
       : row));
     return 'retired';
   });
@@ -1424,7 +1586,10 @@ export function enqueueChatReviewFinding(sessionId: string, key: string, text: s
     const anotherInputOwnsNextTurn = remaining.some(row => row.sessionId === sessionId &&
       row.state !== 'sent' && row.state !== 'cancelled' && row.state !== 'failed');
     const voiceOwnsConversation = deliveryHooks?.voiceActive?.(session.conversationId) === true;
-    const mode: InputArgs['mode'] = policy.browserAllowed && !anotherInputOwnsNextTurn && !voiceOwnsConversation ? 'auto' : 'after-turn';
+    // Native heartbeat findings are supplied on Prime's next Eve tool result, never a
+    // separate browser Send that could stall waiting for a fresh provider permission.
+    const inBand = getConfig().multiAgent.heartbeatMode === 'native-subagent';
+    const mode: InputArgs['mode'] = inBand || (policy.browserAllowed && !anotherInputOwnsNextTurn && !voiceOwnsConversation) ? 'auto' : 'after-turn';
     const now = Date.now();
     const entry = entrySchema.parse({
       id: randomUUID(),
@@ -1435,7 +1600,7 @@ export function enqueueChatReviewFinding(sessionId: string, key: string, text: s
       model: null,
       reasoningEffort: null,
       purpose: 'heartbeat-finding',
-      ...(mode === 'auto' ? { transportIntent: 'browser' as const } : {}),
+      ...(inBand ? { transportIntent: 'tool' as const } : mode === 'auto' ? { transportIntent: 'browser' as const } : {}),
       state: 'queued',
       owner: null,
       createdAt: now,
@@ -1491,7 +1656,9 @@ export function enqueueLanPeerKnowledge(sessionId: string, rawItem: LanPeerKnowl
 
     const policy = await sessionInputPolicy(sessionId);
     const anotherInputOwnsNextTurn = current.some((row) => inputOwnsImmediateBrowserTurn(row, sessionId));
-    const mode: InputArgs['mode'] = policy.browserAllowed && !anotherInputOwnsNextTurn ? 'auto' : 'after-turn';
+    const voiceOwnsConversation = deliveryHooks?.voiceActive?.(session.conversationId) === true;
+    const mode: InputArgs['mode'] = policy.browserAllowed && !anotherInputOwnsNextTurn && !voiceOwnsConversation
+      ? 'auto' : 'after-turn';
     const now = Date.now();
     const entry = entrySchema.parse({
       id: randomUUID(),
@@ -1623,7 +1790,18 @@ export function enqueueChatReviewAttention(
       row.purpose === 'attention' && row.chatReview?.key === parsedReview.key &&
       row.sessionId === sessionId && row.conversationId === session.conversationId);
     const activePrior = [...exactPriors].reverse().find((row) => !terminal(row));
-    if (activePrior) return { ...activePrior };
+    if (activePrior) {
+      // A c25 browser-queued native review can change transport only while nobody has
+      // been offered its text. An ambiguous browser claim remains untouched.
+      if (parsedReview.reviewLane === 'native-parent' && activePrior.state === 'queued' &&
+          activePrior.owner === null && activePrior.offeredAt === undefined && activePrior.sendAuthorizedAt === undefined &&
+          activePrior.transportIntent !== 'tool') {
+        const migrated: InputEntry = { ...activePrior, mode: 'auto', transportIntent: 'tool' };
+        await commit(current.map(row => row.id === activePrior.id ? migrated : row));
+        return { ...migrated };
+      }
+      return { ...activePrior };
+    }
     const prior = [...exactPriors].reverse().find((row) => !retryableUnsent(row));
     if (prior) {
       // A confirmed browser send is not semantic completion. Once its exact coordinator has
@@ -1640,6 +1818,7 @@ export function enqueueChatReviewAttention(
 
     const pending = ordered(current).find((row) =>
       row.purpose === 'attention' && !row.voicePlanCheckpoint &&
+      row.chatReview?.reviewLane === parsedReview.reviewLane &&
       row.sessionId === sessionId &&
       row.state === 'queued' &&
       row.owner === null &&
@@ -1654,7 +1833,8 @@ export function enqueueChatReviewAttention(
           }
         : parsedReview;
       const merged = boundedChatReviewAttention(mergedRaw, pending.attentionItems);
-      const updated: InputEntry = { ...pending, chatReview: merged, text: attentionText(pending.attentionItems, merged) };
+      const updated: InputEntry = { ...pending, chatReview: merged, text: attentionText(pending.attentionItems, merged),
+        ...(parsedReview.reviewLane === 'native-parent' ? { mode: 'auto' as const, transportIntent: 'tool' as const } : {}) };
       await commit(current.map((row) => row.id === pending.id ? updated : row));
       return { ...updated };
     }
@@ -1662,7 +1842,8 @@ export function enqueueChatReviewAttention(
     const review = boundedChatReviewAttention(parsedReview, undefined);
     const policy = await sessionInputPolicy(sessionId);
     const anotherInputOwnsNextTurn = current.some((row) => inputOwnsImmediateBrowserTurn(row, sessionId));
-    const mode: InputArgs['mode'] = policy.browserAllowed && !anotherInputOwnsNextTurn ? 'auto' : 'after-turn';
+    const inBand = review.reviewLane === 'native-parent';
+    const mode: InputArgs['mode'] = inBand || (policy.browserAllowed && !anotherInputOwnsNextTurn) ? 'auto' : 'after-turn';
     const now = Date.now();
     const entry = entrySchema.parse({
       id: randomUUID(),
@@ -1674,7 +1855,7 @@ export function enqueueChatReviewAttention(
       reasoningEffort: null,
       purpose: 'attention',
       chatReview: review,
-      ...(mode === 'auto' ? { transportIntent: 'browser' as const } : {}),
+      ...(inBand ? { transportIntent: 'tool' as const } : mode === 'auto' ? { transportIntent: 'browser' as const } : {}),
       state: 'queued',
       owner: null,
       createdAt: now,
@@ -2249,13 +2430,13 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
     if (current.some((entry) => entry.sessionId === sessionId && entry.state === 'browser')) return batch;
     const delivered: string[] = [];
     let inputTaken = false;
-    let payloadBytes = Buffer.byteLength(TOOL_INPUT_HEADER);
+    let payloadBytes = 0;
     let payloadImages = 0;
     let payloadFull = false;
     const prepareEntry = async (entry: InputEntry): Promise<InputEntry> => {
       if (entry.sessionId !== sessionId || entry.dueAt > Date.now()) return entry;
       // A fresh-turn continue exists only to end the turn natively; inside a tool result it would not.
-      if (entry.purpose === 'attention' || entry.purpose === 'peer' || entry.purpose === 'rotation' || isLocalProviderInput(entry)) return entry;
+      if ((entry.purpose === 'attention' && !inBandHeartbeat(entry)) || entry.purpose === 'peer' || entry.purpose === 'rotation' || isLocalProviderInput(entry)) return entry;
       if (entry.attachments?.length) return entry;
       // A human explicitly reclaimed this untouched row for the native browser.
       // A late tool call must not silently take it back (including on Pro models).
@@ -2276,13 +2457,14 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
         catch (error) { return { ...entry, state: 'failed', error: (error as Error).message.slice(0, 200) }; }
         const message = prepared.deliveryText ?? prepared.text;
         const reminder = finishReminder || batch.reminder || (entry.mode === 'finish' ? 'Work on this user task now.' : '');
-        const messageBytes = Buffer.byteLength(message) + (inputTaken ? 2 : 0);
+        const maintenance = inBandHeartbeat(entry);
+        const messageBytes = Buffer.byteLength(message) + Buffer.byteLength(maintenance ? HEARTBEAT_TOOL_HEADER : TOOL_INPUT_HEADER) + (inputTaken ? 2 : 0);
         const reminderBytes = reminder ? Buffer.byteLength(reminder) + 2 : 0;
         if (payloadBytes + messageBytes + reminderBytes > TOOL_INPUT_TEXT_BYTES || payloadImages + (entry.images?.length ?? 0) > 4) { payloadFull = true; return entry; }
         payloadBytes += messageBytes;
         payloadImages += entry.images?.length ?? 0;
         inputTaken = true;
-        batch.messages.push({ text: message, images: entry.images ?? [] });
+        batch.messages.push({ text: message, images: entry.images ?? [], ...(maintenance ? { maintenance: true as const } : {}) });
         batch.reminder = reminder;
         delivered.push(entry.id);
         return { ...prepared, state: 'tool', offeredAt: entry.offeredAt ?? Date.now(), owner: entry.state === 'tool' ? entry.owner : requestId, conversationId };
@@ -2335,14 +2517,32 @@ export function failUnreachableProjectInput(id: string, sourceConversationId: st
     return true;
   });
 }
+/** A still-queued fresh input reached the exact linked Project home, but its open sidebar
+ * positively excluded that Project after the page remained without a composer. Never infer
+ * deletion from slow loading, a collapsed sidebar or a missing tab. */
+export function failMissingNativeProjectInput(id: string, projectId: string): Promise<boolean> {
+  return serial(async () => {
+    const current = await load();
+    const entry = current.find(row => row.id === id && row.state === 'queued' && row.owner === null &&
+      row.sendAuthorizedAt === undefined && !row.messageId);
+    if (!entry) return false;
+    const destination = await nativeDestination(entry, await target(entry).catch(() => null));
+    if (!destination || destination === 'unknown' || destination.id !== projectId) return false;
+    await commit(current.map(row => row === entry ? { ...row, state: 'failed',
+      error: 'ChatGPT no longer lists the linked Project. Check the Project link and Retry; nothing was sent.' } : row));
+    return true;
+  });
+}
 /** Only a pre-send failure can be declared failed. An ambiguous click stays claimed. */
-export function failBrowserInput(id: string, owner: string, error: string): Promise<boolean> {
+export function failBrowserInput(id: string, owner: string, error: string, detail?: string): Promise<boolean> {
   return serial(async () => {
     const current = await load();
     const entry = current.find((row) => row.id === id && row.owner === owner && row.state === 'browser');
     if (!entry) return false;
-    await commit(current.map((row) => row === entry ? { ...row, state: 'failed', error: error.slice(0, 200) } : row));
-    logWarn(`input ${id}: browser delivery failed after claim — ${error.slice(0, 300)}`);
+    const boundedDetail = detail && /^[a-z][a-z0-9 _-]{0,79}$/.test(detail) ? detail : null;
+    const explanation = (error.slice(0, boundedDetail ? 115 : 200) + (boundedDetail ? ` (${boundedDetail})` : '')).slice(0, 200);
+    await commit(current.map((row) => row === entry ? { ...row, state: 'failed', error: explanation } : row));
+    logWarn(`input ${id}: browser delivery failed after claim — ${explanation}`);
     decisionWaiters.get(id)?.reject(new Error('goal_browser_send_failed'));
     decisionWaiters.delete(id);
     return true;

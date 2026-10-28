@@ -272,9 +272,11 @@ interface TurnFixture {
   id: string;
   messages: Message[];
   role?: 'user' | 'assistant';
+  /** 2026-09+ ChatGPT exchange wraps one exact keyed user unit and its assistant reply. */
+  exchangeMessageId?: string;
   /** A visible `.markdown` block: its text, or markup when the test is about the markup. */
   rendered?: Array<string | { html: string }>;
-  images?: Array<{ assetId: string; clones?: number; plain?: boolean }>;
+  images?: Array<{ assetId: string; clones?: number; plain?: boolean; opaque?: boolean }>;
   staleStamp?: string;
   conversationProps?: Record<string, unknown>;
 }
@@ -301,8 +303,9 @@ async function scan(
   const document = window.document;
 
   for (const turn of turnSections) {
-    const section = document.createElement('section');
-    section.setAttribute('data-testid', 'conversation-turn-2');
+    const section = document.createElement(turn.exchangeMessageId ? 'div' : 'section');
+    if (turn.exchangeMessageId) section.setAttribute('data-turn-key', turn.exchangeMessageId);
+    else section.setAttribute('data-testid', 'conversation-turn-2');
     if (turn.role) section.setAttribute('data-turn', turn.role);
     if (turn.id) section.setAttribute('data-turn-id', turn.id);
     if (turn.staleStamp !== undefined) section.setAttribute('data-clf-fiber-turn', turn.staleStamp);
@@ -317,15 +320,22 @@ async function scan(
       else block.innerHTML = entry.html;
       section.append(block);
     }
+    const imageHome = turn.exchangeMessageId ? document.createElement('div') : section;
+    if (turn.exchangeMessageId) {
+      imageHome.setAttribute('data-chatgpt-search-unit-key', `${turn.exchangeMessageId}:user`);
+      section.append(imageHome);
+    }
     for (const entry of turn.images ?? []) {
       for (let clone = 0; clone < Math.max(1, entry.clones ?? 1); clone++) {
         const wrapper = document.createElement('div');
         if (!entry.plain) wrapper.className = 'group/imagegen-image';
         const image = document.createElement('img');
-        image.src = 'https://chatgpt.com/backend-api/estuary/content?id=' +
-          encodeURIComponent(entry.assetId) + '&sig=private';
+        image.src = entry.opaque
+          ? 'blob:https://chatgpt.com/' + encodeURIComponent(entry.assetId)
+          : 'https://chatgpt.com/backend-api/estuary/content?id=' +
+            encodeURIComponent(entry.assetId) + '&sig=private';
         wrapper.append(image);
-        section.append(wrapper);
+        imageHome.append(wrapper);
       }
     }
     document.body.append(section);
@@ -367,7 +377,7 @@ async function scan(
   const userMessageStamps = [...document.querySelectorAll('[data-testid^="conversation-turn-"]')].map((section) =>
     section.getAttribute('data-clf-user-message-id')
   );
-  const imageStamps = [...document.querySelectorAll('section img')].map(node =>
+  const imageStamps = [...document.querySelectorAll('img')].map(node =>
     node.getAttribute('data-clf-fiber-image')
   );
   dom.window.close();
@@ -1046,6 +1056,41 @@ describe('the calls a turn says it made', () => {
     ]);
     expect(result.imageStamps.filter(Boolean)).toHaveLength(1);
     expect(JSON.stringify(result.turns)).not.toContain('sig=private');
+  });
+
+  it('captures opaque-thumbnail user uploads only within their exact single-message unit with matching pointer count', async () => {
+    const messageId = '7a1c0f3e-5b2d-4c8e-9f10-0123456789ab';
+    const pointers = ['file_00000000000000000000000000000081', 'file_00000000000000000000000000000082'];
+    const upload: Message = {
+      id: messageId, author: { role: 'user' }, recipient: 'all',
+      status: 'finished_successfully', content: { content_type: 'multimodal_text', parts: [
+        { content_type: 'image_asset_pointer', asset_pointer: `sediment://${pointers[0]}` },
+        { content_type: 'image_asset_pointer', asset_pointer: `sediment://${pointers[1]}` },
+        'Two screenshots'
+      ] }
+    };
+    const exact = await scan([], [{ id: 'turn-opaque-user', role: 'user', messages: [upload],
+      images: pointers.map(assetId => ({ assetId, plain: true, opaque: true })) }]);
+    expect(exact.turns[0]?.images).toHaveLength(2);
+    expect(exact.imageStamps.filter(Boolean)).toHaveLength(2);
+    for (const pointer of pointers) expect(exact.imageStamps.some(stamp => stamp?.includes(encodeURIComponent(pointer)))).toBe(true);
+    expect(JSON.stringify(exact.turns)).not.toContain('blob:');
+
+    const extra = await scan([], [{ id: 'turn-opaque-user', role: 'user', messages: [upload],
+      images: [...pointers, 'file_00000000000000000000000000000099'].map(assetId => ({ assetId, plain: true, opaque: true })) }]);
+    expect(extra.turns[0]?.images).toHaveLength(2);
+    expect(extra.imageStamps.filter(Boolean)).toHaveLength(0);
+    const contradictory = await scan([], [{ id: 'turn-opaque-user', role: 'user', messages: [upload],
+      images: ['file_00000000000000000000000000000091', 'file_00000000000000000000000000000092']
+        .map(assetId => ({ assetId, plain: true })) }]);
+    expect(contradictory.imageStamps.filter(Boolean)).toHaveLength(0);
+
+    // The real 2026 renderer uses an exchange keyed by the user message, not a
+    // legacy data-turn=user section; the exact user unit is the only pixel owner.
+    const exchange = await scan([], [{ id: 'turn-user-exchange', exchangeMessageId: messageId,
+      messages: [upload], images: pointers.map(assetId => ({ assetId, plain: true, opaque: true })) }]);
+    expect(exchange.turns[0]?.images).toHaveLength(2);
+    expect(exchange.imageStamps.filter(Boolean)).toHaveLength(2);
   });
 
   it('does not reuse an old text completion while a newer image answer is still running', async () => {

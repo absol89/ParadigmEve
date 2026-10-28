@@ -291,3 +291,82 @@ Before retrying, classify the boundary:
 - **receipt confirmed** — advance/close the obligation, do not redo it.
 
 That pattern is shared by browser sends, plugin refresh clicks, worker delivery, continuation prompts and browser repairs.
+
+---
+
+> **Implementation contracts.** The sections below moved here unchanged from the former single-file
+> `AGENTS.md` map. Their § numbers are kept so references such as “§14” still resolve; the
+> [Vault index](README.md#former-agentsmd-sections) lists where each section lives.
+
+## 19. Debugging, tests and working here
+
+Before editing, inspect `git status --short` and `git diff -- <intended files>`. Reproduce one
+concrete identity through the relevant owners. State the intended behavior and the first wrong
+transition, then repair that owner. For a race, pause A before publication, complete B, resume A
+and prove it cannot overwrite/resurrect B. Prefer exact epochs/receipts and serialized semantic
+mutations over sleeps. Add a meaningful regression for production behavior, including the
+neighboring negative case; documentation-only changes need documentation checks instead.
+
+Browser-facing fixes require hands-on work in the real signed-in ChatGPT page. Inspect the
+current native DOM, editor and turn evidence before designing a fix; do not infer provider
+behavior from mocks or old selectors. Reproduce briefly, repair the earliest wrong boundary,
+then reload the changed extension/install the changed app and repeat the real user flow.
+During broad acceptance, rotate through compaction, workers, Desktop input, native images and
+transcript/turn start-and-finish behavior. Pass concrete failures to bounded fix workers while
+continuing other checks. Reduce a repeated failure to a short reproduction instead of spending
+the whole run replaying one long workflow; avoid optimizing speculative edge cases.
+
+| Symptom / boundary | Open first | Nearest `test/*.test.ts` families |
+| --- | --- | --- |
+| Wrong chat, Unattributed, false tool failure | kernel → correlation → recorder | `mcp`, `correlation`, `attribution-repair`, `call-context`, `mcp-inflight` |
+| Wrong path/project or cross-worker terminal | sandbox/workspace/projects → kernel/ownership | `sandbox`, `projects`, `kernel-project-workspace`, `workspace`, `swarm`, `codex-runtime-parity` |
+| Missing/duplicate input, attachments, checkpoints or semantic review | input/chat-review-heartbeat → bridge → DOM/receipts | `session-input*`, `chat-review-heartbeat`, `input-delivery-integration`, `finish-input-integration`, `task-request`, `chatgpt-dom-input` |
+| Worker family/slot/inbox/revival | agents → bridge → background | `agents`, `kernel-run-inbox`, `agent-communication`, `swarm`, `extension` |
+| Unexpected tab/reload/model/refresh | operation owner → browser election → native observation | `bridge*`, `browser*`, `extension`, `content-script`, `model-*`, `plugin-refresh*` |
+| Lost compaction or Goal debt | continuation/goal → store → bridge | `continuation`, `resume`, `goal*`, `session-finish` |
+| Transcript order, UI clobber, usage | store/chronology → IPC → renderer | `session`, `chronology`, `renderer-*`, `timeline-scroll`, `session-usage`, `usage-observer` |
+| Files/patch/output/code-mode | concrete tool owner → kernel serialization | `codex-*`, `exec-*`, `code-mode-*`, `mcp-tool-declarations`, `artifact-download` |
+| Plugins/auth/native Desktop | manager/exposure/OAuth or computer frame owner | `plugins-*`, `computer*`, `tools-desktop-*`, `macos-*` |
+| Startup/connection/shipping | lifecycle/config/connection or packaging script | `config`, `window-*`, `shutdown`, `tunnel*`, `packaging`, `update`, `third-party-notices` |
+
+Discover current suites with `rg --files test`; do not maintain a stale suite count. Validate
+both ends of every changed protocol: app↔extension, content↔MAIN, main↔preload↔renderer,
+schema↔handler↔recorder and durable write↔restore. Run the nearest suites, adjacent boundary
+tests and `npm run verify` for production edits. Build/package when that layer can differ.
+
+```sh
+npm run dev
+npm run typecheck
+npm test -- --run test/<target>.test.ts
+npm run verify:privacy
+npm run verify:notices
+npm run verify
+npm run build
+npm run dist                       # current OS, x64 + arm64
+npm run dist:dir:mac:x64            # example unpacked target on a matching host
+```
+
+Use `npm ci` for an intentionally needed reproducible dependency install, not as routine
+cleanup of this shared tree. `verify:ci` fetches rg, checks privacy/notices/native-source metadata,
+typechecks, verifies Electron resolves, runs Vitest excluding `mcp-shutdown`, then runs that
+socket-drain suite alone. `vitest.config.ts` forces Node, bounded hooks/tests, `CLF_BRIDGE_PORTS=0`
+and test-only `CLF_EVIDENCE_MS=1500`; never let tests contact the installed production bridge.
+Opt-in live plugin/macOS probes are separate evidence, not implied by the ordinary suite.
+
+When delegation is authorized, reuse a suitable worker. Give each assignment the project,
+concrete task, evidence, allowed files, ownership boundaries, checks and expected handoff.
+Use at most two direct development subagents concurrently by default; an explicit user instruction
+to run a larger bounded batch overrides that default up to the product hard limit. Explicitly prohibit nested
+delegation. Audit-only means no source/test/config/AppData writes beyond the named report.
+The prime independently verifies important claims; parallel reports are hypotheses, not votes.
+
+Record changes and actual checks in a focused worklog. Keep security reproductions/private
+session material out of public docs and fixtures; follow `SECURITY.md`. Do not package, install,
+commit or publish merely because a source/documentation task was requested.
+
+Runtime data is under Electron userData: `%APPDATA%/ParadigmEve` on Windows,
+`~/Library/Application Support/ParadigmEve` on macOS and the XDG config location on Linux.
+Inspect exact session/state files (§4), never edit live ledgers as a repair shortcut. `logger.ts`
+keeps a redacted 500-entry ring and bounded async `app.log` batches with rotation, explicit
+overload omissions, a two-second final flush and separate `.crash` snapshot. Logs are human
+diagnostics, not restart authority; secrets must never be printed to investigate a connection.

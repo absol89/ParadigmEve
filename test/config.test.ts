@@ -610,6 +610,7 @@ describe('shipped defaults', () => {
       expect(config.multiAgent.maxWorkers).toBe(2);
       expect(config.multiAgent.allowUnattributedCalls).toBe(false);
       expect(config.multiAgent.recoverAgentTabs).toBe(false);
+      expect(config.multiAgent.experimentalNativeDelegation).toBe(false);
     }
   );
 

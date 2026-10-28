@@ -149,6 +149,28 @@ export interface ContinuationDestinationCheckpoint extends ContinuationSendCheck
   conversationId: string | null;
 }
 
+export type ContinuationCancelOrigin =
+  | 'stop_turn' | 'session_ui_cancel' | 'companion_cancel_request'
+  | 'summary_validation_failed' | 'automatic_compaction_disabled'
+  | 'source_message_superseded' | 'unknown';
+
+/** Captured in the same durable record as the terminal abort. Caller identity is never inferred. */
+export interface ContinuationAbortProvenance {
+  origin: ContinuationCancelOrigin;
+  entryPoint: string | null;
+  requestedBy: 'human' | 'companion' | 'app' | 'unknown';
+  requestId: string | null;
+  documentId: string | null;
+  at: number;
+  phase: ContinuationState;
+  sourceTurnId: string | null;
+  sourceSend: ContinuationSendCheckpoint;
+  destinationSend: ContinuationDestinationCheckpoint;
+}
+
+export type ContinuationAbortRequest = Partial<Pick<ContinuationAbortProvenance,
+  'origin' | 'entryPoint' | 'requestedBy' | 'requestId' | 'documentId'>>;
+
 /**
  * True while the fence still proves no prompt was submitted, so the prompt may be handed to
  * another document. Both states it covers are written before a composer is submitted; every
@@ -234,6 +256,7 @@ interface Continuation {
   sourceSend: ContinuationSendCheckpoint;
   destinationSend: ContinuationDestinationCheckpoint;
   error: string | null;
+  abortProvenance: ContinuationAbortProvenance | null;
   /**
    * Chat A's one close has been spent. Being superseded only says A is history; it never says
    * that every later tab on A may be closed. Once the browser census shows A gone, the
@@ -278,6 +301,7 @@ interface ContinuationRecord {
   sourceSend?: ContinuationSendCheckpoint;
   destinationSend?: ContinuationDestinationCheckpoint;
   error: string | null;
+  abortProvenance?: ContinuationAbortProvenance | null;
   /** Absent in records written before the source close was one-shot; treated as not yet spent. */
   sourceClosed?: boolean;
 }
@@ -309,6 +333,7 @@ function durableRecord(entry: Continuation): ContinuationRecord {
     sourceSend: { ...entry.sourceSend },
     destinationSend: { ...entry.destinationSend },
     error: entry.error,
+    abortProvenance: entry.abortProvenance,
     sourceClosed: entry.sourceClosed
   };
 }
@@ -369,6 +394,7 @@ function publishRecord(entry: Continuation, record: ContinuationRecord): void {
     ? { ...record.destinationSend }
     : { state: 'not-attempted', conversationId: null, messageId: null };
   entry.error = record.error;
+  entry.abortProvenance = record.abortProvenance ?? null;
   entry.sourceClosed = entry.sourceClosed || record.sourceClosed === true;
   if (entry.askedAt === null && handoffAsked(entry)) {
     entry.askedAt = typeof record.askedAt === 'number' && Number.isFinite(record.askedAt) ? record.askedAt : Date.now();
@@ -381,6 +407,9 @@ async function transitionNow(
 ): Promise<ContinuationRecord> {
   const current = durableRecord(entry);
   const next = derive(current);
+  if (next.state === 'aborted' && current.state !== 'aborted' && !next.abortProvenance) {
+    next.abortProvenance = abortProvenance(current);
+  }
   // Any semantic transition is forward progress, so it renews the waiting deadline. Without this
   // the stamp would only ever be set at open and the manual clock would be back to counting from
   // there — the same bug in a new field.
@@ -431,6 +460,7 @@ export interface ContinuationView {
   state: ContinuationState;
   handoffId: string | null;
   error: string | null;
+  abortProvenance: ContinuationAbortProvenance | null;
   openedAt: number;
   automatic: boolean;
   recovery: boolean;
@@ -451,6 +481,7 @@ const view = (entry: Continuation): ContinuationView => ({
   state: entry.state,
   handoffId: entry.handoffId,
   error: entry.error,
+  abortProvenance: entry.abortProvenance,
   openedAt: entry.openedAt,
   automatic: entry.automatic,
   recovery: entry.recovery,
@@ -789,6 +820,7 @@ function makeContinuation(sessionId: string, fromConversationId: string, automat
     sourceSend: { state: 'not-attempted', messageId: null },
     destinationSend: { state: 'not-attempted', conversationId: null, messageId: null },
     error: null,
+    abortProvenance: null,
     sourceClosed: false
   };
 }
@@ -1585,12 +1617,29 @@ export async function commitContinuation(token: string, toConversationId: string
  * still going to land — the session would move on disk while the swarm stayed behind. The
  * commit either succeeds, or restores a claimable state itself and can be aborted then.
  */
-export function abortContinuation(token: string, reason: string): boolean {
+function abortProvenance(record: ContinuationRecord, request: ContinuationAbortRequest = {}): ContinuationAbortProvenance {
+  return {
+    origin: request.origin ?? 'unknown',
+    entryPoint: request.entryPoint ?? null,
+    requestedBy: request.requestedBy ?? 'unknown',
+    requestId: request.requestId ?? null,
+    documentId: request.documentId ?? null,
+    at: Date.now(),
+    phase: record.state,
+    sourceTurnId: record.sourceTurnId ?? null,
+    sourceSend: { ...(record.sourceSend ?? { state: 'not-attempted', messageId: null }) },
+    destinationSend: { ...(record.destinationSend ?? { state: 'not-attempted', conversationId: null, messageId: null }) }
+  };
+}
+
+export function abortContinuation(token: string, reason: string, request: ContinuationAbortRequest = {}): boolean {
   const entry = byToken.get(token);
   if (!entry || entry.state === 'committing') return false;
   if (entry.state === 'committed' || entry.state === 'aborted') return false;
+  const provenance = abortProvenance(durableRecord(entry), request);
   entry.state = 'aborted';
   entry.error = reason;
+  entry.abortProvenance = provenance;
   endResumeClaim(entry.token);
   cancelPrimeTransfer(entry.from);
   changed();
@@ -1609,15 +1658,18 @@ function noteAbandoned(entry: Continuation, reason: string): void {
 }
 
 /** Durable abort for user-visible cancellation paths. */
-export async function abortContinuationNow(token: string, reason: string): Promise<boolean> {
-  const entry = byToken.get(token);
-  if (!entry || entry.state === 'committing') return false;
-  if (entry.state === 'committed' || entry.state === 'aborted') return false;
-  await transitionNow(entry, (current) => ({ ...current, state: 'aborted', error: reason }));
-  cancelPrimeTransfer(entry.from);
-  logWarn(`continuation ${entry.token.slice(0, 8)} durably abandoned — ${reason}`);
-  noteAbandoned(entry, reason);
-  return true;
+export async function abortContinuationNow(token: string, reason: string, request: ContinuationAbortRequest = {}): Promise<boolean> {
+  return withCheckpointLock(token, async () => {
+    const entry = byToken.get(token);
+    if (!entry || entry.state === 'committing') return false;
+    if (entry.state === 'committed' || entry.state === 'aborted') return false;
+    await transitionNow(entry, (current) => ({ ...current, state: 'aborted', error: reason,
+      abortProvenance: abortProvenance(current, request) }));
+    cancelPrimeTransfer(entry.from);
+    logWarn(`continuation ${entry.token.slice(0, 8)} durably abandoned — ${reason}`);
+    noteAbandoned(entry, reason);
+    return true;
+  });
 }
 
 const SEND_STATES = new Set<ContinuationSendState>([
@@ -1714,6 +1766,9 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
             }
           : { state: 'not-attempted', conversationId: null, messageId: null },
       error: typeof raw.error === 'string' ? raw.error : null,
+      abortProvenance: raw.abortProvenance && raw.state === 'aborted' &&
+        Number.isFinite(raw.abortProvenance.at) && typeof raw.abortProvenance.origin === 'string'
+        ? raw.abortProvenance : null,
       sourceClosed: raw.sourceClosed === true
     };
     if (handoffAsked(entry)) {

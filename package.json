@@ -1,6 +1,6 @@
 {
   "name": "paradigmeve",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "Local coding bridge for ChatGPT over MCP, with native desktop control and approved-folder capability limits.",
   "license": "MIT",
   "author": "ParadigmEve private build",
@@ -76,7 +76,7 @@
     "@types/jsdom": "^30.0.0",
     "@types/node": "^22.15.0",
     "@types/ws": "8.18.1",
-    "electron": "43.7.11",
+    "electron": "43.8.4",
     "electron-builder": "^26.15.7",
     "electron-vite": "^5.0.0",
     "jsdom": "^30.0.1",

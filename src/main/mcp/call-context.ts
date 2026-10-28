@@ -61,6 +61,8 @@ export interface CallCaller {
    * evidence named one. Never anything the model wrote.
    */
   conversationId: string | null;
+  /** Opted-in execution ownership, not observed browser identity. Never publish as request proof. */
+  attributionSource?: 'installation_prime';
   /** Durable local session principal carried by the same exact request proof. */
   sessionId?: string | null;
   /** App-owned local worker identity; absent for every external MCP transport call. */

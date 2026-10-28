@@ -7,6 +7,9 @@ vi.mock('../src/main/session/store.js', async original => ({
   ...await original<typeof import('../src/main/session/store.js')>(),
   conversationAttachment: async () => 'current'
 }));
+// This synthetic identity harness has no app startup or durable store.
+// Delegation lock policy has its own real-ledger tests.
+vi.mock('../src/main/native-delegation.js', () => ({ nativeDelegationBlocksTool: () => false, settleNativeDelegationHolds: async () => undefined }));
 import { dispatch, ok } from '../src/main/mcp/kernel.js';
 import { currentCall } from '../src/main/mcp/call-context.js';
 import { observeRequestCorrelation } from '../src/main/session/correlation.js';

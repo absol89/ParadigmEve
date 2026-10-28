@@ -77,7 +77,7 @@ it('keeps historical manual pages readable without injecting them as live %how i
   const { readVaultManualText, readHowOpeningManualText } = await import('../src/main/vault-path.js');
   expect(await readVaultManualText()).toContain('Old v2.4.0 release notes');
   const opening = await readHowOpeningManualText();
-  expect(opening).toContain('ParadigmEve 2.4.4');
+  expect(opening).toContain('ParadigmEve 2.4.5');
   expect(opening).toContain('Follow the exact owner of each action.');
   expect(opening).toContain('/paradigmeve-manual/02-runtime.md');
   expect(opening).not.toContain('Old v2.4.0 release notes');

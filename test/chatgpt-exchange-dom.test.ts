@@ -110,6 +110,19 @@ describe('ChatGPT DOM adapter on the per-exchange renderer', () => {
     expect(header.closest('[data-turn-key]')?.getAttribute('data-turn-key')).toBe('user-a');
   });
 
+  it('recognizes a collapsed current-turn provider approval without treating historical cards as pending', () => {
+    const approval = '<div data-codex-approval-surface="true" hidden><button disabled>Allow once</button><button>Deny</button></div>';
+    const old = exchange(0, 'user-old', 'Earlier', 'asst-old', 'Done').replace('Worked for 45s', `Worked for 45s${approval}`);
+    const latest = exchange(1, 'user-new', 'Current', null).replace('Worked for 45s', `Worked for 45s${approval}`);
+    expect(clf(old).api.approvalWaiting()).toBe(true);
+    expect(clf(old + exchange(1, 'user-new', 'Current', null)).api.approvalWaiting()).toBe(false);
+    expect(clf(old + latest).api.approvalWaiting()).toBe(true);
+    expect(clf(exchange(1, 'user-new', 'Current', null).replace('Worked for 45s',
+      'Worked for 45s<div data-codex-approval-surface="true"><button disabled>Allow once</button></div>')).api.approvalWaiting()).toBe(false);
+    expect(clf(exchange(1, 'user-new', 'Current', null).replace('Worked for 45s',
+      `Worked for 45s${approval}${approval}`)).api.approvalWaiting()).toBe(false);
+  });
+
   it('mounts replacement activity inside the virtualized exchange instead of before its measured row', () => {
     const { api, document } = clf(exchange(0, 'user-a', 'Question', 'asst-a', 'Answer'));
     const assistant = api.turns()[1];

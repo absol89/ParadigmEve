@@ -21,6 +21,7 @@ vi.mock('../src/main/platform.js', async (importOriginal) => {
 
 const { defaultConfig, initConfigPath, saveConfig } = await import('../src/main/config.js');
 const { initDurableStore, flushDurable, resetDurableForTests } = await import('../src/main/durable.js');
+const { restoreNativeDelegations } = await import('../src/main/native-delegation.js');
 const { initSessionStore, readEvents, flushSessions, resetSessionStoreForTests, unsetSessionRootForTests } = await import('../src/main/session/store.js');
 const { sessionForConversation, flushRecorder, resetRecorderForTests } = await import('../src/main/session/recorder.js');
 const { localChatCoreTools } = await import('../src/main/local-chat-tools.js');
@@ -53,6 +54,7 @@ const context = () => ({
 beforeEach(async () => {
   dir = await makeTempDir('eve-broker-neutral-');
   initConfigPath(dir); initSessionStore(dir); initDurableStore(dir);
+  await restoreNativeDelegations();
   await saveConfig(defaultConfig());
   await fs.mkdir(path.join(dir, 'workspace'));
   await fs.writeFile(path.join(dir, 'workspace', 'book.xlsx'), zipSync({

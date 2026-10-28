@@ -93,6 +93,7 @@ import {
 } from './config.js';
 import { clearAllGoalSwitches, draftTaskPlan, listGoalModels, MODEL_PAGE_SIZE, retireGoalDrafts, goalBackendFor, goalSwitchFor, setGoalSwitchNow, setGoalReplyActiveNow, setGoalObjectiveNow } from './goal.js';
 import { runDiagnostics } from './diagnostics.js';
+import { reconcileChatReviewHeartbeatMode } from './chat-review-heartbeat.js';
 import { formatLogAsJson, formatLogForClipboard, getLog, logInfo, logWarn, onLog } from './logger.js';
 import { RESERVED_ROOT_NAMES, uniqueRootName, validateNewRoot, SandboxError, resolvePath } from './sandbox.js';
 import { addProject, linkNativeProject, listProjects, removeProject } from './projects.js';
@@ -318,6 +319,20 @@ const settingsPatch = z.object({
   }),
   multiAgent: z.object({
     enabled: z.boolean(),
+    heartbeatMode: z.enum(['off', 'auditable-chat', 'native-subagent']).optional(),
+    workerRuntime: z.enum(['chatgpt', 'native', 'openrouter', 'ollama', 'api']).optional(),
+    experimentalApiWorkers: z.object({
+      enabled: z.boolean(),
+      provider: z.enum(['openrouter', 'ollama']).nullable(),
+      model: z.string().trim().max(160).nullable()
+    }).optional(),
+    experimentalNativeDelegation: z.boolean().optional(),
+    approvalRouting: z.object({
+      humanFacing: z.literal('prime_or_active_human_chat'),
+      delegatedWorkers: z.literal('eve_policy'),
+      onAdditionalApproval: z.literal('escalate_to_prime'),
+      automaticRetryOfUncertainCalls: z.literal(false)
+    }).optional(),
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
     maxWorkers: z.number().int().min(1).max(8),
@@ -541,6 +556,11 @@ function mergeSettings(
       autoTokens: pick(current.compaction.autoTokens, base.compaction.autoTokens, wanted.compaction.autoTokens)
     },
     multiAgent: {
+      heartbeatMode: pick(current.multiAgent.heartbeatMode ?? 'off', base.multiAgent.heartbeatMode ?? 'off', wanted.multiAgent.heartbeatMode ?? 'off'),
+      workerRuntime: pick(current.multiAgent.workerRuntime, base.multiAgent.workerRuntime, wanted.multiAgent.workerRuntime),
+      experimentalApiWorkers: pick(current.multiAgent.experimentalApiWorkers, base.multiAgent.experimentalApiWorkers, wanted.multiAgent.experimentalApiWorkers),
+      experimentalNativeDelegation: pick(current.multiAgent.experimentalNativeDelegation, base.multiAgent.experimentalNativeDelegation, wanted.multiAgent.experimentalNativeDelegation),
+      approvalRouting: pick(current.multiAgent.approvalRouting, base.multiAgent.approvalRouting, wanted.multiAgent.approvalRouting),
       defaultModel: pick(current.multiAgent.defaultModel, base.multiAgent.defaultModel, wanted.multiAgent.defaultModel),
       defaultReasoning: pick(current.multiAgent.defaultReasoning, base.multiAgent.defaultReasoning, wanted.multiAgent.defaultReasoning),
       enabled: pick(current.multiAgent.enabled, base.multiAgent.enabled, wanted.multiAgent.enabled),
@@ -719,6 +739,7 @@ export function registerIpc(
   handle('pets:import', async () => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo('native picker opened by renderer: pets:import');
     const selected = await dialog.showOpenDialog(window, { title: 'Import a pet folder', properties: ['openDirectory'] });
     if (selected.canceled || !selected.filePaths[0]) return null;
     return importPet(selected.filePaths[0]);
@@ -860,6 +881,18 @@ export function registerIpc(
       if (previous.ui.finishTool && !published.ui.finishTool) await cancelFinishInputs(false);
       else if ((previous.goal.impulseMinutes ?? 0) > 0 && !published.goal.impulseMinutes) await cancelFinishInputs(true);
       if (previous.compaction.auto !== published.compaction.auto) await reconcileAutomaticCompactionPolicy();
+      if (previous.multiAgent.heartbeatMode !== published.multiAgent.heartbeatMode) {
+        // One existing durable heartbeat owner handles this mode transition. Retire only
+        // old-lane pre-Send obligations; an ambiguous Send stays owed and visible.
+        try {
+          const result = await reconcileChatReviewHeartbeatMode(Date.now(), published.multiAgent.heartbeatMode ?? 'off');
+          if (result === 'ambiguous') logWarn('Heartbeat mode changed; an authorized old-lane Send prevents automatic debt retirement.');
+        } catch (error) {
+          // Settings is already durably published; the existing timer will retry this
+          // transition. Do not present a false failed Save or start a second scheduler.
+          logWarn(`Heartbeat mode transition is waiting for durable reconciliation: ${String(error)}`);
+        }
+      }
       if (process.platform === 'win32') {
         const beforeDesktop = effectiveCapabilities(previous);
         const afterDesktop = effectiveCapabilities(published);
@@ -994,6 +1027,7 @@ export function registerIpc(
   handle('roots:add', async () => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo('native picker opened by renderer: roots:add');
     const result = await dialog.showOpenDialog(window, {
       title: 'Approve a folder for ChatGPT',
       properties: ['openDirectory']
@@ -1018,6 +1052,7 @@ export function registerIpc(
   const chooseProject = async (expenses: boolean, language = 'en') => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo(`native picker opened by renderer: ${expenses ? 'expenses:chooseProject' : 'projects:chooseProject'}`);
     const result = await dialog.showOpenDialog(window, { title: expenses ? (language === 'sv-SE' ? 'Välj en tom mapp för utgifter' : language === 'es-419' ? 'Elige una carpeta vacía para Gastos' : 'Choose an empty folder for Expenses') : 'Choose a project folder for ChatGPT', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return null;
     const folder = result.filePaths[0];
@@ -1312,6 +1347,7 @@ export function registerIpc(
   handle('transcription:startFile', async payload => {
     const { sessionId } = z.object({ sessionId: z.string().min(8).max(64).nullable() }).strict().parse(payload);
     if (sessionId && !await getSession(sessionId)) throw new Error('The selected conversation is unavailable.');
+    logInfo('native picker opened by renderer: transcription:startFile');
     const selection = await dialog.showOpenDialog({
       title: 'Transcribe recording', properties: ['openFile'],
       filters: [{ name: 'Audio and video', extensions: ['wav', 'mp3', 'm4a', 'mp4', 'mov', 'mkv', 'webm', 'ogg', 'flac', 'aac'] }]
@@ -1379,6 +1415,7 @@ export function registerIpc(
   handle('binary:pick', async () => {
     const window = getWindow();
     if (!window) throw new Error('No window');
+    logInfo('native picker opened by renderer: binary:pick');
     const result = await dialog.showOpenDialog(window, {
       title: 'Select the tunnel executable',
       properties: ['openFile'],
@@ -1548,6 +1585,7 @@ export function registerIpc(
     return result;
   };
   handle('sessions:files', async () => {
+    logInfo('native picker opened by renderer: sessions:files');
     const chosen = await dialog.showOpenDialog({ title: 'Attach files', properties: ['openFile', 'multiSelections'] });
     if (chosen.canceled) return [];
     if (chosen.filePaths.length > 20) throw new Error('Attach up to 20 files per message');

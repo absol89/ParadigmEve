@@ -422,22 +422,17 @@ export async function flushSessions(): Promise<void> {
 }
 
 /**
- * Waits only for mutations that belong to one session, then makes its summary current on disk.
- *
- * A read of session A must not become a global write barrier for every other open session.
- * Besides the avoidable latency, the old `flushSessions()` call meant polling one chat could
- * force metadata churn for dozens of unrelated generating chats. The per-session queue already
- * is the serialization boundary, so joining that target queue is both sufficient and stronger:
- * it also waits for an in-flight reconstruction of this exact session before deciding whether
- * there is anything live to flush.
+ * A read of session A only waits for its append queue, including an in-flight reconstruction.
+ * Do not prematurely write its summary: the metadata timer batches that work, and quit still
+ * uses flushSessions() as the durable shutdown barrier.
  */
-async function flushSession(sessionId: string): Promise<void> {
+async function settleSessionWrites(sessionId: string): Promise<void> {
   let entry = open.get(sessionId);
   if (!entry) {
     const reconstructing = opening.get(sessionId);
     if (reconstructing) entry = await reconstructing;
   }
-  if (entry) await flushSessionEntry(entry);
+  if (entry) await entry.queue;
 }
 
 async function flushSessionEntry(entry: OpenSession): Promise<void> {
@@ -1487,7 +1482,7 @@ export interface ReadOptions {
  */
 export async function readEvents(sessionId: string, options: ReadOptions = {}): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const from = options.from ?? 0;
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
 
@@ -1579,7 +1574,7 @@ export async function readRecentEvents(
   options: Pick<ReadOptions, 'kinds' | 'agent'> & { maxBytes?: number; before?: number } = {}
 ): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   return readRecentEventsFromDisk(sessionId, limit, options);
 }
 

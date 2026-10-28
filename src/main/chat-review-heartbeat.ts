@@ -8,23 +8,36 @@
  * executes user work itself and never commandeers Prime's foreground browser turn.
  */
 import { randomUUID } from 'node:crypto';
-import { PLAN_CATALOG_MAX, planIdSchema, type PlanLibrary, type PlanView } from '../shared/plans.js';
+import {
+  PLAN_CATALOG_MAX,
+  planIdSchema,
+  planProvenanceSchema,
+  type PlanLibrary,
+  type PlanProvenance,
+  type PlanView
+} from '../shared/plans.js';
 import type { SessionSummary } from '../shared/session.js';
 import { currentAgentConversationId } from './agent-identity.js';
+import { getConfig } from './config.js';
 import { readDurable, readDurableStrict, writeDurableNow } from './durable.js';
 import { logInfo, logWarn } from './logger.js';
 import {
   listPlans,
+  planReviewScopeDigest,
+  reconcileReviewedPlanItems,
   withPlanReviewValidationFence,
   type PlanReviewExpectation
 } from './plans.js';
 import { isChatBlocked } from './session/blocked-chats.js';
 import {
   dispatchChatReviewWorker,
+  dispatchChatReviewNativeParent,
   enqueueChatReviewFinding,
+  chatReviewTransportStage,
   LEGACY_HEARTBEAT_AMBIGUOUS,
   legacyChatReviewActivityAt,
   reconcileHeartbeatFindingQueue,
+  retireLegacyChatReviewAttention,
   type ChatReviewAttention,
   type ChatReviewPlanSnapshot
 } from './session/input.js';
@@ -35,6 +48,7 @@ export const CHAT_REVIEW_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const CHAT_REVIEW_RETRY_MS = 60 * 1000;
 export const CHAT_REVIEW_PLAN_BATCH_SIZE = 4;
 const CHAT_REVIEW_PLAN_CATALOG_MAX = PLAN_CATALOG_MAX;
+const CHAT_REVIEW_RECONCILIATION_MAX = 512;
 const STATE = 'chat-review-heartbeat';
 
 export interface ChatReviewPlanTarget {
@@ -47,6 +61,7 @@ export interface ChatReviewPlanTarget {
 
 export const CHAT_REVIEW_PLAN_CLASSIFICATIONS = [
   'ready-to-archive',
+  'stale-checklist',
   'tbd',
   'blocked',
   'superseded',
@@ -56,6 +71,8 @@ export type ChatReviewPlanClassification = (typeof CHAT_REVIEW_PLAN_CLASSIFICATI
 
 export interface ChatReviewPlanAck extends ChatReviewPlanTarget {
   classification: ChatReviewPlanClassification;
+  /** Non-mutating review evidence: exact currently-open items the source proves complete. */
+  staleItemIds?: string[];
   mutationRequest?: ChatReviewPlanMutationRequest;
 }
 
@@ -69,15 +86,33 @@ export interface ChatReviewPlanSweep {
   remainingPlanIds: string[];
 }
 
-export interface ChatReviewDebt extends ChatReviewAttention {
+export interface ChatReviewPlanReconciliation extends ChatReviewPlanTarget {
+  heartbeatKey: string;
+  coordinatorSessionId: string;
+  itemIds: string[];
+  scopeDigest: string;
+  createdAt: number;
+  provenance?: PlanProvenance;
+}
+
+export interface ChatReviewDebt extends Omit<ChatReviewAttention, 'reviewLane'> {
   sessionId: string;
   conversationId: string;
   /** New epochs run only in the app-owned read/review worker. Absent on legacy Prime-owned debt. */
-  reviewLane?: 'worker';
+  reviewLane?: 'worker' | 'native-parent';
   /** Absent only on receipt-backed debt written before durable Plan review shipped. */
   planBatch?: ChatReviewPlanTarget[];
   /** Absent only together with planBatch on legacy debt. */
   planAcks?: ChatReviewPlanAck[];
+}
+type ReviewLaneSelection = 'worker' | 'native-parent' | 'off';
+/** Immutable audit custody written before an incompatible epoch is invalidated. */
+export interface ChatReviewSupersession {
+  debt: ChatReviewDebt;
+  supersededAt: number;
+  selectedLane: ReviewLaneSelection;
+  /** `-after-possible-send`: the old prompt may have reached Prime; it was quiet a full cadence. */
+  reason: 'mode-changed' | 'mode-changed-after-possible-send';
 }
 /**
  * Privacy-safe semantic result of one fully completed review epoch.
@@ -97,7 +132,7 @@ export interface ChatReviewCompletionReceipt {
   completedAt: number;
   result: ChatReviewCompletionResult;
   /** App-owned proof added by the lifecycle tool; never accepted from model arguments. */
-  reviewLane?: 'worker';
+  reviewLane?: 'worker' | 'native-parent';
   /** Compact provenance-bound handoff for Prime. Required when result=dispatched. */
   finding?: string;
 }
@@ -113,6 +148,8 @@ export interface ChatReviewHeartbeatState {
   debt?: ChatReviewDebt;
   lastReceipt?: ChatReviewCompletionReceipt;
   planSweep?: ChatReviewPlanSweep;
+  /** Source-proven stale checklist items waiting for the exact ordinary Prime to reconcile. */
+  planReconciliations?: ChatReviewPlanReconciliation[];
   pendingFinding?: ChatReviewPrimeFinding;
   /** Overflow custody for previous still-pending findings; file per index, not a lossy ring. */
   findingSpoolRead?: number;
@@ -121,13 +158,24 @@ export interface ChatReviewHeartbeatState {
   uncertainFindings?: ChatReviewPrimeFinding[];
   /** Older uncertain findings are preserved in numbered durable archive slots. */
   uncertainArchiveCount?: number;
+  /** Each exact superseded obligation has its own durable audit slot; never a completion receipt. */
+  supersessionCount?: number;
 }
 export type ChatReviewHeartbeatResult = {
-  status: 'queued' | 'pending' | 'not-due' | 'no-coordinator';
+  status: 'queued' | 'pending' | 'not-due' | 'no-coordinator' | 'paused';
   nextAt: number;
   sessionId?: string;
   conversationId?: string;
-  reason?: 'debt-owner-unavailable' | 'no-successor' | 'no-fresh-coordinator';
+  reason?: 'debt-owner-unavailable' | 'no-successor' | 'no-fresh-coordinator' | 'off' |
+    /** Pending: a Native review not yet put into any Prime tool result. Prime has not called Eve since. */
+    'awaiting-prime-tool-call' |
+    /** Pending: the Native review reached (or was offered to) Prime; no exact receipt yet. */
+    'awaiting-native-receipt' |
+    'awaiting-worker-receipt' |
+    /** Pending: Settings chose another lane, but the old prompt may have reached Prime recently. */
+    'mode-change-held';
+  /** With a pending reason: when the owed review window closed, i.e. how long it has waited. */
+  waitingSince?: number;
   /**
    * With `no-successor`: the saved Eve/Eva identity that could not be used as the successor, or
    * absent when there is none. Diagnostic only — it names why the heartbeat waits, never a target.
@@ -154,7 +202,17 @@ type Dependencies = {
   archiveUncertainFinding: (index: number, finding: ChatReviewPrimeFinding) => Promise<void>;
   writePendingSpool: (index: number, finding: ChatReviewPrimeFinding) => Promise<void>;
   readPendingSpool: (index: number) => Promise<ChatReviewPrimeFinding | null>;
+  archiveSupersession: (index: number, record: ChatReviewSupersession) => Promise<void>;
+  /**
+   * Refuse to supersede if this epoch may already have crossed browser Send, unless every row for
+   * the key has been quiet since `quietBefore` (then `quiet`, with its open transport closed).
+   */
+  retireAttention: (key: string, quietBefore?: number) => Promise<'retired' | 'none' | 'ambiguous' | 'quiet'>;
+  /** Diagnostics only: how far this key's review prompt has travelled toward Prime. */
+  transportStage: (key: string) => Promise<'none' | 'queued' | 'offered' | 'delivered' | 'closed'>;
   plans: () => Promise<PlanLibrary>;
+  /** Current user authority, rechecked at final receipt; tests can inject an exact value. */
+  archiveAuthority: () => boolean;
   planFence: <T>(targets: readonly PlanReviewExpectation[], commit: () => Promise<T>) => Promise<T>;
   makeKey: () => string;
   agentConversation: () => string | null;
@@ -210,9 +268,18 @@ function parsePlanAck(value: unknown): ChatReviewPlanAck | null {
       completedItemIds: [...request.completedItemIds].sort()
     };
   }
+  let staleItemIds: string[] | undefined;
+  if (row.staleItemIds !== undefined) {
+    if (!Array.isArray(row.staleItemIds) || row.staleItemIds.length === 0 || row.staleItemIds.length > 100 ||
+        !row.staleItemIds.every(safePlanId) || new Set(row.staleItemIds).size !== row.staleItemIds.length) return null;
+    staleItemIds = [...row.staleItemIds].sort();
+  }
+  if ((classification === 'stale-checklist') !== Boolean(staleItemIds) ||
+      (staleItemIds && mutationRequest)) return null;
   return {
     ...target,
     classification: classification as ChatReviewPlanClassification,
+    ...(staleItemIds ? { staleItemIds } : {}),
     ...(mutationRequest ? { mutationRequest } : {})
   };
 }
@@ -223,6 +290,29 @@ function parsePlanSweep(value: unknown): ChatReviewPlanSweep | null {
   if (!Array.isArray(ids) || ids.length > CHAT_REVIEW_PLAN_CATALOG_MAX || !ids.every(safePlanId) ||
       new Set(ids).size !== ids.length) return null;
   return { remainingPlanIds: [...ids] };
+}
+
+function parsePlanReconciliation(value: unknown): ChatReviewPlanReconciliation | null {
+  const target = parsePlanTarget(value);
+  if (!target || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.heartbeatKey !== 'string' || row.heartbeatKey.length === 0 || row.heartbeatKey.length > 512 ||
+      typeof row.coordinatorSessionId !== 'string' || row.coordinatorSessionId.length < 8 || row.coordinatorSessionId.length > 160 ||
+      !Array.isArray(row.itemIds) || row.itemIds.length === 0 || row.itemIds.length > 100 ||
+      !row.itemIds.every(safePlanId) || new Set(row.itemIds).size !== row.itemIds.length ||
+      typeof row.scopeDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(row.scopeDigest) ||
+      !safeTime(row.createdAt)) return null;
+  const provenance = row.provenance === undefined ? undefined : planProvenanceSchema.safeParse(row.provenance);
+  if (provenance !== undefined && !provenance.success) return null;
+  return {
+    ...target,
+    heartbeatKey: row.heartbeatKey,
+    coordinatorSessionId: row.coordinatorSessionId,
+    itemIds: [...row.itemIds].sort(),
+    scopeDigest: row.scopeDigest.toLowerCase(),
+    createdAt: row.createdAt,
+    ...(provenance === undefined ? {} : { provenance: provenance.data })
+  };
 }
 
 /** Positive recorder evidence that this coordinator has no live turn to finish the owed review. */
@@ -237,7 +327,7 @@ function parseDebt(value: unknown): ChatReviewDebt | null {
     safeTime(row.sinceAt) && safeTime(row.untilAt) && row.untilAt >= row.sinceAt &&
     typeof row.sessionId === 'string' && row.sessionId.length >= 8 && row.sessionId.length <= 64 &&
     typeof row.conversationId === 'string' && row.conversationId.length >= 8 && row.conversationId.length <= 256 &&
-    (row.reviewLane === undefined || row.reviewLane === 'worker'))) return null;
+    (row.reviewLane === undefined || row.reviewLane === 'worker' || row.reviewLane === 'native-parent'))) return null;
   const legacyPlanDebt = row.planBatch === undefined && row.planAcks === undefined;
   if ((row.planBatch === undefined) !== (row.planAcks === undefined)) return null;
   let planBatch: ChatReviewPlanTarget[] | undefined;
@@ -259,7 +349,7 @@ function parseDebt(value: unknown): ChatReviewDebt | null {
     untilAt: row.untilAt,
     sessionId: row.sessionId,
     conversationId: row.conversationId,
-    ...(row.reviewLane === 'worker' ? { reviewLane: 'worker' as const } : {}),
+    ...(row.reviewLane === 'worker' || row.reviewLane === 'native-parent' ? { reviewLane: row.reviewLane } : {}),
     ...(planBatch === undefined ? {} : { planBatch, planAcks: planAcks! })
   };
 }
@@ -272,7 +362,7 @@ function parseReceipt(value: unknown): ChatReviewCompletionReceipt | null {
     typeof row.conversationId === 'string' && row.conversationId.length >= 8 && row.conversationId.length <= 256 &&
     typeof row.requestId === 'string' && row.requestId.length > 0 && row.requestId.length <= 256 &&
     safeTime(row.completedAt) &&
-    (row.reviewLane === undefined || row.reviewLane === 'worker') &&
+    (row.reviewLane === undefined || row.reviewLane === 'worker' || row.reviewLane === 'native-parent') &&
     (row.finding === undefined || (typeof row.finding === 'string' && row.finding.trim().length > 0 && row.finding.length <= 6000)) &&
     (row.result === undefined || (typeof row.result === 'string' && (CHAT_REVIEW_COMPLETION_RESULTS as readonly string[]).includes(row.result)))
     ? {
@@ -284,7 +374,7 @@ function parseReceipt(value: unknown): ChatReviewCompletionReceipt | null {
         // Receipts written before the result enum existed semantically meant only "review
         // completed". Preserve that exact meaning rather than rejecting old durable state.
         result: (row.result ?? 'completed') as ChatReviewCompletionResult,
-        ...(row.reviewLane === 'worker' ? { reviewLane: 'worker' as const } : {}),
+        ...(row.reviewLane === 'worker' || row.reviewLane === 'native-parent' ? { reviewLane: row.reviewLane } : {}),
         ...(row.finding === undefined ? {} : { finding: row.finding })
       }
     : null;
@@ -332,6 +422,17 @@ const defaults: Dependencies = {
       if (!planSweep) throw new Error('The durable chat review Plan sweep is invalid');
       state.planSweep = planSweep;
     }
+    if (value.planReconciliations !== undefined) {
+      if (!Array.isArray(value.planReconciliations) || value.planReconciliations.length > CHAT_REVIEW_RECONCILIATION_MAX) {
+        throw new Error('The durable chat review Plan reconciliations are invalid');
+      }
+      const reconciliations = value.planReconciliations.map(parsePlanReconciliation);
+      if (reconciliations.some(item => item === null) ||
+          new Set((reconciliations as ChatReviewPlanReconciliation[]).map(item => item.planId)).size !== reconciliations.length) {
+        throw new Error('The durable chat review Plan reconciliations are invalid');
+      }
+      state.planReconciliations = reconciliations as ChatReviewPlanReconciliation[];
+    }
     if (value.pendingFinding !== undefined) {
       const pendingFinding = parsePendingFinding(value.pendingFinding);
       if (!pendingFinding) throw new Error('The durable chat review Prime finding is invalid');
@@ -357,6 +458,10 @@ const defaults: Dependencies = {
       if (!safeTime(value.uncertainArchiveCount)) throw new Error('The durable chat review uncertain archive cursor is invalid');
       state.uncertainArchiveCount = value.uncertainArchiveCount;
     }
+    if (value.supersessionCount !== undefined) {
+      if (!safeTime(value.supersessionCount)) throw new Error('The durable chat review supersession cursor is invalid');
+      state.supersessionCount = value.supersessionCount;
+    }
     if (state.debt?.planBatch !== undefined && !state.planSweep) {
       throw new Error('The durable chat review Plan debt has no sweep cursor');
     }
@@ -380,12 +485,18 @@ const defaults: Dependencies = {
   uniqueSession: (conversationId) => findSessionByConversation(conversationId, { includeHistorical: true, requireUnique: true }),
   blocked: isChatBlocked,
   // Prime remains the durable debt owner while review executes in an app-owned worker lane.
-  enqueue: (sessionId, review) => dispatchChatReviewWorker(sessionId, review),
+  enqueue: (sessionId, review) => review.reviewLane === 'native-parent'
+    ? dispatchChatReviewNativeParent(sessionId, review)
+    : dispatchChatReviewWorker(sessionId, review),
   enqueueFinding: (sessionId, key, text) => enqueueChatReviewFinding(sessionId, key, text),
   archiveUncertainFinding: (index, finding) =>
     writeDurableNow(`chat-review-uncertain-${index.toString(36)}`, finding),
   writePendingSpool: (index, finding) =>
     writeDurableNow(`chat-review-finding-${index.toString(36)}`, finding),
+  archiveSupersession: (index, record) =>
+    writeDurableNow(`chat-review-superseded-${index.toString(36)}`, record),
+  retireAttention: (key, quietBefore) => retireLegacyChatReviewAttention(key, 'mode-changed', quietBefore),
+  transportStage: (key) => chatReviewTransportStage(key),
   async readPendingSpool(index) {
     const row = await readDurableStrict<unknown>(`chat-review-finding-${index.toString(36)}`);
     const finding = parsePendingFinding(row);
@@ -393,6 +504,7 @@ const defaults: Dependencies = {
     return finding;
   },
   plans: listPlans,
+  archiveAuthority: () => getConfig().eveAuthority?.archiveCompletedWork === true,
   planFence: withPlanReviewValidationFence,
   makeKey: () => `heartbeat:${randomUUID()}`,
   agentConversation: currentAgentConversationId,
@@ -457,13 +569,20 @@ function selectPlanReviewBatch(
 ): { sweep: ChatReviewPlanSweep; targets: ChatReviewPlanTarget[]; snapshots: ChatReviewPlanSnapshot[] } {
   const checked = checkedPlanLibrary(library);
   const liveById = new Map(checked.live.map(plan => [plan.id, plan]));
-  let remainingPlanIds = (state?.planSweep?.remainingPlanIds ?? []).filter(id => liveById.has(id));
+  const pendingReconciliationIds = new Set((state?.planReconciliations ?? [])
+    .filter(reconciliation => {
+      const live = liveById.get(reconciliation.planId);
+      return Boolean(live && samePlanTarget(planTarget(live), reconciliation));
+    })
+    .map(reconciliation => reconciliation.planId));
+  let remainingPlanIds = (state?.planSweep?.remainingPlanIds ?? [])
+    .filter(id => liveById.has(id) && !pendingReconciliationIds.has(id));
   if (remainingPlanIds.length === 0) {
     // listPlans() already has stable Live ordering. Keep that ordering within each audience while
     // putting human commitments before worker/helper bookkeeping at the start of every cycle.
     remainingPlanIds = [
-      ...checked.live.filter(plan => plan.audience === 'human').map(plan => plan.id),
-      ...checked.live.filter(plan => plan.audience === 'eve').map(plan => plan.id)
+      ...checked.live.filter(plan => plan.audience === 'human' && !pendingReconciliationIds.has(plan.id)).map(plan => plan.id),
+      ...checked.live.filter(plan => plan.audience === 'eve' && !pendingReconciliationIds.has(plan.id)).map(plan => plan.id)
     ];
   }
   const selected = remainingPlanIds.slice(0, CHAT_REVIEW_PLAN_BATCH_SIZE).map(id => liveById.get(id)!);
@@ -479,12 +598,77 @@ function stateWithDebt(state: ChatReviewHeartbeatState | null, debt: ChatReviewD
     ...(state?.lastCompletedAt === undefined ? {} : { lastCompletedAt: state.lastCompletedAt }),
     ...(state?.lastReceipt ? { lastReceipt: state.lastReceipt } : {}),
     ...(state?.planSweep ? { planSweep: state.planSweep } : {}),
+    ...(state?.planReconciliations?.length ? { planReconciliations: state.planReconciliations } : {}),
     ...(state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
     ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
     ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
     ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
+    ...(state?.supersessionCount !== undefined ? { supersessionCount: state.supersessionCount } : {}),
     debt
   };
+}
+
+/**
+ * A Settings mode change invalidates the old lane's receipt capability without declaring its
+ * work complete. Keep the exact previous debt (including Plan revisions/ACKs) in an fsynced
+ * audit slot before removing the live blockage; the completion cursor never advances here.
+ *
+ * The browser-owned attention outbox is fenced first: only definitely pre-Send messages may
+ * be cancelled. A possible Send leaves the old debt intact while it is recent, so a new review
+ * cannot race it. When another lane is selected, that hold ends once the old prompt has been
+ * quiet for a full cadence and its Prime is not mid-turn: a Native prompt handed to an idle Prime
+ * may never be answered, and holding for it stopped every Auditable review after the switch.
+ * Its window is not lost: the completion cursor stays put, so the next epoch reviews it again.
+ */
+async function supersedeIncompatibleReviewDebt(
+  now: number, state: ChatReviewHeartbeatState | null, selectedLane: ReviewLaneSelection,
+  deps: Dependencies
+): Promise<{ state: ChatReviewHeartbeatState | null; blocked: boolean }> {
+  const old = state?.debt;
+  if (!old || (selectedLane !== 'off' && (old.reviewLane ?? 'worker') === selectedLane)) {
+    return { state, blocked: false };
+  }
+  let retirement = await deps.retireAttention(old.key);
+  if (retirement === 'ambiguous' && selectedLane !== 'off') {
+    // OFF launches nothing, so it never needs to end the hold; returning to the old lane resumes it.
+    // A Prime that is mid-turn and recorded work within the cadence may be answering the old
+    // prompt right now, so it keeps the hold; so does an owner lookup that fails. A turn whose end
+    // was never observed but shows no activity for a full cadence does not hold it forever.
+    const quietBefore = now - CHAT_REVIEW_HEARTBEAT_MS;
+    const owner = await exactDebtOwner(old, deps).catch(() => undefined);
+    const ownerWorking = owner !== null && (owner === undefined ||
+      (Boolean(owner.activeTurnId) && Math.max(owner.lastToolCallAt ?? 0, owner.updatedAt) > quietBefore));
+    if (!ownerWorking) retirement = await deps.retireAttention(old.key, quietBefore);
+  }
+  if (retirement === 'ambiguous') return { state, blocked: true };
+  const index = state.supersessionCount ?? 0;
+  if (!Number.isSafeInteger(index + 1)) throw new Error('The chat review supersession audit index is exhausted');
+  const possiblySent = retirement === 'quiet';
+  await deps.archiveSupersession(index, {
+    debt: old, supersededAt: now, selectedLane, reason: possiblySent ? 'mode-changed-after-possible-send' : 'mode-changed'
+  });
+  const next: ChatReviewHeartbeatState = { ...state, supersessionCount: index + 1 };
+  delete next.debt;
+  await deps.writeState(next);
+  (possiblySent ? logWarn : logInfo)(`chat review heartbeat: superseded ${old.reviewLane ?? 'legacy-worker'} epoch ${old.key} ` +
+    `for ${selectedLane}${possiblySent ? ' after its possibly-sent prompt was quiet for a full cadence' : ''}; ` +
+    'exact debt archived, review coverage and Plan sweep preserved');
+  return { state: next, blocked: false };
+}
+
+/** Called by the existing Settings transaction as well as the existing semantic timer. */
+export function reconcileChatReviewHeartbeatMode(
+  now = Date.now(), selectedMode: 'off' | 'auditable-chat' | 'native-subagent' = 'off',
+  dependencies: Partial<Dependencies> = {}
+): Promise<'unchanged' | 'superseded' | 'ambiguous'> {
+  return serialHeartbeat(async () => {
+    const deps = { ...defaults, ...dependencies };
+    const before = await deps.readState();
+    const selectedLane: ReviewLaneSelection = selectedMode === 'off' ? 'off' :
+      selectedMode === 'native-subagent' ? 'native-parent' : 'worker';
+    const outcome = await supersedeIncompatibleReviewDebt(now, before, selectedLane, deps);
+    return outcome.blocked ? 'ambiguous' : outcome.state?.debt !== before?.debt ? 'superseded' : 'unchanged';
+  });
 }
 
 function planBatchBelongsToSweep(state: ChatReviewHeartbeatState | null, debt: ChatReviewDebt): boolean {
@@ -525,7 +709,8 @@ async function attentionForDebt(
   deps: Dependencies,
   knownLibrary?: PlanLibrary
 ): Promise<ChatReviewAttention> {
-  const base = { key: debt.key, sinceAt: debt.sinceAt, untilAt: debt.untilAt };
+  const base: ChatReviewAttention = { key: debt.key, sinceAt: debt.sinceAt, untilAt: debt.untilAt,
+    ...(debt.reviewLane === 'native-parent' ? { reviewLane: 'native-parent' as const } : {}) };
   if (debt.planBatch === undefined) return base;
   const library = checkedPlanLibrary(knownLibrary ?? await deps.plans());
   const byId = planById(library);
@@ -667,6 +852,13 @@ export async function chatReviewRequiresWorker(
   const state = await deps.readState();
   return state?.debt?.key === key && state.debt.reviewLane === 'worker';
 }
+/** A native-child's output is interpreted and acknowledged only by this exact Prime parent. */
+export async function chatReviewRequiresNativeParent(key: string, dependencies: Partial<Dependencies> = {}): Promise<boolean> {
+  if (!key || key.length > 512) return false;
+  const deps = { ...defaults, ...dependencies };
+  const state = await deps.readState();
+  return state?.debt?.key === key && state.debt.reviewLane === 'native-parent';
+}
 
 /** New exact ordinary coordinator for a fresh epoch or a canonical retired/stalled-owner transfer. */
 async function newestCoordinator(
@@ -709,6 +901,8 @@ export interface ChatReviewPlanAcknowledgementInput {
   planId: string;
   expectedUpdatedAt: number;
   classification: ChatReviewPlanClassification;
+  /** Non-mutating worker review evidence. Valid only with classification=stale-checklist. */
+  staleItemIds?: readonly string[];
   /** Exact Companion request identity for safely recognizing a replay after a bounded Plan mutation. */
   requestId?: string;
   /** Canonical mutation arguments. Required with `options.mutate`, omitted for non-mutating acks. */
@@ -754,6 +948,13 @@ function sameMutationRequest(left: ChatReviewPlanMutationRequest, right: ChatRev
     left.completedItemIds.every((itemId, index) => itemId === right.completedItemIds[index]);
 }
 
+function sameStaleItemIds(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  if (!left || !right) return left === right;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
 /** Persist one exact Plan review against the current revision/source of this heartbeat's fixed batch. */
 export function acknowledgeChatReviewPlan(
   input: ChatReviewPlanAcknowledgementInput,
@@ -766,6 +967,10 @@ export function acknowledgeChatReviewPlan(
         !(CHAT_REVIEW_PLAN_CLASSIFICATIONS as readonly string[]).includes(input.classification)) return 'rejected';
     const mutationRequest = mutationRequestFromInput(input, options.mutate);
     if (mutationRequest === 'invalid') return 'rejected';
+    const staleItemIds = input.staleItemIds === undefined ? undefined : [...input.staleItemIds].sort();
+    if ((input.classification === 'stale-checklist') !== Boolean(staleItemIds?.length) ||
+        (staleItemIds && (staleItemIds.length > 100 || !staleItemIds.every(safePlanId) ||
+          new Set(staleItemIds).size !== staleItemIds.length || options.mutate))) return 'rejected';
     const state = await deps.readState();
     const debt = state?.debt;
     if (!debt || debt.key !== input.key || debt.planBatch === undefined || debt.planAcks === undefined ||
@@ -786,6 +991,10 @@ export function acknowledgeChatReviewPlan(
     const currentLive = library.live.find(plan => plan.id === input.planId);
     const current = currentLive ?? library.done.find(plan => plan.id === input.planId);
     if (!current || current.updatedAt !== input.expectedUpdatedAt) return 'rejected';
+    if (staleItemIds) {
+      const currentItems = new Map(current.items.map(item => [item.id, item]));
+      if (staleItemIds.some(id => !currentItems.has(id) || currentItems.get(id)!.status === 'done')) return 'rejected';
+    }
     const beforeMutation = planTarget(current);
     // Live revision/source drift means the prompt snapshot is stale. Reject this attempt and let
     // the durable retry path refresh the target before the coordinator reviews it again. Archived
@@ -799,10 +1008,12 @@ export function acknowledgeChatReviewPlan(
     const acknowledgement: ChatReviewPlanAck = {
       ...afterTarget,
       classification: input.classification,
+      ...(staleItemIds ? { staleItemIds } : {}),
       ...(mutationRequest ? { mutationRequest } : {})
     };
     if (previous && samePlanTarget(previous, acknowledgement)) {
-      if (previous.classification !== acknowledgement.classification) return 'rejected';
+      if (previous.classification !== acknowledgement.classification ||
+          !sameStaleItemIds(previous.staleItemIds, acknowledgement.staleItemIds)) return 'rejected';
       if (!samePlanTarget(batchTarget, afterTarget)) {
         const planBatch = debt.planBatch.map((target, index) => index === batchIndex ? afterTarget : target);
         await deps.writeState(stateWithDebt(state, { ...debt, planBatch }));
@@ -883,7 +1094,7 @@ export function completeChatReviewHeartbeat(
     if (!receipt.key || receipt.key.length > 512 || !receipt.sessionId || !receipt.conversationId ||
         !receipt.requestId || receipt.requestId.length > 256 || !safeTime(receipt.completedAt) ||
         !(CHAT_REVIEW_COMPLETION_RESULTS as readonly string[]).includes(receipt.result) ||
-        (receipt.reviewLane !== undefined && receipt.reviewLane !== 'worker') ||
+        (receipt.reviewLane !== undefined && receipt.reviewLane !== 'worker' && receipt.reviewLane !== 'native-parent') ||
         (receipt.finding !== undefined && (!receipt.finding.trim() || receipt.finding.length > 6000)) ||
         (receipt.result !== 'completed' && !receipt.finding?.trim())) return 'rejected';
     const state = await deps.readState();
@@ -894,10 +1105,12 @@ export function completeChatReviewHeartbeat(
         previous.conversationId === receipt.conversationId ? 'already-completed' : 'rejected';
     }
     if (debt.reviewLane === 'worker' && receipt.reviewLane !== 'worker') return 'rejected';
+    if (debt.reviewLane === 'native-parent' && receipt.reviewLane !== 'native-parent') return 'rejected';
     const coordinator = await exactCoordinator(debt, deps);
     if (!coordinator || !receiptMatchesDebt(receipt, debt, coordinator) || !planBatchBelongsToSweep(state, debt)) return 'rejected';
     let planSweep = state?.planSweep;
     let liveExpectations: PlanReviewExpectation[] = [];
+    let planReconciliations = [...(state?.planReconciliations ?? [])];
     if (debt.planBatch !== undefined) {
       if (!planSweep || debt.planAcks === undefined || debt.planAcks.length !== debt.planBatch.length) return 'rejected';
       const acknowledgementById = new Map(debt.planAcks.map(ack => [ack.planId, ack]));
@@ -906,6 +1119,7 @@ export function completeChatReviewHeartbeat(
       const library = checkedPlanLibrary(await deps.plans());
       const liveById = new Map(library.live.map(plan => [plan.id, plan]));
       const archivedIds = new Set(library.done.map(plan => plan.id));
+      const staleReconciliations: ChatReviewPlanReconciliation[] = [];
       liveExpectations = [];
       for (const target of debt.planBatch) {
         const acknowledgement = acknowledgementById.get(target.planId)!;
@@ -913,19 +1127,43 @@ export function completeChatReviewHeartbeat(
         if (live) {
           if (!samePlanTarget(target, acknowledgement) || !samePlanTarget(planTarget(live), acknowledgement)) return 'rejected';
           liveExpectations.push({ planId: live.id, updatedAt: live.updatedAt, provenance: live.provenance });
+          // An acknowledged ready Eve Activity is not proof that its authorized exact archive
+          // succeeded. Do not quietly close the epoch while that same revision remains Live.
+          // Human/manual Plans and authority-disabled Eve Activity remain explicit boundaries.
+          if (receipt.result === 'completed' && acknowledgement.classification === 'ready-to-archive' &&
+              live.audience === 'eve' && live.readyToArchive && deps.archiveAuthority()) return 'rejected';
+          if (acknowledgement.classification === 'stale-checklist') {
+            if (!acknowledgement.staleItemIds?.length) return 'rejected';
+            staleReconciliations.push({
+              ...planTarget(live),
+              heartbeatKey: debt.key,
+              coordinatorSessionId: debt.sessionId,
+              itemIds: [...acknowledgement.staleItemIds],
+              scopeDigest: planReviewScopeDigest(live),
+              createdAt: receipt.completedAt,
+              ...(live.provenance ? { provenance: live.provenance } : {})
+            });
+          }
         } else if (!archivedIds.has(target.planId)) {
           return 'rejected';
         }
       }
+      if (receipt.result === 'completed' && staleReconciliations.length) return 'rejected';
       const completedIds = new Set(debt.planBatch.map(target => target.planId));
       planSweep = { remainingPlanIds: planSweep.remainingPlanIds.filter(id => !completedIds.has(id)) };
+      // A current re-review supersedes any older housekeeping obligation for that exact Plan.
+      planReconciliations = planReconciliations.filter(item => !completedIds.has(item.planId));
+      for (const reconciliation of staleReconciliations) planReconciliations.push(reconciliation);
+      if (planReconciliations.length > CHAT_REVIEW_RECONCILIATION_MAX) return 'rejected';
     }
     const nextState: ChatReviewHeartbeatState = {
       lastCompletedAt: debt.untilAt,
       lastReceipt: receipt,
       ...(planSweep ? { planSweep } : {}),
+      ...(planReconciliations.length ? { planReconciliations } : {}),
       ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
       ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
+      ...(state?.supersessionCount !== undefined ? { supersessionCount: state.supersessionCount } : {}),
       ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
       ...(!receipt.finding && state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
       ...(receipt.finding ? {
@@ -965,9 +1203,56 @@ export function completeChatReviewHeartbeat(
   });
 }
 
+export type ChatReviewHousekeepingResult = 'reconciled' | 'already-reconciled' | 'stale';
+
+/** Bounded structured housekeeping owned by one exact ordinary coordinator session. */
+export function listChatReviewPlanReconciliations(sessionId: string): Promise<ChatReviewPlanReconciliation[]> {
+  return serialHeartbeat(async () => {
+    const state = await defaults.readState();
+    return (state?.planReconciliations ?? [])
+      .filter(item => item.coordinatorSessionId === sessionId)
+      .map(item => ({ ...item, itemIds: [...item.itemIds], ...(item.provenance ? { provenance: { ...item.provenance } } : {}) }));
+  });
+}
+
+/**
+ * Consumes one durable stale-checklist obligation. The target comes entirely from durable review
+ * state; the caller supplies only its exact coordinator session and Plan id.
+ */
+export function reconcileChatReviewPlanHousekeeping(
+  sessionId: string,
+  planId: string
+): Promise<ChatReviewHousekeepingResult> {
+  return serialHeartbeat(async () => {
+    if (!sessionId || sessionId.length > 160 || !safePlanId(planId)) return 'stale';
+    const state = await defaults.readState();
+    const reconciliation = state?.planReconciliations?.find(item =>
+      item.coordinatorSessionId === sessionId && item.planId === planId);
+    if (!state || !reconciliation) return 'already-reconciled';
+
+    const result = await reconcileReviewedPlanItems({
+      planId: reconciliation.planId,
+      updatedAt: reconciliation.updatedAt,
+      ...(reconciliation.provenance ? { provenance: reconciliation.provenance } : {}),
+      itemIds: reconciliation.itemIds,
+      scopeDigest: reconciliation.scopeDigest
+    });
+    const remaining = (state.planReconciliations ?? []).filter(item => item.planId !== reconciliation.planId);
+    const nextState: ChatReviewHeartbeatState = { ...state };
+    if (remaining.length) nextState.planReconciliations = remaining;
+    else delete nextState.planReconciliations;
+    // `reconciled` may have changed the Plan before this state commit. If this write fails, the
+    // durable obligation remains; the next retry recognizes the same-scope done items as already
+    // reconciled and removes the obligation without applying the effect twice.
+    await defaults.writeState(nextState);
+    return result;
+  });
+}
+
 export function runChatReviewHeartbeat(
   now = Date.now(),
-  dependencies: Partial<Dependencies> = {}
+  dependencies: Partial<Dependencies> = {},
+  requestedLane: 'worker' | 'native-parent' = 'worker'
 ): Promise<ChatReviewHeartbeatResult> {
   return serialHeartbeat(async () => {
     const deps = { ...defaults, ...dependencies };
@@ -1044,6 +1329,18 @@ export function runChatReviewHeartbeat(
       // the independent review clock. A later completed receipt spools it before replacement.
     }
     if (state?.debt) {
+      const selection = await supersedeIncompatibleReviewDebt(now, state, requestedLane, deps);
+      state = selection.state;
+      if (selection.blocked) return {
+        status: 'pending',
+        reason: 'mode-change-held',
+        waitingSince: state!.debt!.untilAt,
+        nextAt: now + CHAT_REVIEW_RETRY_MS,
+        sessionId: state!.debt!.sessionId,
+        conversationId: state!.debt!.conversationId
+      };
+    }
+    if (state?.debt) {
       let debt = state.debt;
       if (!planBatchBelongsToSweep(state, debt)) {
         throw new Error('The durable chat review Plan batch is outside the sweep cursor');
@@ -1114,7 +1411,7 @@ export function runChatReviewHeartbeat(
         // either (Eva, 2026-10-20: no heartbeat tab, the same deferral on every retry). Once that
         // old row has been quiet a full cadence, retire its key and review the same window afresh in
         // the worker lane. The old row stays untouched as the record of a possible Send.
-        if (debt.reviewLane === 'worker' || !String(error).includes(LEGACY_HEARTBEAT_AMBIGUOUS)) throw error;
+        if (debt.reviewLane === 'worker' || debt.reviewLane === 'native-parent' || !String(error).includes(LEGACY_HEARTBEAT_AMBIGUOUS)) throw error;
         const lastActivity = await deps.legacyActivityAt(debt.key);
         if (lastActivity === null || now - lastActivity < CHAT_REVIEW_HEARTBEAT_MS) throw error;
         const library = retryLibrary ?? checkedPlanLibrary(await deps.plans());
@@ -1140,8 +1437,17 @@ export function runChatReviewHeartbeat(
           conversationId: successor.conversationId
         };
       }
+      let reason: ChatReviewHeartbeatResult['reason'] = 'awaiting-worker-receipt';
+      if (debt.reviewLane === 'native-parent') {
+        // Evidence for the Native limit: Eve cannot make an idle Prime run, so this says whether
+        // the review is still waiting for Prime's next Eve tool call or for its receipt.
+        const stage = await deps.transportStage(debt.key).catch(() => null);
+        reason = stage === 'offered' || stage === 'delivered' ? 'awaiting-native-receipt' : 'awaiting-prime-tool-call';
+      }
       return {
         status: 'pending',
+        reason,
+        waitingSince: debt.untilAt,
         nextAt: now + CHAT_REVIEW_RETRY_MS,
         sessionId: debt.sessionId,
         conversationId: debt.conversationId
@@ -1164,8 +1470,9 @@ export function runChatReviewHeartbeat(
       state?.pendingFinding || (state?.findingSpoolRead ?? 0) < (state?.findingSpoolWrite ?? 0)
         ? Math.min(dueAt, now + CHAT_REVIEW_RETRY_MS) : dueAt };
 
-    // Every fresh epoch is worker-lane (`reviewLane: 'worker'` below).
-    const unique = await newestCoordinator(await deps.sessions(), deps, null, true);
+    // A fresh epoch belongs to exactly one selected lane; never silently reroute
+    // an earlier debt when Settings changes during an uncertain Send.
+      const unique = await newestCoordinator(await deps.sessions(), deps, null, requestedLane === 'worker');
     if (unique) {
       const conversationId = unique.conversationId;
       const sinceAt = lastCompletedAt === null || clockReset
@@ -1186,18 +1493,21 @@ export function runChatReviewHeartbeat(
         ...review,
         sessionId: unique.id,
         conversationId,
-        reviewLane: 'worker',
+        reviewLane: requestedLane,
         planBatch: planReview.targets,
         planAcks: []
       };
-      const attention: ChatReviewAttention = { ...review, plans: planReview.snapshots };
+      const attention: ChatReviewAttention = { ...review, plans: planReview.snapshots,
+        ...(requestedLane === 'native-parent' ? { reviewLane: 'native-parent' } : {}) };
       // The obligation is durable before browser transport. If enqueue fails or the resulting
       // unclaimed attention is cancelled, restart still knows exactly what review remains owed.
       await deps.writeState({
         ...(lastCompletedAt === null ? {} : { lastCompletedAt }),
         ...(state?.lastReceipt ? { lastReceipt: state.lastReceipt } : {}),
+        ...(state?.planReconciliations?.length ? { planReconciliations: state.planReconciliations } : {}),
         ...(state?.uncertainFindings?.length ? { uncertainFindings: state.uncertainFindings } : {}),
         ...(state?.uncertainArchiveCount ? { uncertainArchiveCount: state.uncertainArchiveCount } : {}),
+        ...(state?.supersessionCount !== undefined ? { supersessionCount: state.supersessionCount } : {}),
         ...(state?.pendingFinding ? { pendingFinding: state.pendingFinding } : {}),
         ...(state?.findingSpoolWrite !== undefined ? { findingSpoolRead: state.findingSpoolRead, findingSpoolWrite: state.findingSpoolWrite } : {}),
         planSweep: planReview.sweep,
@@ -1231,6 +1541,13 @@ export function startChatReviewHeartbeatMaintenance(options: {
   // duplicates of a known Send or explicit queued dismissal are retired;
   // no unique finding, user input, or ambiguous browser claim is touched.
   const run = options.run ?? (async (at) => {
+    const mode = getConfig().multiAgent.heartbeatMode ?? 'off';
+    if (mode === 'off') {
+      // The existing timer retires a definitely pre-Send review into append-only
+      // custody, but never clears findings or launches an alternate lane.
+      await reconcileChatReviewHeartbeatMode(at, 'off');
+      return { status: 'paused' as const, reason: 'off' as const, nextAt: at + CHAT_REVIEW_RETRY_MS };
+    }
     try {
       const retired = await reconcileHeartbeatFindingQueue();
       if (retired) logInfo(`chat review heartbeat retired ${retired} proven redundant queued finding(s)`);
@@ -1238,7 +1555,7 @@ export function startChatReviewHeartbeatMaintenance(options: {
       // Queue housekeeping is never permission to stall a separate semantic review.
       logWarn(`chat review heartbeat queue reconciliation deferred: ${String(error)}`);
     }
-    return runChatReviewHeartbeat(at);
+    return runChatReviewHeartbeat(at, {}, mode === 'native-subagent' ? 'native-parent' : 'worker');
   });
   let stopped = false;
   let timer: NodeJS.Timeout | null = null;

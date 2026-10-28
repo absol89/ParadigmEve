@@ -1,4 +1,4 @@
-import { admitEvecronOccurrence } from './evecron-runner.js';
+import { admitEvecronOccurrence, reconcileEvecronDelivery } from './evecron-runner.js';
 import { materializeEveCronOccurrences } from './schedule.js';
 import { listInputs, type InputEntry } from './session/input.js';
 import type { EveCronOccurrence } from '../shared/schedule.js';
@@ -14,6 +14,10 @@ export interface ScheduleMaintenanceRunResult {
   due: number;
   admitted: string[];
   alreadyAdmitted: string[];
+  /** Admitted occurrences whose outbox row was ACKed and that now run. */
+  started: string[];
+  /** Admitted occurrences whose outbox row ended without an ACK: failed, never re-sent. */
+  deliveryFailed: Array<{ occurrenceId: string; error: string }>;
   ignoredNonInstallation: string[];
   failed: Array<{ occurrenceId: string; error: string }>;
 }
@@ -23,6 +27,7 @@ interface ScheduleMaintenanceDeps {
   materialize: (fromAt: number, throughAt: number, now: number) => Promise<EveCronOccurrence[]>;
   inputs: () => Promise<InputEntry[]>;
   admit: (occurrenceId: string, now: number) => Promise<unknown>;
+  reconcile: (occurrenceId: string, now: number) => Promise<{ outcome: 'started' | 'failed' | 'waiting'; occurrence: EveCronOccurrence }>;
 }
 
 export interface ScheduleMaintenanceOptions {
@@ -40,7 +45,8 @@ function dependencies(options: ScheduleMaintenanceOptions): ScheduleMaintenanceD
     now: options.deps?.now ?? options.now ?? Date.now,
     materialize: options.deps?.materialize ?? materializeEveCronOccurrences,
     inputs: options.deps?.inputs ?? listInputs,
-    admit: options.deps?.admit ?? admitEvecronOccurrence
+    admit: options.deps?.admit ?? admitEvecronOccurrence,
+    reconcile: options.deps?.reconcile ?? reconcileEvecronDelivery
   };
 }
 
@@ -56,6 +62,9 @@ function exactScheduleInput(row: InputEntry, occurrence: EveCronOccurrence): boo
  * runner. A durable outbox row is the admission receipt: once it exists, later ticks/restarts do
  * not call the runner again. A claimed occurrence with no outbox row is deliberately retried so a
  * crash between the schedule claim and outbox commit can heal via the runner's stable input id.
+ * An admitted occurrence whose row reached a terminal outbox state is settled from that row: an
+ * ACKed row starts it, an unACKed one fails it. Without this, a row the browser never picked up
+ * left the occurrence scheduled and "Waiting to start" forever (c29, 2026-10-28).
  */
 export async function runScheduleMaintenanceOnce(
   options: Pick<ScheduleMaintenanceOptions, 'now' | 'deps'> = {}
@@ -77,6 +86,8 @@ export async function runScheduleMaintenanceOnce(
     due: due.length,
     admitted: [],
     alreadyAdmitted: [],
+    started: [],
+    deliveryFailed: [],
     ignoredNonInstallation: [],
     failed: []
   };
@@ -86,8 +97,19 @@ export async function runScheduleMaintenanceOnce(
       result.ignoredNonInstallation.push(occurrence.id);
       continue;
     }
-    if (outbox.some(row => exactScheduleInput(row, occurrence))) {
+    const admitted = outbox.find(row => exactScheduleInput(row, occurrence));
+    if (admitted) {
       result.alreadyAdmitted.push(occurrence.id);
+      if (admitted.state !== 'sent' && admitted.state !== 'failed' && admitted.state !== 'cancelled') continue;
+      try {
+        const settled = await deps.reconcile(occurrence.id, now);
+        if (settled.outcome === 'started') result.started.push(occurrence.id);
+        else if (settled.outcome === 'failed') {
+          result.deliveryFailed.push({ occurrenceId: occurrence.id, error: settled.occurrence.failure?.error ?? 'Delivery failed' });
+        }
+      } catch (error) {
+        result.failed.push({ occurrenceId: occurrence.id, error: error instanceof Error ? error.message : String(error) });
+      }
       continue;
     }
     try {

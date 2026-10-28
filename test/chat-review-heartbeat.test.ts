@@ -10,7 +10,10 @@ import {
   CHAT_REVIEW_RETRY_MS,
   acknowledgeChatReviewPlan,
   chatReviewCoordinatorCandidates,
+  chatReviewRequiresNativeParent,
+  chatReviewRequiresWorker,
   completeChatReviewHeartbeat,
+  reconcileChatReviewHeartbeatMode,
   resolveChatReviewContinuity,
   runChatReviewHeartbeat,
   startChatReviewHeartbeatMaintenance,
@@ -182,6 +185,220 @@ describe('chat review heartbeat', () => {
       untilAt: now,
       plans: []
     });
+  });
+  it('queues a native-parent epoch on the existing heartbeat timer without spawning a worker chat', async () => {
+    const now = 50_000_000;
+    const owner = session({ id: 'native-prime', conversationId, lastToolCallAt: now - 1 });
+    let state: ChatReviewHeartbeatState | null = null;
+    const enqueue = vi.fn(async () => ({ state: 'queued' }));
+    const dependencies = {
+      readState: async () => state,
+      writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      sessions: async () => [owner], uniqueSession: async () => owner,
+      blocked: () => false, plans: emptyPlans, enqueue,
+      makeKey: () => 'heartbeat:native-parent-test', agentConversation: () => owner.conversationId
+    };
+    expect(await runChatReviewHeartbeat(now, dependencies, 'native-parent')).toMatchObject({ status: 'queued' });
+    expect(requiredState(state).debt).toMatchObject({ key: 'heartbeat:native-parent-test', reviewLane: 'native-parent', sessionId: owner.id });
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(owner.id, {
+      key: 'heartbeat:native-parent-test', sinceAt: Math.max(0, now - CHAT_REVIEW_INITIAL_LOOKBACK_MS),
+      untilAt: now, plans: [], reviewLane: 'native-parent'
+    });
+    expect(await chatReviewRequiresWorker('heartbeat:native-parent-test', dependencies)).toBe(false);
+    expect(await chatReviewRequiresNativeParent('heartbeat:native-parent-test', dependencies)).toBe(true);
+    expect(await completeChatReviewHeartbeat(receipt(requiredState(state).debt!, { result: 'completed' }), dependencies)).toBe('rejected');
+    expect(await completeChatReviewHeartbeat(receipt(requiredState(state).debt!, { reviewLane: 'native-parent' }), dependencies)).toBe('completed');
+    expect(requiredState(state).debt).toBeUndefined();
+    expect(requiredState(state).lastReceipt?.reviewLane).toBe('native-parent');
+  });
+
+  it('supersedes c24 worker-lane debt for Native with full audit custody and no lost Plan/window coverage', async () => {
+    const now = 50_000_000;
+    const owner = session({ id: 'prime-session', conversationId, lastToolCallAt: now - 1 });
+    const target = plan(17);
+    const original = debt({ key: 'heartbeat:c24-worker-debt', reviewLane: 'worker', sinceAt: 1_000_000,
+      untilAt: 2_000_000, planBatch: [planTargetFor(target)], planAcks: [] });
+    let state: ChatReviewHeartbeatState | null = { lastCompletedAt: original.sinceAt,
+      planSweep: { remainingPlanIds: [target.id] }, debt: original };
+    const archiveSupersession = vi.fn(async () => undefined);
+    const retireAttention = vi.fn(async () => 'none' as const);
+    const enqueue = vi.fn(async () => ({ state: 'queued' }));
+    const deps = {
+      readState: async () => state,
+      writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      sessions: async () => [owner], uniqueSession: async () => owner, blocked: () => false,
+      plans: async () => ({ live: [target], done: [] }), enqueue,
+      archiveSupersession, retireAttention,
+      makeKey: () => 'heartbeat:after-native-selection', agentConversation: () => conversationId
+    };
+    expect(await runChatReviewHeartbeat(now, deps, 'native-parent')).toMatchObject({ status: 'queued' });
+    expect(retireAttention).toHaveBeenCalledExactlyOnceWith(original.key);
+    expect(archiveSupersession).toHaveBeenCalledExactlyOnceWith(0, {
+      debt: original, supersededAt: now, selectedLane: 'native-parent', reason: 'mode-changed'
+    });
+    expect(requiredState(state).supersessionCount).toBe(1);
+    expect(requiredState(state).lastCompletedAt).toBe(original.sinceAt);
+    expect(requiredState(state).planSweep?.remainingPlanIds).toEqual([target.id]);
+    expect(requiredState(state).debt).toMatchObject({
+      key: 'heartbeat:after-native-selection', reviewLane: 'native-parent', sinceAt: original.sinceAt,
+      planBatch: [planTargetFor(target)], planAcks: []
+    });
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(owner.id, expect.objectContaining({ reviewLane: 'native-parent' }));
+    expect(await chatReviewRequiresWorker(original.key, deps)).toBe(false);
+    expect(await completeChatReviewHeartbeat(receipt(original), deps)).toBe('rejected');
+  });
+
+  it('clears a definitely pre-Send Native epoch when switched OFF without marking review complete', async () => {
+    const original = debt({ key: 'heartbeat:old-native', reviewLane: 'native-parent',
+      planBatch: [], planAcks: [] });
+    let state: ChatReviewHeartbeatState | null = { lastCompletedAt: 500,
+      planSweep: { remainingPlanIds: [] }, debt: original };
+    const archiveSupersession = vi.fn(async () => undefined);
+    const retireAttention = vi.fn(async () => 'retired' as const);
+    const deps = { readState: async () => state,
+      writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      archiveSupersession, retireAttention };
+    expect(await reconcileChatReviewHeartbeatMode(6_000, 'off', deps)).toBe('superseded');
+    expect(requiredState(state).debt).toBeUndefined();
+    expect(requiredState(state).lastCompletedAt).toBe(500);
+    expect(requiredState(state).planSweep).toEqual({ remainingPlanIds: [] });
+    expect(archiveSupersession).toHaveBeenCalledWith(0, {
+      debt: original, supersededAt: 6_000, selectedLane: 'off', reason: 'mode-changed'
+    });
+    expect(await reconcileChatReviewHeartbeatMode(6_001, 'off', deps)).toBe('unchanged');
+    expect(archiveSupersession).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear an old review or launch another lane when its browser Send is ambiguous', async () => {
+    const original = debt({ key: 'heartbeat:uncertain-native', reviewLane: 'native-parent',
+      planBatch: [], planAcks: [] });
+    let state: ChatReviewHeartbeatState | null = { debt: original,
+      planSweep: { remainingPlanIds: [] } };
+    const archiveSupersession = vi.fn(async () => undefined);
+    const enqueue = vi.fn(async () => undefined);
+    const deps = { readState: async () => state,
+      writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+      archiveSupersession, retireAttention: async () => 'ambiguous' as const, enqueue };
+    expect(await runChatReviewHeartbeat(6_000, deps, 'worker')).toMatchObject({ status: 'pending' });
+    expect(requiredState(state).debt).toEqual(original);
+    expect(archiveSupersession).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  describe('Native → Auditable after the Native prompt reached an idle Prime', () => {
+    const now = 90_000_000;
+    function harness(options: {
+      owner?: SessionSummary | null;
+      quiet: boolean;
+      lane?: 'worker' | 'native-parent';
+    }) {
+      const original = debt({ key: 'heartbeat:native-offered', reviewLane: 'native-parent', sinceAt: 1_000_000,
+        untilAt: now - 2 * CHAT_REVIEW_HEARTBEAT_MS, planBatch: [], planAcks: [] });
+      let state: ChatReviewHeartbeatState | null = { lastCompletedAt: original.sinceAt,
+        planSweep: { remainingPlanIds: [] }, debt: original };
+      const owner = options.owner === undefined
+        ? session({ id: original.sessionId, conversationId, lastToolCallAt: original.untilAt, updatedAt: original.untilAt, activeTurnId: null })
+        : options.owner;
+      // The real outbox answers `ambiguous` for a tool-offered row and `quiet` only when asked
+      // with a cut-off that every row predates.
+      const retireAttention = vi.fn(async (_key: string, quietBefore?: number) =>
+        quietBefore !== undefined && options.quiet ? 'quiet' as const : 'ambiguous' as const);
+      const archiveSupersession = vi.fn(async () => undefined);
+      const enqueue = vi.fn(async () => undefined);
+      const deps = {
+        readState: async () => state,
+        writeState: async (next: ChatReviewHeartbeatState) => { state = next; },
+        sessions: async () => owner ? [owner] : [],
+        uniqueSession: async () => owner,
+        blocked: () => false,
+        plans: emptyPlans,
+        planFence: openPlanFence,
+        enqueue, archiveSupersession, retireAttention,
+        transportStage: async (): Promise<'none' | 'queued' | 'offered' | 'delivered' | 'closed'> => 'delivered',
+        makeKey: () => 'heartbeat:auditable-after-native',
+        agentConversation: () => conversationId
+      };
+      return { original, deps, retireAttention, archiveSupersession, enqueue, state: () => state };
+    }
+
+    it('reviews the same window in the worker lane once the old prompt was quiet a full cadence', async () => {
+      const { original, deps, retireAttention, archiveSupersession, enqueue, state } = harness({ quiet: true });
+      expect(await runChatReviewHeartbeat(now, deps, 'worker')).toMatchObject({ status: 'queued' });
+      expect(retireAttention).toHaveBeenNthCalledWith(1, original.key);
+      expect(retireAttention).toHaveBeenNthCalledWith(2, original.key, now - CHAT_REVIEW_HEARTBEAT_MS);
+      expect(archiveSupersession).toHaveBeenCalledExactlyOnceWith(0, {
+        debt: original, supersededAt: now, selectedLane: 'worker', reason: 'mode-changed-after-possible-send'
+      });
+      // Coverage is not lost: the completion cursor did not move, so the new epoch starts there.
+      expect(requiredState(state()).lastCompletedAt).toBe(original.sinceAt);
+      expect(requiredState(state()).debt).toMatchObject({
+        key: 'heartbeat:auditable-after-native', reviewLane: 'worker', sinceAt: original.sinceAt
+      });
+      expect(enqueue).toHaveBeenCalledExactlyOnceWith(original.sessionId, expect.not.objectContaining({ reviewLane: 'native-parent' }));
+      // A late answer from the old Prime prompt cannot close the new epoch.
+      expect(await completeChatReviewHeartbeat(receipt(original, { reviewLane: 'native-parent' }), deps)).toBe('rejected');
+    });
+
+    it('keeps the hold and reports it while the old prompt was active within the cadence', async () => {
+      const { original, deps, archiveSupersession, enqueue, state } = harness({ quiet: false });
+      expect(await runChatReviewHeartbeat(now, deps, 'worker')).toMatchObject({
+        status: 'pending', reason: 'mode-change-held', waitingSince: original.untilAt
+      });
+      expect(requiredState(state()).debt).toEqual(original);
+      expect(archiveSupersession).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    it('keeps the hold while Prime is mid-turn with recent work, but not for a turn that never closed', async () => {
+      const busy = harness({ quiet: true, owner: session({ id: 'prime-session', conversationId,
+        activeTurnId: 'turn-answering', lastToolCallAt: now - 60_000, updatedAt: now - 60_000 }) });
+      expect(await runChatReviewHeartbeat(now, busy.deps, 'worker')).toMatchObject({ status: 'pending', reason: 'mode-change-held' });
+      expect(busy.retireAttention).toHaveBeenCalledExactlyOnceWith(busy.original.key);
+
+      const abandoned = harness({ quiet: true, owner: session({ id: 'prime-session', conversationId,
+        activeTurnId: 'turn-end-never-seen', lastToolCallAt: now - 3 * CHAT_REVIEW_HEARTBEAT_MS,
+        updatedAt: now - 3 * CHAT_REVIEW_HEARTBEAT_MS }) });
+      expect(await runChatReviewHeartbeat(now, abandoned.deps, 'worker')).toMatchObject({ status: 'queued' });
+    });
+
+    it('keeps the hold if the owner cannot be read, and OFF never ends it', async () => {
+      const unreadable = harness({ quiet: true });
+      unreadable.deps.uniqueSession = async () => { throw new Error('session index busy'); };
+      expect(await runChatReviewHeartbeat(now, unreadable.deps, 'worker')).toMatchObject({ status: 'pending', reason: 'mode-change-held' });
+      expect(unreadable.retireAttention).toHaveBeenCalledTimes(1);
+
+      const off = harness({ quiet: true });
+      expect(await reconcileChatReviewHeartbeatMode(now, 'off', off.deps)).toBe('ambiguous');
+      expect(off.retireAttention).toHaveBeenCalledExactlyOnceWith(off.original.key);
+      expect(requiredState(off.state()).debt).toEqual(off.original);
+    });
+
+    it('says whether a Native review still waits for a Prime tool call or for its receipt', async () => {
+      for (const [stage, reason] of [
+        ['queued', 'awaiting-prime-tool-call'], ['none', 'awaiting-prime-tool-call'],
+        ['offered', 'awaiting-native-receipt'], ['delivered', 'awaiting-native-receipt']
+      ] as const) {
+        const native = harness({ quiet: true });
+        native.deps.transportStage = async () => stage;
+        expect(await runChatReviewHeartbeat(now, native.deps, 'native-parent')).toMatchObject({
+          status: 'pending', reason, waitingSince: native.original.untilAt
+        });
+        expect(native.retireAttention).not.toHaveBeenCalled();
+      }
+    });
+  });
+
+  it('preserves the old key if supersession audit persistence fails before changing state', async () => {
+    const original = debt({ reviewLane: 'worker', planBatch: [], planAcks: [] });
+    const writeState = vi.fn(async () => undefined);
+    const enqueue = vi.fn(async () => undefined);
+    await expect(runChatReviewHeartbeat(6_000, {
+      readState: async () => ({ debt: original, planSweep: { remainingPlanIds: [] } }),
+      writeState, archiveSupersession: async () => { throw new Error('audit disk full'); },
+      retireAttention: async () => 'none', enqueue
+    }, 'native-parent')).rejects.toThrow('audit disk full');
+    expect(writeState).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('follows stale pre-CLF Eve/Eva identity through the exact session lineage to current chat B', async () => {
@@ -1239,6 +1456,54 @@ describe('chat review heartbeat', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('persists exact stale-checklist obligations only with a dispatched receipt and dedupes the unchanged Plan', async () => {
+    const current = plan(91);
+    const pending = debt({ reviewLane: 'worker', planBatch: [planTargetFor(current)], planAcks: [] });
+    const coordinator = session({ id: pending.sessionId, conversationId: pending.conversationId });
+    let state: ChatReviewHeartbeatState = {
+      debt: pending,
+      planSweep: { remainingPlanIds: [current.id] }
+    };
+    const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+    const dependencies = {
+      readState: async () => state,
+      writeState,
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      plans: async () => ({ live: [current], done: [] }),
+      planFence: openPlanFence,
+      sessions: async () => [coordinator],
+      enqueue: vi.fn(async () => undefined),
+      makeKey: () => 'heartbeat:next'
+    };
+    const staleItemIds = [current.items[0]!.id];
+    expect(await acknowledgeChatReviewPlan({
+      key: pending.key, sessionId: pending.sessionId, conversationId: pending.conversationId,
+      planId: current.id, expectedUpdatedAt: current.updatedAt,
+      classification: 'stale-checklist', staleItemIds
+    }, { dependencies })).toBe('acknowledged');
+    const afterAck = structuredClone(state);
+    writeState.mockClear();
+    expect(await completeChatReviewHeartbeat(receipt(pending, { reviewLane: 'worker' }), dependencies)).toBe('rejected');
+    expect(state).toEqual(afterAck);
+    expect(writeState).not.toHaveBeenCalled();
+
+    expect(await completeChatReviewHeartbeat(receipt(pending, {
+      reviewLane: 'worker', result: 'dispatched', finding: 'Exact stale checklist requires Prime reconciliation.'
+    }), dependencies)).toBe('completed');
+    expect(state.debt).toBeUndefined();
+    expect(state.planReconciliations).toMatchObject([{
+      planId: current.id, updatedAt: current.updatedAt,
+      heartbeatKey: pending.key, coordinatorSessionId: pending.sessionId, itemIds: staleItemIds,
+      provenance: current.provenance
+    }]);
+    expect(state.planSweep?.remainingPlanIds).toEqual([]);
+
+    await runChatReviewHeartbeat(pending.untilAt + CHAT_REVIEW_HEARTBEAT_MS + 10, dependencies);
+    expect(state.debt?.planBatch).toEqual([]);
+    expect(state.planReconciliations).toHaveLength(1);
+  });
+
   it('advances Plan rotation only after every exact acknowledgement and an accepted receipt', async () => {
     const now = 30_000_000;
     const coordinator = session({ id: 'prime-rotation', conversationId, lastToolCallAt: now - 1 });
@@ -1655,6 +1920,7 @@ describe('chat review heartbeat', () => {
       uniqueSession: async () => coordinator,
       blocked: () => false,
       plans: async () => library,
+      archiveAuthority: () => true, // An explicitly ready human Plan remains manual even when Eve cleanup is enabled.
       planFence: openPlanFence
     };
     await runChatReviewHeartbeat(now, {
@@ -1673,6 +1939,55 @@ describe('chat review heartbeat', () => {
     library = { live: [], done: [current] };
     expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('completed');
     expect(requiredState(state).planSweep?.remainingPlanIds).toEqual([]);
+  });
+
+  it('will not quietly complete a review while enabled Eve archive authority leaves an acknowledged exact Activity Live', async () => {
+    const now = 81_000_000;
+    const coordinator = session({ id: 'prime-archive-deferral', conversationId, lastToolCallAt: now - 1 });
+    const doneItem = { id: planUuid(90_102), text: 'Done', status: 'done' as const };
+    let current = plan(62, {
+      audience: 'eve', items: [doneItem], readyToArchive: true, nextItemId: null,
+      provenance: { kind: 'plan', sessionId: 'source-eve', conversationId: 'source-eve-chat' }
+    });
+    let library: PlanLibrary = { live: [current], done: [] };
+    let state: ChatReviewHeartbeatState | null = null;
+    const writeState = vi.fn(async (next: ChatReviewHeartbeatState) => { state = next; });
+    let allowed = true;
+    const base = {
+      readState: async () => state,
+      writeState,
+      uniqueSession: async () => coordinator,
+      blocked: () => false,
+      plans: async () => library,
+      archiveAuthority: () => allowed,
+      planFence: openPlanFence
+    };
+    await runChatReviewHeartbeat(now, {
+      ...base,
+      sessions: async () => [coordinator],
+      enqueue: vi.fn(async () => undefined),
+      makeKey: () => 'heartbeat:archive-deferral'
+    });
+    const pending = requiredState(state).debt!;
+    expect(await acknowledgeChatReviewPlan({
+      key: pending.key, sessionId: pending.sessionId, conversationId: pending.conversationId,
+      planId: current.id, expectedUpdatedAt: current.updatedAt, classification: 'ready-to-archive'
+    }, { dependencies: base })).toBe('acknowledged');
+    const acknowledgedState = structuredClone(requiredState(state));
+    expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('rejected');
+    expect(state).toEqual(acknowledgedState);
+    expect(writeState).toHaveBeenCalledTimes(2);
+
+    allowed = false;
+    expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('completed');
+    expect(requiredState(state).debt).toBeUndefined();
+
+    // An already-archived exact Activity is also safe with archive authority enabled.
+    const archivedAt = current.updatedAt + 1;
+    current = { ...current, updatedAt: archivedAt, archivedAt, section: 'done', readyToArchive: false };
+    library = { live: [], done: [current] };
+    allowed = true;
+    expect(await completeChatReviewHeartbeat(receipt(pending), base)).toBe('already-completed');
   });
 
   it('does not advance Plan rotation when final receipt persistence fails', async () => {
@@ -1861,6 +2176,24 @@ describe('chat review heartbeat', () => {
       enqueue
     })).rejects.toThrow('disk full');
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('OFF polls Settings without starting a semantic review or pending browser dispatch', async () => {
+    vi.useFakeTimers();
+    try {
+      const onQueued = vi.fn();
+      const onResult = vi.fn();
+      const onError = vi.fn();
+      const stop = startChatReviewHeartbeatMaintenance({ onQueued, onResult, onError });
+      await vi.advanceTimersByTimeAsync(2 * CHAT_REVIEW_HEARTBEAT_MS);
+      expect(onQueued).not.toHaveBeenCalled();
+      expect(onResult).toHaveBeenCalled();
+      expect(onResult.mock.calls.every(([row]) => row.status === 'paused' && row.reason === 'off')).toBe(true);
+      expect(onError).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps retrying and reports a no-coordinator maintenance result for diagnostics', async () => {

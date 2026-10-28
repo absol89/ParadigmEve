@@ -18,6 +18,9 @@ function harness() {
       const rows = listeners.get(type) ?? [];
       rows.push({ handler, once: options?.once === true });
       listeners.set(type, rows);
+    },
+    removeEventListener: (type: string, handler: (event: unknown) => void) => {
+      listeners.set(type, (listeners.get(type) ?? []).filter(row => row.handler !== handler));
     }
   };
   const dispatch = (type: string, event: unknown) => {
@@ -25,7 +28,8 @@ function harness() {
     listeners.set(type, rows.filter(row => !row.once));
     for (const row of rows) row.handler(event);
   };
-  runInNewContext(script, { window, document, location: { origin: 'https://chatgpt.com' }, URL, Date: Clock, TextDecoder, setTimeout, clearTimeout });
+  const inject = (source = script) => runInNewContext(source, { window, document, location: { origin: 'https://chatgpt.com' }, URL, Date: Clock, TextDecoder, setTimeout, clearTimeout });
+  inject();
   async function feed(data: unknown, url = 'https://chatgpt.com/backend-api/wham/usage', init: Record<string, unknown> = {}) {
     let done: () => void = () => {};
     const inspected = new Promise<void>(resolve => { done = resolve; });
@@ -62,10 +66,43 @@ function harness() {
     if (String(init.method || 'GET').toUpperCase() === 'POST' && new URL(url).origin === 'https://chatgpt.com' && /^\/backend-api\/(?:f\/)?conversation$/.test(new URL(url).pathname)) await inspected;
     else await new Promise(resolve => setTimeout(resolve, 0));
   }
+  async function openSse() {
+    let cancelled = false;
+    let waiting: ((result: { done: boolean; value?: Uint8Array }) => void) | null = null;
+    const queued: Array<{ done: boolean; value?: Uint8Array }> = [];
+    const reader = {
+      read: () => cancelled ? Promise.resolve({ done: true }) : queued.length > 0
+        ? Promise.resolve(queued.shift()!)
+        : new Promise<{ done: boolean; value?: Uint8Array }>(resolve => { waiting = resolve; }),
+      cancel: async () => {
+        cancelled = true;
+        if (waiting) { const resolve = waiting; waiting = null; resolve({ done: true }); }
+      }
+    };
+    response = {
+      url: 'https://chatgpt.com/backend-api/conversation', ok: true,
+      headers: { get: () => 'text/event-stream' },
+      clone: () => ({ body: { getReader: () => reader } })
+    };
+    const expected = response;
+    expect(await window.fetch('/backend-api/conversation', { method: 'POST' })).toBe(expected);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return {
+      cancelled: () => cancelled,
+      push: (data: string) => {
+        const value = { done: false, value: new TextEncoder().encode(data) };
+        if (waiting) { const resolve = waiting; waiting = null; resolve(value); }
+        else queued.push(value);
+      }
+    };
+  }
   return {
+    inject,
+    markLegacy: () => { (window as typeof window & { __cosUsageObserver?: unknown }).__cosUsageObserver = true; },
     posts,
     feed,
     feedSse,
+    openSse,
     replaceFetch: (wrapExisting = false) => {
       const previous = window.fetch;
       const replacement = (...args: unknown[]) => wrapExisting ? previous(...args) : Promise.resolve(response);
@@ -74,6 +111,7 @@ function harness() {
     },
     ready: () => { document.readyState = 'interactive'; dispatch('DOMContentLoaded', {}); },
     resumeSend: () => dispatch('cos-resume-send-observer', {}),
+    pagehide: () => dispatch('pagehide', {}),
     currentFetch: () => window.fetch,
     holdNextBody: () => { let release = () => {}; nextBodyGate = new Promise<void>(resolve => { release = resolve; }); return () => release(); },
     advance: (ms: number) => { now += ms; },
@@ -82,6 +120,38 @@ function harness() {
 }
 
 describe('MAIN-world usage projection', () => {
+  it('leaves a legacy observer alone until normal reload instead of layering fetch owners', () => {
+    const h = harness();
+    h.markLegacy();
+    const current = h.currentFetch();
+    h.inject();
+    expect(h.currentFetch()).toBe(current);
+  });
+  it('replaces an older observer without disturbing a provider fetch wrapper or retaining readers', async () => {
+    const h = harness();
+    const old = await h.openSse();
+    h.replaceFetch(true);
+    h.inject(script.replace('OBSERVER_VERSION = 2', 'OBSERVER_VERSION = 3'));
+    expect(old.cancelled()).toBe(true);
+    const current = h.currentFetch();
+    h.inject(script.replace('OBSERVER_VERSION = 2', 'OBSERVER_VERSION = 3'));
+    expect(h.currentFetch()).toBe(current);
+    await h.feed({ model_limits: [{ model_slug: 'new-model', remaining: 2 }] });
+    expect(h.posts).toHaveLength(1);
+    h.request();
+    expect(h.posts).toHaveLength(2);
+  });
+
+  it('observes exact resumed conversation streams but rejects unrelated resume routes', async () => {
+    const h = harness();
+    const frame = 'data: {"conversation_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","metadata":{"request_id":"wfr_resume"}}\n\n';
+    await h.feedSse([frame], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation/resume');
+    expect(h.posts).toHaveLength(1);
+    await h.feedSse([frame], { method: 'POST' }, 'https://chatgpt.com/backend-api/conversation/resume');
+    await h.feedSse([frame], { method: 'POST' }, 'https://chatgpt.com/backend-api/f/conversation/resume/other');
+    expect(h.posts).toHaveLength(1);
+  });
+
   it('retains supported model counts without requiring a reset timestamp', async () => {
     const h = harness();
     await h.feed({ model_limits: [{ model_slug: 'model-a', remaining: 3 }, { model_slug: 'model-b', remaining: 0, resets_after: 'invalid' }, { model_slug: 'unknown' }] });
@@ -193,6 +263,24 @@ describe('MAIN-world usage projection', () => {
     ]);
     expect(JSON.stringify(h.posts)).not.toContain('private prompt');
     expect(JSON.stringify(h.posts)).not.toContain('tool args');
+  });
+
+  it('retires the oldest cloned stream reader and observes the newest after a third response', async () => {
+    const h = harness();
+    const oldest = await h.openSse();
+    const middle = await h.openSse();
+    const newest = await h.openSse();
+    expect(oldest.cancelled()).toBe(true);
+    expect(middle.cancelled()).toBe(false);
+    expect(newest.cancelled()).toBe(false);
+    const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    newest.push(`data: {"conversation_id":"${conversationId}","metadata":{"request_id":"wfr_after_allow_once"}}\n\n`);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.posts).toContainEqual({ type: 'cos-request-origin', conversationId,
+      requestIds: ['wfr_after_allow_once'], observedAt: expect.any(Number) });
+    h.pagehide();
+    expect(middle.cancelled()).toBe(true);
+    expect(newest.cancelled()).toBe(true);
   });
 
   it('accepts the current UUID-shaped opaque request id from the same exact stream metadata field', async () => {

@@ -175,6 +175,7 @@ var CLF_DOM = (() => {
    * and strip our nodes before extracting page text. Unknown/fake DOMs fall back safely.
    */
   const OWN_SURFACES = '.clf-stream, .clf-stage, .clf-composer, .clf-boot, [data-clf-user-text]';
+  const APPROVAL_CARD = '[data-codex-approval-surface="true"]';
 
   /**
    * Removes this extension's own rendered surfaces from a clone, in place.
@@ -806,6 +807,16 @@ var CLF_DOM = (() => {
     }, []);
   }
 
+  // ChatGPT can add rich-link preview styles/scripts inside a contenteditable node. They are
+  // renderer metadata, not words authored or inserted by the user. Read a detached clone so
+  // comparisons never mutate a live composer or invalidate its selection/draft lease.
+  function editorAuthoredText(box) {
+    if (!box) return '';
+    const copy = box.cloneNode(true);
+    for (const node of copy.querySelectorAll('style,script,noscript,template')) node.remove();
+    return copy.textContent || '';
+  }
+
   /** A pre-Send draft lease lasts only for this operation and these exact DOM nodes. */
   function captureComposerDraft(value, stillCurrent = () => true) {
     let box = composer(), host = composerBox() || composerActions()?.host;
@@ -814,13 +825,13 @@ var CLF_DOM = (() => {
     // Keep the same text comparison used by send receipts; editor identity and
     // trusted edits still revoke the lease even when a user only changes spacing.
     const compact = text => String(text || '').replace(/\s+/g, '');
-    const insertedText = compact(box?.textContent);
+    const insertedText = compact(editorAuthoredText(box));
     let touched = false;
     let files = [];
     const events = ['input', 'change', 'keydown', 'pointerdown', 'paste', 'drop'];
     const changed = event => { if (event.isTrusted) touched = true; };
     for (const name of events) host?.addEventListener(name, changed, true);
-    const same = () => !touched && stillCurrent() && composer() === box && box?.isConnected && compact(box.textContent) === insertedText;
+    const same = () => !touched && stillCurrent() && composer() === box && box?.isConnected && compact(editorAuthoredText(box)) === insertedText;
     const ownsAttachments = () => {
       if (!same() || !host) return false;
       const current = [...host.querySelectorAll('button[aria-label]')].filter(node => composerFileName(node));
@@ -858,7 +869,7 @@ var CLF_DOM = (() => {
       rebind() {
         if (rebound || touched || files.length || !stillCurrent() || same()) return false;
         const next = composer(), nextHost = composerBox() || composerActions()?.host;
-        if (!next?.isConnected || next === box || compact(next.textContent) !== insertedText || hasComposerAttachments()) return false;
+        if (!next?.isConnected || next === box || compact(editorAuthoredText(next)) !== insertedText || hasComposerAttachments()) return false;
         for (const name of events) host?.removeEventListener(name, changed, true);
         box = next; host = nextHost; rebound = true;
         for (const name of events) host?.addEventListener(name, changed, true);
@@ -882,6 +893,24 @@ var CLF_DOM = (() => {
     const form = composer()?.closest('form');
     return [...(form || document).querySelectorAll(selector)].filter(button =>
       renderedComposerNode(button) && (!form || button.closest('form') === form));
+  }
+
+  /**
+   * A provider tool-approval card can remain mounted after ChatGPT collapses
+   * "Previous activity". Visibility is not proof of whether it still needs an
+   * answer. Only the latest assistant exchange may hold a pending card; cards
+   * in older turns, kept redirect pages and our own UI never count.
+   */
+  function approvalWaiting() {
+    return safe(() => {
+      const assistant = turns().filter(turn => turn.role === 'assistant').at(-1);
+      if (!assistant) return false;
+      const cards = [...document.querySelectorAll(APPROVAL_CARD)].filter(card =>
+        card.isConnected && !onKeptPage(card) && !card.closest(OWN_SURFACES) &&
+        assistant.nodes.some(node => node.contains(card)) &&
+        card.querySelector('button:not([disabled]), [role="button"]:not([aria-disabled="true"])'));
+      return cards.length === 1;
+    }, false);
   }
 
   /** Stop is a busy hint only; the exact provider terminal still owns turn completion. */
@@ -1985,7 +2014,7 @@ var CLF_DOM = (() => {
     };
     try {
       if (!box) return reject('composer_missing');
-      const existing = (box.textContent || '').trim();
+      const existing = editorAuthoredText(box).trim();
       if (value === '' && mode !== true) return false;
       if (existing !== '' && mode === false) return reject('existing_draft');
       box.focus();
@@ -2016,7 +2045,7 @@ var CLF_DOM = (() => {
       const compact = text => String(text || '').replace(/\s+/g, '');
       const expected = mode === 'append' ? existing + value : value;
       if (!box.isConnected || composer() !== box) return reject('editor_replaced');
-      if (compact(box.textContent) !== compact(expected)) return reject('text_mismatch');
+      if (compact(editorAuthoredText(box)) !== compact(expected)) return reject('text_mismatch');
       return true;
     } catch {
       return reject('insertion_exception');
@@ -2028,12 +2057,12 @@ var CLF_DOM = (() => {
     return safe(() => {
       const box = composer();
       const compact = (text) => String(text || '').replace(/\s+/g, '');
-      if (!box || compact(box.textContent) !== compact(value)) return false;
+      if (!box || compact(editorAuthoredText(box)) !== compact(value)) return false;
       box.focus();
       document.execCommand('selectAll', false);
       document.execCommand('delete', false);
       box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
-      return (box.textContent || '').trim() === '';
+      return editorAuthoredText(box).trim() === '';
     }, false);
   }
 
@@ -2044,8 +2073,12 @@ var CLF_DOM = (() => {
       if (box.getAttribute('aria-disabled') === 'true' || box.getAttribute('contenteditable') === 'false') return false;
       // Rich editors use adjacent paragraphs for newlines; textContent concatenates
       // their words. Preserve those boundaries when matching the rendered user message.
-      const draftText = () => (typeof box.innerText === 'string' ? box.innerText : [...box.childNodes]
-        .map((node) => (node.textContent || '') + (/^(P|DIV|BR)$/.test(node.nodeName) ? '\n' : '')).join('')).trim();
+      const draftText = () => {
+        const copy = box.cloneNode(true);
+        for (const node of copy.querySelectorAll('style,script,noscript,template')) node.remove();
+        return (typeof box.innerText === 'string' ? box.innerText : [...copy.childNodes]
+          .map((node) => (node.textContent || '') + (/^(P|DIV|BR)$/.test(node.nodeName) ? '\n' : '')).join('')).trim();
+      };
       const submitted = draftText();
       if (!submitted) return false;
       const compact = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -2802,6 +2835,20 @@ var CLF_DOM = (() => {
     return Boolean(await wait(active));
   }
 
+  /**
+   * Only an expanded Projects section can prove an id is absent. A closed sidebar or collapsed
+   * section proves nothing; neither case authorizes failing a linked native Project input.
+   */
+  function sidebarListsProject(id) {
+    return safe(() => {
+      const sections = [...document.querySelectorAll('[data-app-action-sidebar-section]')]
+        .filter(section => section.querySelector('[data-app-action-sidebar-project-create]'));
+      if (sections.length !== 1 || sections[0].getAttribute('data-app-action-sidebar-section-collapsed') !== 'false') return null;
+      return [...sections[0].querySelectorAll('[data-app-action-sidebar-project-id]')]
+        .some(row => row.getAttribute('data-app-action-sidebar-project-id').toLowerCase() === String(id || '').toLowerCase());
+    }, null);
+  }
+
   function projectHomeId(pathname = location.pathname) {
     return /^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\/project\/?$/i.exec(pathname)?.[1]?.toLowerCase() || null;
   }
@@ -2972,6 +3019,7 @@ var CLF_DOM = (() => {
     prepareChatModelSurface,
     newChatControl,
     projectHomeId,
+    sidebarListsProject,
     enterProject,
     visibleModelSelection,
     modelSelectionFailureReason,
@@ -2979,6 +3027,7 @@ var CLF_DOM = (() => {
     uploadImages,
     uploadFailureReason,
     captureComposerDraft,
+    editorAuthoredText,
     hasComposerAttachments,
     composerAttachmentNames,
     pluginRefreshView,
@@ -3022,6 +3071,7 @@ var CLF_DOM = (() => {
     messagesIn,
     sectionSignature,
     generating,
+    approvalWaiting,
     stopButton,
     stopGeneration,
     sendButton,

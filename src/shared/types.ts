@@ -348,6 +348,24 @@ export interface GoalSettings {
  * by accident: several ChatGPT tabs driving the same filesystem is a real risk.
  */
 export interface MultiAgentSettings {
+  /** Independent 22-minute semantic review route. Off is the safe default after c20. */
+  heartbeatMode?: 'off' | 'auditable-chat' | 'native-subagent';
+  /** New assignments only. Absent on legacy configurations, which retain execution.worker. */
+  workerRuntime?: 'chatgpt' | 'native' | 'openrouter' | 'ollama' | 'api';
+  /** Explicit debug experiment selection; an unconfigured API worker never falls back to ChatGPT. */
+  experimentalApiWorkers?: {
+    enabled: boolean;
+    provider: 'openrouter' | 'ollama' | null;
+    model: string | null;
+  };
+  /** Retained for legacy snapshots; the single Native worker route controls new opt-in. */
+  experimentalNativeDelegation?: boolean;
+  approvalRouting?: {
+    humanFacing: 'prime_or_active_human_chat';
+    delegatedWorkers: 'eve_policy';
+    onAdditionalApproval: 'escalate_to_prime';
+    automaticRetryOfUncertainCalls: false;
+  };
   defaultModel?: string;
   defaultReasoning?: ReasoningEffort | '';
   enabled: boolean;

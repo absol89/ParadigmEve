@@ -1,7 +1,10 @@
-import { offerToolInput, acknowledgeToolInput, TOOL_INPUT_HEADER } from '../session/input.js';
+import { offerToolInput, acknowledgeToolInput, TOOL_INPUT_HEADER, HEARTBEAT_TOOL_HEADER } from '../session/input.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { nativeDelegationBlocksTool, settleNativeDelegationHolds } from '../native-delegation.js';
+import { debugReliabilityEvent } from '../reliability-debug-events.js';
 import { pluginManager } from '../plugins/manager.js';
 import { WINDOWS_COMPUTER_STATE_INPUT_METHODS } from '../../shared/windows-computer.js';
+import { BUILD_FLAVOR } from '../../shared/build-flavor.js';
 /**
  * The machinery every model-facing tool sits on, independent of which surface it lives on.
  *
@@ -25,6 +28,7 @@ import { WINDOWS_COMPUTER_STATE_INPUT_METHODS } from '../../shared/windows-compu
 
 import { rawPromises as fs } from '../rawfs.js';
 import { beginToolTiming, inboundRequestId, inboundPublication, inboundToolEvidence, noteInboundToolRequest } from './inbound.js';
+import { noteRouteRequestArrived } from '../tunnel/route-settle.js';
 import { McpServer, type ServerContext } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities, type Root } from '../../shared/types.js';
@@ -92,7 +96,7 @@ import { anyContinuationOpen, compactingConversation } from '../session/continua
 import { acknowledgeBackgroundExecOutput, backgroundExecRecoveryNotices, offerBackgroundExecOutput } from '../codex/ownership.js';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '../codex/unified-exec-constants.js';
 import { chatUrl, unattributedRepairEta } from '../bridge.js';
-import { sharedEveOwnerForCurrentCall } from '../eve-access.js';
+import { sharedEveOwnerForCurrentCall, unattributedPrimeForCurrentCall } from '../eve-access.js';
 import { conversationAttachment, findSessionByConversation, readOverflowText } from '../session/store.js';
 import type { StoredText, ToolOutcome } from '../../shared/session.js';
 import { archiveWorkerPlansForDeliveredReport } from '../plans.js';
@@ -533,6 +537,9 @@ async function dispatchTracked(
   // Publish local admission before any wait for page identity. The page can then retry a
   // first-call correlation without the handler and browser waiting on one another.
   if (!nested) noteInboundToolRequest(requestId);
+  if (!nested && surface === 'core' && requestId && inboundToolEvidence() && !context.caller.localPrincipal) {
+    noteRouteRequestArrived(requestId);
+  }
   noteTransportIdentity(transportKey);
   const markTiming = beginToolTiming();
   // The existing request owner marks ParadigmEve's authenticated self-test/tunnel probes as
@@ -560,6 +567,21 @@ async function dispatchTracked(
   // touch state. If the page is one tick late this stays null; only handlers that actually
   // require identity wait for their own exact mate. Ordinary absolute reads/execs never wait.
   if (!nested) setCallerConversation(context, callerConversation(name, startedAt, requestId));
+  // Opt-in assigns missing identity to the durable Prime, without inventing page proof.
+  if (!context.caller.conversationId && !nested) {
+    const owner = unattributedPrimeForCurrentCall(context.caller);
+    if (owner) {
+      const session = await findSessionByConversation(owner, { requireUnique: true });
+      const exact = callerConversation(name, startedAt, requestId);
+      if (exact) setCallerConversation(context, exact);
+      else if (session?.conversationId === owner && unattributedPrimeForCurrentCall(context.caller) === owner) {
+        context.caller.conversationId = owner;
+        context.caller.sessionId = session.id;
+        context.caller.attributionSource = 'installation_prime';
+      }
+    }
+  }
+  const primeFallback = context.caller.attributionSource === 'installation_prime';
   // Only calls that need an *existing* per-chat workspace before the handler runs are
   // identity-sensitive here. An absolute read or an exec with an explicit absolute workdir is
   // self-contained and must stay fast; if its exact page mate is late, workspace.ts simply
@@ -576,11 +598,32 @@ async function dispatchTracked(
   // handler runs. Recording a late identity cannot recover a discarded anonymous frame.
   const desktopContext = (surface === 'core' || surface === 'desktop') && (name === 'get_window_state' ||
     (WINDOWS_COMPUTER_STATE_INPUT_METHODS as readonly string[]).includes(name));
-  if (!context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'work_context' || exactCallerMutation || (identitySensitive && swarmRunning())) && requestId) {
+  const needsExactCallerAttempt = desktopContext || name === 'exec' || name === 'update_plan' ||
+    name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' ||
+    name === 'work_context' || name === 'native_delegation' || exactCallerMutation || (identitySensitive && swarmRunning());
+  // Account-wide Eve access authorizes independent connector operations without installing
+  // the Companion on every device. It does NOT make per-chat state anonymous: Plan review,
+  // update_plan, input/observation and relative workspace tools still need the same bounded
+  // exact request-id lookup before their handler decides which session they belong to.
+  // On a device without the Companion, the wait ends unproven and existing shared-access or
+  // fail-closed handler policy applies; it never invents the current Prime as caller.
+  if (!context.caller.conversationId && needsExactCallerAttempt && requestId) {
+    const identityWaitStartedAt = Date.now();
+    if (BUILD_FLAVOR === 'debug') {
+      logInfo(`identity timing: request ${requestId.slice(0, 8)} tool ${name} waiting for exact Companion evidence`);
+    }
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
     );
+    if (BUILD_FLAVOR === 'debug') {
+      logInfo(
+        `identity timing: request ${requestId.slice(0, 8)} tool ${name} resolved ` +
+        `${context.caller.conversationId ? 'exact' : 'without Companion evidence'} ` +
+        `after ${Math.max(0, Date.now() - identityWaitStartedAt)} ms ` +
+        `(total ${Math.max(0, Date.now() - startedAt)} ms)`
+      );
+    }
   }
   // A run that ended leaves an explicit short-lived lease tombstone for each open worker
   // chat. Resolve exact request identity before ordinary tools too while such leases exist;
@@ -656,7 +699,7 @@ async function dispatchTracked(
   // And this call is itself first-hand evidence that its own conversation is alive. That is
   // what undoes a worker given up on because its tab went away — the turn never stopped, so
   // the call arrives from a chat the app had written off, and the write-off was wrong.
-  const alive = supersededConversation ? null : noteAgentAlive(context.caller.conversationId);
+  const alive = supersededConversation || primeFallback ? null : noteAgentAlive(context.caller.conversationId);
   if (alive?.report) await recordAgentMessage(alive.report, 'sent', context.caller.conversationId);
   // A prime message accepted while a worker's tab was closed could not safely be injected while
   // that server-side turn might still be running. If the silence check above has now proved the
@@ -739,15 +782,28 @@ async function dispatchTracked(
     !allowUnattributed && !sharedEveAccess && hasRetiredWorkerLeases() && !context.caller.conversationId;
   const dormantLeaseAmbiguous =
     !allowUnattributed && !sharedEveAccess && hasDormantWorkerLeases() && !context.caller.conversationId;
+  // A hosted child can carry the exact same Companion proof as its parent.
+  // Do not attribute a child principal or allow an effect through that shared proof.
+  // An unproven caller is conservatively denied while any parent is locked.
+  // A close made inside a turn holds the lock until that turn ends: the child may have made it.
+  await settleNativeDelegationHolds();
+  const nativeEffectLocked = nativeDelegationBlocksTool(
+    name, args, effectful, context.caller.conversationId ?? null, context.caller.sessionId ?? null
+  );
+  if (nativeEffectLocked) debugReliabilityEvent('native-caller-unproven', {
+    owner: context.caller.conversationId, warning: true
+  });
+  const nativeLockRefusal =
+    'NATIVE_DELEGATION_PARENT_LOCKED: this exact parent conversation has a hosted research request with unverified child lifecycle. No effectful Eve tool ran. Use direct native_delegation report/cancel/close or inspect status; other host connectors are outside Eve\'s lock.';
   // In a swarm, a relative/defaulted filesystem operation is not safe to execute after the
   // exact caller lookup timed out: its workspace is part of the requested operation. Falling
   // back to the first approved root turns an attribution outage into wrong-project mutation.
   // Refuse and let the model retry once page evidence is healthy instead.
   // The arrival of this exact call acknowledges earlier injected input before the
   // handler reads the queue. New queued input is still offered only with its result.
-  if (!nested) await acknowledgeToolInput(context.caller.sessionId, context.caller.conversationId, requestId, startedAt)
+  if (!nested && !primeFallback) await acknowledgeToolInput(context.caller.sessionId, context.caller.conversationId, requestId, startedAt)
     .catch(() => logWarn('Prior user input receipt could not be saved; its existing claim is preserved'));
-  if (!nested && requestId && !blockedChat && !supersededConversation && !compacting) {
+  if (!nested && !primeFallback && requestId && !blockedChat && !supersededConversation && !compacting) {
     const explicitPoll = name === 'write_stdin' && args && typeof args === 'object'
       ? (args as { session_id?: number }).session_id : undefined;
     await acknowledgeBackgroundExecOutput(context.caller.sessionId, startedAt, explicitPoll);
@@ -755,6 +811,16 @@ async function dispatchTracked(
   let handlerRan = false;
   markTiming('identity');
   const invokeHandler = async (): Promise<ToolResult> => {
+    if (primeFallback && (unattributedPrimeForCurrentCall(context.caller) !== context.caller.conversationId ||
+        (await findSessionByConversation(context.caller.conversationId!, { requireUnique: true }))?.id !== context.caller.sessionId)) {
+      return fail('PRIME_OWNER_CHANGED: Prime ownership or the unattributed-call setting changed before execution. No local tool was run.');
+    }
+    // This is a second admission check after asynchronous request bookkeeping.
+    // A research lock prepared while attribution or receipts were pending must
+    // still veto the effect before the handler can run.
+    if (nativeDelegationBlocksTool(
+      name, args, effectful, context.caller.conversationId ?? null, context.caller.sessionId ?? null
+    )) return fail(nativeLockRefusal);
     let receiptId: string | null = null;
     // A mixed read/write tool's read action is not an external effect even
     // though its top-level MCP declaration cannot carry per-action hints.
@@ -821,6 +887,8 @@ async function dispatchTracked(
         ? Promise.resolve(fail(BLOCKED_CHAT_REFUSAL))
         : localCallerRejected
         ? Promise.resolve(fail('LOCAL_AGENT_CALLER_REJECTED: this local worker is no longer active in its broker run. No local tool was run.'))
+        : nativeEffectLocked
+        ? Promise.resolve(fail(nativeLockRefusal))
         : heartbeatReviewWorker && !heartbeatReviewToolAllowed.has(name) && !heartbeatWorkerReportsToPrime(name, args)
         ? Promise.resolve(fail('HEARTBEAT_REVIEW_READ_ONLY: this maintenance worker may only read/review local evidence and acknowledge the exact heartbeat. Return actionable findings to Prime; no user work or mutation was run.'))
         : compacting
@@ -855,7 +923,7 @@ async function dispatchTracked(
               'CALLER_IDENTITY_REQUIRED: this operation needs this chat’s exact workspace, but the connector could not prove which ChatGPT conversation made the call. Retry after the extension reconnects; no file or command was changed.'
             )
           )
-        : nested && (name === 'exec' || name === 'session_finish' || name === 'schedule' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'lan' || isFinish)
+        : nested && (name === 'exec' || name === 'session_finish' || name === 'schedule' || name === 'chat_review_plan' || name === 'chat_review_complete' || name === 'chat_review_housekeeping' || name === 'native_delegation' || name === 'lan' || isFinish)
         ? Promise.resolve(fail('DIRECT_CALL_REQUIRED: call this lifecycle tool directly, outside exec. No action was taken.'))
         : invokeHandler()
   );
@@ -880,7 +948,7 @@ async function dispatchTracked(
   // retry after a lost result. The SDK exposes the JSON-RPC id, but a model-issued retry is
   // a new MCP request with a new id, so that id cannot prove the previous finish result was
   // seen. The broker therefore re-offers rather than assuming; see acknowledgeOffers.
-  const acknowledgedForConversation = supersededConversation || nested
+  const acknowledgedForConversation = supersededConversation || nested || primeFallback
     ? null
     : acknowledgeOffersForConversation(
         context.caller.conversationId,
@@ -910,24 +978,31 @@ async function dispatchTracked(
   const baseResult = surface === 'plugins' && !handlerRan ? pluginManager.redactResult(result) as ToolResult : result;
   let delivered = nested ? baseResult : withUnattributedNotice(
     context.caller.conversationId,
-    withInbox(context.caller.conversationId, context.agent, baseResult, isFinish)
+    primeFallback ? baseResult : withInbox(context.caller.conversationId, context.agent, baseResult, isFinish)
   );
   // Ordinary tools carry direct user input, but only the explicit finish signal
   // advances a planned stage. Successful work is not evidence that a stage is done.
-  const userInput = nested ? { messages: [], reminder: '' } : await offerToolInput(context.caller.sessionId, context.caller.conversationId, context.caller.requestId, startedAt, name === 'session_finish' && !result.isError).catch(() => {
+  const userInput = nested || primeFallback ? { messages: [], reminder: '' } : await offerToolInput(context.caller.sessionId, context.caller.conversationId, context.caller.requestId, startedAt, name === 'session_finish' && !result.isError).catch(() => {
     logWarn('User input could not be attached; the completed tool result is preserved');
     return { messages: [], reminder: '' };
   });
   if (userInput.messages.length) {
     const attachments: ToolResult['content'] = [];
+    let userHeaderSent = false;
+    let maintenanceHeaderSent = false;
     for (const [index, message] of userInput.messages.entries()) {
-      attachments.push({ type: 'text', text: (index === 0 ? TOOL_INPUT_HEADER : '\n\n') + message.text });
+      const header = message.maintenance
+        ? maintenanceHeaderSent ? '' : HEARTBEAT_TOOL_HEADER
+        : userHeaderSent ? '' : TOOL_INPUT_HEADER;
+      if (message.maintenance) maintenanceHeaderSent = true;
+      else userHeaderSent = true;
+      attachments.push({ type: 'text', text: (index === 0 ? '' : '\n\n') + header + message.text });
       for (const image of message.images) attachments.push({ type: 'image', mimeType: 'image/webp', data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1) });
     }
     if (userInput.reminder) attachments.push({ type: 'text', text: '\n\n' + userInput.reminder });
     delivered = { ...delivered, content: [...delivered.content, ...attachments] };
   }
-  if (!nested && handlerRan && !blockedChat && !supersededConversation && !compacting) {
+  if (!nested && !primeFallback && handlerRan && !blockedChat && !supersededConversation && !compacting) {
     delivered = await withBackgroundExecRecovery(context, delivered);
   }
   if (surface === 'plugins' && delivered.content.length > baseResult.content.length) {
@@ -950,6 +1025,11 @@ async function dispatchTracked(
     const merged = [typeof own === 'string' ? own : '', supplemental].filter(Boolean).join('\n');
     if (supplemental) delivered = { ...delivered, structuredContent: { ...delivered.structuredContent, supplemental_context: merged } };
   }
+  // The Core surface returns local file, terminal and background output. Its real bytes remain
+  // available to an authorized nested tool call; only the final model-facing result is scrubbed.
+  // Use the same configured-secret and credential projection as Plugins, including structured
+  // content (which ChatGPT may prefer to the text blocks). Recorder sees these delivered bytes.
+  if (surface === 'core' && !nested) delivered = pluginManager.redactResult(delivered) as ToolResult;
   const recorderStartedAt = Date.now();
   // Event duration includes identity/handler/delivery work. Recorder and local HTTP finish
   // are measured separately because a row cannot contain the time of its own later commit.
@@ -969,6 +1049,7 @@ async function dispatchTracked(
     bind: context.bindOnAttribution ?? null,
     requestId: context.caller.requestId,
     conversationId: context.caller.conversationId,
+    attributionSource: context.caller.attributionSource,
     sessionId: context.caller.sessionId ?? null,
     // Connector calls come from ChatGPT; an in-process loop that did not name its route stays unknown.
     contentRoute: context.caller.contentRoute ?? (context.caller.localPrincipal ? null : 'chatgpt'),

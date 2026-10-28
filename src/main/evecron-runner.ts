@@ -3,6 +3,7 @@ import {
   claimEveCronOccurrence,
   completeEveCronOccurrence,
   eveCronWorkAuthorityMatches,
+  failEveCronOccurrence,
   markEveCronOccurrenceRunning,
   readScheduleState
 } from './schedule.js';
@@ -44,6 +45,11 @@ export interface EvecronStartSync {
   execution: EvecronExecutionState;
   input: InputEntry | null;
   started: boolean;
+}
+
+export interface EvecronDeliveryReconcile extends EvecronStartSync {
+  /** `waiting`: no terminal outbox verdict yet (queued, browser-owned, or ACKed without a session). */
+  outcome: 'started' | 'failed' | 'waiting';
 }
 
 export interface CompleteEvecronRunInput {
@@ -190,6 +196,32 @@ export async function syncEvecronOccurrenceStart(occurrenceId: string): Promise<
   });
   execution = await bindEvecronExecution(occurrence);
   return { occurrence, execution, input, started: true };
+}
+
+/**
+ * Settle one admitted occurrence from its exact outbox row's own terminal state.
+ *
+ * The outbox owns delivery; this only copies its verdict. A `sent` row retries Start (the ACK path's
+ * own sync can miss a session that was not recorded yet, or a failed write). A `failed` or
+ * `cancelled` row was never ACKed, and an ACK can no longer arrive for it, so the occurrence fails
+ * instead of reading as "Waiting to start" forever (c29, 2026-10-28). Nothing is re-sent: a row whose
+ * Send was authorized says the message may have arrived.
+ */
+export async function reconcileEvecronDelivery(occurrenceId: string, now = Date.now()): Promise<EvecronDeliveryReconcile> {
+  const occurrence = await occurrenceById(occurrenceId);
+  const input = (await listInputs()).find(row => row.id === occurrence.inputId && row.purpose === 'schedule' &&
+    row.scheduleOccurrenceId === occurrence.id) ?? null;
+  if (occurrence.state === 'scheduled' && input && (input.state === 'failed' || input.state === 'cancelled')) {
+    assertExecutableAuthority(occurrence);
+    const reason = input.error ?? 'Its browser message was cancelled.';
+    const error = input.sendAuthorizedAt === undefined
+      ? `Not started: ${reason} It was not sent and will not be retried automatically.`
+      : `Delivery uncertain: ${reason} The scheduled message may have reached ChatGPT; it will not be resent.`;
+    const failed = await failEveCronOccurrence(occurrence.id, { kind: 'delivery', failedAt: now, error: error.slice(0, 500) });
+    return { occurrence: failed, execution: await bindEvecronExecution(failed), input, started: false, outcome: 'failed' };
+  }
+  const sync = await syncEvecronOccurrenceStart(occurrenceId);
+  return { ...sync, outcome: sync.started ? 'started' : sync.occurrence.state === 'failed' ? 'failed' : 'waiting' };
 }
 
 /**

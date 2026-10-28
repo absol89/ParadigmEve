@@ -212,6 +212,79 @@ describe('ArchiveRuntime', () => {
     expect(archived.events[0]!.assets).toHaveLength(1);
   });
 
+  it('appends late image custody without rewriting published user text and renders it on that exact message', async () => {
+    const archiveRoot = await tempArchiveRoot();
+    const id = 'session-immutable-late-user-images';
+    const first = new TextEncoder().encode('first screenshot bytes');
+    const second = new TextEncoder().encode('second screenshot bytes');
+    const images: AssetRef[] = [
+      { id: 'first.webp', mimeType: 'image/webp', bytes: first.length },
+      { id: 'second.webp', mimeType: 'image/webp', bytes: second.length }
+    ];
+    const opening = { ...user(1, 'Upload text before pixels'), time: 1_000,
+      source: 'extension', messageId: 'exact-user-with-two-images' } as SessionEvent;
+    const reply = { ...assistant(2, 'Prior assistant reply', true), messageId: 'prior-reply' } as SessionEvent;
+    let current: CurrentSessionArchiveSnapshot = { summary: summary(id), events: [opening, reply] };
+    let bytesPresent = false;
+    const runtime = new ArchiveRuntime({ archiveRoot, writerVersion: 'runtime-test',
+      now: () => 1_000 + PAGE_USER_RECEIPT_GRACE_MS + 10_000,
+      source: {
+        listSessionIds: async () => [id],
+        readSession: async () => current,
+        readAsset: async (_session, assetId) => bytesPresent
+          ? assetId === 'first.webp' ? first : assetId === 'second.webp' ? second : null
+          : null
+      }
+    });
+    await runtime.start();
+    await runtime.drain();
+    const initial = await runtime.store.readSession(id);
+    expect(initial.events.map(event => event.eventId)).toEqual([
+      'user:exact-user-with-two-images', 'assistant:prior-reply'
+    ]);
+    expect(initial.events[0]!.assets).toEqual([]);
+
+    current = { summary: { ...summary(id), updatedAt: 300 }, events: [
+      { ...opening, seq: 4, assets: images } as SessionEvent,
+      { ...reply, seq: 5 } as SessionEvent,
+      { ...user(6, 'Later message has no images'), messageId: 'different-user' } as SessionEvent
+    ] };
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    expect((await runtime.store.readSession(id)).events).toHaveLength(3);
+
+    bytesPresent = true;
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    const enriched = await runtime.store.readSession(id);
+    expect(enriched.events.slice(0, initial.events.length)).toEqual(initial.events);
+    expect(enriched.events.map(event => event.eventId).slice(0, 3)).toEqual([
+      'user:exact-user-with-two-images', 'assistant:prior-reply', 'user:different-user'
+    ]);
+    const supplements = enriched.events.filter(event => event.kind === 'late_user_image');
+    expect(supplements).toHaveLength(2);
+    expect(supplements.every(event => event.assets.length === 1 && event.assets[0]?.captureState === 'retained' &&
+      event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) &&
+      event.payload.targetEventId === 'user:exact-user-with-two-images' &&
+      event.sourceRefs.some(ref => ref.kind === 'other' && ref.id === 'user:exact-user-with-two-images'))).toBe(true);
+    expect(enriched.manifest?.assetCount).toBe(2);
+
+    const derived = await runtime.rebuildDerived();
+    const generated = await generatedStaticFiles(derived.staticSite.indexPath);
+    const transcript = (await Promise.all(generated.chunks.map(chunk => fs.readFile(chunk, 'utf8')))).join('');
+    expect(transcript.match(/asset-card/g)).toHaveLength(2);
+    const sourcePosition = transcript.indexOf('Upload text before pixels');
+    const nextUserPosition = transcript.indexOf('Later message has no images');
+    expect(sourcePosition).toBeLessThan(transcript.indexOf('asset-card'));
+    expect(transcript.lastIndexOf('asset-card')).toBeLessThan(nextUserPosition);
+    expect(sourcePosition).toBeLessThan(nextUserPosition);
+    expect(transcript).toContain('.webp');
+
+    runtime.queueSessionReconcile(id);
+    await runtime.drain();
+    expect((await runtime.store.readSession(id)).events).toEqual(enriched.events);
+  });
+
   it('shows an interrupted GPT-6 reply that never resolved as missing words, not as the pointer', async () => {
     const archiveRoot = await tempArchiveRoot();
     const id = 'session-unresolved-reference';
@@ -301,8 +374,10 @@ describe('ArchiveRuntime', () => {
     await runtime.drain();
     scanned.mockClear(); // Measure static refresh, not required canonical append-only verification.
     await runtime.refreshStaticSite();
-    expect(scanned).toHaveBeenCalledTimes(1);
-    expect(scanned.mock.calls[0]?.[0]).toBe(b);
+    // The changed chat gets one bounded late-image evidence pass and one rendering pass.
+    // Unchanged Alpha is still not scanned at all.
+    expect(scanned).toHaveBeenCalledTimes(2);
+    expect(scanned.mock.calls.map(call => call[0])).toEqual([b, b]);
     expect(diagnostics).toContain('derived rebuild static fragments reused=1 rendered=1');
     const generated = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
     const chunks = await Promise.all(generated.chunks.map(file => fs.readFile(file, 'utf8')));
@@ -315,7 +390,7 @@ describe('ArchiveRuntime', () => {
     scanned.mockClear();
     await runtime.rebuildDerived();
     // Both manifest integrity checks, full text indexing, and transcript rendering are intentional.
-    expect(scanned).toHaveBeenCalledTimes(6);
+    expect(scanned).toHaveBeenCalledTimes(8);
   });
 
   it('does not reuse a corrupted local static fragment, or an obsolete cross-chat token map', async () => {
@@ -340,7 +415,8 @@ describe('ArchiveRuntime', () => {
     runtime.queueSessionReconcile(b); await runtime.drain();
     scanned.mockClear();
     await runtime.refreshStaticSite();
-    expect(scanned).toHaveBeenCalledTimes(2); // Unsafe Alpha cache cannot be carried forward.
+    expect(scanned).toHaveBeenCalledTimes(4); // Unsafe Alpha and changed Beta each require two streaming passes.
+    expect(new Set(scanned.mock.calls.map(call => call[0]))).toEqual(new Set([a, b]));
     const repaired = await generatedStaticFiles(runtime.staticSiteTarget().indexPath);
     expect((await Promise.all(repaired.chunks.map(file => fs.readFile(file, 'utf8')))).join('')).not.toContain('CORRUPTED-CACHE');
 
@@ -351,7 +427,7 @@ describe('ArchiveRuntime', () => {
     runtime.queueSessionReconcile(c); await runtime.drain();
     scanned.mockClear();
     await runtime.refreshStaticSite();
-    expect(scanned).toHaveBeenCalledTimes(3);
+    expect(scanned).toHaveBeenCalledTimes(6);
   });
 
   it('automatically republishes an already-open static archive after a durable session commit', async () => {

@@ -22,6 +22,8 @@ export interface RotationDeps {
   turnStartedAt(sessionId: string, turnId: string): Promise<number | null>;
   /** Files the automatic continue into exactly this running turn; null when the outbox refused. */
   file(sessionId: string, turnId: string, startedAt: number): Promise<unknown | null>;
+  /** Durable app-owned filing evidence, independent of this process's retry cache. */
+  history?(sessionId: string, turnId: string): Promise<{ filings: number; lastFiledAt: number } | null>;
   log(message: string): void;
 }
 
@@ -35,23 +37,31 @@ export const RECOVERY_CONTINUE_MESSAGE =
 
 const REFUSED_RETRY_MS = 60_000;
 const UNTAKEN_RETRY_MS = 5 * 60_000;
-const MAX_FILED_PER_TURN = 2;
+export const MAX_FILED_PER_TURN = 2;
 const attempts = new Map<string, { turnId: string; at: number; filed: boolean; filings: number; gaveUp?: boolean }>();
 const inFlight = new Set<string>();
 
 export async function considerTurnRotation(conversationId: string, sessionId: string, turnId: string, deps: RotationDeps): Promise<boolean> {
   const minutes = deps.minutes();
   if (!(minutes > 0) || inFlight.has(conversationId)) return false;
-  const now = deps.now();
-  const last = attempts.get(conversationId);
-  if (last?.turnId === turnId && (last.gaveUp || now - last.at < (last.filed ? UNTAKEN_RETRY_MS : REFUSED_RETRY_MS))) return false;
-  if (last?.turnId === turnId && last.filings >= MAX_FILED_PER_TURN) {
-    attempts.set(conversationId, { ...last, gaveUp: true });
-    deps.log(`turn rotation: ${conversationId} — giving up on fresh turns for turn ${turnId}; the page did not take ${last.filings} automatic continues`);
-    return false;
-  }
   inFlight.add(conversationId);
   try {
+    const now = deps.now();
+    const inMemory = attempts.get(conversationId);
+    const history = await deps.history?.(sessionId, turnId);
+    const last = history && history.filings > 0 ? {
+      turnId,
+      at: Math.max(history.lastFiledAt, inMemory?.turnId === turnId ? inMemory.at : 0),
+      filed: true,
+      filings: Math.max(history.filings, inMemory?.turnId === turnId ? inMemory.filings : 0),
+      gaveUp: inMemory?.turnId === turnId ? inMemory.gaveUp : false
+    } : inMemory;
+    if (last?.turnId === turnId && (last.gaveUp || now - last.at < (last.filed ? UNTAKEN_RETRY_MS : REFUSED_RETRY_MS))) return false;
+    if (last?.turnId === turnId && last.filings >= MAX_FILED_PER_TURN) {
+      attempts.set(conversationId, { ...last, gaveUp: true });
+      deps.log(`turn rotation: ${conversationId} — giving up on fresh turns for turn ${turnId}; the page did not take ${last.filings} automatic continues`);
+      return false;
+    }
     const startedAt = await deps.turnStartedAt(sessionId, turnId);
     if (startedAt === null || now - startedAt < minutes * 60_000) return false;
     const row = await deps.file(sessionId, turnId, startedAt);

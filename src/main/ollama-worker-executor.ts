@@ -20,7 +20,7 @@ import {
 } from './agents.js';
 import { effectiveCapabilities, getConfig } from './config.js';
 import { localAgentCoreTools } from './local-agent-tools.js';
-import { runLocalAgent } from './local-agent-runtime.js';
+import { LocalAgentAuthorizationRequired, runLocalAgent } from './local-agent-runtime.js';
 import { createOllamaAgentModelRuntime } from './ollama-agent-runtime.js';
 import { ensureOllamaModel, resolveOllamaEndpoint } from './ollama-client.js';
 import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, openRouterModelInfo } from './openrouter-client.js';
@@ -62,6 +62,7 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
   if (inFlight.has(runKey)) return;
 
   const controller = new AbortController();
+  const startedAt = Date.now();
   inFlight.set(runKey, controller);
   const principal = issueWorkerExecutionPrincipal(worker.runId, worker.id);
   if (!principal || principal.backend !== backend || !activateWorkerExecutionPrincipal(principal)) {
@@ -79,7 +80,9 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
 
   try {
     const settings = getConfig().agentRuntime.ollama;
-    const model = worker.model?.trim() || (backend === 'openrouter' ? getConfig().agentRuntime.openrouter?.model ?? '' : settings.model);
+    // The broker froze this model at admission. Never let subsequent Settings edits retarget
+    // an already-authorized worker to a different provider model.
+    const model = worker.model?.trim() || '';
     let routerKey: string | null = null;
     let toolsSupported = true;
     if (backend === 'openrouter') {
@@ -113,14 +116,19 @@ async function execute(worker: WorkerSpawn, backend: LocalWorkerBackend = 'ollam
     });
     const finished = finishAgent({ localPrincipal: principal }, result.final);
     logInfo(
-      `multi-agent: ${worker.id} completed in ${backendName(backend)} runtime (${result.turns} turn(s), ${result.toolCalls} tool call(s)); state=${finished.info.state}`
+      `multi-agent: ${worker.id} completed in ${backendName(backend)} runtime (${result.turns} turn(s), ${result.toolCalls} tool call(s), ${Date.now() - startedAt} ms); state=${finished.info.state}`
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
+    const approval = error instanceof LocalAgentAuthorizationRequired;
     const failed = failAgent(
       worker.id,
       reason,
-      failureNote(worker, reason, backend),
+      approval
+        ? `[${worker.id} awaiting authorization] ${backendName(backend)} worker stopped at ${error.toolName}. ` +
+          'Prime must review the requested action and decide whether to create a new authorized assignment. ' +
+          'No approval was inferred and no tool call was replayed.'
+        : failureNote(worker, reason, backend),
       { revivable: false },
       worker.runId
     );

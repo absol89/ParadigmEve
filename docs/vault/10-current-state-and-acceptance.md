@@ -394,3 +394,86 @@ For a fuller evidence-first checklist, see [Debugging playbooks](11-debugging-pl
 - Connector schema refresh and Companion extension refresh are separate operations.
 - Let the installer close/restart Eve during upgrades; the external controller is designed around that.
 - Fix the earliest wrong authority instead of layering another watcher/fallback over it.
+
+---
+
+> **Implementation contracts.** The sections below moved here unchanged from the former single-file
+> `AGENTS.md` map. Their § numbers are kept so references such as “§14” still resolve; the
+> [Vault index](README.md#former-agentsmd-sections) lists where each section lives.
+
+## 3. Intent, current source and evidence
+
+For **what should happen**, use the current user request, these product contracts and the
+load-bearing reasons in implementation comments. For **what happens now**, use current code with
+a reproducible test or live observation. A test that encodes an obsolete invariant is evidence
+of the old behavior, not permission to restore it.
+
+Current declarations (`mcp/surfaces.ts`, `mcp/tools-*.ts`, `shared/*.ts`, package/version/manifest)
+define the tool/config/wire contract. README and worklogs are secondary and can describe old code.
+
+### Checked baseline
+
+| Setting | Fresh installation | Migration / runtime rule |
+| --- | --- | --- |
+| Roots | None. | Root-requiring capabilities cannot be published usefully until a root is approved. |
+| Tool capabilities | Current `defaultConfig()` starts all Core capability flags on, including `saveArtifact`; read-only off. | Omitted legacy flags use conservative `DEFAULT_CAPABILITIES`. Malformed existing config is conservative recovery, not fresh consent. |
+| Recording | On, 30-day retention. | Explicit Off stays Off; retention still applies to old history. |
+| Context / compaction | Debug self-testing: advisory 300,000; limit 400,000 (advisory × 4/3). Dev/shipping: advisory 369,000; limit 492,000. Auto-compaction on at advisory. | Estimated local units. Automatic execution additionally requires live work, current ownership and eligible model/role. Exact untouched prior defaults migrate; explicit custom thresholds stay exact. |
+| Multi-agent | On, 2 simultaneous slot-holding workers **per family**, configured hard max 8. | Legacy absent enabled/allow-unattributed fields remain false. Existing choices stay exact. |
+| Unattributed allowance | Off on first launch. | Powerful work stays available, but a caller that cannot prove its exact chat/session identity fails closed instead of guessing an owner. Existing explicit choices stay exact. |
+| Recover ordinary/agent tabs | Off. | Goal/Loop can independently justify recovery; history alone cannot. |
+| Goal / Loop | Off, preferred mode Goal. Both decision backends default to ChatGPT, helper `gpt-5.6-sol` High. | API uses the configured OpenRouter/custom endpoint and stored model. These defaults are not account-availability proof. |
+| Desktop | Computer Use off on fresh installs; Privacy screenshots on; Windows/macOS can be enabled explicitly (macOS also needs OS consent); Linux unavailable. | Unsupported platforms mask live capabilities without erasing stored choices. Windows Window2 observation is always exact-window/owned-popup capture with no monitor-pixel fallback; on backends that can otherwise choose, Privacy screenshots prefers the active window. Eve self-window control remains a separate Advanced authority. |
+| Shell/UI | Dark theme; no login startup, automatic connector connection or keep-running-in-tray on fresh installs. Ongoing plugin auto-refresh and background chat placement remain on. | Plugin refresh maintains connector schemas and does not itself call a model; optional browser/finish/plan choices are resolved by current config and their consumer, not invented from absent fields. |
+| Plugin auto-refresh | On. | Connector/schema maintenance stays current by default; it does not itself invoke a model. Existing explicit saved On/Off remains exact. |
+| Background chats | On. | Omitted legacy settings use On; explicit saved On/Off remains exact. Cold Windows startup requests a minimized browser window. |
+| Starter Threads | Empty pinned `%how`, `%appdata%`, `%expenses` and `%organize` Threads, each with a Thread-owned standing prompt and no Pins. `%how` and `%appdata%` start grouped under `#Eve`; `%how` starts from the user's actual question and quietly consults the packaged current manual as needed. | A durable starter ledger follows each shipped starter by concrete Thread id and shipped-prompt fingerprint. Missing/deleted shipped starters are recreated; untouched shipped prompts upgrade in place; an explicitly saved prompt becomes user-owned and is never overwritten. User renames/regrouping remain attached to the same starter id. An untouched app-created legacy `%organizer` row may migrate in place to `%organize`, preserving its durable id and Pins. Settings navigation is opt-in from the stable starter definition: only a starter with an explicit real `settingsSurface` is shown under `% Threads`; today that is `%expenses`. Ordinary/archived Threads and starters without a settings surface are not projected into Settings, and a user rename does not change eligibility because the durable starter id still owns the concrete Thread id. |
+| Skills | Compact metadata catalog; full bodies lazy. | Natural-language selection only. Metadata is bounded separately from the 96k browser delivery limit; do not raise the transport ceiling to fit Skill bodies. Imported packages remain external/read-only; Eve-owned revisions retain history. |
+| Local transcription | Local first, GPU only when probe proves a usable backend/device; CPU fallback stays explicit. | First-use pinned FFmpeg/models may download into the managed runtime. Mic/system tracks can be preserved separately. Cloud ASR uploads only when explicitly selected; diarization remains local. |
+
+Keep evidence levels separate in all reports: **source → tests → build → package → installed
+payload → live browser/device/provider behavior**. Passing one level does not prove the next.
+For a shipped-version question inspect the immutable tag and installed bytes; a dirty tree with
+the same package version is not equivalent.
+
+## 21. Known implementation gaps — not intended behavior
+
+These are source-level discrepancies checked for this map, not new live reproductions or
+permission for an unsolicited rewrite. Recheck current code/tests before acting; another
+shared-tree change may already have addressed them.
+
+- **Startup opening:** `index.ts` still calls `startChatModelDiscovery(true)` on window show
+  when the catalog is unknown. Desired policy requires a concrete operation to own any new
+  browser document; app opening alone must not become a fallback opener.
+- **Goal publication:** explicit switch writes serialize, but mutate shared memory before
+  the awaited durable write; synchronous clear/move paths and objective/reply mutations do not
+  all share the same semantic transaction. Intent is durable commit before visible state, with
+  rollback unable to overwrite a newer accepted change.
+- **Goal retirement scope:** master/config/secret changes cross separate ledgers, and
+  `retireGoalDrafts()` marks reply debt handled while cancelling attempts. Recording Off also
+  lacks a uniform runtime gate for retained per-chat overrides. Invalidating a provider attempt
+  must preserve any still-owed eligible continuation and respect effective current settings.
+- **Provisional Goal restart:** live exact `turn:<id>` debt can begin with `eventSeq=0`, while
+  reply restore rejects sequences below 1. The accepted identity should survive until durable
+  turn evidence strengthens it, without losing or duplicating the obligation on restart.
+- **Resume projections and Goal debt:** normal commit and restored committed-B projection
+  still duplicate parts of the repair path. Objective/switch move, but source reply-ledger
+  disposition is absent. Current watchdog checks already fence superseded A; do not claim the
+  old historical-A reopening bug is unconditionally present. Intent is one idempotent committed
+  projection and explicit supersession of A's debt, never treating it as B's completed turn.
+- **ChatGPT alternate "app shell" layout (upstream 2.1.15–2.1.17):** the Companion reads classic
+  sections and the September `[data-turn-key]`/`data-chatgpt-search-unit-key` layout, but not the
+  A/B `[data-app-shell-main-surface]` shell with `data-content-search-unit-key` units and typed Fiber
+  `entry.turn.items` (Chat On Steroids `80d2b5a`, `62f940c`, `bbd1390`). Upstream's image-only
+  answer completion (`45c9efe`, `generated-image` items ending a turn) depends on it and is not ported.
+- **Self-pruned tabs read as closes:** `/closed` carries no "the Companion removed this tab itself"
+  fact, so a managed prune of a prime tab ends its run like a user close. Upstream separates the two
+  with durable removal receipts (Chat On Steroids `48cee02`). Decided 2026-09-28: the Companion's own
+  tidying must not count as the user ending the run; implement and test that distinction before
+  claiming it.
+
+Do not restore obsolete claims while investigating: two MCP surfaces, one global prime run,
+fresh `saveArtifact=false`, three browser command kinds, fixed 60s Unattributed repair, tab-query
+failure as “no tabs”, missing all-repair handout, no maintenance single-flight, or no final
+browser-repair action claim. The checked tree has changed those contracts. Comments/worklogs can
+lag even when nearby code is current.

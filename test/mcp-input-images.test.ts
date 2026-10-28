@@ -5,6 +5,7 @@ import sharp from 'sharp';
 import { expect, it } from 'vitest';
 import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { initDurableStore, flushDurable, resetDurableForTests } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { initSessionStore, createSession, appendEvent, observeSessionModel, resetSessionStoreForTests } from '../src/main/session/store.js';
 import { observeRequestCorrelation } from '../src/main/session/correlation.js';
 import { enqueueInput, listInputs, resetInputForTests } from '../src/main/session/input.js';
@@ -16,6 +17,7 @@ import { makeTempDir, removeTempDir } from './helpers.js';
 it('carries validated user image bytes through an exact-session MCP result and acknowledges the next same-turn call', async () => {
   const directory = await makeTempDir('clf-mcp-input-image-');
   initDurableStore(directory); initSessionStore(directory); resetInputForTests();
+  await restoreNativeDelegations();
   initConfigPath(directory);
   const config = defaultConfig();
   await saveConfig({ ...config, ui: { ...config.ui, finishTool: true } });

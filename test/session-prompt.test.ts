@@ -141,7 +141,7 @@ it('injects only current-version %how guidance, not historical 2.4.0 release ins
     '--- Current request ---',
     request
   ].join('\n'));
-  expect(text).toContain('# ParadigmEve 2.4.4 — current %how quick reference');
+  expect(text).toContain('# ParadigmEve 2.4.5 — current %how quick reference');
   expect(text).toContain('/paradigmeve-manual/10-current-state-and-acceptance.md');
   expect(text).not.toContain('2.4.0');
   expect(text).not.toContain('## Historical 2.4.1');

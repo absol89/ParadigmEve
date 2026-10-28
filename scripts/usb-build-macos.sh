@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-NODE_VERSION="22.23.2"
+NODE_VERSION="24.22.1"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 HOST_OS="$(uname -s)"
@@ -43,11 +43,11 @@ NODE_DIR="$TOOLCHAIN_ROOT/$NODE_BASENAME"
 DOWNLOAD_DIR="$TOOLCHAIN_ROOT/downloads"
 mkdir -p "$TOOLCHAIN_ROOT" "$DOWNLOAD_DIR"
 
-node22_available() {
-  command -v node >/dev/null 2>&1 && [ "$(node -p 'process.versions.node.split(`.`)[0]' 2>/dev/null || true)" = "22" ]
+secure_node24_available() {
+  command -v node >/dev/null 2>&1 && node -e 'const [major,minor,patch]=process.versions.node.split(".").map(Number); process.exit(major===24 && (minor>22 || (minor===22 && patch>=1)) ? 0 : 1)' >/dev/null 2>&1
 }
 
-if node22_available; then
+if secure_node24_available; then
   say "Using existing Node $(node --version) at $(command -v node)"
 else
   say "Preparing user-local Node v${NODE_VERSION} for ${PACKAGE_ARCH}"
@@ -101,7 +101,7 @@ else
     rmdir "$TMP_NODE_DIR"
   fi
   export PATH="$NODE_DIR/bin:$PATH"
-  node22_available || die "the user-local Node 22 toolchain did not start correctly"
+  secure_node24_available || die "the user-local Node 24.22.1 toolchain did not start correctly"
   printf 'Using user-local %s at %s\n' "$(node --version)" "$(command -v node)"
 fi
 

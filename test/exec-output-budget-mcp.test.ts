@@ -18,6 +18,7 @@ import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { initDurableStore, resetDurableForTests } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { startMcpServer, type McpEndpoint } from '../src/main/mcp/server.js';
 import { validateNewRoot } from '../src/main/sandbox.js';
 import { initSessionStore, resetSessionStoreForTests, unsetSessionRootForTests } from '../src/main/session/store.js';
@@ -60,6 +61,7 @@ async function serve(): Promise<McpEndpoint> {
   initConfigPath(dir);
   initSessionStore(dir);
   initDurableStore(dir);
+  await restoreNativeDelegations();
   const cfg = defaultConfig();
   await saveConfig({ ...cfg, roots: [{ name: 'probe', path: dir }], readOnly: false });
   return startMcpServer(() => ({

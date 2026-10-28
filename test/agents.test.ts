@@ -12,6 +12,7 @@ import { promises as fs } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Caller } from '../src/main/agents.js';
 import * as chatModels from '../src/main/chat-models.js';
+import * as logger from '../src/main/logger.js';
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -37,6 +38,9 @@ const {
   currentPrimeRecoveryCandidate,
   currentRunId,
   dispatchHeartbeatReviewWorker,
+  heartbeatProgressStatus,
+  HEARTBEAT_FIRST_PROGRESS_MS,
+  HEARTBEAT_REVIEW_BUDGET_MS,
   dormantWorkerNotice,
   reactivateDormantRunForConversation,
   failAgent,
@@ -64,7 +68,9 @@ const {
   failWorkerRevival,
   isWorkerConversation,
   heartbeatReviewWorkerCall,
+  heartbeatReviewWorkerHoldsKey,
   heartbeatReviewWorkerOwnsKey,
+  heartbeatWorkerDeliveryAllowedFor,
   isHeartbeatReviewWorkerCaller,
   WAKE_FAILURES_BEFORE_GIVING_UP,
   noteWorkerRevived,
@@ -103,6 +109,7 @@ const {
 const { startMcpServer } = await import('../src/main/mcp/server.js');
 const { runningToolCalls } = await import('../src/main/mcp/call-context.js');
 const { flushDurable, initDurableStore, readDurable, writeDurableNow, writeDurableSoon } = await import('../src/main/durable.js');
+const { restoreNativeDelegations } = await import('../src/main/native-delegation.js');
 const { findSessionByConversation, initSessionStore, readRecentEvents, resetSessionStoreForTests } = await import(
   '../src/main/session/store.js'
 );
@@ -118,7 +125,7 @@ async function setEnabled(enabled: boolean, maxWorkers = 3, allowUnattributedCal
   const base = defaultConfig();
   await saveConfig({
     ...base,
-    multiAgent: { ...base.multiAgent, enabled, maxWorkers, allowUnattributedCalls }
+    multiAgent: { ...base.multiAgent, enabled, maxWorkers, allowUnattributedCalls, heartbeatMode: 'auditable-chat' }
   });
 }
 
@@ -127,6 +134,9 @@ beforeAll(async () => {
   initConfigPath(dir);
   initSessionStore(dir);
   initDurableStore(dir);
+  // The production MCP endpoint restores this ledger before admitting effects.
+  // A standalone broker fixture must obey the same fail-closed startup contract.
+  await restoreNativeDelegations();
   await setEnabled(true);
 });
 
@@ -164,6 +174,59 @@ const prime: Caller = { conversationId: PRIME_CHAT };
 const REFUSED_ON_ROOTS = /unknown root|not found|not inside an approved folder/i;
 
 describe('app-owned heartbeat review worker', () => {
+  it('fences stale heartbeat bootstraps and broker inbox after Native mode is selected', async () => {
+    const old = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:old-auditable-epoch');
+    expect(pendingWorkerSpawns().some(worker => worker.id === old.workerId)).toBe(true);
+    const before = snapshotSwarm();
+    const selected = getConfig();
+    await saveConfig({ ...selected, multiAgent: { ...selected.multiAgent, heartbeatMode: 'native-subagent' } });
+    try {
+      expect(heartbeatWorkerDeliveryAllowedFor(old.workerId, old.runId)).toBe(false);
+      expect(pendingWorkerSpawns().some(worker => worker.id === old.workerId)).toBe(false);
+      expect(pendingWorkerRevivals().some(worker => worker.id === old.workerId)).toBe(false);
+      // The broker preserves the old audit identity; it does not authorize a new Send.
+      expect(snapshotSwarm()?.activeRuns?.flatMap(run => run.agents).some(agent => agent.info.id === old.workerId)).toBe(true);
+      restoreSwarm(before);
+      expect(pendingWorkerSpawns().some(worker => worker.id === old.workerId)).toBe(false);
+    } finally {
+      await saveConfig(selected);
+    }
+  });
+  it('distinguishes missing first progress from real evidence without launching another worker', () => {
+    const at = 1_000_000;
+    expect(heartbeatProgressStatus(at, null, at + HEARTBEAT_FIRST_PROGRESS_MS - 1))
+      .toBe('awaiting-first-progress');
+    expect(heartbeatProgressStatus(at, null, at + HEARTBEAT_FIRST_PROGRESS_MS))
+      .toBe('first-progress-missing');
+    // A tool before this exact handoff is not evidence that this epoch made progress.
+    expect(heartbeatProgressStatus(at, at - 1, at + HEARTBEAT_FIRST_PROGRESS_MS))
+      .toBe('first-progress-missing');
+    expect(heartbeatProgressStatus(at, at + 1, at + HEARTBEAT_FIRST_PROGRESS_MS))
+      .toBe('progress-observed');
+    expect(heartbeatProgressStatus(at, at + 1, at + HEARTBEAT_REVIEW_BUDGET_MS))
+      .toBe('budget-exceeded');
+  });
+  it('logs the first-progress stall once on the existing retry, without issuing a second heartbeat send', async () => {
+    const warnings = vi.spyOn(logger, 'logWarn').mockImplementation(() => undefined);
+    const browser = vi.fn();
+    const dropBrowser = onSpawnRequest(browser);
+    vi.useFakeTimers({ now: new Date('2026-10-27T16:00:00Z'), toFake: ['Date'] });
+    try {
+      const first = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:diagnostic-once');
+      vi.setSystemTime(Date.now() + HEARTBEAT_FIRST_PROGRESS_MS);
+      expect(await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:diagnostic-once'))
+        .toMatchObject({ workerId: first.workerId, reused: true });
+      expect(await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:diagnostic-once'))
+        .toMatchObject({ workerId: first.workerId, reused: true });
+      expect(warnings.mock.calls.filter(([line]) => line.includes('FIRST_PROGRESS_MISSING'))).toHaveLength(1);
+      expect(browser).toHaveBeenCalledTimes(1);
+      expect(pendingWorkerSpawns()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      warnings.mockRestore();
+      dropBrowser();
+    }
+  });
   it('does not grant review authority to an ordinary worker merely because its task quotes maintenance markers', async () => {
     await setEnabled(true);
     const imitation = spawn({
@@ -287,6 +350,61 @@ describe('app-owned heartbeat review worker', () => {
       await setEnabled(true);
     }
   });
+
+  it('keeps the full review contract in broker state while sending a short epoch to a retained worker chat', async () => {
+    const first = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:archive-first');
+    expect(bindConversation(first.workerId, 'c-heartbeat-retained')).toBe(true);
+    const initialTask = swarmState().agents.find(agent => agent.id === first.workerId)?.task ?? '';
+    expect(initialTask).toContain('/appdata/state/plans.json');
+    expect(finishWorkerConversation('c-heartbeat-retained', 'Review finished.')?.info.state)
+      .toMatch(/sleeping|finished/);
+
+    const next = await dispatchHeartbeatReviewWorker(PRIME_CHAT, 'heartbeat:archive-next');
+    expect(next).toMatchObject({ workerId: first.workerId, reused: true });
+    const snapshot = snapshotSwarm() as any;
+    const owners = [...(snapshot?.activeRuns ?? []), ...(snapshot?.dormantRuns ?? [])];
+    const worker = owners.flatMap((owner: any) => owner.agents ?? [])
+      .find((agent: any) => agent.info?.id === first.workerId);
+    const update = worker?.queue?.find((message: any) => message.text?.includes('heartbeat:archive-next'));
+    expect(update?.text).toContain('standing read-only review instructions');
+    expect(update?.text.length).toBeLessThan(initialTask.length);
+    expect(worker?.info.task).toContain('/appdata/state/plans.json');
+    expect(heartbeatReviewWorkerOwnsKey({ conversationId: 'c-heartbeat-retained' },
+      'heartbeat:archive-next', PRIME_CHAT)).toBe(true);
+  });
+
+  it.each(['ollama', 'openrouter'] as const)(
+    'keeps auditable heartbeat reviews on their own ChatGPT route when ordinary workers use %s',
+    async (provider) => {
+      const base = defaultConfig();
+      await saveConfig({
+        ...base,
+        multiAgent: {
+          ...base.multiAgent,
+          enabled: true,
+          heartbeatMode: 'auditable-chat',
+          workerRuntime: 'api',
+          experimentalApiWorkers: { enabled: true, provider, model: 'heartbeat/fixture' }
+        },
+        execution: { ...base.execution, worker: 'gpt-chat' }
+      });
+      const browser = vi.fn();
+      const local = vi.fn();
+      const dropBrowser = onSpawnRequest(browser);
+      const dropLocal = onExecutorSpawnRequest(provider, local);
+      try {
+        const result = await dispatchHeartbeatReviewWorker(PRIME_CHAT, `heartbeat:${provider}-route`);
+        expect(result.reused).toBe(false);
+        expect(local).not.toHaveBeenCalled();
+        expect(browser).toHaveBeenCalledTimes(1);
+        expect(heartbeatReviewWorkerHoldsKey(`heartbeat:${provider}-route`, PRIME_CHAT)).toBe(true);
+      } finally {
+        dropBrowser();
+        dropLocal();
+        await setEnabled(true);
+      }
+    }
+  );
 });
 
 interface StartedSwarm {
@@ -373,6 +491,75 @@ describe('worker chats the browser may close', () => {
 });
 
 describe('spawning a run', () => {
+  it('keeps the experimental API runtime off by default and refuses an unconfigured opt-in before admission', async () => {
+    const base = defaultConfig();
+    expect(base.multiAgent.workerRuntime ?? 'chatgpt').toBe('chatgpt');
+    expect(base.multiAgent.experimentalApiWorkers).toEqual({ enabled: false, provider: null, model: null });
+    await saveConfig({ ...base, multiAgent: {
+      ...base.multiAgent, enabled: true, workerRuntime: 'api',
+      experimentalApiWorkers: { enabled: false, provider: 'openrouter', model: 'fixture/model' }
+    } });
+    try {
+      expect(() => spawn({ workers: [{ task: 'do not start' }], caller: prime })).toThrow(/EXPERIMENTAL_WORKER_NOT_CONFIGURED/);
+      expect(currentRunId()).toBeNull();
+      expect(pendingWorkerSpawns()).toEqual([]);
+    } finally { await setEnabled(true); }
+  });
+
+  it('never silently spawns a ChatGPT worker when Native subagents are selected', async () => {
+    const base = defaultConfig();
+    await saveConfig({ ...base, multiAgent: { ...base.multiAgent, enabled: true, workerRuntime: 'native' } });
+    const browser = vi.fn();
+    const dropBrowser = onSpawnRequest(browser);
+    try {
+      expect(() => spawn({ workers: [{ task: 'no unverified native launch' }], caller: prime }))
+        .toThrow(/NATIVE_SUBAGENTS_REQUIRE_WORK_PARENT/);
+      expect(currentRunId()).toBeNull();
+      expect(pendingWorkerSpawns()).toEqual([]);
+      expect(browser).not.toHaveBeenCalled();
+    } finally { dropBrowser(); await setEnabled(true); }
+  });
+
+  it.each(['ollama', 'openrouter'] as const)(
+    'routes the explicit %s dropdown choice to its own executor with its selected model', async (provider) => {
+      const base = defaultConfig();
+      await saveConfig({ ...base, multiAgent: {
+        ...base.multiAgent, enabled: true, workerRuntime: provider,
+        experimentalApiWorkers: { enabled: true, provider, model: 'exact/worker-model' }
+      } });
+      const browser = vi.fn();
+      const local = vi.fn();
+      const dropBrowser = onSpawnRequest(browser);
+      const dropLocal = onExecutorSpawnRequest(provider, local);
+      try {
+        const result = spawn({ workers: [{ task: 'verify selected worker runtime' }], caller: prime });
+        expect(result.created[0]).toMatchObject({ model: 'exact/worker-model', reasoningEffort: null });
+        expect(local).toHaveBeenCalledTimes(1);
+        expect(browser).not.toHaveBeenCalled();
+      } finally { dropBrowser(); dropLocal(); await setEnabled(true); }
+    }
+  );
+
+  it('routes an explicitly selected API worker locally, freezes its model, and does not open a ChatGPT worker tab', async () => {
+    const base = defaultConfig();
+    await saveConfig({ ...base,
+      multiAgent: { ...base.multiAgent, enabled: true, workerRuntime: 'api',
+        experimentalApiWorkers: { enabled: true, provider: 'openrouter', model: 'fixture/selected' } },
+      execution: { ...base.execution, worker: 'gpt-chat' }
+    });
+    const browser = vi.fn();
+    const local = vi.fn();
+    const dropBrowser = onSpawnRequest(browser);
+    const dropLocal = onExecutorSpawnRequest('openrouter', local);
+    try {
+      const result = spawn({ workers: [{ task: 'analyze bounded input' }], caller: prime });
+      expect(result.created[0]).toMatchObject({ model: 'fixture/selected', reasoningEffort: null });
+      expect(local).toHaveBeenCalledTimes(1);
+      expect(browser).not.toHaveBeenCalled();
+      expect(() => spawn({ workers: [{ task: 'model override', model: 'gpt-5.6' }], caller: prime })).toThrow(/omit model\/reasoning_effort/);
+    } finally { dropBrowser(); dropLocal(); await setEnabled(true); }
+  });
+
   it('refuses the feature while it is switched off', async () => {
     await setEnabled(false);
     expect(() => spawn({ workers: [{ task: 'x' }], caller: prime })).toThrow(/not enabled|switched off|disabled/i);
@@ -2887,13 +3074,143 @@ describe('through the MCP endpoint', () => {
       const spawnResult = await agentsWithRequestId('wfr_shared_unproven_spawn', 'spawn', {
         workers: [{ task: 'must not become a new worker under borrowed Prime identity' }]
       });
-      expect(spawnResult).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(spawnResult).toMatch(/NO_EXACT_CHAT_FOR_WORKER_FAMILY|WORKER_IDENTITY_LOST/);
       expect(swarmStateForCaller({ conversationId: ownerConversation })).toEqual(before);
       expect(recovery).toHaveBeenCalledWith(ownerConversation, 'wfr_shared_unproven_message');
       expect(recovery).toHaveBeenCalledWith(ownerConversation, 'wfr_shared_unproven_spawn');
     } finally {
       dispose();
       resetAgentIdentityForTests();
+    }
+  });
+
+  it('lets opted-in shared Eve coordinate its Prime family with explicit fallback labeling and shared-eve sender', async () => {
+    const ownerConversation = 'c-prime-shared-opt-in';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: ownerConversation });
+    restoreAgentIdentity({ version: 1, conversationId: ownerConversation });
+    try {
+      const status = await agentsWithRequestId('wfr_opted_shared_status', 'status');
+      expect(status).toContain('Shared Eve connector authority');
+      expect(status).toContain('Unattributed');
+      expect(status).toContain('worker-1');
+
+      const message = await agentsWithRequestId('wfr_opted_shared_message', 'message', {
+        to: 'worker-1', text: 'Please report the bounded read-only audit.'
+      });
+      expect(message).toContain('Queued for worker-1');
+      expect(message).toContain('Unattributed');
+      expect(pendingCount('worker-1')).toBe(1);
+      expect(offerMessages('worker-1')[0]?.from).toBe('shared-eve');
+
+      const spawnResult = await agentsWithRequestId('wfr_opted_shared_spawn', 'spawn', {
+        workers: [{ task: 'test shared Eve coordination' }]
+      });
+      expect(spawnResult).toContain('Prime fallback enabled; execution is assigned to Prime');
+      expect(spawnResult).toContain('worker-2');
+      const untargeted = await agentsWithRequestId('wfr_opted_shared_untargeted_finish', 'finish', {
+        result: 'never infer an unknown worker from caller activity'
+      });
+      expect(untargeted).toContain('SHARED_EVE_WORKER_TARGET_REQUIRED');
+      const finishResult = await agentsWithRequestId('wfr_opted_shared_finish', 'finish', {
+        worker_id: 'worker-1', result: 'operator-attested completion of worker-1'
+      });
+      expect(finishResult).toContain('Shared Eve connector accepted');
+      expect(finishResult).toContain('browser caller is not proven to be that worker');
+      const state = swarmStateForCaller({ conversationId: ownerConversation });
+      expect(state.agents).toHaveLength(3);
+      expect(state.agents.find(agent => agent.id === 'worker-1')?.state).toBe('sleeping');
+      expect(offerMessages('prime').some(message => message.from === 'shared-eve')).toBe(true);
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('does not let shared Eve finish an unknown worker target', async () => {
+    const owner = 'c-shared-finish-target';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: owner });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    try {
+      const unknown = await agentsWithRequestId('wfr_shared_bad_finish_target', 'finish', {
+        worker_id: 'worker-999', result: 'must not finish another family'
+      });
+      expect(unknown).toContain('SHARED_EVE_WORKER_TARGET_REQUIRED');
+      expect(swarmStateForCaller({ conversationId: owner }).agents.find(agent => agent.id === 'worker-1')?.state).toBe('invited');
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('does not borrow shared Prime access when the installation has no retained Prime family', async () => {
+    await setEnabled(true, 3, true);
+    restoreAgentIdentity({ version: 1, conversationId: 'c-owner-without-broker-family' });
+    try {
+      const status = await agentsWithRequestId('wfr_opted_shared_no_family', 'status');
+      expect(status).toContain('WORKER_IDENTITY_LOST');
+      expect(status).not.toContain('worker-1');
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('scopes shared coordination to the installed owner with colliding worker names', async () => {
+    const ownerA = 'c-shared-owner-a';
+    const ownerB = 'c-shared-owner-b';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: ownerA });
+    spawn({ caller: { conversationId: ownerB }, workers: [{ task: 'Independent family' }] });
+    restoreAgentIdentity({ version: 1, conversationId: ownerA });
+    try {
+      const status = await agentsWithRequestId('wfr_shared_two_families_status', 'status');
+      expect(status).toContain('Shared Eve connector authority');
+      const message = await agentsWithRequestId('wfr_shared_two_families_message', 'message', {
+        to: 'worker-1', text: 'Only installation owner A should receive this.'
+      });
+      expect(message).toContain('Queued for worker-1');
+      expect(pendingCount('worker-1', currentRunId(ownerA)!)).toBe(1);
+      expect(pendingCount('worker-1', currentRunId(ownerB)!)).toBe(0);
+    } finally {
+      resetAgentIdentityForTests();
+      await setEnabled(true);
+    }
+  });
+
+  it('uses explicit Prime fallback for worker-lane coordination only while unattributed calls are opted in', async () => {
+    const owner = 'c-shared-worker-review';
+    await setEnabled(true, 3, true);
+    startSwarm(1, { conversationId: owner });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    const key = 'heartbeat:shared-worker-lane-negative';
+    await recordChatObservations(owner, [
+      { kind: 'user_message', time: Date.now(), text: 'coordinator', messageId: 'shared-worker-lane-source' }
+    ]);
+    const summary = await findSessionByConversation(owner, { requireUnique: true });
+    await writeDurableNow('chat-review-heartbeat', {
+      debt: { key, sinceAt: 100, untilAt: 200, sessionId: summary!.id, conversationId: owner, reviewLane: 'worker' }
+    });
+    try {
+      await setEnabled(true, 3, false);
+      const denied = await agentsWithRequestId('wfr_shared_worker_review_disabled', 'message', {
+        to: 'worker-1', text: 'MUST NOT QUEUE', review_key: key
+      });
+      expect(denied).toContain('WORKER_IDENTITY_LOST');
+      expect(pendingCount('worker-1')).toBe(0);
+      await setEnabled(true, 3, true);
+      const accepted = await agentsWithRequestId('wfr_shared_worker_review_enabled', 'message', {
+        to: 'worker-1', text: 'Operator-authorized coordination', review_key: key
+      });
+      expect(accepted).toContain('Queued for worker-1');
+      expect(accepted).toContain('Prime fallback enabled; sender is shared-eve');
+      expect(pendingCount('worker-1')).toBe(1);
+      expect(offerMessages('worker-1')[0]?.from).toBe('shared-eve');
+    } finally {
+      await writeDurableNow('chat-review-heartbeat', {});
+      resetAgentIdentityForTests();
+      await setEnabled(true);
     }
   });
 
@@ -2969,7 +3286,7 @@ describe('through the MCP endpoint', () => {
       const spawned = await agentsWithRequestId('wfr_worker_lane_spawn', 'spawn', {
         workers: [{ task: 'must not spawn under a reviewer key' }], review_key: key
       });
-      expect(spawned).toMatch(/UNIDENTIFIED_CALLER|WORKER_IDENTITY_LOST/);
+      expect(spawned).toMatch(/NO_EXACT_CHAT_FOR_WORKER_FAMILY|WORKER_IDENTITY_LOST/);
       expect(swarmStateForCaller(heartbeatPrime)).toEqual(before);
       expect(pendingCount('worker-1')).toBe(0);
     } finally {
@@ -3103,7 +3420,9 @@ describe('through the MCP endpoint', () => {
 
   it('refuses a spawn whose conversation this app cannot prove, and creates nothing', async () => {
     const text = await agents('spawn', { workers: [{ task: 'anything' }] });
-    expect(text).toMatch(/UNIDENTIFIED_CALLER|could not/i);
+    expect(text).toContain('NO_EXACT_CHAT_FOR_WORKER_FAMILY');
+    expect(text).toContain('shared-Eve authority');
+    expect(text).toContain('does not identify this caller');
     expect(swarmRunning()).toBe(false);
     expect(pendingWorkerSpawns()).toEqual([]);
   });
@@ -3157,7 +3476,7 @@ describe('through the MCP endpoint', () => {
     // opaque, single-epoch capability already printed in that exact browser-authored review
     // prompt. It is not an agent/run credential and expires with the durable review debt.
     expect(Object.keys(agentsSchema.properties).filter(field => /key|secret|token/i.test(field))).toEqual(['review_key']);
-    expect(agentsSchema.properties.review_key.description).toMatch(/heartbeat continuity only|current ParadigmEve chat-review prompt/i);
+    expect(agentsSchema.properties.review_key.description).toMatch(/Heartbeat review key for exact continuity with the current ParadigmEve review prompt/i);
     expect(JSON.stringify(agentsSchema)).not.toMatch(/join/i);
   });
 
@@ -3486,6 +3805,82 @@ describe('through the MCP endpoint', () => {
     expect(text).toContain('Queued for worker-1');
     expect(text).not.toContain('cannot message itself');
     expect(pendingCount('worker-1')).toBe(1);
+  });
+
+  it('waits for late worker-to-Prime message proof instead of adopting shared Eve operator authority', async () => {
+    await setEnabled(true, 3, true);
+    try {
+      startSwarm(1);
+      startWorker('worker-1');
+      const requestId = 'wfr_shared_worker_to_prime_late';
+      const pending = agentsWithRequestId(requestId, 'message', {
+        to: 'prime', text: 'Evidence-backed heartbeat blocker'
+      });
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await recordChatObservations('c-worker-1', [
+        { kind: 'turn_start', time: Date.now(), turnId: 't-shared-worker-late' },
+        { kind: 'tool_evidence', time: Date.now(), turnId: 't-shared-worker-late',
+          calls: [{ messageId: 'm-shared-worker-late', tool: 'agents',
+            order: 0, answered: false, requestId }] }
+      ]);
+      const reply = await pending;
+      expect(reply).toContain('Queued for prime');
+      expect(reply).not.toContain('AGENTS_BUSY');
+      expect(reply).not.toContain('cannot message itself');
+      expect(pendingCount('prime')).toBe(1);
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
+  it('reports the exact worker rather than shared Prime status when its request proof is late', async () => {
+    await setEnabled(true, 3, true);
+    try {
+      startSwarm(1);
+      startWorker('worker-1');
+      const requestId = 'wfr_shared_worker_status_late';
+      const pending = agentsWithRequestId(requestId, 'status');
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await recordChatObservations('c-worker-1', [
+        { kind: 'turn_start', time: Date.now(), turnId: 't-shared-status-late' },
+        { kind: 'tool_evidence', time: Date.now(), turnId: 't-shared-status-late',
+          calls: [{ messageId: 'm-shared-status-late', tool: 'agents',
+            order: 0, answered: false, requestId }] }
+      ]);
+      const reply = await pending;
+      expect(reply).toContain('You are worker-1');
+      expect(reply).not.toContain('Shared Eve connector authority');
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
+  it('finishes only the exact worker after a late request join under shared access', async () => {
+    await setEnabled(true, 3, true);
+    try {
+      startSwarm(1);
+      startWorker('worker-1');
+      const requestId = 'wfr_shared_worker_finish_late';
+      const pending = agentsWithRequestId(requestId, 'finish', {
+        result: 'Reviewed only the assigned session; no user work executed.'
+      });
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await recordChatObservations('c-worker-1', [
+        { kind: 'turn_start', time: Date.now(), turnId: 't-shared-finish-late' },
+        { kind: 'tool_evidence', time: Date.now(), turnId: 't-shared-finish-late',
+          calls: [{ messageId: 'm-shared-finish-late', tool: 'agents',
+            order: 0, answered: false, requestId }] }
+      ]);
+      const reply = await pending;
+      expect(reply).toContain('worker-1 finished its report');
+      expect(reply).not.toContain('SHARED_EVE_WORKER_TARGET_REQUIRED');
+      expect(swarmStateForCaller(prime).agents.find(agent => agent.id === 'worker-1')?.state).toBe('sleeping');
+      expect(offerMessagesForConversation(PRIME_CHAT)?.messages.some(message =>
+        message.text.includes('Reviewed only the assigned session')
+      )).toBe(true);
+    } finally {
+      await setEnabled(true);
+    }
   });
 
   it('publishes no message when its durable acceptance barrier fails, and a retry queues exactly one', async () => {
@@ -3963,6 +4358,31 @@ describe('simultaneous independent prime families', () => {
     expect(swarmState(a.runId).agents.every(row => row.primeConversationId === 'parallel-prime-a-resumed')).toBe(true);
     cancelPrimeTransfer(primeB.conversationId!);
     expect(() => spawn({ caller: primeB, workers: [{ task: 'B next' }] })).not.toThrow();
+  });
+
+  it('lets an active worker report to Prime while Compact & Resume is moving the Prime chat', async () => {
+    const { beginPrimeTransfer, commitPrimeTransfer } = await import('../src/main/agents.js');
+    const run = recruit(prime, 1);
+    bindConversation('worker-1', 'worker-report-during-prime-transfer', run.runId);
+    noteAgentAlive('worker-report-during-prime-transfer');
+
+    expect(beginPrimeTransfer(PRIME_CHAT)).toBe(true);
+    expect(() => sendMessage(
+      { conversationId: 'worker-report-during-prime-transfer' },
+      'prime',
+      'bounded worker finding while Prime is compacting'
+    )).not.toThrow();
+    expect(offerMessages('prime', false, run.runId).map(message => message.text))
+      .toContain('bounded worker finding while Prime is compacting');
+
+    // The handover still fences commands in the other direction. Prime cannot create new work
+    // for workers until its replacement chat owns the family.
+    expect(() => sendMessage(prime, 'worker-1', 'must wait for the new Prime chat'))
+      .toThrow(/OWNER_TRANSITION_IN_PROGRESS/);
+
+    expect(commitPrimeTransfer(PRIME_CHAT, 'prime-after-worker-report')).toBe(true);
+    expect(offerMessages('prime', false, run.runId).map(message => message.text))
+      .toContain('bounded worker finding while Prime is compacting');
   });
 
   it('moves a prime family on an explicit user request with no handover from the old chat', async () => {

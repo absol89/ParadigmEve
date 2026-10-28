@@ -16,6 +16,7 @@ import { lastToolCallAt } from './mcp/tools.js';
 import { CORE_CONNECTOR_NAME, SURFACE_LIST, surfaceDefinition, surfaceIsUseful, desktopToolNames, type SurfaceId } from './mcp/surfaces.js';
 import { getSecret } from './secrets.js';
 import { startTunnel, TunnelError, type TunnelHandle } from './tunnel/index.js';
+import { noteTunnelClientConnected } from './tunnel/route-settle.js';
 import { desktopAutomationSupported } from './platform.js';
 import { publishPluginSurface, unpublishPluginSurface, pluginRefreshPublications } from './plugin-refresh.js';
 import { pluginManager } from './plugins/manager.js';
@@ -283,6 +284,9 @@ async function connectImpl(): Promise<void> {
       apiKey,
       discoveryHeaders: tunnelProbeHeaders(),
       label: 'core',
+      onClientFirstConnected: () => {
+        if (!shutdownRequested && generation === connectionGeneration) noteTunnelClientConnected();
+      },
       report: (report) => {
         if (generation !== connectionGeneration) return;
         setStatus({

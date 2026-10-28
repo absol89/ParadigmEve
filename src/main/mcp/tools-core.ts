@@ -1,9 +1,17 @@
 import { toolDeclaration } from './tool-declarations.js';
 import { registerPlanTool } from './plan-tool.js';
-import { registerChatReviewPlanTool } from './chat-review-plan-tool.js';
+import { registerChatReviewHousekeepingTool, registerChatReviewPlanTool } from './chat-review-plan-tool.js';
 import { goalWorkerChat } from '../bridge.js';
 import { announceSessionFinish } from '../session/finish.js';
 import { getConfig } from '../config.js';
+import { currentAgentConversationId } from '../agent-identity.js';
+import {
+  prepareNativeDelegation,
+  reportNativeDelegation,
+  requestNativeDelegationCancellation,
+  closeNativeDelegation,
+  listNativeDelegations
+} from '../native-delegation.js';
 /**
  * The Core connector: reading, changing and running code on this PC.
  *
@@ -30,7 +38,6 @@ import {
   viewImage
 } from '../codex/view-image.js';
 import { logInfo, logWarn } from '../logger.js';
-import { archiveFinishedPlansForSession } from '../plans.js';
 import { SandboxError, isNativeWindowsPath, resolvePath, strayVirtualPath } from '../sandbox.js';
 import { currentWorkspace } from '../workspace.js';
 import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities, type Root } from '../../shared/types.js';
@@ -126,8 +133,12 @@ import {
   requestWorkerBootstraps,
   requestWorkerRevivals,
   statusForCaller,
+  statusForSharedEvePrime,
   stageFinishAgent,
   stageMessages,
+  stageSharedEvePrimeMessages,
+  stageSharedEvePrimeSpawn,
+  stageSharedEveWorkerFinish,
   stageSpawn,
   swarmRunning,
   swarmStateForCaller,
@@ -149,7 +160,7 @@ import {
   freshCallOrigin,
   recordAgentMessage
 } from '../session/recorder.js';
-import { findSessionByConversation } from '../session/store.js';
+import { findSessionByConversation, getSession } from '../session/store.js';
 import {
   adoptAgent,
   fail,
@@ -170,8 +181,8 @@ import {
 import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
 import { registerPinsTool } from './pins-tool.js';
 import { registerScheduleTool } from './schedule-tool.js';
-import { chatReviewRequiresWorker, completeChatReviewHeartbeat, currentChatReviewPlanEvidence, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
-import { currentCallMayUseEveAuthority } from '../eve-access.js';
+import { chatReviewRequiresWorker, chatReviewRequiresNativeParent, completeChatReviewHeartbeat, currentChatReviewPlanEvidence, resolveChatReviewContinuity } from '../chat-review-heartbeat.js';
+import { currentCallMayUseEveAuthority, sharedEveOwnerForCurrentCall } from '../eve-access.js';
 import { lanPeerMessagingStatus, lanPeerRuntimeAvailable, sendLanPeerMessage } from '../lan-peer-runtime.js';
 import { ArtifactFetchError } from './artifact-fetch.js';
 import { ArtifactTargetError } from './artifact-target.js';
@@ -1299,6 +1310,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     registerPinsTool(reg);
     registerScheduleTool(reg);
     registerChatReviewPlanTool(reg);
+    registerChatReviewHousekeepingTool(reg);
     reg.register('chat_review_complete', toolDeclaration('chat_review_complete', () => ({
       title: 'Complete chat review heartbeat',
       description:
@@ -1316,8 +1328,12 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
       const continuity = await resolveChatReviewContinuity(key);
       const reviewWorker = Boolean(continuity && heartbeatReviewWorkerCall(caller, key, continuity.conversationId));
       const workerRequired = await chatReviewRequiresWorker(key);
+      const nativeParentRequired = await chatReviewRequiresNativeParent(key);
       if (workerRequired && !reviewWorker) {
         return fail('CHAT_REVIEW_WORKER_REQUIRED: this review epoch belongs to ParadigmEve’s read-only heartbeat worker. The Prime/legacy conversation cannot complete it.');
+      }
+      if (nativeParentRequired && reviewWorker) {
+        return fail('CHAT_REVIEW_NATIVE_PARENT_REQUIRED: the exact ordinary Prime parent, not a ChatGPT worker, must interpret and complete this native review.');
       }
       let receiptSessionId = caller.sessionId;
       let receiptConversationId = caller.conversationId;
@@ -1352,18 +1368,12 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
         requestId: caller.requestId,
         completedAt: call.startedAt,
         result,
-        ...(reviewWorker ? { reviewLane: 'worker' as const } : {}),
+        ...(reviewWorker ? { reviewLane: 'worker' as const } :
+          nativeParentRequired ? { reviewLane: 'native-parent' as const } : {}),
         ...(finding ? { finding } : {})
       });
       if (receiptResult === 'rejected') {
         return fail('CHAT_REVIEW_RECEIPT_REJECTED: this call does not exactly match the current durable review debt, or a Plan in its batch has no chat_review_plan acknowledgement yet. Leave the review pending; do not guess another key, chat or session. A heartbeat worker that cannot finish the review reports the blocker to Prime and finishes.');
-      }
-      // The worker's own finished Plan (its Eve-activity action list) moves to Done with the receipt,
-      // only while the user lets Eve archive completed work. Revoking that leaves it under Live.
-      if (receiptResult === 'completed' && reviewWorker && caller.sessionId &&
-          getConfig().eveAuthority?.archiveCompletedWork === true) {
-        await archiveFinishedPlansForSession(caller.sessionId).catch((error: unknown) =>
-          logWarn(`heartbeat review could not archive its finished Plan: ${error instanceof Error ? error.message : String(error)}`));
       }
       return ok(receiptResult === 'completed' ? 'Chat review completed.' : 'Chat review was already completed.');
     }));
@@ -1503,6 +1513,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     })), async ({ summary }) => {
       if (!getConfig().ui.finishTool) return { content: [{ type: 'text' as const, text: 'RELEASED: The user disabled finish hold. You may write your final answer.' }] };
       const caller = currentCaller();
+      if (caller.attributionSource === 'installation_prime') return ok('RELEASED: this call is assigned to Prime by your unattributed-call setting. No native chat turn was held or completed.');
       if (!caller.sessionId || !caller.conversationId) return fail('Exact session identity is required');
       if (goalWorkerChat(caller.conversationId)) return fail('Session finish hold is not applicable to workers or decision helpers. Workers report with agents action=finish; decision helpers answer normally.');
       return guard('session_finish', async () => ({ content: [{ type: 'text', text: await announceSessionFinish(caller.sessionId!, summary) }] }));
@@ -1512,8 +1523,115 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
   // ----------------------------------------------------------------- agents
 
   if (reg.agentToolsExposed) registerAgentsTool(reg);
+  // Separate, opted-in parent-chat research ledger. It cannot spawn ChatGPT-hosted
+  // children and stays inspectable/closable if the user later disables the option.
+  registerNativeDelegationTool(reg);
 }
 
+
+// ---------------------------------------------------------------------------
+// Prime-mediated hosted Work research — a ledger, never an Eve child executor.
+// ---------------------------------------------------------------------------
+
+function registerNativeDelegationTool(reg: SurfaceRegistrar): void {
+  reg.register('native_delegation', toolDeclaration('native_delegation', () => ({
+    title: 'Experimental ChatGPT Work delegation record',
+    description:
+      'Prepare and preserve a Prime-mediated research request in a human-selected ChatGPT Work conversation. ' +
+      'This does not launch, control or independently verify hosted subagents. ' +
+      'Visible ChatGPT worker chats remain the default. Hosted children inherit parent tools; ' +
+      'child identity, tool receipts, cancellation and billing are not independently verified by Eve.',
+    inputSchema: z.object({
+      action: z.enum(['prepare', 'report', 'status', 'cancel', 'close']),
+      assignments: z.array(z.object({
+        label: z.string().trim().min(1).max(80),
+        task: z.string().trim().min(1).max(1200)
+      }).strict()).min(1).max(4).optional(),
+      request_id: z.string().min(1).max(128).optional(),
+      assignment_id: z.string().min(1).max(128).optional(),
+      report: z.string().min(1).max(4000).optional(),
+      source_references: z.array(z.string().min(1).max(300)).max(12).optional(),
+      disposition: z.enum(['closed', 'unsupported', 'unknown']).optional(),
+      reason: z.string().max(1000).optional()
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  })), async (input) => guard('native_delegation', async () => {
+    const caller = currentCaller();
+    if (caller.attributionSource === 'installation_prime') {
+      return fail('NATIVE_DELEGATION_EXACT_PRIME_REQUIRED: a shared installation fallback cannot prepare or settle hosted research.');
+    }
+    const conversationId = await exactToolConversation('native_delegation');
+    const sessionId = provenSession(caller.requestId, caller.sessionId ?? null);
+    if (!conversationId || !sessionId) return fail('NATIVE_DELEGATION_EXACT_PRIME_REQUIRED');
+    const isExactPrime = primeForOwnedConversation(conversationId) === conversationId ||
+      currentAgentConversationId() === conversationId;
+    if (!isExactPrime) return fail('NATIVE_DELEGATION_PRIME_ONLY');
+    const session = await findSessionByConversation(conversationId, { requireUnique: true });
+    if (session?.id !== sessionId) return fail('NATIVE_DELEGATION_SESSION_MISMATCH');
+    const owner = { conversationId, sessionId, primeRunId: currentRunId(conversationId) };
+    try {
+      if (input.action === 'status') {
+        const requests = listNativeDelegations(owner);
+        return {
+          content: [{ type: 'text' as const,
+            text: 'Eve-owned request records only. Hosted child status and independent receipts are unverified.' }],
+          structuredContent: { action: 'status', requests }
+        };
+      }
+      if (input.action === 'prepare') {
+        if (!reg.agentToolsLive || getConfig().multiAgent.experimentalNativeDelegation !== true) {
+          return fail('NATIVE_DELEGATION_OPT_IN_REQUIRED: enable the separate experimental research option in Settings.');
+        }
+        if (!input.assignments) return fail('prepare requires 1–4 bounded read-only research assignments');
+        const request = await prepareNativeDelegation({
+          owner, assignments: input.assignments,
+          acknowledgement: 'User-enabled experimental native delegation. Only Eve intent and parent-conversation reports are recorded; hosted child starts, effects, cancellation and billing are not verified.'
+        });
+        return {
+          content: [{ type: 'text' as const,
+            text: 'Request durably prepared; Eve did not launch a hosted child. In a human-selected eligible Work conversation, Prime may explicitly delegate these four-or-fewer read-only research tasks. Do not send secrets or use effectful tools. Children can inherit parent host tools; Eve cannot constrain external connectors.' }],
+          structuredContent: { action: 'prepare', request }
+        };
+      }
+      if (!input.request_id) return fail(input.action + ' requires request_id');
+      if (input.action === 'report') {
+        if (!input.assignment_id || !input.report) return fail('report requires assignment_id and report');
+        const request = await reportNativeDelegation({
+          owner, requestId: input.request_id, assignmentId: input.assignment_id,
+          report: input.report, sourceReferences: input.source_references
+        });
+        return {
+          content: [{ type: 'text' as const,
+            text: 'Parent-conversation reported finding durably recorded; no independent child identity or tool receipt is claimed.' }],
+          structuredContent: { action: 'report', request }
+        };
+      }
+      if (input.action === 'cancel') {
+        const request = await requestNativeDelegationCancellation({ owner, requestId: input.request_id });
+        return {
+          content: [{ type: 'text' as const,
+            text: 'Cancellation requested in Eve; hosted termination remains unverified.' }],
+          structuredContent: { action: 'cancel', request }
+        };
+      }
+      if (!input.disposition) return fail('close requires disposition');
+      // A hosted child shares this exact proof, so this close may be the child's own. It takes
+      // effect for effects only once the turn it was made in has ended.
+      const turnId = (await getSession(sessionId))?.activeTurnId ?? null;
+      const request = await closeNativeDelegation({
+        owner, requestId: input.request_id, disposition: input.disposition, reason: input.reason, turnId
+      });
+      return {
+        content: [{ type: 'text' as const,
+          text: 'Eve research record closed. This does not independently prove a hosted child stopped or completed.' +
+            (request.closedInTurn ? ' Effectful Eve tools stay locked for this conversation until the current turn ends.' : '') }],
+        structuredContent: { action: 'close', request }
+      };
+    } catch (error) {
+      return fail(friendlyError(error));
+    }
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // agents
@@ -1579,11 +1697,11 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
     toolDeclaration('agents', () => ({
       title: 'Multi-agent run',
       description:
-        `Run ChatGPT workers for ${agentName()}. App settings supply model/reasoning defaults; pass overrides only when the user explicitly requests them. Reuse a suitable sleeping worker with message before spawn. Sleeping/terminal workers remain in durable history. message routes ${agentName()}↔worker and revives sleeping workers; replies arrive on later tool results, so never poll. status shows full worker history. finish reports the worker result and normally puts it to sleep. If a ParadigmEve heartbeat prompt provides review_key, pass that exact key only on ${agentName()} calls from that heartbeat.`,
+        `ChatGPT worker coordination for ${agentName()}. App settings supply model/reasoning defaults; overrides correspond to explicit user choices. Existing sleeping workers can be revived with message, while sleeping and terminal workers remain in durable history. message routes ${agentName()}↔worker, and replies arrive on subsequent tool results. status shows worker history. finish records a worker report and normally changes it to sleeping. review_key identifies the current ParadigmEve heartbeat review, when present.`,
       inputSchema: z.object({
         action: z.enum(['spawn', 'message', 'status', 'finish']).describe('What to do.'),
         review_key: z.string().min(1).max(512).optional().describe(
-          'Heartbeat continuity only: exact key from the current ParadigmEve review prompt. Omit otherwise; never guess or reuse.'
+          'Heartbeat review key for exact continuity with the current ParadigmEve review prompt, when applicable.'
         ),
         context: z
           .string()
@@ -1608,13 +1726,13 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                 .max(80)
                 .optional()
                 .describe(
-                  'Omit unless the user explicitly requests a model override; app settings supply their default. Overrides require an exact account-observed model id or provider alias; never guess spellings. Invalid choices return observed ids before workers open; the browser confirms availability before sending.'
+                  'Optional user-selected worker model override. Defaults to app settings. An override uses an account-observed model id or provider alias; invalid choices return observed ids, and the browser checks availability.'
                 ),
               reasoning_effort: z
                 .enum(REASONING_EFFORTS)
                 .optional()
                 .describe(
-                  'Omit unless the user explicitly requests a reasoning override; app settings supply their default automatically. Do not ask for a reasoning level just to spawn a worker. Independent of model: it never selects or changes one.'
+                  'Optional user-selected reasoning override. Defaults to app settings and does not select or change a model.'
                 )
             }).strict()
           )
@@ -1622,7 +1740,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           .max(8)
           .optional()
           .describe(
-            'spawn: fresh workers to create only after checking status for a suitable sleeping worker; revive one explicitly with message.'
+            'spawn: new workers; a retained sleeping worker is revivable through message.'
           ),
         messages: z
           .array(
@@ -1635,7 +1753,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           .max(16)
           .optional()
           .describe(
-            'message: atomic batch; prefer this to one call per recipient.'
+            'message: atomic batch of addressed worker messages.'
           ),
         to: z
           .string()
@@ -1651,10 +1769,13 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           .optional()
           .describe(
             'finish: factual handoff under RESULT / CHANGES / VALIDATION / BLOCKERS.'
-          )
+          ),
+        worker_id: z.string().min(1).max(40).optional().describe(
+          'finish: worker to finish when shared-Eve permission is enabled but this call has no exact page identity. This is an explicit target, not identity proof.'
+        )
       })
       .superRefine((input, ctx) => {
-        const reject = (field: 'context' | 'workers' | 'messages' | 'to' | 'text' | 'result' | 'review_key', message: string): void => {
+        const reject = (field: 'context' | 'workers' | 'messages' | 'to' | 'text' | 'result' | 'worker_id' | 'review_key', message: string): void => {
           if (input[field] !== undefined) ctx.addIssue({ code: 'custom', path: [field], message });
         };
         if (input.action !== 'spawn') {
@@ -1666,7 +1787,10 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           reject('to', 'to is only valid with action=message');
           reject('text', 'text is only valid with action=message');
         }
-        if (input.action !== 'finish') reject('result', 'result is only valid with action=finish');
+        if (input.action !== 'finish') {
+          reject('result', 'result is only valid with action=finish');
+          reject('worker_id', 'worker_id is only valid with action=finish');
+        }
         if (input.action === 'finish') reject('review_key', `review_key is only valid for ${agentName()} heartbeat continuity, not worker finish`);
       })
       .strict(),
@@ -1692,11 +1816,12 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // And the identity behind it is the exact kind: a generic connector row would let
           // an uninvolved chat that happened to call something else in the same window
           // become the prime of this run.
-          const staged = stageSpawn({
-            workers: input.workers,
-            context: input.context ?? null,
-            caller: await callerNow(startedAt, { exact: true, reviewKey: input.review_key })
-          });
+          const caller = await callerNow(startedAt, { exact: true, reviewKey: input.review_key, allowSharedPrime: true });
+          const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+            !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+          const staged = sharedOwner
+            ? stageSharedEvePrimeSpawn(sharedOwner, input.workers, input.context ?? null)
+            : stageSpawn({ workers: input.workers, context: input.context ?? null, caller });
           let accepted = false;
           try {
             let durable = false;
@@ -1722,7 +1847,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Browser tabs are a publication side effect, never part of planning. They become
           // visible only after the exact broker revision above is durable.
           requestWorkerBootstraps(created.map((worker) => worker.id), runId);
-          await adoptAgent(PRIME_ID);
+          if (!sharedOwner) await adoptAgent(PRIME_ID);
           const invited = created.filter((worker) => worker.state === 'invited');
           const sleeping = created.filter((worker) => worker.state === 'sleeping' && worker.revivable);
           return {
@@ -1730,7 +1855,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               {
                 type: 'text' as const,
                 text:
-                  (becamePrime ? `This conversation is now the ${agentName()} conversation for worker run ${runId}. ` : '') +
+                  (sharedOwner ? (caller.attributionSource ? 'Prime fallback enabled; execution is assigned to Prime. ' : 'Shared Eve connector authority used; this caller remains Unattributed. ') :
+                    becamePrime ? `This conversation is now the ${agentName()} conversation for worker run ${runId}. ` : '') +
                   `${created.length} worker(s) matched: ${created.map((info) => `${info.id} (${info.label}, ${info.state}${info.model ? `, model ${info.model}` : ''}${info.reasoningEffort ? `, reasoning ${info.reasoningEffort}` : ''})`).join(', ')}. ` +
                   (invited.length > 0 ? 'New worker chats are opening with their briefs already in them. ' : '') +
                   (defaultNotes?.length ? `${defaultNotes.join(' ')} ` : '') +
@@ -1746,7 +1872,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
             structuredContent: {
               action: 'spawn',
               run_id: runId,
-              self: PRIME_ID,
+              self: sharedOwner ? 'shared-eve' : PRIME_ID,
               became_prime: becamePrime,
               workers: created.map((info) => ({ id: info.id, label: info.label, state: info.state, model: info.model, reasoning_effort: info.reasoningEffort }))
             }
@@ -1770,11 +1896,21 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Shared installation permission is not proof that this request came from Prime.
           // Both directions of worker messaging require an exact caller or the narrowly
           // verified heartbeat continuity identity, even when Prime is the recipient.
-          const caller = await callerNow(startedAt, { reviewKey: input.review_key });
-          await measureSleepingWorkers(caller);
+          // Messages may come from a worker even with account-wide Eve permission enabled.
+          // Give its exact page/request-id join a chance before considering shared operator
+          // authority; otherwise a late worker->Prime report is misrouted as Prime->Prime.
+          const caller = await callerNow(startedAt, {
+            reviewKey: input.review_key, allowSharedPrime: true, preferExact: true
+          });
+          const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+            !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+          if (sharedOwner) await measureSleepingWorkers({ conversationId: sharedOwner });
+          else await measureSleepingWorkers(caller);
           // One call, one identity resolution, one all-or-nothing delivery: a prime
           // redirecting its whole run cannot end up with two of its three messages sent.
-          const staged = stageMessages(caller, items);
+          const staged = sharedOwner
+            ? stageSharedEvePrimeMessages(sharedOwner, items)
+            : stageMessages(caller, items);
           let accepted = false;
           try {
             let durable = false;
@@ -1799,10 +1935,10 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // Reopening a sleeping worker's chat is a browser side effect, so it happens only
           // after the broker revision that reserved its slot is durable — exactly as a spawn's
           // tabs do. Nothing has been typed into that chat yet at this point.
-          const runId = caller.conversationId ? currentRunId(caller.conversationId) : null;
+          const runId = currentRunId(sharedOwner ?? caller.conversationId ?? undefined);
           if (woken.length > 0 && runId) requestWorkerRevivals(woken, runId);
           if (runId) requestActiveWorkerMessageDelivery([...new Set(sent.map((message) => message.to))], runId);
-          for (const message of sent) await recordAgentMessage(message, 'sent', caller.conversationId);
+          for (const message of sent) await recordAgentMessage(message, 'sent', sharedOwner ?? caller.conversationId);
           return {
             content: [
               {
@@ -1811,7 +1947,8 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                   `Queued for ${[...new Set(sent.map((message) => message.to))].join(', ')}.` +
                   (woken.length > 0
                     ? ` Waking ${woken.join(', ')} in ${woken.length === 1 ? 'the same chat' : 'their existing chats'}.`
-                    : '')
+                    : '') +
+                  (sharedOwner ? (caller.attributionSource ? ' Prime fallback enabled; sender is shared-eve.' : ' Shared Eve connector authority was used; sender is shared-eve and this caller remains Unattributed.') : '')
               }
             ],
             structuredContent: {
@@ -1830,7 +1967,16 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           }
           // Finish is worker-only. Shared Eve authority is intentionally not a caller identity:
           // without exact page/request proof, fail closed instead of misclassifying a worker as Prime.
-          const staged = stageFinishAgent(await callerNow(startedAt), input.result);
+          const caller = await callerNow(startedAt, {
+            allowSharedPrime: true, preferExact: !input.worker_id
+          });
+          const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+            !caller.conversationId ? sharedEveCoordinatorForCurrentCall() : null;
+          if (input.worker_id && !sharedOwner) return fail('SHARED_EVE_TARGET_ONLY: worker_id is only for an unattributed shared-Eve finish; no worker was finished.');
+          if (sharedOwner && !input.worker_id) return fail('SHARED_EVE_WORKER_TARGET_REQUIRED: supply worker_id to finish a named worker without page attribution; no worker was finished.');
+          const staged = sharedOwner
+            ? stageSharedEveWorkerFinish(sharedOwner, input.worker_id!, input.result)
+            : stageFinishAgent(caller, input.result);
           let accepted = staged.repeat;
           try {
             if (!staged.repeat) {
@@ -1856,7 +2002,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           }
           const { info, report, repeat } = staged;
           if (report) {
-            await recordAgentMessage(report, 'sent', info.conversationId);
+            await recordAgentMessage(report, 'sent', sharedOwner ?? info.conversationId);
           }
           // A retry is answered as a retry. Repeating "marked finished" would read as a
           // second finish and invite the model to keep going until it gets a different
@@ -1865,7 +2011,9 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
             content: [
               {
                 type: 'text' as const,
-                text: repeat
+                text: sharedOwner
+                  ? `Shared Eve connector accepted the explicitly addressed finish for ${info.id}; the browser caller is not proven to be that worker. ${repeat ? 'That result was already recorded; nothing was sent again.' : 'The report was durably queued for Eve.'}`
+                  : repeat
                   ? `${info.id} was already ${info.state} and that result was already queued for ${agentName()}, so nothing was ` +
                     'sent again. Stop working and stop calling tools.'
                   : info.state === 'finished'
@@ -1884,9 +2032,13 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
         // and `identify` is what decides whether this caller is one of them. An unrelated
         // chat is told AGENTS_BUSY and nothing else — not who the prime is, not how many
         // workers there are, not what any of them are doing.
-        const caller = await callerNow(startedAt, { reviewKey: input.review_key });
-        await measureSleepingWorkers(caller);
-        const status = statusForCaller(caller);
+        const caller = await callerNow(startedAt, {
+          reviewKey: input.review_key, allowSharedPrime: true, preferExact: true
+        });
+        const sharedOwner = caller.attributionSource === 'installation_prime' ? caller.conversationId :
+          !caller.conversationId ? sharedEveCoordinatorForCurrentCall(input.review_key) : null;
+        if (!sharedOwner) await measureSleepingWorkers(caller);
+        const status = sharedOwner ? statusForSharedEvePrime(sharedOwner) : statusForCaller(caller);
         const me = status.self;
         const state = status.state;
         const failed = state.agents.filter((info) => info.state === 'failed');
@@ -1920,7 +2072,9 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               {
                 type: 'text' as const,
                 text:
-                `You are ${me.id === PRIME_ID ? agentName() : me.id}.\n` +
+                (sharedOwner
+                  ? `Shared Eve connector authority: showing ${agentName()}'s worker family. ${caller.attributionSource ? 'Execution is assigned to Prime by your fallback setting.' : 'The calling chat is Unattributed, not proven as Prime.'}\n`
+                  : `You are ${me.id === PRIME_ID ? agentName() : me.id}.\n`) +
                 state.agents
                   .map(
                     (info) => {
@@ -2001,11 +2155,22 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
  * The proven identity is then adopted for the rest of the call, so this result is recorded
  * against the right agent and carries the right inbox.
  */
+function sharedEveCoordinatorForCurrentCall(reviewKey?: string): string | null {
+  // A worker-lane heartbeat key is never an Eve-operator credential, even when account-wide
+  // operation is enabled. This path carries authority only, not conversation identity.
+  if (reviewKey || getConfig().multiAgent.allowUnattributedCalls !== true) return null;
+  const owner = sharedEveOwnerForCurrentCall();
+  return owner && primeForOwnedConversation(owner) === owner ? owner : null;
+}
+
 async function callerNow(
   startedAt: number,
-  options: { exact?: boolean; reviewKey?: string } = {}
+  options: { exact?: boolean; reviewKey?: string; allowSharedPrime?: boolean; preferExact?: boolean } = {}
 ): Promise<Caller> {
   const base = currentCaller();
+  // The dispatcher already froze this explicitly authorized execution owner.
+  // Do not reinterpret later page evidence or mark a remote operation as a native turn.
+  if (base.attributionSource === 'installation_prime') return base;
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
   // model cannot absorb, so it gets the longer ceiling; every other `agents` action can be
   // declined and asked again on the next tool call.
@@ -2029,21 +2194,28 @@ async function callerNow(
   // A sole Prime is only a page on which the missing proof might become visible. Trigger the
   // existing browser-recovery path before entering the event-driven wait, but never adopt the
   // candidate as caller identity: only the exact request-id correlation below may do that.
-  if (!exactBeforeWait && !heartbeatContinuity && base.requestId) requestPrimeIdentityRecovery(base.requestId);
+  const sharedPrime = options.allowSharedPrime
+    ? sharedEveCoordinatorForCurrentCall(options.reviewKey)
+    : null;
+  const pageAttributionOptional = getConfig().multiAgent.allowUnattributedCalls === true &&
+    !options.reviewKey && !options.preferExact && sharedPrime !== null;
+  if (!exactBeforeWait && !heartbeatContinuity && base.requestId && !pageAttributionOptional) requestPrimeIdentityRecovery(base.requestId);
   const exactResolved =
     exactBeforeWait ??
     heartbeatContinuity?.conversationId ??
-    (await awaitFreshCallOrigin('agents', startedAt, window, {
+    // The shared operator fast path is only for calls that do not require a particular
+    // chat. A real worker's page evidence can arrive seconds after MCP admission;
+    // shortening a worker-sensitive call to 1.5s recreates the same misrouting race.
+    (pageAttributionOptional ? null : await awaitFreshCallOrigin('agents', startedAt,
+      sharedPrime && !options.preferExact ? Math.min(window, 1500) : window, {
       exact: options.exact,
       // ChatGPT's own id for this request, when it sent one. It names the conversation
       // outright, so two workers calling at the same moment are no longer a hard case.
       requestId: base.requestId
     }));
-  // An authenticated shared-Eve connector request may use ordinary self-contained
-  // tools without Companion page evidence. It must never borrow Prime's broker identity:
-  // a synthetic conversationId would let an unknown caller inspect or mutate a worker
-  // run and make the result look as if Prime had done it. No broker action has a safe
-  // nonmember identity fallback. Keep unrelated shared-Eve permissions unchanged.
+  // The opted-in operator route addresses the retained Prime family directly without
+  // pretending this request was sent by Prime or a worker. Page attribution is now
+  // optional for that route, including spawn and explicitly targeted worker finish.
   const resolved = exactResolved;
   const caller: Caller = {
     ...base,
@@ -2070,13 +2242,14 @@ async function callerNow(
     // conversations still hit AGENTS_BUSY exactly as before.
     await repairPrimeFromResumeShadow(exactResolved);
   }
-  if (!resolved) {
+  if (!resolved && !sharedPrime) {
     logWarn(
       base.requestId
         ? `agents caller not identified: no page evidence matched HTTP request ${base.requestId.slice(0, 20)}…`
         : 'agents caller not identified: this MCP request carried no request id and page evidence was insufficient'
     );
   }
+  if (sharedPrime && !resolved) logWarn('agents: separate shared-Eve worker-family authority available; caller remains Unattributed');
   await adoptAgent(agentForCaller(caller));
   return caller;
 }

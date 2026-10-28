@@ -412,3 +412,55 @@ Relevant renderer modules:
 - `src/renderer/agent-plan.ts`
 
 The UI should be thought of as a projection of the durable libraries. Repaint bugs must be fixed by refreshing/projecting the authoritative state, not by creating a second browser-local Pin/Plan truth.
+
+---
+
+> **Implementation contracts.** The sections below moved here unchanged from the former single-file
+> `AGENTS.md` map. Their § numbers are kept so references such as “§14” still resolve; the
+> [Vault index](README.md#former-agentsmd-sections) lists where each section lives.
+
+## 11. Generated workflow vs the agent's displayed plan
+
+“Create plan” uses `goal.ts::draftTaskPlan()` via `task-request.ts` and the selected ChatGPT/API
+backend. It returns 2–12 substantial stages under the aggregate bound. Stage one must state the
+complete objective, requirements, constraints and implementation approach; later stages are
+verification/improvement checkpoints, not withheld parts of the specification. Planner helpers
+receive reference task content and a JSON output contract, not executor instructions or finish
+reminders. Invalid stages never enter the queue.
+
+Planning belongs to the originating draft key. Navigation does not cancel it or redirect its
+result. Editing a pending task cancels that exact request; object identity rejects late results.
+Progress/error/retry belongs to the same invocation. `runTaskRequest()` coalesces a repeated id
+with the same fingerprint and retries only classified pre-delivery failures within its bounds.
+
+- **New chat:** the completed plan stays editable until explicit Send/cancel/New chat reset.
+  Clearing the composer keeps its captured objective. Send freezes the original objective and
+  **every** stage in the first durable payload. Later checkpoints are materialized once after
+  the first receipt creates the concrete local session. Until then, the dock projects them
+  from that same input. Retry must retain objective + all stages, never restore only stage one.
+- **Existing session:** completion atomically admits all finish checkpoints into the durable
+  outbox immediately. Composer text/attachments are not sent by that admission, and clearing
+  the composer cannot delete the checkpoints. Edit/delete/reorder uses the ordinary queue.
+  Failed admission keeps the editable result for retry in its originating session.
+- **Displayed `update_plan`:** `plan-tool.ts` writes one whole `plan.json` under the exact
+  caller's local session. Short headlines, bounded details and statuses appear above the queue;
+  at most one step is in progress. Older calls/retired frontends cannot overwrite newer state.
+  Only after that session authority accepts the update does `plans.ts` project it into the
+  app-wide Plans catalog. The renderer derives audience from durable session ancestry: ordinary
+  Prime/user work stays in the manager-facing Plans view, while worker execution plans are grouped
+  under Eve activity. A worker must call its own `update_plan` for an actual worker checklist
+  to appear there; historical worker tool calls alone do not synthesize a checklist. A worker session
+  that never wrote a Plan but delivered finish reports gets one archived entry labelled "Recovered from
+  finish reports (no Plan was written)", built only from those delivered reports. Archived worker
+  Plans remain in Eve activity → Done rather than being discarded. The human Plans view still rolls those worker plans up as collapsed
+  **Verified work**, preserving their completed audit/checklist evidence without giving every
+  execution plan equal visual weight with the user's goals. This is a presentation split over the
+  same durable catalog, so grouping a worker plan never deletes its history. The inline card can dismiss after
+  completion, while a first-class Prime Plan remains in Live until the user archives it. A completed
+  worker Plan may instead auto-archive after its exact finish report is delivered, when that policy applies. Prepared
+  handoffs include an exact-session notice to inspect the saved plan. Neither representation
+  delivers instructions nor completes/deletes queued checkpoints.
+
+Finish checkpoints use `shared/input.ts::browserInputModel()` to inherit current selection,
+including legacy rows containing an old model. A receipt for an inherited checkpoint must not
+republish an old enqueue-time model as a fresh observed switch.

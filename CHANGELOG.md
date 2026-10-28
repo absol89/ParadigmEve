@@ -13,6 +13,110 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.5] — Heartbeat, worker choice and Compact & Resume safety
+
+**Source-release preparation (2026-10-28):** c26 is the latest locally built,
+silently installed and byte-verified Windows x64 debug candidate. The full local
+verification passed 6,232 tests, TypeScript, privacy, notices and packaged-resource
+checks. Tagging source does not publish downloadable installers.
+
+- Native-parent heartbeat attention and findings now travel through Prime's
+  authenticated Eve tool result, avoiding an extra worker chat or browser Send.
+  One exact four-Plan review completed after Compact & Resume with accepted
+  acknowledgements and a durable receipt; a later review truthfully reported
+  a blocked historical worker obligation without replaying a browser Send.
+- Legacy heartbeat-worker delivery is fenced while Native mode is selected;
+  ambiguous browser claims and historical receipts remain preserved.
+- Durable heartbeat debt supersession, bounded rotation retries, protected
+  Compact & Resume source turns and ordinary input-header batching are improved.
+- An idle Prime still cannot perform model work on a timer, and ChatGPT approval
+  cards remain provider-owned. Fully unattended Native child execution and safe
+  old-queue retirement across repeated mode reversals remain release gates.
+- Electron 43.8.4 with the patched Node 24.22.1 runtime replaces Electron
+  43.8.3. The c29 candidate bundles it; its acceptance checks are pending.
+- Queued Native findings and in-band heartbeat reviews no longer block each
+  other in the input queue.
+- A scheduled run whose browser message never started now ends Failed in every
+  ledger instead of waiting to start indefinitely; uncertain delivery is never
+  resent. This fix is newer than c29 and not yet verified in an installed build.
+
+**Earlier candidate evidence (2026-10-27):** c18 was built, silently installed and
+verified against its packaged Windows x64 files. The historical Prime-family handoff
+was not proven complete. The following earlier entries retain the development
+history and must not be read as the latest candidate status.
+
+- Compact & Resume writing-phase recovery now preserves the exact source handoff
+  while its answer turn is still open instead of reloading it on a periodic timer.
+  After fifteen minutes it records a single visible stuck-answer notice while
+  retaining the sent request and continuing to wait for real terminal proof.
+  This prevents a known interruption mechanism, but cannot infer a missing terminal
+  receipt from visible text. The original automatic handoff was cancelled; a separate
+  manually triggered handoff committed, and original-family Prime transfer remains
+  unverified. An overly late automatic-compaction trigger is still under investigation.
+- Automatic Compact & Resume holds an unsent handoff ticket while the latest
+  ChatGPT turn has an actionable provider approval card, including a collapsed
+  **Previous activity** card. It does not focus the tab, click Stop, or arm Send
+  until approval clears. A fresh exact-chat signal also pauses app-side pickup.
+  This is a preventive race guard, not proof that approval caused the observed
+  04:15 source-marker failure; Eve neither grants approval nor replays Send.
+- Bounded c18 tests completed both a reusable **ChatGPT worker** in its own chat and
+  a **Native subagent** inside the active parent, including a successful read-only
+  Native-to-Eve call with exact Companion proof. These are not tests of long-running
+  unattended Native workers or uninterrupted provider approval behavior.
+- Worker settings are converging on four explicit choices: **ChatGPT workers**,
+  **Native subagents**, **OpenRouter**, and **Ollama**. A choice must not silently
+  select another backend, model, or reasoning level. Native subagents have no verified
+  unattended launch/receipt API in Eve; a heartbeat routed there must retain its
+  review debt until an active parent can perform and prove the review.
+- Reused heartbeat review chats receive a short key-bound follow-up instead of
+  repeatedly archiving the long onboarding instructions; the original full review
+  contract remains with the persisted worker task. Existing exact Plan, revision,
+  provenance and receipt fences remain mandatory.
+- ChatGPT's own **Allow ChatGPT to use Eve?** permission prompt remains a human
+  decision. Eve cannot autoaccept, dismiss or bypass it.
+
+**Earlier candidate status (2026-10-25):** A local Windows x64 c3 debug candidate was
+built, verified, installed and is running for bounded dogfood. It has not been tagged, pushed,
+published or promoted to Latest. The installed executable and `app.asar` matched the packaged
+candidate, and the materialized Companion files matched the c3 source; current-generation live
+Companion document proof was deferred, so browser-side c3 activation is not claimed from those
+hashes alone.
+
+- Read-only heartbeat reviews now distinguish source-proven stale checklist items from
+  intentionally open work and ready-to-archive human Plans. A stale-checklist finding
+  cannot silently close as a completed review.
+- Durable structured reconciliation lets the exact ordinary Prime complete only reviewed
+  items with revision, item identity, full provenance, and source-document fencing.
+- Completed Eve heartbeat Activity uses exact single-Plan archive checks after its final
+  Plan update, subject to the existing archive authority. Human Plans and unrelated
+  same-session Activity are never swept automatically.
+- Added regression coverage for review receipts, reconciliation idempotency, direct-tool
+  authority, source races, and MCP discovery.
+- **Provider approval waits are surfaced without taking approval authority.** Connector/tool
+  descriptions now state ChatGPT-side refusals and user-selected worker overrides as facts rather
+  than instructing retries or ranking Eve over ChatGPT's independent approval decisions. The
+  Companion can recognize one pending approval card in the current turn even when **Previous
+  activity** is collapsed; Eve projects a waiting row and a deduplicated desktop-native notice.
+  It does not click an approval button, replay an uncertain effect, or claim mobile notification
+  delivery.
+- **Prime continuity no longer treats shared-Eve attribution gaps as permission to reload.** With
+  user-enabled shared-Eve coordination, an unresolved request-id join may remain auditable as
+  Unattributed while the existing Prime ChatGPT document is preserved.
+- **Compact & Resume cancellation is fenced immediately before successor creation.** A durable
+  one-shot placement authorization makes cancel-first prevent a stale tab and dispatch-first
+  prevent a false successful cancellation. Regression tests cover both orders and keep the
+  successor in the source window without taking foreground focus. The historical file-picker
+  observation remains unassigned; no cause is claimed.
+- **Windows candidate reinstall preserves active ChatGPT tabs.** `-SilentNoFocus` runs the local
+  installer without a foreground NSIS wizard, and the replacement app starts in the background
+  with `--preserve-chatgpt-tabs` so the Companion can refresh at its existing idle fence instead
+  of restarting Chrome or navigating an active page.
+- The exact c3 source snapshot recorded in the local candidate passed `npm run verify:ci`
+  (6,074 main tests), plus 20 Computer Use tests and 2 MCP shutdown tests; Windows x64 packaging
+  also passed. Installed c3 dogfood is not complete live acceptance: current-generation Companion
+  proof was deferred, and the approval-card and cancelled-handoff flows still need bounded live
+  confirmation.
+
 ## [2.4.4] — Reliability, provenance, protected recovery and archive freshness
 
 **Source release preparation (2026-10-23):** The cumulative 2.4.4 fixes are being

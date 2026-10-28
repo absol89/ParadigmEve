@@ -571,7 +571,9 @@ describe('the settings sheet', () => {
     const pane = document.querySelector('.view[data-view="settings"]')!;
     const listened = /const CHAT_INPUTS[^=]*=\s*\[([^\]]*)\]/.exec(chatSource);
     expect(listened, 'CHAT_INPUTS is gone or renamed').not.toBeNull();
-    const mainListened = /for \(const id of \[([\s\S]*?)\]\) \{\s*\$\(id\)\.addEventListener\('change', \(\) => void save\(\)\);\s*\}/.exec(mainSource);
+    // The settings listener also refreshes conditional worker-route help before saving.
+    // Preserve the save assertion while allowing that local presentation update.
+    const mainListened = /for \(const id of \[([\s\S]*?)\]\) \{\s*\$\(id\)\.addEventListener\('change', \(\) => \{[\s\S]*?void save\(\);\s*\}\);\s*\}/.exec(mainSource);
     expect(mainListened, 'main settings change-listener list is gone or renamed').not.toBeNull();
     const chatIds = listened?.[1] ?? '';
     const mainIds = mainListened?.[1] ?? '';

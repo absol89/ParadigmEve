@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { surfaceDefinition } from '../src/main/mcp/surfaces.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocked = vi.hoisted(() => ({ spawn: vi.fn(), listWindows: vi.fn(), findUi: vi.fn(), act: vi.fn(), extensionDir: vi.fn() }));
+const mocked = vi.hoisted(() => ({ spawn: vi.fn(), minimizedLaunch: vi.fn(), listWindows: vi.fn(), findUi: vi.fn(), act: vi.fn(), extensionDir: vi.fn() }));
 
 vi.mock('node:child_process', () => ({ spawn: mocked.spawn }));
 vi.mock('../src/main/computer/index.js', () => ({ listWindows: mocked.listWindows, findUi: mocked.findUi, act: mocked.act }));
@@ -18,6 +18,7 @@ const userData = 'C:\\Users\\example\\AppData\\Roaming\\ParadigmEve';
 
 vi.mock('electron', () => ({ app: { getPath: () => userData } }));
 vi.mock('../src/main/browser.js', () => ({
+  launchWindowsMinimizedBrowser: mocked.minimizedLaunch,
   findPreferredBrowser: (_platform?: unknown, _env?: unknown, _home?: unknown, _exists?: unknown, browser = 'chrome') =>
     browser === 'edge' ? edgePath : browser === 'brave' ? bravePath : chromePath,
   selectedChatBrowser: () => selectedBrowser,
@@ -126,6 +127,7 @@ beforeEach(async () => {
   chromeProcesses = [];
   mocked.spawn.mockReset();
   mocked.spawn.mockImplementation(() => newChromeProcess());
+  mocked.minimizedLaunch.mockReset().mockResolvedValue(undefined);
   mocked.listWindows.mockReset();
   mocked.listWindows.mockResolvedValue({
     windows: [{
@@ -337,6 +339,61 @@ describe('ParadigmEve setup browser', () => {
       { type: 'ui_action', ref: 'restore-button', action: 'invoke' },
       { type: 'wait', ms: 750 },
     ], { window: 88 });
+  });
+
+  it('restores a positively absent Eve Browser minimized after install without opening a ChatGPT URL or taking focus', async () => {
+    const setup = await modulePromise;
+    mocked.listWindows
+      .mockResolvedValueOnce({ windows: [{ id: 5, app: 'Chrome', process: 'chrome' }], screen: {} })
+      .mockResolvedValueOnce({ windows: [], screen: {} })
+      .mockResolvedValue({ windows: [{ id: 88, app: 'Chrome.setupbrowserprofile.Default', process: 'chrome', state: 'open' }], screen: {} });
+
+    await expect(setup.restoreMissingParadigmEveBrowserAfterInstall()).resolves.toBe('restored');
+    expect(mocked.spawn).not.toHaveBeenCalled();
+    expect(mocked.minimizedLaunch).toHaveBeenCalledTimes(1);
+    const [browserPath, args] = mocked.minimizedLaunch.mock.calls[0] as [string, string[]];
+    expect(browserPath).toBe(chromePath);
+    expect(args).toContain(`--user-data-dir=${path.join(userData, 'setup-browser-profile')}`);
+    expect(args).toContain('--restore-last-session');
+    expect(args).not.toContain('https://chatgpt.com/');
+    expect(mocked.act).not.toHaveBeenCalled();
+    expect(mocked.findUi).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to a foreground Chrome launch if minimized install recovery fails', async () => {
+    const setup = await modulePromise;
+    mocked.listWindows.mockResolvedValue({ windows: [], screen: {} });
+    mocked.minimizedLaunch.mockRejectedValue(new Error('minimized startup refused'));
+    await expect(setup.restoreMissingParadigmEveBrowserAfterInstall()).rejects.toThrow('minimized startup refused');
+    expect(mocked.minimizedLaunch).toHaveBeenCalledTimes(1);
+    expect(mocked.spawn).not.toHaveBeenCalled();
+    expect(mocked.act).not.toHaveBeenCalled();
+  });
+
+  it('preserves existing, uncertain, newly appearing and family-switched Eve Browser windows during install', async () => {
+    const setup = await modulePromise;
+    const dedicatedWindow = { id: 77, app: 'Chrome.setupbrowserprofile.Default', process: 'chrome', state: 'foreground' };
+    mocked.listWindows.mockResolvedValue({ windows: [dedicatedWindow], screen: {} });
+    await expect(setup.restoreMissingParadigmEveBrowserAfterInstall()).resolves.toBe('present');
+    expect(mocked.spawn).not.toHaveBeenCalled();
+    expect(mocked.act).not.toHaveBeenCalled();
+
+    mocked.listWindows.mockReset().mockRejectedValue(new Error('native census unavailable'));
+    await expect(setup.restoreMissingParadigmEveBrowserAfterInstall()).resolves.toBe('unknown');
+    expect(mocked.spawn).not.toHaveBeenCalled();
+
+    mocked.listWindows.mockReset()
+      .mockResolvedValueOnce({ windows: [], screen: {} })
+      .mockResolvedValueOnce({ windows: [dedicatedWindow], screen: {} });
+    await expect(setup.restoreMissingParadigmEveBrowserAfterInstall()).resolves.toBe('present');
+    expect(mocked.spawn).not.toHaveBeenCalled();
+
+    mocked.listWindows.mockReset().mockImplementation(async () => {
+      selectedBrowser = 'edge';
+      return { windows: [], screen: {} };
+    });
+    await expect(setup.restoreMissingParadigmEveBrowserAfterInstall()).resolves.toBe('unknown');
+    expect(mocked.spawn).not.toHaveBeenCalled();
   });
 
   it('refreshes the unpacked Companion through Chrome UI in the dedicated profile only', async () => {

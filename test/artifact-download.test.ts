@@ -24,6 +24,8 @@ import {
 } from '../src/main/mcp/artifact-target.js';
 import { startMcpServer, type McpEndpoint } from '../src/main/mcp/server.js';
 import type { ToolContext } from '../src/main/mcp/tools.js';
+import { initDurableStore } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { resetWorkspaces } from '../src/main/workspace.js';
 import { DEFAULT_CAPABILITIES, type Capabilities, type Root } from '../src/shared/types.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
@@ -411,6 +413,9 @@ describe('download_artifact MCP surface', () => {
     base = await makeTempDir('clf-artifact-mcp-');
     approved = path.join(base, 'workspace');
     await fs.mkdir(approved, { recursive: true });
+    initDurableStore(base);
+    // Match the normal app startup before an effectful MCP call is admitted.
+    await restoreNativeDelegations();
   });
 
   afterAll(async () => {

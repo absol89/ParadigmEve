@@ -168,14 +168,14 @@ describe('cross-platform packaging targets', () => {
     expect(ipc).toContain('if (lanPeerRuntimeAvailable(BUILD_FLAVOR))');
   });
 
-  it('pins Electron 43.7.11 exactly and proves packaged runners use those runtime bytes', () => {
+  it('pins Electron 43.8.4 exactly and proves packaged runners use those runtime bytes', () => {
     const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
     const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
     const smoke = readFileSync(path.join(root, 'scripts', 'smoke-packaged-runtime.mjs'), 'utf8');
 
-    expect(pkg.devDependencies.electron).toBe('43.7.11');
-    expect(lock.packages?.['']?.devDependencies?.electron).toBe('43.7.11');
-    expect(lock.packages?.['node_modules/electron']?.version).toBe('43.7.11');
+    expect(pkg.devDependencies.electron).toBe('43.8.4');
+    expect(lock.packages?.['']?.devDependencies?.electron).toBe('43.8.4');
+    expect(lock.packages?.['node_modules/electron']?.version).toBe('43.8.4');
     expect(smoke).toContain('const expectedElectronVersion = sourcePackage.devDependencies?.electron;');
     expect(smoke).toContain('electron: process.versions.electron');
     expect(smoke).toContain('runtime.electron !== expectedElectronVersion');
@@ -298,9 +298,9 @@ describe('cross-platform packaging targets', () => {
     expect(installer).toContain('SetAutoClose true');
     expect(installer).toContain('HideWindow');
     expect(installer).toContain('${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"');
-    expect(installer).toContain('StrCpy $1 "--updated --recover-companion-browser"');
+    expect(installer).toContain('StrCpy $1 "--updated --background --preserve-chatgpt-tabs"');
     expect(installer).toContain('${elseIf} $ParadigmEveHadExistingInstall == "1"');
-    expect(installer).toContain('StrCpy $1 "--recover-companion-browser"');
+    expect(installer).toContain('StrCpy $1 "--background --preserve-chatgpt-tabs"');
     expect(installer).toContain('StrCpy $1 ""');
     expect(installer).not.toContain('--connect-on-start');
     // A silent install run from inside ParadigmEve force-closes its own caller. The installer must
@@ -323,8 +323,11 @@ describe('cross-platform packaging targets', () => {
     expect(installer).not.toMatch(/(?:no-sandbox|disable-gpu-sandbox)/i);
     expect(selfReinstall).toContain('[int]$RetrySeconds = 30');
     expect(selfReinstall).toContain('[int]$RecoverySeconds = 120');
-    expect(selfReinstall).toContain("@('--connect-on-start', '--recover-companion-browser')");
-    expect(selfReinstall).not.toContain("@('--background', '--connect-on-start', '--recover-companion-browser')");
+    expect(selfReinstall).toContain('[switch]$SilentNoFocus');
+    expect(selfReinstall).toContain("Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -WindowStyle Hidden");
+    expect(selfReinstall).toContain('if ($SilentNoFocus) {');
+    expect(selfReinstall).toContain("@('--background', '--connect-on-start', '--preserve-chatgpt-tabs')");
+    expect(selfReinstall).not.toContain("@('--connect-on-start', '--recover-companion-browser')");
     expect(selfReinstall).toContain('/recovery');
     expect(selfReinstall).toContain('$recovery.ready -eq $true');
     expect(selfReinstall).toContain("$snapshot -match 'Installation Complete'");

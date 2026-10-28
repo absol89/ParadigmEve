@@ -7,6 +7,7 @@ import {
   normalizeLocalAgentEndpoint,
   resetLocalAgentRuntimeForTests,
   revokeLocalAgentExecutionPrincipal,
+  LocalAgentAuthorizationRequired,
   runLocalAgent,
   type LocalAgentModelRuntime,
   type LocalAgentTool
@@ -59,6 +60,19 @@ describe('local agent execution principal', () => {
 });
 
 describe('local agent tool loop', () => {
+  it('stops at an explicit approval requirement without model retry or inferred human denial', async () => {
+    const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: 'run-a', agentId: 'worker-1' });
+    const invoke = vi.fn(async () => ({ content: 'APPROVAL_REQUIRED: approval must come from Prime', isError: true }));
+    const complete = vi.fn<LocalAgentModelRuntime['complete']>()
+      .mockResolvedValue({ type: 'tool_calls', calls: [{ id: 'permission-1', name: 'read', arguments: { path: '/a' } }] });
+    await expect(runLocalAgent({
+      backend: 'ollama', principal, endpoint: 'http://localhost:11434/v1', model: 'qwen3',
+      system: 'bounded', task: 'work', tools: [tool(invoke)], runtime: { complete }
+    })).rejects.toBeInstanceOf(LocalAgentAuthorizationRequired);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the principal out of model input and uses it only for app-owned tool invocation', async () => {
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: 'run-a', agentId: 'worker-1' });
     const invoke = vi.fn(async (_args: unknown, seen: unknown) => ({ content: seen === principal ? 'file text' : 'wrong principal' }));

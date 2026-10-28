@@ -167,6 +167,7 @@ export interface WorkerExecutionReceipt {
  */
 export type CallAttribution =
   | 'request_id'
+  | 'installation_prime'
   | 'unattributed'
   | 'superseded'
   | 'turn'
@@ -195,6 +196,7 @@ export type CallAttribution =
  */
 export const ATTRIBUTION_LABELS: Record<CallAttribution, string> = {
   request_id: 'exact request id',
+  installation_prime: 'Prime fallback (user enabled)',
   unattributed: 'request id not resolved',
   superseded: 'retired conversation',
   agent: 'agent key',
@@ -214,10 +216,10 @@ export interface ToolCallRecord {
   attribution: CallAttribution;
   /** Normalized inbound HTTP x-request-id, retained for forensic correlation. */
   requestId: string | null;
-  /** Conversation proven by that request id, or null when ownership was unresolved. */
+  /** Execution owner; installation_prime explicitly denotes user-authorized fallback, not page proof. */
   conversationId: string | null;
   /** Deterministic placement outcome for current, unresolved, or deliberately retired callers. */
-  attributionMethod: 'request_id' | 'unattributed' | 'superseded';
+  attributionMethod: 'request_id' | 'unattributed' | 'superseded' | 'installation_prime';
   /** Exact arguments as JSON. Cut inline past the cap, with the whole text in an asset. */
   args: StoredText;
   result: StoredText;

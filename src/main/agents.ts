@@ -17,11 +17,14 @@ import { randomUUID } from 'node:crypto';
 import type { AgentInfo, AgentMessage, AgentState, ReasoningEffort, SwarmState } from '../shared/session.js';
 import { HEARTBEAT_REVIEW_WORKER_MARKER, REASONING_EFFORTS, isReasoningEffort } from '../shared/session.js';
 import { AGENT_BACKEND_IDS, agentBackendExecutionStatus, type AgentBackendId } from '../shared/agent-backends.js';
+import { BUILD_FLAVOR } from '../shared/build-flavor.js';
 import { getConfig } from './config.js';
+import { currentAgentConversationId } from './agent-identity.js';
 import { getChatModels } from './chat-models.js';
 import { CHATGPT_SETTINGS_MODELS, CHATGPT_SOL_MODEL_ID, configuredChatModelRequest, type ChatModelOption } from '../shared/chat-models.js';
 import { DEFAULT_CORE_CONNECTOR_NAME } from '../shared/types.js';
 import { logInfo, logWarn } from './logger.js';
+import { debugReliabilityEvent } from './reliability-debug-events.js';
 import { inheritWorkspace, releasePrimeWorkspace, bindAgentWorkspace } from './workspace.js';
 import { issueLocalAgentExecutionPrincipal, localAgentExecutionPrincipalIssued, revokeLocalAgentExecutionPrincipal, type LocalAgentBackendId, type LocalAgentExecutionPrincipal } from './local-agent-runtime.js';
 import { knownCloudModel, resolveOllamaEndpoint } from './ollama-client.js';
@@ -569,6 +572,7 @@ export function pendingWorkerSpawns(): WorkerSpawn[] {
     .filter(
       (agent) =>
         agent.info.role === 'worker' && agent.info.state === 'invited' && agent.backend !== null && !unpublishedAgents.has(agent)
+        && heartbeatWorkerDeliveryAllowed(agent)
     )
     .map((agent) => ({ runId: run.runId, primeConversationId: run.primeConversationId, id: agent.info.id, task: agent.info.task,
       backend: agent.backend as AgentBackendId, model: agent.info.model, reasoningEffort: agent.info.reasoningEffort })));
@@ -706,6 +710,8 @@ export function requestPrimeIdentityRecovery(requestId: string): void {
  * What a caller can offer as proof of who it is. No field is ever an agent id.
  */
 export interface Caller {
+  /** Explicit installation execution owner, distinct from observed worker identity. */
+  attributionSource?: 'installation_prime';
   /**
    * The ChatGPT conversation this call was proven to come from, and the only identity any
    * agent has.
@@ -955,6 +961,32 @@ export function statusForCaller(caller: Caller): CallerSwarmStatus {
   throw new AgentError(
     'No sub-agent run or worker history belongs to this conversation. Call agents action=spawn to start one.'
   );
+}
+
+/** Account-authorized status of the installation's existing Prime family, not caller identity. */
+export function statusForSharedEvePrime(ownerConversationId: string): CallerSwarmStatus {
+  requireSharedEvePrime(ownerConversationId);
+  return statusForCaller({ conversationId: ownerConversationId });
+}
+
+/** An opted-in account operator can add workers to Eve's retained family without page proof. */
+export function stageSharedEvePrimeSpawn(
+  ownerConversationId: string,
+  workers: SpawnInput['workers'],
+  context: string | null
+): StagedSpawn {
+  requireSharedEvePrime(ownerConversationId, true);
+  return stageSpawn({ caller: { conversationId: ownerConversationId }, workers, context });
+}
+
+function requireSharedEvePrime(ownerConversationId: string, allowNewFamily = false): void {
+  const family = primeForOwnedConversation(ownerConversationId);
+  if (!getConfig().multiAgent.allowUnattributedCalls ||
+      !ownerConversationId ||
+      currentAgentConversationId() !== ownerConversationId ||
+      (family !== ownerConversationId && !(allowNewFamily && family === null))) {
+    throw new IdentityLostError();
+  }
 }
 
 /**
@@ -1553,6 +1585,16 @@ const heartbeatReviewEpochMarker = (key: string): string => `[[PARADIGMEVE-HEART
 const heartbeatReviewAgent = (agent: Agent): boolean =>
   agent.info.role === 'worker' && agent.info.maintenanceKind === 'heartbeat-review';
 
+/** A mode change is an immediate transport fence, including across bridge restart.
+ * A parked legacy heartbeat worker remains historical evidence, not a new browser task. */
+function heartbeatWorkerDeliveryAllowed(agent: Agent): boolean {
+  return !heartbeatReviewAgent(agent) || getConfig().multiAgent.heartbeatMode === 'auditable-chat';
+}
+export function heartbeatWorkerDeliveryAllowedFor(id: string, runId?: string): boolean {
+  const agent = scopedRun(runId)?.agents.get(id);
+  return Boolean(agent && heartbeatWorkerDeliveryAllowed(agent));
+}
+
 function heartbeatReviewWorker(owner: Run | DormantRun | null | undefined): Agent | null {
   if (!owner) return null;
   return [...owner.agents.values()].find((agent) =>
@@ -1636,6 +1678,10 @@ export interface HeartbeatReviewDispatchResult {
  */
 /** A heartbeat worker with no tool call or turn end for this long is not reviewing anything. */
 export const HEARTBEAT_WORKER_STALE_MS = 10 * 60_000;
+/** Missing first worker progress is diagnostic after one minute, not another wake/send authority. */
+export const HEARTBEAT_FIRST_PROGRESS_MS = 60_000;
+/** An epoch cannot be called healthy just because its model or provider call is still pending. */
+export const HEARTBEAT_REVIEW_BUDGET_MS = 22 * 60_000;
 /**
  * A worker that ended its turn for an epoch without a receipt is not handed that same epoch again
  * before the next heartbeat cadence. Without this, an open debt (re-enqueued about once a minute)
@@ -1644,7 +1690,51 @@ export const HEARTBEAT_WORKER_STALE_MS = 10 * 60_000;
  */
 export const HEARTBEAT_REHAND_MS = 22 * 60_000;
 /** When each heartbeat worker was last handed which epoch: a fresh revival counts as work, not silence. */
-const heartbeatHanded = new Map<string, { at: number; key: string }>();
+const heartbeatHanded = new Map<string, {
+  at: number; key: string; firstProgressObserved?: boolean; firstProgressWarned?: boolean; budgetWarned?: boolean;
+}>();
+
+/** Pure status for diagnostics; it neither changes review debt nor reissues a worker message. */
+export function heartbeatProgressStatus(
+  handedAt: number,
+  lastWorkAt: number | null,
+  now: number
+): 'awaiting-first-progress' | 'first-progress-missing' | 'progress-observed' | 'budget-exceeded' {
+  if (now - handedAt >= HEARTBEAT_REVIEW_BUDGET_MS) return 'budget-exceeded';
+  if (lastWorkAt !== null && lastWorkAt > handedAt) return 'progress-observed';
+  return now - handedAt >= HEARTBEAT_FIRST_PROGRESS_MS ? 'first-progress-missing' : 'awaiting-first-progress';
+}
+
+async function observeHeartbeatReviewProgress(
+  workerId: string,
+  conversationId: string | null,
+  key: string,
+  lastWorkAt: (conversationId: string) => Promise<number | null>
+): Promise<void> {
+  const handoff = heartbeatHanded.get(workerId);
+  if (!handoff || handoff.key !== key) return;
+  const observedAt = conversationId ? await lastWorkAt(conversationId) : null;
+  if (observedAt !== null && observedAt > handoff.at) handoff.firstProgressObserved = true;
+  const status = heartbeatProgressStatus(handoff.at, handoff.firstProgressObserved ? handoff.at + 1 : null, Date.now());
+  if (status === 'first-progress-missing' && !handoff.firstProgressWarned) {
+    handoff.firstProgressWarned = true;
+    debugReliabilityEvent('worker-first-progress-missing', {
+      owner: workerId, epoch: key, elapsedMs: Date.now() - handoff.at, warning: true
+    });
+    logWarn(`multi-agent: heartbeat FIRST_PROGRESS_MISSING worker=${workerId} epoch=${key} ` +
+      `elapsed_ms=${Date.now() - handoff.at} conversation=${conversationId ? 'bound' : 'unbound'}; ` +
+      'no tool/turn progress observed. This is a diagnostic, not authority to retry or open a tab.');
+  }
+  if (status === 'budget-exceeded' && !handoff.budgetWarned) {
+    handoff.budgetWarned = true;
+    debugReliabilityEvent('worker-review-budget-exceeded', {
+      owner: workerId, epoch: key, elapsedMs: Date.now() - handoff.at, warning: true
+    });
+    logWarn(`multi-agent: heartbeat REVIEW_BUDGET_EXCEEDED worker=${workerId} epoch=${key} ` +
+      `elapsed_ms=${Date.now() - handoff.at}; exact review debt remains pending. ` +
+      'Do not infer completion or replay an uncertain worker/browser send.');
+  }
+}
 
 export async function dispatchHeartbeatReviewWorker(
   primeConversationId: string,
@@ -1664,6 +1754,16 @@ export async function dispatchHeartbeatReviewWorker(
     `Do not execute or delegate user work, send messages, edit/install, drive the browser, or change any other Plan. ` +
     `Prime alone owns execution; finish after the exact heartbeat lifecycle receipt. ` +
     `If you are blocked before that receipt, report the blocker to Prime and finish anyway: the review stays pending for the next heartbeat.`;
+  // The first bootstrap teaches a dedicated worker the full review contract. Repeating it
+  // every 22 minutes filled that worker's ChatGPT history and the user's local archive with
+  // near-identical instructions. A worker with an exact retained conversation already has
+  // that contract; its next authored message only needs the new epoch and the non-negotiable
+  // read-only boundary. Keep the complete task in broker state for durable key ownership.
+  const followup = `${HEARTBEAT_REVIEW_WORKER_MARKER}\n${marker}\n` +
+    `Review this new heartbeat epoch using your standing read-only review instructions. ` +
+    `First verify this exact key in /appdata/state/chat-review-heartbeat.json; if it differs, stop. ` +
+    `Review only its bounded requests and Plan batch, acknowledge each exact Plan revision, ` +
+    `then call chat_review_complete with this key. Do not execute, delegate, edit, send, or use the browser.`;
   let owner = runForConversation(primeConversationId);
   // A heartbeat worker can stay `active` after its chat stopped: c19 refused its reads and its
   // finish, its turn ended, and nothing ever slept it. Every later epoch was then queued to that
@@ -1685,6 +1785,7 @@ export async function dispatchHeartbeatReviewWorker(
   if (existing) {
     const alreadyRunningThisEpoch = occupiesSlot(existing.info.state) && existing.info.task === task;
     if (alreadyRunningThisEpoch) {
+      await observeHeartbeatReviewProgress(existing.info.id, existing.info.conversationId, key, lastWorkAt);
       const runId = owner?.runId;
       if (!runId) throw new AgentError('Heartbeat review worker has no durable run owner.');
       return { workerId: existing.info.id, runId, reused: true };
@@ -1704,7 +1805,10 @@ export async function dispatchHeartbeatReviewWorker(
     // Broker delivery may acknowledge/remove the queue row on the worker's first read-only call;
     // later lifecycle calls in the same turn must still prove this exact key belongs to this worker.
     existing.info.task = task;
-    const staged = stageMessages({ conversationId: primeConversationId }, [{ to: existing.info.id, text: task }]);
+    const staged = stageMessages({ conversationId: primeConversationId }, [{
+      to: existing.info.id,
+      text: existing.info.conversationId ? followup : task
+    }]);
     let accepted = false;
     try {
       if (!(await persistCriticalSwarmNow())) throw new AgentError('Heartbeat review could not cross its durable worker-message barrier.');
@@ -1750,6 +1854,7 @@ export async function dispatchHeartbeatReviewWorker(
     }
   }
   requestWorkerBootstraps(staged.created.map((worker) => worker.id), staged.runId);
+  heartbeatHanded.set(staged.created[0]!.id, { at: Date.now(), key });
   return { workerId: staged.created[0]!.id, runId: staged.runId, reused: false };
 }
 
@@ -1769,6 +1874,7 @@ export function requestWorkerBootstraps(ids: readonly string[], runId?: string):
       (agent) =>
         agent.info.role === 'worker' &&
         agent.info.state === 'invited' &&
+        heartbeatWorkerDeliveryAllowed(agent) &&
         agent.backend !== null &&
         !unpublishedAgents.has(agent) &&
         wanted.has(agent.info.id)
@@ -1791,11 +1897,42 @@ function requireSpawnExecutionBackend(role: 'orchestrator' | 'worker', backend: 
   );
 }
 
-function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker: AgentBackendId } {
-  const { orchestrator, worker } = getConfig().execution;
+function requireSpawnExecutionBackends(internalMaintenance = false): { orchestrator: AgentBackendId; worker: AgentBackendId } {
+  const config = getConfig();
+  const orchestrator = config.execution.orchestrator;
+  // Legacy installations preserve their already-selected backend. The new explicit switch
+  // affects only newly admitted workers; every admitted worker freezes its own backend/model.
+  let worker: AgentBackendId = config.execution.worker;
+  // Heartbeat has its OWN user-selected mode, distinct from normal worker mode.
+  // An app-owned auditable review uses the existing gpt-chat transport and the
+  // existing read-only maintenance principal, never the normal worker picker.
+  if (internalMaintenance) worker = 'gpt-chat';
+  else if (config.multiAgent.workerRuntime === 'chatgpt') worker = 'gpt-chat';
+  if (!internalMaintenance && config.multiAgent.workerRuntime === 'native') {
+    throw new AgentError(
+      'NATIVE_SUBAGENTS_REQUIRE_WORK_PARENT: Native subagents can be started only by an active ChatGPT Work parent. ' +
+        'ParadigmEve cannot independently launch or verify one as an unattended worker. No worker was created and no fallback occurred.'
+    );
+  }
+  if (!internalMaintenance && (config.multiAgent.workerRuntime === 'openrouter' || config.multiAgent.workerRuntime === 'ollama')) {
+    if (BUILD_FLAVOR !== 'debug') {
+      throw new AgentError('EXPERIMENTAL_WORKER_UNAVAILABLE: OpenRouter and Ollama worker modes are available only in debug builds. No worker was created.');
+    }
+    worker = config.multiAgent.workerRuntime;
+  }
+  if (!internalMaintenance && config.multiAgent.workerRuntime === 'api') {
+    if (BUILD_FLAVOR !== 'debug') {
+      throw new AgentError('EXPERIMENTAL_WORKER_UNAVAILABLE: the new API-worker experiment is available only in debug builds.');
+    }
+    const experiment = config.multiAgent.experimentalApiWorkers;
+    if (!experiment?.enabled || !experiment.provider || !experiment.model?.trim()) {
+      throw new AgentError('EXPERIMENTAL_WORKER_NOT_CONFIGURED: select and enable an API provider and exact model in debug settings before spawning. No worker was created.');
+    }
+    worker = experiment.provider;
+  }
   requireSpawnExecutionBackend('orchestrator', orchestrator);
   requireSpawnExecutionBackend('worker', worker);
-  if (worker === 'openrouter' && !getConfig().agentRuntime.openrouter?.model.trim()) {
+  if (worker === 'openrouter' && !configuredWorkerModel(worker)) {
     throw new AgentError(
       'AGENT_BACKEND_UNAVAILABLE: OpenRouter is selected as the worker backend, but no OpenRouter model is configured. ' +
         'Set the exact model id (for example stepfun/step-5-preview) in Agent execution settings before spawning workers. No run or worker was created.'
@@ -1809,7 +1946,7 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
           'Leave it blank for the local daemon, or configure an HTTPS endpoint (HTTP only on loopback), before spawning workers. No run or worker was created.'
       );
     }
-    if (!settings.model.trim()) {
+    if (!configuredWorkerModel(worker)) {
       throw new AgentError(
         'AGENT_BACKEND_UNAVAILABLE: Ollama is selected as the worker backend, but no Ollama model is configured. ' +
           'Choose a model before spawning workers. No run or worker was created.'
@@ -1817,6 +1954,15 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
     }
   }
   return { orchestrator, worker };
+}
+
+function configuredWorkerModel(backend: 'ollama' | 'openrouter'): string {
+  const config = getConfig();
+  if ((config.multiAgent.workerRuntime === 'api' || config.multiAgent.workerRuntime === backend) &&
+      config.multiAgent.experimentalApiWorkers?.provider === backend) {
+    return config.multiAgent.experimentalApiWorkers.model?.trim() ?? '';
+  }
+  return backend === 'ollama' ? config.agentRuntime.ollama.model.trim() : config.agentRuntime.openrouter?.model.trim() ?? '';
 }
 
 /**
@@ -1835,14 +1981,14 @@ function requireSpawnExecutionBackends(): { orchestrator: AgentBackendId; worker
  */
 export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResult {
   if (!options.internalMaintenance) requireEnabled();
-  const execution = requireSpawnExecutionBackends();
+  const execution = requireSpawnExecutionBackends(options.internalMaintenance === true);
   let run = runForConversation(input.caller.conversationId);
   if (run && activeSpawnStages.has(run)) {
     throw new AgentError(
       'SPAWN_IN_PROGRESS: another worker spawn is still crossing its durable acceptance barrier. Retry this spawn after that call finishes.'
     );
   }
-  const capacityKind = workerCapacityClass(execution.worker, execution.worker === 'ollama' ? getConfig().agentRuntime.ollama.model : null);
+  const capacityKind = workerCapacityClass(execution.worker, execution.worker === 'ollama' ? configuredWorkerModel('ollama') : null);
   const max = workerLimitForClass(capacityKind);
   if (input.workers.length === 0) throw new AgentError('At least one worker is required');
 
@@ -1880,7 +2026,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
       }
       // Freeze the exact configured Ollama model on admission. Capacity, provenance and the
       // executor must not change underneath an already-created worker when Settings changes.
-      model = getConfig().agentRuntime.ollama.model.trim() || null;
+      model = configuredWorkerModel('ollama') || null;
     } else if (execution.worker === 'openrouter') {
       if (worker.model !== undefined || worker.reasoning_effort !== undefined) {
         throw new AgentError(
@@ -1889,7 +2035,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
         );
       }
       // Frozen on admission, like Ollama: Settings changes never move a created worker.
-      model = getConfig().agentRuntime.openrouter?.model.trim() || null;
+      model = configuredWorkerModel('openrouter') || null;
     }
     // Composed once, here, and stored as *the* task. Everything downstream — the bootstrap
     // the browser types, the repeated-spawn match, the status table, the snapshot — then
@@ -1901,10 +2047,12 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   const conversationId = input.caller.conversationId ?? null;
   if (!conversationId) {
     throw new AgentError(
-      'UNIDENTIFIED_CALLER: this app could not prove which ChatGPT conversation this call came from, so it will not ' +
-        `make this chat the ${configuredAgentName()} conversation for a worker run. No workers were created. The paired browser extension has to be ` +
-        'connected and this conversation has to be showing its connector activity; wait a moment and call ' +
-        'agents action=spawn again.'
+      'NO_EXACT_CHAT_FOR_WORKER_FAMILY: spawning a new chat-owned worker family requires proof of the originating ' +
+        `ChatGPT conversation. This request has no such proof, so it cannot make an arbitrary chat the ${configuredAgentName()} Prime. ` +
+        'No workers were created. Authenticated shared-Eve authority, when enabled in Settings, still permits eligible ' +
+        'self-contained operations and explicitly addressed actions within an existing retained family; it does not ' +
+        'identify this caller as a particular chat. To create a new family, issue spawn from the actual paired ' +
+        'ChatGPT conversation after its exact identity is observed.'
     );
   }
 
@@ -2226,14 +2374,61 @@ export function stageMessages(
   }
 }
 
+/**
+ * Explicit shared-Eve operator route. The connector proof is checked by the MCP owner; this
+ * broker fence verifies the user's opt-in and exact installed Prime family again. A shared
+ * operator is NEVER a ChatGPT conversation or worker, and durable message provenance says so.
+ */
+export function stageSharedEvePrimeMessages(
+  ownerConversationId: string,
+  items: ReadonlyArray<{ to: string; text: string }>
+): StagedAgentMessages {
+  requireSharedEvePrime(ownerConversationId);
+  if (!items.length || items.length > MAX_BATCH_MESSAGES) throw new AgentError('Invalid shared Eve message batch');
+  const caller = { conversationId: ownerConversationId };
+  let run = runForCaller(caller);
+  let resumedDormant = false;
+  if (!run) {
+    const dormant = dormantRunForPrime(ownerConversationId);
+    if (dormant) {
+      if (!(run = reactivateDormantRun(dormant))) {
+        throw new AgentError('PRIME_TRANSFER_IN_PROGRESS: worker family is moving; no message was queued.');
+      }
+      resumedDormant = true;
+    }
+  }
+  try {
+    return stageMessagesActive(caller, items, resumedDormant, 'shared-eve');
+  } catch (error) {
+    if (resumedDormant) parkRun(run, 'a shared Eve message was rejected before a worker was woken');
+    throw error;
+  }
+}
+
 function stageMessagesActive(
   caller: Caller,
   items: ReadonlyArray<{ to: string; text: string }>,
-  resumedDormant: boolean
+  resumedDormant: boolean,
+  senderLabel?: 'shared-eve'
 ): StagedAgentMessages {
   const run = runForCaller(caller);
   const from = requireMember(caller);
-  if (run && (activeSpawnStages.has(run) || run.transfer)) throw new AgentError('OWNER_TRANSITION_IN_PROGRESS: wait for this run spawn or owner transfer to settle.');
+  if (run && activeSpawnStages.has(run)) {
+    throw new AgentError('OWNER_TRANSITION_IN_PROGRESS: wait for this run spawn or owner transfer to settle.');
+  }
+  // Compact & Resume moves the Prime binding, not the worker inboxes or Prime's durable queue.
+  // A worker reporting to Prime during that handover is therefore safe: the queued report moves
+  // with the same family and is exactly what Prime needs after the successor takes ownership.
+  // Keep every other route fenced while the transfer is open so the old Prime cannot author new
+  // worker work and no sleeping worker can be revived against an owner that is changing chats.
+  const reportDuringPrimeTransfer = Boolean(
+    run?.transfer &&
+    from.info.role === 'worker' &&
+    items.every((item) => item.to?.trim() === PRIME_ID)
+  );
+  if (run?.transfer && !reportDuringPrimeTransfer) {
+    throw new AgentError('OWNER_TRANSITION_IN_PROGRESS: wait for this run spawn or owner transfer to settle.');
+  }
   if (activeFinishStages.has(from)) {
     throw new AgentError(
       `FINISH_IN_PROGRESS: ${from.info.id} is still crossing its durable finish barrier and cannot send another message yet.`
@@ -2274,7 +2469,9 @@ function stageMessagesActive(
         `FINISH_IN_PROGRESS: ${toId} is still crossing its durable finish barrier${where}. Retry after that finish call settles.`
       );
     }
-    assertRoute(from, to);
+    // An opted-in account operator can explicitly report to Prime without pretending
+    // to be a particular worker. Ordinary Prime self-messaging remains an error.
+    if (!(senderLabel === 'shared-eve' && to.info.id === PRIME_ID)) assertRoute(from, to);
     if (isOver(to.info.state)) {
       throw new AgentError(
         to.info.state === 'failed'
@@ -2319,7 +2516,7 @@ function stageMessagesActive(
     const already = perRecipient.get(to.info.id) ?? 0;
     assertRoom(to, already + 1);
     perRecipient.set(to.info.id, already + 1);
-    planned.push({ to, message: newMessage(from.info.id, to.info.id, trimmed) });
+    planned.push({ to, message: newMessage(senderLabel ?? from.info.id, to.info.id, trimmed) });
   }
 
   for (const { to, message } of planned) {
@@ -2404,6 +2601,7 @@ export function offerMessages(id: string, onFinish = false, runId?: string): Age
 }
 
 function offerAgentMessages(agent: Agent, onFinish = false): AgentMessage[] {
+  if (!heartbeatWorkerDeliveryAllowed(agent)) return [];
   // Once the browser owns a wake, its queued text has exactly one delivery path: the real user
   // message the content script is about to submit. Letting an MCP result carry the same inbox
   // while `waking` would duplicate that instruction before the browser ACK. And after the ACK,
@@ -2834,6 +3032,25 @@ export function stageFinishAgent(caller: Caller, result: string): StagedFinish {
 }
 
 /**
+ * Explicitly addressed shared-Eve operator finish. The worker id is a routing target, not
+ * evidence that the worker issued the request. Preserve this distinction in the report.
+ */
+export function stageSharedEveWorkerFinish(ownerConversationId: string, workerId: string, result: string): StagedFinish {
+  requireSharedEvePrime(ownerConversationId);
+  const run = runForCaller({ conversationId: ownerConversationId });
+  const target = run?.agents.get(workerId);
+  if (!target || target.info.role !== 'worker' || heartbeatReviewAgent(target)) {
+    throw new AgentError('SHARED_EVE_WORKER_TARGET_REQUIRED: name a non-maintenance worker in Eve\'s current family. No worker was finished.');
+  }
+  const staged = stageFinish(target, result);
+  if (staged.report) {
+    staged.report.from = 'shared-eve';
+    staged.report.text = `[Shared Eve operator report for ${workerId}; caller not proven as worker] ${staged.report.text}`;
+  }
+  return staged;
+}
+
+/**
  * Finishes the calling worker. An agent can only ever finish itself.
  *
  * Finishing twice is one finish. This connector loses tool results, so a worker whose result
@@ -3120,7 +3337,7 @@ function dispatchWorkerRevivals(revivals: readonly WorkerRevival[]): void {
 export function pendingWorkerRevivals(): WorkerRevival[] {
   const out: WorkerRevival[] = [];
   for (const run of runs.values()) for (const agent of run.agents.values()) {
-    if (agent.info.state !== 'waking' || !agent.info.conversationId || !agent.backend) continue;
+    if (agent.info.state !== 'waking' || !agent.info.conversationId || !agent.backend || !heartbeatWorkerDeliveryAllowed(agent)) continue;
     const plan = planRevivalText(agent);
     out.push({
       id: agent.info.id,
@@ -3294,6 +3511,7 @@ export function stageQueuedWorkerRevivals(ids: readonly string[], runId?: string
   for (const agent of run.agents.values()) {
     if (
       agent.info.role !== 'worker' ||
+      !heartbeatWorkerDeliveryAllowed(agent) ||
       !wanted.has(agent.info.id) ||
       agent.info.state !== 'sleeping' ||
       !agent.info.revivable ||

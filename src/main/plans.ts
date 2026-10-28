@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { getConfig } from './config.js';
 import { readDurableStrict, writeDurableNow } from './durable.js';
 import { agentPlanUpdateSchema, type AgentPlanUpdate } from '../shared/agent-plan.js';
@@ -56,7 +56,11 @@ async function writeRecords(plans: PlanRecord[]): Promise<void> {
  * first-class `kind: plan` provenance is eligible; ambiguous/backfilled Plans deliberately fail
  * closed because there is no exact conversation to mutate.
  */
-async function syncOriginatingSessionPlan(plan: PlanRecord, clear = false): Promise<boolean> {
+async function syncOriginatingSessionPlan(
+  plan: PlanRecord,
+  clear = false,
+  expectedDocument?: PlanRecord
+): Promise<boolean> {
   const provenance = plan.provenance;
   if (provenance?.kind !== 'plan' || !provenance.sessionId || !provenance.conversationId) return true;
 
@@ -77,7 +81,7 @@ async function syncOriginatingSessionPlan(plan: PlanRecord, clear = false): Prom
     // source has moved on to different work, leave it alone. Use the session's current conversation
     // binding and an immediate successor revision; a concurrent newer source update then wins the
     // store fence and cleanup safely becomes a no-op rather than cancelling the archive.
-    if (!sameAgentSteps(plan, current)) return true;
+    if (!(expectedDocument ? sameAgentDocument(expectedDocument, current) : sameAgentSteps(plan, current))) return true;
     await updateSessionPlan(
       provenance.sessionId,
       currentConversationId,
@@ -92,7 +96,7 @@ async function syncOriginatingSessionPlan(plan: PlanRecord, clear = false): Prom
   // checklist is still the same checklist this first-class Plan represents. If the source has
   // genuinely moved on to different steps, fail closed and make the Plans surface refresh instead
   // of overwriting newer work.
-  if (!sameAgentSteps(plan, current)) return false;
+  if (!(expectedDocument ? sameAgentDocument(expectedDocument, current) : sameAgentSteps(plan, current))) return false;
   // Preserve the chat-side explanation/details while replacing the checklist and its statuses.
   // Text is the only shared identity available in the legacy AgentPlan schema; consume duplicate
   // text matches in order so repeated step labels remain deterministic.
@@ -314,6 +318,25 @@ export interface PlanReviewSourceExpectation {
   provenance: PlanProvenance | undefined;
 }
 
+export interface ExactEvePlanArchiveExpectation extends PlanReviewExpectation {
+  sessionId: string;
+}
+
+export type ExactEvePlanArchiveResult =
+  | 'archived'
+  | 'already-archived'
+  | 'authority-disabled'
+  | 'not-eve'
+  | 'not-ready'
+  | 'stale';
+
+export interface ReviewedPlanReconciliationExpectation extends PlanReviewExpectation {
+  itemIds: readonly string[];
+  scopeDigest: string;
+}
+
+export type ReviewedPlanReconciliationResult = 'reconciled' | 'already-reconciled' | 'stale';
+
 function samePlanProvenance(left: PlanProvenance | undefined, right: PlanProvenance | undefined): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.kind === right.kind &&
@@ -323,7 +346,22 @@ function samePlanProvenance(left: PlanProvenance | undefined, right: PlanProvena
     left.messageId === right.messageId &&
     left.toolCallId === right.toolCallId &&
     left.sourcePlanId === right.sourcePlanId &&
+    left.sourceItemId === right.sourceItemId &&
+    left.sourceRevision === right.sourceRevision &&
     left.label === right.label;
+}
+
+/**
+ * Stable fingerprint for the part of a Plan a source-backed completion decision depends on.
+ * Status is deliberately excluded: completing exact reviewed items is the effect this digest must
+ * recognize after a crash/retry. Any scope/identity/detail/claim/source change invalidates it.
+ */
+export function planReviewScopeDigest(plan: Pick<PlanRecord, 'title' | 'items'>): string {
+  const scope = [plan.title, plan.items.map(item => {
+    const { status: _status, ...rest } = item;
+    return rest;
+  })];
+  return createHash('sha256').update(JSON.stringify(scope)).digest('hex');
 }
 
 function planAudience(
@@ -884,10 +922,57 @@ export function completePlanItemsForReview(
       items: current.items.map(item => completed.has(item.id) ? { ...item, status: 'done' as const } : item),
       updatedAt: nextTimestamp(current.updatedAt)
     };
+    if (!(await syncOriginatingSessionPlan(updated, false, current))) {
+      throw new Error('Plan source changed; refresh before editing it again');
+    }
     const next = [...plans];
     next[index] = updated;
     await writeRecords(next);
     return updated;
+  });
+}
+
+/**
+ * Completes one source-reviewed stale checklist obligation with crash-safe idempotency.
+ * A retry may observe the requested items already done on a newer revision, but only while the
+ * non-status Plan scope and full provenance still match the reviewed source.
+ */
+export function reconcileReviewedPlanItems(
+  expectation: ReviewedPlanReconciliationExpectation
+): Promise<ReviewedPlanReconciliationResult> {
+  return queueMutation(async () => {
+    const parsed = parsedReviewExpectation(expectation);
+    if (!/^[0-9a-f]{64}$/i.test(expectation.scopeDigest)) throw new Error('Plan review scope digest is invalid');
+    if (!Array.isArray(expectation.itemIds) || expectation.itemIds.length === 0 || expectation.itemIds.length > 100) {
+      throw new Error('Reviewed Plan item ids are invalid');
+    }
+    const itemIds = expectation.itemIds.map(id => planIdSchema.parse(id));
+    if (new Set(itemIds).size !== itemIds.length) throw new Error('Reviewed Plan item ids must be unique');
+
+    const plans = await readRecords();
+    const index = plans.findIndex(plan => plan.id === parsed.planId);
+    if (index < 0) return 'stale';
+    const current = plans[index]!;
+    if (!samePlanProvenance(current.provenance, parsed.provenance)) return 'stale';
+    if (planReviewScopeDigest(current) !== expectation.scopeDigest) return 'stale';
+    const items = new Map(current.items.map(item => [item.id, item]));
+    if (itemIds.some(id => !items.has(id))) return 'stale';
+    const alreadyDone = itemIds.every(id => items.get(id)!.status === 'done');
+    if (current.archivedAt !== null) return alreadyDone ? 'already-reconciled' : 'stale';
+    if (current.updatedAt !== parsed.updatedAt) return alreadyDone ? 'already-reconciled' : 'stale';
+    if (alreadyDone) return 'already-reconciled';
+
+    const completed = new Set(itemIds);
+    const updated: PlanRecord = {
+      ...current,
+      items: current.items.map(item => completed.has(item.id) ? { ...item, status: 'done' as const } : item),
+      updatedAt: nextTimestamp(current.updatedAt)
+    };
+    if (!(await syncOriginatingSessionPlan(updated, false, current))) return 'stale';
+    const next = [...plans];
+    next[index] = updated;
+    await writeRecords(next);
+    return 'reconciled';
   });
 }
 
@@ -1070,7 +1155,7 @@ export async function cancelPlan(id: string): Promise<PlanView> {
     const at = nextTimestamp(current.updatedAt);
     const kept = await withLegacyAgentRevision(current, bySession.get(current.provenance?.sessionId ?? '')?.title);
     const cancelled: PlanRecord = { ...kept, archivedAt: at, cancelledAt: at, updatedAt: at };
-    if (!(await syncOriginatingSessionPlan(cancelled, true))) throw new Error('Plan source changed; refresh before editing it again');
+    if (!(await syncOriginatingSessionPlan(cancelled, true, current))) throw new Error('Plan source changed; refresh before editing it again');
     const next = [...plans];
     next[index] = cancelled;
     await writeRecords(next);
@@ -1100,11 +1185,56 @@ export async function archivePlan(id: string): Promise<PlanView> {
     const archivedAt = nextTimestamp(current.updatedAt);
     const kept = await withLegacyAgentRevision(current, bySession.get(current.provenance?.sessionId ?? '')?.title);
     const archived: PlanRecord = { ...kept, items, archivedAt, updatedAt: archivedAt };
-    if (!(await syncOriginatingSessionPlan(archived, true))) throw new Error('Plan source changed; refresh before editing it again');
+    if (!(await syncOriginatingSessionPlan(archived, true, current))) throw new Error('Plan source changed; refresh before editing it again');
     const next = [...plans];
     next[index] = archived;
     await writeRecords(next);
     return projectPlan(archived, audience);
+  });
+}
+
+/**
+ * Archives one exact reviewed/projected Eve Activity Plan with optimistic revision/source fencing.
+ * The helper owns the whole mutation so callers never need a read-then-generic-archive race.
+ */
+export function archiveExactReadyEvePlan(
+  expectation: ExactEvePlanArchiveExpectation
+): Promise<ExactEvePlanArchiveResult> {
+  return queueMutation(async () => {
+    const parsed = parsedReviewExpectation(expectation);
+    if (!expectation.sessionId || expectation.sessionId.length > 160) throw new Error('Plan source session is invalid');
+    const plans = await readRecords();
+    const index = plans.findIndex(plan => plan.id === parsed.planId);
+    if (index < 0) return 'stale';
+    const current = plans[index]!;
+    if (current.provenance?.sessionId !== expectation.sessionId ||
+        !samePlanProvenance(current.provenance, parsed.provenance)) return 'stale';
+
+    const sessions = await indexedSessions();
+    const bySession = new Map(sessions.map(session => [session.id, session]));
+    const audience = planAudience(current, bySession);
+    if (audience !== 'eve') return 'not-eve';
+    // A matching authoritative archive is a terminal idempotent success even though updatedAt
+    // necessarily advanced when it was archived.
+    if (current.archivedAt !== null) return 'already-archived';
+    if (current.updatedAt !== parsed.updatedAt) return 'stale';
+    if (!readyFromRealWork(current, audience)) return 'not-ready';
+    // Re-read user authority inside the serialized owner immediately before the automatic effect.
+    if (getConfig().eveAuthority?.archiveCompletedWork !== true) return 'authority-disabled';
+
+    const items = current.items.map(item =>
+      item.status !== 'done' && legacyPrimeHandoffItem(item.text)
+        ? { ...item, status: 'done' as const }
+        : item
+    );
+    const archivedAt = nextTimestamp(current.updatedAt);
+    const kept = await withLegacyAgentRevision(current, bySession.get(current.provenance?.sessionId ?? '')?.title);
+    const archived: PlanRecord = { ...kept, items, archivedAt, updatedAt: archivedAt };
+    if (!(await syncOriginatingSessionPlan(archived, true, current))) return 'stale';
+    const next = [...plans];
+    next[index] = archived;
+    await writeRecords(next);
+    return 'archived';
   });
 }
 

@@ -18,6 +18,8 @@
 import { promises as fs, statSync, writeFileSync } from 'node:fs';
 import type { LogEntry } from '../shared/types.js';
 import { currentAgent } from './mcp/call-context.js';
+import { BUILD_FLAVOR } from '../shared/build-flavor.js';
+import { classifyReliabilityLog } from './reliability-debug.js';
 
 const MAX_ENTRIES = 500;
 /** One rotation keeps the previous file, so the last two of these are always on disk. */
@@ -337,7 +339,9 @@ export function formatLogAsJson(): string {
     entries.map((e) => ({
       time: new Date(e.time).toISOString(),
       level: e.level,
-      message: e.message
+      message: e.message,
+      ...(BUILD_FLAVOR === 'debug' && classifyReliabilityLog(e.message)
+        ? { reliability: classifyReliabilityLog(e.message) } : {})
     })),
     null,
     2

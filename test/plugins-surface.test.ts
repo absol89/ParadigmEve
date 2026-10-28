@@ -7,6 +7,7 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import { initConfigPath, loadConfig, getConfig, updateConfig, effectiveCapabilities } from '../src/main/config.js';
 import { initSessionStore, listSessions, readEvents } from '../src/main/session/store.js';
 import { initDurableStore, resetDurableForTests } from '../src/main/durable.js';
+import { restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { flushRecorder } from '../src/main/session/recorder.js';
 import { startMcpServer, type McpEndpoint } from '../src/main/mcp/server.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
@@ -53,6 +54,7 @@ async function rpc(surface: 'plugins' | 'core' | 'desktop', method: string, para
 beforeAll(async () => {
   directory = await makeTempDir('clf-plugins-surface-');
   initConfigPath(directory); await loadConfig(); initDurableStore(directory); initSessionStore(directory);
+  await restoreNativeDelegations();
   await updateConfig(config => ({ ...config, multiAgent: { ...config.multiAgent, enabled: false } }));
   endpoint = await startMcpServer(() => ({ roots: [], caps: effectiveCapabilities(getConfig()), readOnly: getConfig().readOnly }));
 });

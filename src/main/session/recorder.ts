@@ -1416,6 +1416,8 @@ export interface ToolCallInput {
   requestId?: string | null;
   /** Exact conversation already proven for this request by the dispatcher, when available. */
   conversationId?: string | null;
+  /** User-authorized execution owner; not browser/request proof. */
+  attributionSource?: 'installation_prime';
   /** Durable local session principal carried by the exact request correlation, when available. */
   sessionId?: string | null;
   /** A successful worker finish report is a hard activity boundary, not fresh work. */
@@ -1470,8 +1472,8 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
       sessionId:
         input.sessionId ??
         (correlation?.conversationId === input.conversationId ? correlation.sessionId : null),
-      attribution: 'request_id',
-      turnId: live?.turnId ?? null
+      attribution: input.attributionSource ?? 'request_id',
+      turnId: input.attributionSource ? null : live?.turnId ?? null
     };
     if (input.bind) bindAgentConversation(input.bind, input.conversationId);
     attributing = Promise.resolve(target);
@@ -1578,7 +1580,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       // Selection evidence must precede this exact turn, not merely arrive before the
       // tool result is recorded. A user changing next-turn settings cannot reprice the
       // model still executing the old turn. Unknown/historical calls stay unattributed.
-      if (selection?.conversationId === target.conversationId && live?.turnId === target.turnId &&
+      if (!input.attributionSource && selection?.conversationId === target.conversationId && live?.turnId === target.turnId &&
           live.turnStartedAt !== null && live.turnStartedAt !== undefined &&
           selection.observedAt <= live.turnStartedAt && selection.observedAt <= input.startedAt) {
         callModel = { model: selection.model, ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}) };
@@ -1624,11 +1626,11 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       requestId: input.requestId ?? null,
       conversationId: target.conversationId,
       attributionMethod:
-        target.attribution === 'superseded'
+        input.attributionSource ?? (target.attribution === 'superseded'
           ? 'superseded'
           : target.conversationId && input.requestId
             ? 'request_id'
-            : 'unattributed',
+            : 'unattributed'),
       args: await storeText(sessionId, redactCredentialText(safeJson(redactArgs(input.tool, input.args))), MAX_TOOL_ARGS_CHARS),
       result: await storeText(sessionId, resultText, MAX_TOOL_RESULT_CHARS),
       outcome: input.outcome,
@@ -1648,7 +1650,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       ...(eventAgent ? { agent: eventAgent } : {}),
       ...(target.turnId ? { turnId: target.turnId } : {})
     });
-    const reopenedTurnId = await reopenFalselyEndedTurn(
+    const reopenedTurnId = input.attributionSource ? null : await reopenFalselyEndedTurn(
       sessionId,
       target.conversationId,
       input.requestId ?? null,
@@ -1662,7 +1664,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
         target.conversationId !== null &&
         filed?.conversationId === target.conversationId &&
         !(await conversationWasSuperseded(target.conversationId));
-      attributionListener?.(
+      if (!input.attributionSource) attributionListener?.(
         target.conversationId,
         sessionId,
         currentConversation,

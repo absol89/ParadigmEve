@@ -205,9 +205,20 @@ function freshGoalDefaults(): GoalSettings {
 }
 // Two workers, not three: three concurrent workers reproducibly trips ChatGPT's rate limit
 // ("too many requests"), which strands the run rather than making it faster.
-const DEFAULT_MULTI_AGENT: MultiAgentSettings = {
+const DEFAULT_MULTI_AGENT: MultiAgentSettings & { heartbeatMode: 'off' } = {
   enabled: false,
+  heartbeatMode: 'off',
   maxWorkers: 2,
+  // Absent retains pre-experiment execution.worker. Fresh debug installations already
+  // default that canonical driver to GPT Chat; explicit selection opts into this switch.
+  experimentalApiWorkers: { enabled: false, provider: null, model: null },
+  experimentalNativeDelegation: false,
+  approvalRouting: {
+    humanFacing: 'prime_or_active_human_chat',
+    delegatedWorkers: 'eve_policy',
+    onAdditionalApproval: 'escalate_to_prime',
+    automaticRetryOfUncertainCalls: false
+  },
   allowUnattributedCalls: false,
   // Off: Goal/Loop chats are always recovered, and reopening anything else — a worker, a prime,
   // a plain chat that once called a tool — is the user's choice to make.
@@ -454,6 +465,21 @@ const configSchema = z.object({
   multiAgent: z
     .object({
       enabled: z.boolean().optional().default(DEFAULT_MULTI_AGENT.enabled),
+      heartbeatMode: z.enum(['off', 'auditable-chat', 'native-subagent']).optional().default('off'),
+      workerRuntime: z.enum(['chatgpt', 'native', 'openrouter', 'ollama', 'api']).optional(),
+      experimentalApiWorkers: z.object({
+        enabled: z.boolean().optional().default(false),
+        provider: z.enum(['openrouter', 'ollama']).nullable().optional().default(null),
+        model: z.string().trim().max(160).nullable().optional().default(null)
+      }).optional(),
+      // Missing legacy opt-in is off; explicit true must come from Settings.
+      experimentalNativeDelegation: z.boolean().optional(),
+      approvalRouting: z.object({
+        humanFacing: z.literal('prime_or_active_human_chat'),
+        delegatedWorkers: z.literal('eve_policy'),
+        onAdditionalApproval: z.literal('escalate_to_prime'),
+        automaticRetryOfUncertainCalls: z.literal(false)
+      }).optional(),
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
       maxWorkers: z.number().int().min(1).max(8).optional().default(DEFAULT_MULTI_AGENT.maxWorkers),

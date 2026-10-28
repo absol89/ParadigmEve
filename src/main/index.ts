@@ -58,6 +58,8 @@ import {
   type SwarmSnapshot
 } from './agents.js';
 import { flushDurable, initDurableStore, readDurable, readDurableStrict, writeDurableNow, writeDurableSoon } from './durable.js';
+import { restoreNativeDelegations } from './native-delegation.js';
+import { restoreRouteHold } from './tunnel/route-settle.js';
 import {
   AGENT_IDENTITY_STATE,
   currentAgentConversationId,
@@ -92,6 +94,7 @@ import {
   onChatReviewHeartbeatPublicStatus,
   readChatReviewHeartbeatPublicStatus,
   startChatReviewHeartbeatMaintenance,
+  CHAT_REVIEW_HEARTBEAT_MS,
   type ChatReviewHeartbeatPublicStatus
 } from './chat-review-heartbeat.js';
 import { configureLanPeerRuntime, publishLanPeerRuntime, stopLanPeerRuntime } from './lan-peer-runtime.js';
@@ -120,7 +123,7 @@ import { editContextMenuTemplate } from './edit-context-menu.js';
 import { startupSplashDocument } from './startup-splash.js';
 import { readUiLanguage } from './ui-language.js';
 import { openParadigmEveChromeProfile, refreshParadigmEveCompanionForMaintenance, restartParadigmEveChromeForInstallerRecovery, restoreParadigmEveBrowser, restoreParadigmEveChromeSessionForRecovery } from './setup-assistant.js';
-import { wakeBrowserUrl } from './browser-startup.js';
+import { restorePreservedCompanionBrowserAfterInstall, wakeBrowserUrl } from './browser-startup.js';
 import { recoverUnclaimedRestartWakes } from './session/input.js';
 import {
   beginRecoveryRun,
@@ -132,6 +135,8 @@ import {
 } from './session/recovery-memory.js';
 import { configureSelfMaintenanceRuntime } from './self-maintenance.js';
 import { claimNativeNotification } from './native-notification-dedupe.js';
+import { requestApprovalTabFocus, setApprovalNotifier } from './approval-wait.js';
+import { debugReliabilityEvent } from './reliability-debug-events.js';
 
 // Electron derives userData from package/name casing. Pin the Windows spelling deliberately so
 // Settings, logs and the default self-maintenance root all use AppData\Roaming\ParadigmEve.
@@ -163,6 +168,7 @@ let lastLanPeerLog = '';
 let runtimeReady = false;
 let forcedConnectPending = isForcedConnectLaunch(process.argv);
 let companionBrowserRecoveryPending = isCompanionBrowserRecoveryLaunch(process.argv);
+let preservedBrowserStartupPending = process.argv.includes('--preserve-chatgpt-tabs');
 let companionBrowserRecoveryRunning: Promise<void> | null = null;
 let companionBrowserRecoveryCompleted = false;
 let companionProtocolRepairAttempted = false;
@@ -270,6 +276,16 @@ function runCompanionBrowserRecovery(): Promise<void> {
   });
   companionBrowserRecoveryRunning = work;
   return work;
+}
+
+function runPreservedBrowserStartup(): Promise<void> {
+  preservedBrowserStartupPending = false;
+  return restorePreservedCompanionBrowserAfterInstall().then((result) => {
+    if (result === 'restored') logInfo('Absent dedicated Eve Browser restored minimized after install; existing Chrome session tabs were not replaced');
+    else if (result === 'unknown') logWarn('Dedicated Eve Browser window presence could not be proved after install; preserving browser state without opening another window');
+  }).catch((error) => {
+    logWarn(`could not restore absent Eve Browser after install: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 /**
@@ -504,6 +520,25 @@ setFinishNotifier((title, body, sessionId, turnId) => {
   notice.show();
   return true;
 });
+setApprovalNotifier((sessionId, progressId, conversationId) => {
+  if (!Notification.isSupported() || !claimNativeNotification(progressId)) return;
+  const notice = new Notification({
+    title: 'Waiting for your approval in ChatGPT',
+    body: 'Click to open Eve and select the existing ChatGPT tab with this approval, if the card is still waiting.'
+  });
+  notice.on('click', () => {
+    // A deliberate human click can select the *existing* exact approval page through
+    // its authenticated Companion poll. Never open another browser tab as a fallback.
+    requestApprovalTabFocus(conversationId);
+    showWindow();
+    if (!window) return;
+    const target = window.webContents;
+    const open = (): void => { if (!target.isDestroyed()) target.send('session:write', sessionId); };
+    if (target.isLoadingMainFrame()) target.once('did-finish-load', open);
+    else open();
+  });
+  notice.show();
+});
 setBrowserWorkArea(() => screen.getPrimaryDisplay().workArea);
 
 // Electron promises `second-instance` only after its own `ready`, not after our async startup.
@@ -582,9 +617,13 @@ app.on('second-instance', (_event, argv) => {
     forcedConnectPending = true;
     if (runtimeReady) void connect();
   }
-  if (isCompanionBrowserRecoveryLaunch(argv)) {
+  if (!argv.includes('--preserve-chatgpt-tabs') && isCompanionBrowserRecoveryLaunch(argv)) {
     companionBrowserRecoveryPending = true;
     if (runtimeReady) runCompanionBrowserRecovery();
+  }
+  if (argv.includes('--preserve-chatgpt-tabs')) {
+    preservedBrowserStartupPending = true;
+    if (runtimeReady && browserExtensionRequired(getConfig())) void runPreservedBrowserStartup();
   }
   if (!isBackgroundLaunch(argv)) windowActivation.request();
 });
@@ -655,6 +694,7 @@ void app.whenReady().then(async () => {
   await restoreChatModels();
   if (windowActivation.isDisabled()) return;
   await loadConfig();
+  await restoreRouteHold();
   try { await initializeExpensesProjects(); }
   catch (error) { logWarn(`could not initialize Expenses projects: ${error instanceof Error ? error.message : String(error)}`); }
   await pluginManager.initialize(userData);
@@ -685,6 +725,10 @@ void app.whenReady().then(async () => {
   // And the user's blocks, for the same reason: a chat blocked yesterday is still the rogue
   // turn today, and a block that loads after the first call is a tool the turn already got.
   await restoreBlockedChats();
+  if (windowActivation.isDisabled()) return;
+  // Recover native Work research locks before any MCP ingress can dispatch a tool. A
+  // recovered request proves only Eve's recorded intent, never a hosted child lifecycle.
+  await restoreNativeDelegations();
   if (windowActivation.isDisabled()) return;
   setAgentConversationLookup(agentConversation);
   // The prime's chat is the user's own, so no extension report can name it. It is bound
@@ -887,7 +931,9 @@ void app.whenReady().then(async () => {
   stopScheduleMaintenance = startScheduleMaintenance({
     onRun: (result) => {
       if (result.admitted.length) logInfo(`schedule maintenance admitted ${result.admitted.length} due occurrence(s)`);
-      for (const failure of result.failed) logWarn(`schedule maintenance could not admit ${failure.occurrenceId}: ${failure.error}`);
+      for (const id of result.started) logInfo(`schedule maintenance started ${id} from its acknowledged delivery`);
+      for (const failure of result.deliveryFailed) logWarn(`schedule occurrence ${failure.occurrenceId} failed: ${failure.error}`);
+      for (const failure of result.failed) logWarn(`schedule maintenance could not admit or settle ${failure.occurrenceId}: ${failure.error}`);
     },
     onError: (error) => logWarn(`schedule maintenance failed: ${error.message}`)
   });
@@ -933,19 +979,48 @@ void app.whenReady().then(async () => {
   let lastChatReviewHeartbeatStatus = '';
   let lastHeartbeatBackoff = '';
   let lastHeartbeatError = '';
+  let heartbeatStatusSince = 0;
+  let heartbeatIdleWaitReported: number | null = null;
   const startReviewHeartbeatMaintenance = () => {
     if (stopChatReviewHeartbeat) return;
-    logInfo('chat review heartbeat maintenance started; semantic cadence is 22 minutes');
+    logInfo('chat review heartbeat mode observer started; semantic cadence is 22 minutes for Auditable chat and Native subagent');
     stopChatReviewHeartbeat = startChatReviewHeartbeatMaintenance({
       onQueued: (result) => logInfo(`chat review heartbeat queued for ${result.conversationId ?? result.sessionId ?? 'Eve'}`),
       onResult: (result) => {
         if (lastHeartbeatError) logInfo('chat review heartbeat running again after: ' + lastHeartbeatError);
         lastHeartbeatError = '';
         const status = `${result.status}:${result.reason ?? ''}`;
+        // P1 evidence: a Native review waits for Prime's next Eve tool call, and Eve cannot make an
+        // idle Prime run. Say once per owed window when that wait passes a full cadence.
+        if (result.status === 'pending' && result.waitingSince !== undefined &&
+            (result.reason === 'awaiting-prime-tool-call' || result.reason === 'awaiting-native-receipt') &&
+            heartbeatIdleWaitReported !== result.waitingSince && Date.now() - result.waitingSince >= CHAT_REVIEW_HEARTBEAT_MS) {
+          heartbeatIdleWaitReported = result.waitingSince;
+          debugReliabilityEvent('heartbeat-native-idle-wait', { owner: result.conversationId, elapsedMs: Date.now() - result.waitingSince, warning: true });
+          logWarn(`chat review heartbeat: the Native review has waited ${Math.round((Date.now() - result.waitingSince) / 60_000)} min ` +
+            `(${result.reason}); Eve cannot start an idle Prime, so it runs only when Prime next calls an Eve tool. ` +
+            'Auditable chat reviews without Prime.');
+        }
         if (status === lastChatReviewHeartbeatStatus) return;
         const previous = lastChatReviewHeartbeatStatus;
+        const previousForMs = heartbeatStatusSince ? Date.now() - heartbeatStatusSince : 0;
         lastChatReviewHeartbeatStatus = status;
-        if (result.status === 'no-coordinator') {
+        heartbeatStatusSince = Date.now();
+        if (previous.startsWith('pending:')) {
+          logInfo(`chat review heartbeat left ${previous} after ${Math.round(previousForMs / 1000)}s; now ${status}`);
+        }
+        if (result.status === 'pending') {
+          if (result.reason === 'mode-change-held') {
+            debugReliabilityEvent('heartbeat-mode-change-held', { owner: result.conversationId, warning: true });
+            logWarn('chat review heartbeat: the review mode changed, but the old prompt may have reached Prime recently; ' +
+              'its review is kept until Prime answers or it has been quiet for a full cadence');
+          } else if (result.reason) {
+            logInfo(`chat review heartbeat pending: ${result.reason}`);
+          }
+        } else if (result.status === 'paused') {
+          debugReliabilityEvent('heartbeat-mode-off');
+          logInfo('chat review heartbeat: OFF; no new review dispatched. Pre-Send old-lane debt is superseded into durable audit custody; ambiguous Send debt remains protected.');
+        } else if (result.status === 'no-coordinator') {
           const reason = result.reason === 'debt-owner-unavailable'
             ? 'the durable review owner is not currently available'
             : result.reason === 'no-successor'
@@ -999,7 +1074,14 @@ void app.whenReady().then(async () => {
     void connect();
   }
   let startupBrowserRecovery: Promise<unknown> | null = null;
-  if (companionBrowserRecoveryPending) {
+  if (preservedBrowserStartupPending) {
+    // A candidate install never restarts, navigates or focuses a live ChatGPT window.
+    // If the exact dedicated browser is absent, its saved session can be restored minimized.
+    // Present/unknown windows remain untouched for in-place Companion refresh at their idle fence.
+    logInfo('Companion browser profile preserved during upgrade; checking dedicated-window presence');
+    if (browserExtensionRequired(getConfig())) startupBrowserRecovery = runPreservedBrowserStartup();
+    else preservedBrowserStartupPending = false;
+  } else if (companionBrowserRecoveryPending) {
     startupBrowserRecovery = runCompanionBrowserRecovery();
   } else if (restartRecoveryRequested(process.argv, previousRunUnclean)) {
     // Exact Prime startup recovery must join the same browser-startup owner used by bridge repairs.

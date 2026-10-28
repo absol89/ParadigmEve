@@ -43,7 +43,9 @@ const { resetRecorderForTests, sessionForConversation } = await import('../src/m
 const { resetSwarm } = await import('../src/main/agents.js');
 const {
   CONTINUATIONS_STATE,
-  restoreContinuations
+  restoreContinuations,
+  abortContinuationNow,
+  continuationByToken
 } = await import('../src/main/session/continuation.js');
 const { makeTempDir, removeTempDir, SAMPLE_BRIEF } = await import('./helpers.js');
 const { APP_VERSION, BRIDGE_PROTOCOL } = await import('../src/main/version.js');
@@ -272,7 +274,7 @@ describe('the whole move, when it works', () => {
     const stored = await capture(continuation);
     expect(pendingCommands()).toHaveLength(1);
     // Handed to A's browser, not to the OS — and exactly one chat either way.
-    expect(stored.body.placement).toEqual({ id: pendingCommands()[0]!.id, backend: null, model: null, reasoningEffort: null, active: true, homeConversationId: CHAT_A, project: null });
+    expect(stored.body.placement).toEqual({ id: pendingCommands()[0]!.id, backend: null, model: null, reasoningEffort: null, active: false, homeConversationId: CHAT_A, project: null, type: 'resume', token: continuation });
     expect(opened).toHaveLength(0);
   });
 });
@@ -320,6 +322,12 @@ describe('a brief that never really arrived', () => {
     const { token: first } = await press();
     const cancelled = await request('POST', '/compact', { body: { conversationId: CHAT_A, cancel: true } });
     expect(cancelled.body.cancelled).toBe(true);
+    expect(continuationByToken(first)?.abortProvenance).toMatchObject({
+      origin: 'companion_cancel_request',
+      entryPoint: 'bridge.cancelResumeNowLocked',
+      requestedBy: 'unknown',
+      phase: 'awaiting-summary'
+    });
 
     // The interrupted turn's text turning up late must land nowhere at all.
     const late = await capture(first, 'the brief the model was still writing');
@@ -331,6 +339,35 @@ describe('a brief that never really arrived', () => {
     const { token: second } = await press();
     expect(second).not.toBe(first);
     expect((await capture(second)).status).toBe(200);
+  });
+
+  it('durably captures the first cancellation origin and pre-abort checkpoints through restart', async () => {
+    await connect();
+    const sessionId = await record();
+    const { token: continuation } = await press();
+    const before = continuationByToken(continuation)!;
+    expect(await Promise.all([
+      abortContinuationNow(continuation, 'cancelled', {
+        origin: 'companion_cancel_request', entryPoint: '/compact', requestedBy: 'companion',
+        requestId: 'request-1', documentId: 'document-1'
+      }),
+      abortContinuationNow(continuation, 'cancelled', {
+        origin: 'session_ui_cancel', requestedBy: 'human'
+      })
+    ])).toEqual([true, false]);
+    const persisted = await readDurable<ContinuationSnapshot>(CONTINUATIONS_STATE);
+    const savedAbort = persisted!.entries.find((entry) => entry.token === continuation)!;
+    expect(savedAbort).toMatchObject({ sessionId, from: CHAT_A, state: 'aborted', error: 'cancelled' });
+    expect(savedAbort.abortProvenance).toMatchObject({
+      origin: 'companion_cancel_request', requestedBy: 'companion', entryPoint: '/compact',
+      requestId: 'request-1', documentId: 'document-1', phase: 'awaiting-summary',
+      sourceSend: before.sourceSend, destinationSend: before.destinationSend
+    });
+    expect(savedAbort.abortProvenance!.at).toBeGreaterThanOrEqual(before.openedAt);
+    await restoreContinuations(persisted);
+    expect(continuationByToken(continuation)?.abortProvenance).toEqual(savedAbort.abortProvenance);
+    expect(await sessionForConversation(CHAT_A)).toBe(sessionId);
+    expect(pendingCommands()).toHaveLength(0);
   });
 
   // The load-bearing refusal: a brief is only a brief because it came back with the token

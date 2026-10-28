@@ -444,6 +444,26 @@ export function reconcileEvecronExecutionState(
     });
   }
 
+  // A delivery failure before Start is a schedule-core verdict, not a task event: nothing ran, so
+  // the ordinary `failed` event (running work only) cannot record it. Project it here instead.
+  if (occurrence.state === 'failed' && occurrence.failure && state.startedAt === null &&
+      (state.status === 'queued' || state.status === 'needs_user')) {
+    const failedAt = occurrence.failure.failedAt;
+    const terminalFailure = { evidenceRef: `schedule-occurrence:${occurrence.id}:failure`, code: occurrence.failure.kind };
+    const failedReceipt = receipt(state, 'core-failed', 'failed', failedAt, true, {
+      detail: occurrence.failure.error,
+      evidenceRef: terminalFailure.evidenceRef
+    });
+    return evecronExecutionStateSchema.parse({
+      ...state,
+      status: 'failed',
+      completedAt: failedAt,
+      terminalFailure,
+      lastQuietReceiptAt: failedAt,
+      receipts: state.receipts.some(row => row.kind === 'failed') ? state.receipts : [...state.receipts, failedReceipt]
+    });
+  }
+
   return state;
 }
 

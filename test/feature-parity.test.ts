@@ -19,9 +19,19 @@ describe('portable browser-backed feature parity', () => {
       // identical on every host. Its only product dependency is recording, not Windows/Desktop.
       expect(config.goal).toEqual(windows.goal);
       expect(config.goal.enabled).toBe(false);
-      expect(config.multiAgent).toEqual({
+      // Keep the entire worker policy platform-invariant as new opt-in fields are added;
+      // explicit consent and approval-routing defaults must stay conservative everywhere.
+      expect(config.multiAgent).toEqual(windows.multiAgent);
+      expect(config.multiAgent).toMatchObject({
         enabled: true,
         maxWorkers: 2,
+        experimentalApiWorkers: { enabled: false, provider: null, model: null },
+        approvalRouting: {
+          humanFacing: 'prime_or_active_human_chat',
+          delegatedWorkers: 'eve_policy',
+          onAdditionalApproval: 'escalate_to_prime',
+          automaticRetryOfUncertainCalls: false
+        },
         allowUnattributedCalls: false,
         recoverAgentTabs: false
       });

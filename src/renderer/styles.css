@@ -3187,6 +3187,12 @@ nav button:hover, nav button.is-sel { background: var(--hover); color: var(--ink
 [data-view='settings'] .pane > h3:first-child { margin-top: 0; }
 [data-view='settings'] .setting { padding: 15px 0; }
 [data-view='settings'] .setting > select { max-width: 46%; min-width: 100px; border-radius: 8px; background: var(--hover); }
+.experimental-worker-panel { margin: 0; }
+[data-view='settings'] .experimental-worker-panel .setting { padding: 9px 0; }
+.experimental-worker-panel #experimentalWorkerStatus { font-size: 12px; margin: 4px 0 12px; }
+.worker-legacy-settings { padding: 12px 0; border-top: 1px solid var(--line); }
+.worker-legacy-settings summary { cursor: pointer; color: var(--faint); font-size: 13px; }
+.worker-legacy-settings[open] summary { color: var(--ink); margin-bottom: 6px; }
 [data-view='settings'] .language-picker .language-select { min-width: 132px; border-radius: 8px; background: var(--hover); }
 [data-panel='home'] .card > h2 { text-transform: none; letter-spacing: 0; font-size: 14px; min-height: 0; padding: 9px 20px; }
 .settings-heading .eyebrow { display: none; }

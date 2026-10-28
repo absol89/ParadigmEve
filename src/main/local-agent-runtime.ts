@@ -230,6 +230,19 @@ export interface LocalAgentRunResult {
   toolCalls: number;
 }
 
+/** The worker must stop; only a fresh, human-authorized continuation can proceed. */
+export class LocalAgentAuthorizationRequired extends Error {
+  constructor(readonly toolName: string, readonly detail: string) {
+    super(`AWAITING_AUTHORIZATION: ${toolName}: ${detail}`);
+  }
+}
+
+function needsHumanAuthorization(result: LocalAgentToolResult): boolean {
+  // Explicit authorization contracts only. An ordinary TOOL_REJECTED, timeout or
+  // ambiguous result is not evidence of a human denial or an approval request.
+  return result.isError === true && /\b(?:APPROVAL_REQUIRED|AWAITING_AUTHORIZATION|HUMAN_APPROVAL_REQUIRED)\b/.test(result.content);
+}
+
 /**
  * Minimal app-owned model/tool loop.
  *
@@ -294,6 +307,9 @@ export async function runLocalAgent(options: RunLocalAgentOptions): Promise<Loca
           const detail = error instanceof Error ? error.message : String(error);
           result = { content: `TOOL_EXECUTION_ERROR: ${detail}`, isError: true };
         }
+      }
+      if (needsHumanAuthorization(result)) {
+        throw new LocalAgentAuthorizationRequired(call.name, result.content);
       }
       messages.push({
         role: 'tool',

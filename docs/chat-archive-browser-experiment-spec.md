@@ -309,6 +309,15 @@ If ParadigmEve cannot lawfully/securely capture the bytes, the archive records:
 
 No dead provider URL is rendered as if it were a durable file.
 
+When the exact user-message row was already published before its local image preview arrived,
+its archived words and chronological position remain immutable. The archive may append a
+content-addressed `late_user_image` evidence event only after the canonical session now owns
+the image bytes under that same provider message identity. This supplement records the exact
+original archive user-event id and current source revision, never a guessed neighboring turn.
+The static transcript joins these retained supplements to their original user message during
+rendering; it never rewrites the archival event ledger or requests a signed provider URL.
+Absent/unverified bytes remain pending rather than being falsely presented as archived.
+
 ### 10.3 Generated/assistant images
 
 Introduce a first-class durable generated/native-image evidence type rather than hiding image

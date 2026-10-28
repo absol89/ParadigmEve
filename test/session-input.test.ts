@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../src/shared/user-prompt.js';
 import { flushDurable, initDurableStore, readDurable, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import {
-  CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, legacyChatReviewActivityAt, enqueueLanPeerKnowledge, enqueueWorkerAttention,
-  reconcileHeartbeatFindingQueue,
+  CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, dispatchChatReviewNativeParent, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, legacyChatReviewActivityAt, enqueueLanPeerKnowledge, enqueueWorkerAttention,
+  reconcileHeartbeatFindingQueue, retireLegacyChatReviewAttention, chatReviewTransportStage,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, forceSendRefusal
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, turnRotationHistory, forceSendRefusal
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -23,7 +23,21 @@ import { trackInFlight, emptyEvidence, type CallContext } from '../src/main/mcp/
 const offerToolInput = async (...args: Parameters<typeof offerToolInputBatch>) => (await offerToolInputBatch(...args)).messages;
 vi.mock('../src/main/session/recorder.js', () => ({ noteChatOrigin: vi.fn(async () => undefined) }));
 
-const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', pastConversations: [] as string[], blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null, lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null, localOnly: false, provider: null as null | { id: 'ollama'; model: string }, finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, connectorName: 'Eve', pendingUser: false, pendingUserAt: null as number | null, staleOwnerConversationId: null as string | null, staleOwnerEnded: true, brokerOwner: null as string | null, end: null as null | { kind: string; outcome: string; turnId: string; time: number }, dispatchHeartbeatReviewWorker: vi.fn(async (_conversationId: string, _key: string, _reviewText: string) => ({ workerId: 'worker-1', runId: 'run-1', reused: false })) }));
+const binding = vi.hoisted(() => ({
+  origin: 'desktop', conversationId: 'conversation-a', pastConversations: [] as string[],
+  blocked: false, recorded: true, activeTurnId: null as string | null, endedAt: null as number | null,
+  lastToolCallAt: null as number | null, lastAssistantFinalAt: null as number | null,
+  localOnly: false, provider: null as null | { id: 'ollama'; model: string },
+  finishEnabled: true, finishReleased: false, model: 'gpt-6-astra', leadMinutes: 5,
+  impulseMinutes: 0, connectorName: 'Eve', workerRuntime: 'chatgpt' as 'chatgpt' | 'native',
+  heartbeatMode: 'auditable-chat' as 'off' | 'auditable-chat' | 'native-subagent',
+  pendingUser: false, pendingUserAt: null as number | null,
+  staleOwnerConversationId: null as string | null, staleOwnerEnded: true,
+  brokerOwner: null as string | null,
+  end: null as null | { kind: string; outcome: string; turnId: string; time: number },
+  dispatchHeartbeatReviewWorker: vi.fn(async (_conversationId: string, _key: string, _reviewText: string) =>
+    ({ workerId: 'worker-1', runId: 'run-1', reused: false }))
+}));
 vi.mock('../src/main/agents.js', () => ({
   selectedBrokerOwnerConversationId: vi.fn(() => binding.brokerOwner),
   dispatchHeartbeatReviewWorker: binding.dispatchHeartbeatReviewWorker
@@ -50,7 +64,7 @@ vi.mock('../src/main/session/store.js', () => ({
     return binding.recorded && id === binding.conversationId ? { id: 'session-one', conversationId: id, endedAt: null } : null;
   })
 }));
-vi.mock('../src/main/config.js', () => ({ getConfig: () => ({ mcp: { connectorName: binding.connectorName }, ui: { finishTool: binding.finishEnabled, finishAction: 'goal', finishLeadMinutes: binding.leadMinutes }, goal: { impulseMinutes: binding.impulseMinutes } }) }));
+vi.mock('../src/main/config.js', () => ({ getConfig: () => ({ mcp: { connectorName: binding.connectorName }, ui: { finishTool: binding.finishEnabled, finishAction: 'goal', finishLeadMinutes: binding.leadMinutes }, goal: { impulseMinutes: binding.impulseMinutes }, multiAgent: { workerRuntime: binding.workerRuntime, heartbeatMode: binding.heartbeatMode } }) }));
 vi.mock('../src/main/session/blocked-chats.js', () => ({ isChatBlocked: () => binding.blocked }));
 let directory: string;
 let now: number;
@@ -111,6 +125,8 @@ beforeEach(async () => {
   binding.staleOwnerEnded = true;
   binding.brokerOwner = null;
   binding.connectorName = 'Eve';
+  binding.workerRuntime = 'chatgpt';
+  binding.heartbeatMode = 'auditable-chat';
   binding.finishEnabled = true; binding.finishReleased = false; binding.model = 'gpt-6-astra'; binding.leadMinutes = 5; binding.impulseMinutes = 0;
   binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'previous-turn', time: 0 };
   now = 1000;
@@ -125,6 +141,39 @@ afterEach(async () => {
 });
 
 describe('fresh-turn continue (turn rotation)', () => {
+  it('spends at most two exact-turn automatic filings across a process restart, without replay', async () => {
+    now = 2 * 60 * 60_000;
+    const startedAt = now - 31 * 60_000;
+    binding.activeTurnId = 'long-turn';
+    binding.end = { kind: 'turn_start', outcome: 'unknown', turnId: 'long-turn', time: startedAt };
+    for (let count = 1; count <= 2; count += 1) {
+      const row = await fileRotationInput(sessionId, 'long-turn', startedAt);
+      expect(row?.purpose).toBe('rotation');
+      expect(await cancelInput(row!.id)).toBe(true); // definite pre-Send refusal
+      now += 5 * 60_000 + 1;
+      resetInputForTests(); // the next call reads the durable queue/ledger as after app restart
+      expect(await turnRotationHistory(sessionId, 'long-turn')).toMatchObject({ filings: count });
+    }
+    expect(await fileRotationInput(sessionId, 'long-turn', startedAt)).toBeNull();
+    expect((await listInputs()).filter(row => row.purpose === 'rotation')).toHaveLength(2);
+    binding.activeTurnId = 'different-turn';
+    expect(await fileRotationInput(sessionId, 'different-turn', now - 31 * 60_000)).not.toBeNull();
+  });
+
+  it('counts legacy c24 failed rotations when the separate durable budget did not exist', async () => {
+    const startedAt = now - 31 * 60_000;
+    binding.activeTurnId = 'legacy-turn';
+    const rows: InputEntry[] = [1, 2].map(index => ({
+      ...input({ text: 'Continue the task from where you are. (ParadigmEve starts a fresh turn every so often so long work stays reliable; nothing else changed.)' }),
+      purpose: 'rotation' as const, directTurn: { id: 'legacy-turn', startedAt },
+      transportIntent: 'browser' as const, state: 'failed' as const, owner: null,
+      createdAt: now - index * 1000, conversationId: binding.conversationId
+    }));
+    await writeDurableNow('session-input', rows);
+    resetInputForTests();
+    expect(await turnRotationHistory(sessionId, 'legacy-turn')).toMatchObject({ filings: 2 });
+    expect(await fileRotationInput(sessionId, 'legacy-turn', startedAt)).toBeNull();
+  });
   it('reaches the browser only for its exact running turn, never a tool result, and is dropped when the turn ends', async () => {
     const startedAt = now - 31 * 60_000;
     binding.activeTurnId = 'long-turn';
@@ -1948,6 +1997,183 @@ it('dispatches a heartbeat review to the app-owned worker without queueing anyth
     error: expect.stringContaining('read-only worker lane')
   });
   expect(await pendingBrowserInputs()).toEqual([]);
+});
+
+it('does not borrow ordinary ChatGPT worker routing when native heartbeat is selected', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  const review = { key: 'heartbeat:native-pending', sinceAt: 0, untilAt: now };
+  await expect(dispatchChatReviewWorker(sessionId, review)).rejects.toThrow('HEARTBEAT_MODE_NOT_AUDITABLE');
+  expect(binding.dispatchHeartbeatReviewWorker).not.toHaveBeenCalled();
+  expect(await pendingBrowserInputs()).toEqual([]);
+});
+it('routes a native review in-band to Prime once without any new browser Send or worker chat', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  binding.workerRuntime = 'native';
+  const review = { key: 'heartbeat:native-parent-once', sinceAt: 0, untilAt: now,
+    reviewLane: 'native-parent' as const, plans: [reviewPlan({ title: 'Exact native target' })] };
+  const first = await dispatchChatReviewNativeParent(sessionId, review);
+  const second = await dispatchChatReviewNativeParent(sessionId, review);
+  expect(second.id).toBe(first.id);
+  expect(first).toMatchObject({ purpose: 'attention', mode: 'auto', transportIntent: 'tool', state: 'queued', chatReview: review });
+  expect(first.text).toContain('native-subagent heartbeat');
+  expect(first.text).toContain('Delegate the read-only classification');
+  expect(first.text).toContain('If native delegation is unavailable, report blocked');
+  expect(binding.dispatchHeartbeatReviewWorker).not.toHaveBeenCalled();
+  expect((await listInputs()).filter(row => row.chatReview?.key === review.key)).toHaveLength(1);
+  expect(await pendingBrowserInputs()).toEqual([]);
+  expect(await claimBrowserInput(first.id, 'prime-document', binding.conversationId, true)).toBeNull();
+  expect(await hasEligibleToolInput(sessionId)).toBe(true);
+  const delivered = await offerToolInput(sessionId, binding.conversationId, 'prime-existing-tool', now + 1);
+  expect(delivered).toHaveLength(1);
+  expect(delivered[0]?.text).toContain(review.key);
+  expect(delivered[0]?.maintenance).toBe(true);
+  expect((await listInputs()).find(row => row.id === first.id)).toMatchObject({ state: 'tool', owner: 'prime-existing-tool' });
+  expect(await pendingBrowserInputs()).toEqual([]);
+});
+it('migrates only unclaimed c25 native browser attention to in-band delivery', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  const review = { key: 'heartbeat:c25-unclaimed', sinceAt: 0, untilAt: now, reviewLane: 'native-parent' as const };
+  const old = await seedLegacyInput(input({ text: 'Legacy browser heartbeat', mode: 'after-turn' }));
+  const row = { ...old, purpose: 'attention' as const, chatReview: review, text: 'Legacy browser heartbeat' };
+  await writeDurableNow('session-input', [row]);
+  resetInputForTests();
+  expect(await dispatchChatReviewNativeParent(sessionId, review)).toMatchObject({ id: row.id, mode: 'auto', transportIntent: 'tool' });
+  expect(await pendingBrowserInputs()).toEqual([]);
+  expect(await hasEligibleToolInput(sessionId)).toBe(true);
+});
+it('keeps native heartbeat findings in Prime tool results, never a new browser turn', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  const finding = await enqueueChatReviewFinding(sessionId, 'heartbeat:native-finding', 'Prime should inspect task X.');
+  expect(finding).toMatchObject({ mode: 'auto', transportIntent: 'tool', purpose: 'heartbeat-finding' });
+  expect(await pendingBrowserInputs()).toEqual([]);
+  expect(await claimBrowserInput(finding.id, 'page', binding.conversationId, true)).toBeNull();
+  expect((await offerToolInput(sessionId, binding.conversationId, 'prime-next-call', now + 1))[0]?.text).toContain('Prime should inspect task X.');
+});
+it('migrates a definitely untouched c25 browser finding on Native selection without a new Send', async () => {
+  const old = await enqueueChatReviewFinding(sessionId, 'heartbeat:pre-native-finding', 'Review this source.');
+  expect(old).toMatchObject({ state: 'queued', transportIntent: 'browser' });
+  binding.heartbeatMode = 'native-subagent';
+  resetInputForTests();
+  expect((await listInputs()).find(row => row.id === old.id)).toMatchObject({ mode: 'auto', transportIntent: 'tool' });
+  expect(await pendingBrowserInputs()).toEqual([]);
+  expect((await offerToolInput(sessionId, binding.conversationId, 'prime-existing-tool', now + 1))[0]?.maintenance).toBe(true);
+});
+it('moves an untouched Native finding back to a browser message when Native is switched off', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  // Possibly delivered in a tool result already: never moved to, or re-sent through, the browser.
+  const offered = await enqueueChatReviewFinding(sessionId, 'heartbeat:native-offered-finding', 'Prime should check Z.');
+  await writeDurableNow('session-input', (await listInputs()).map(entry => entry.id === offered.id
+    ? { ...entry, state: 'tool' as const, owner: 'prime-call', offeredAt: now } : entry));
+  binding.heartbeatMode = 'auditable-chat';
+  resetInputForTests();
+  expect((await listInputs()).find(row => row.id === offered.id)).toMatchObject({ state: 'tool', transportIntent: 'tool', offeredAt: now });
+  await writeDurableNow('session-input', (await listInputs()).map(entry => entry.id === offered.id
+    ? { ...entry, state: 'sent' as const, messageId: `input:${entry.id}`, deliveredAt: now } : entry));
+
+  binding.heartbeatMode = 'native-subagent';
+  resetInputForTests();
+  const untouched = await enqueueChatReviewFinding(sessionId, 'heartbeat:native-untouched', 'Prime should resume task Y.');
+  expect(untouched).toMatchObject({ transportIntent: 'tool' });
+  binding.heartbeatMode = 'auditable-chat';
+  resetInputForTests();
+  const moved = (await listInputs()).find(row => row.id === untouched.id)!;
+  expect(moved).toMatchObject({ state: 'queued', mode: 'after-turn' });
+  expect(moved.transportIntent).toBeUndefined();
+  expect(await offerToolInput(sessionId, binding.conversationId, 'prime-later-call', now + 1)).toEqual([]);
+  // The heartbeat's own retry gets the moved row back, not a stuck tool-only one.
+  expect(await enqueueChatReviewFinding(sessionId, 'heartbeat:native-untouched', 'Prime should resume task Y.'))
+    .toMatchObject({ id: untouched.id, mode: 'after-turn' });
+});
+it('cancels only pre-Send old-lane review input when Settings switches mode', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  const review = { key: 'heartbeat:mode-cancel', sinceAt: 0, untilAt: now, reviewLane: 'native-parent' as const };
+  const row = await dispatchChatReviewNativeParent(sessionId, review);
+  expect(await retireLegacyChatReviewAttention(review.key, 'mode-changed')).toBe('retired');
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({
+    state: 'cancelled', error: expect.stringContaining('mode changed')
+  });
+  expect(await pendingBrowserInputs()).toEqual([]);
+
+  const ambiguousReview = { ...review, key: 'heartbeat:mode-uncertain' };
+  const uncertain = await dispatchChatReviewNativeParent(sessionId, ambiguousReview);
+  await writeDurableNow('session-input', (await listInputs()).map(entry => entry.id === uncertain.id
+    ? { ...entry, state: 'failed' as const, sendAuthorizedAt: now } : entry));
+  resetInputForTests();
+  expect(await retireLegacyChatReviewAttention(ambiguousReview.key, 'mode-changed')).toBe('ambiguous');
+  expect((await listInputs()).find(entry => entry.id === uncertain.id)).toMatchObject({
+    state: 'failed', sendAuthorizedAt: now
+  });
+});
+it('closes a quiet tool-offered Native review on a mode change, but not a recent or browser-claimed one', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  const review = { key: 'heartbeat:native-quiet', sinceAt: 0, untilAt: now, reviewLane: 'native-parent' as const };
+  const row = await dispatchChatReviewNativeParent(sessionId, review);
+  expect(await chatReviewTransportStage(review.key)).toBe('queued');
+  expect((await offerToolInput(sessionId, binding.conversationId, 'prime-call', now + 1))[0]?.maintenance).toBe(true);
+  const offered = (await listInputs()).find(entry => entry.id === row.id)!;
+  expect(offered).toMatchObject({ state: 'tool' });
+  expect(await chatReviewTransportStage(review.key)).toBe('offered');
+  const lastActivity = Math.max(offered.createdAt, offered.offeredAt!);
+
+  // Offered to Prime counts as possibly sent: no plain retirement, and no early quiet exit.
+  expect(await retireLegacyChatReviewAttention(review.key, 'mode-changed')).toBe('ambiguous');
+  expect(await retireLegacyChatReviewAttention(review.key, 'mode-changed', lastActivity - 1)).toBe('ambiguous');
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ state: 'tool' });
+
+  expect(await retireLegacyChatReviewAttention(review.key, 'mode-changed', lastActivity)).toBe('quiet');
+  expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({
+    state: 'cancelled', offeredAt: offered.offeredAt, error: expect.stringContaining('may already have reached Prime')
+  });
+  expect(await chatReviewTransportStage(review.key)).toBe('closed');
+  // A restart must not offer the dead key to Prime again.
+  resetInputForTests();
+  expect(await offerToolInput(sessionId, binding.conversationId, 'prime-after-restart', now + 2)).toEqual([]);
+
+  const claimed = await enqueueChatReviewAttention(sessionId, { key: 'heartbeat:browser-claimed', sinceAt: 0, untilAt: now });
+  await writeDurableNow('session-input', (await listInputs()).map(entry => entry.id === claimed.id
+    ? { ...entry, state: 'browser' as const, owner: 'page', offeredAt: now, sendAuthorizedAt: now } : entry));
+  resetInputForTests();
+  expect(await retireLegacyChatReviewAttention('heartbeat:browser-claimed', 'mode-changed', now + 60 * 60_000)).toBe('ambiguous');
+});
+it('queues a Native review beside a queued Native finding; both reach Prime in one tool result', async () => {
+  binding.heartbeatMode = 'native-subagent';
+  const finding = await enqueueChatReviewFinding(sessionId, 'heartbeat:native-finding-first', 'Prime should check X.');
+  // Neither row ever uses the composer, so the one-composer-message rule does not apply between them.
+  const review = await dispatchChatReviewNativeParent(sessionId, {
+    key: 'heartbeat:native-review-beside-finding', sinceAt: 0, untilAt: now, reviewLane: 'native-parent'
+  });
+  expect(review).toMatchObject({ state: 'queued', transportIntent: 'tool' });
+  const delivered = await offerToolInput(sessionId, binding.conversationId, 'prime-next-call', now + 1);
+  expect(delivered.map(message => message.maintenance)).toEqual([true, true]);
+  const text = delivered.map(message => message.text).join(' ');
+  expect(text).toContain('Prime should check X.');
+  expect(text).toContain('heartbeat:native-review-beside-finding');
+  expect((await listInputs()).filter(row => row.id === finding.id || row.id === review.id).map(row => row.state)).toEqual(['tool', 'tool']);
+  // A user's own message is still accepted while both wait for Prime.
+  await expect(enqueueInput(input({ text: 'My own message to Prime' }))).resolves.toMatchObject({ state: 'queued' });
+});
+it('refuses a Native review prompt when Settings has already switched away', async () => {
+  binding.heartbeatMode = 'auditable-chat';
+  expect(() => dispatchChatReviewNativeParent(sessionId, {
+    key: 'heartbeat:stale-native', sinceAt: 0, untilAt: now, reviewLane: 'native-parent'
+  })).toThrow('HEARTBEAT_MODE_NOT_NATIVE');
+  expect(await pendingBrowserInputs()).toEqual([]);
+});
+it('does not let OFF retire a legacy row or start a review, whatever ordinary worker mode is selected', async () => {
+  binding.workerRuntime = 'native';
+  binding.heartbeatMode = 'off';
+  const review = { key: 'heartbeat:off-before-retire', sinceAt: 0, untilAt: now };
+  const legacy = await enqueueChatReviewAttention(sessionId, review);
+  await expect(dispatchChatReviewWorker(sessionId, review)).rejects.toThrow('HEARTBEAT_MODE_NOT_AUDITABLE');
+  expect(binding.dispatchHeartbeatReviewWorker).not.toHaveBeenCalled();
+  expect((await listInputs()).find(row => row.id === legacy.id)).toMatchObject({ state: 'queued' });
+});
+it('uses the explicit Auditable chat heartbeat mode even when the normal worker dropdown says Native', async () => {
+  binding.workerRuntime = 'native';
+  binding.heartbeatMode = 'auditable-chat';
+  const review = { key: 'heartbeat:independent', sinceAt: 0, untilAt: now };
+  await expect(dispatchChatReviewWorker(sessionId, review)).resolves.toMatchObject({ workerId: 'worker-1' });
+  expect(binding.dispatchHeartbeatReviewWorker).toHaveBeenCalledTimes(1);
 });
 
 it.each(['sent', 'failed', 'cancelled'] as const)(

@@ -31,16 +31,18 @@ import {
   initSessionStore,
   rebindSession,
   readSessionPlan,
+  readEvents,
   upsertMessageEvent,
   writeOverflowText
 } from '../src/main/session/store.js';
 import { resetWorkspaces, setWorkspaceFor } from '../src/main/workspace.js';
 import { bindConversation, dispatchHeartbeatReviewWorker, onSwarmPersistNow, resetAgentsForTests } from '../src/main/agents.js';
 import { initDurableStore, writeDurableNow } from '../src/main/durable.js';
+import { closeNativeDelegation, prepareNativeDelegation, restoreNativeDelegations } from '../src/main/native-delegation.js';
 import { DEFAULT_CAPABILITIES, DESKTOP_CAPABILITIES, type Capabilities, type Root } from '../src/shared/types.js';
 import type { ToolOutcome } from '../src/shared/session.js';
 import { emptyEvidence, noteExec, noteExecStart, noteOutcome, runInCallContext, type CallContext } from '../src/main/mcp/call-context.js';
-import { observeRequestCorrelation } from '../src/main/session/correlation.js';
+import { observeRequestCorrelation, requestCorrelation } from '../src/main/session/correlation.js';
 import { WINDOWS_COMPUTER_METHODS, WINDOWS_COMPUTER_READ_METHODS } from '../src/shared/windows-computer.js';
 import { resetBlockedChatsForTests, setChatBlocked } from '../src/main/session/blocked-chats.js';
 import { resetAgentIdentityForTests, restoreAgentIdentity } from '../src/main/agent-identity.js';
@@ -265,6 +267,10 @@ beforeAll(async () => {
   // default now, so without a directory of its own the recorder wrote session folders
   // into the process's working directory — which for a test run is the repository.
   initSessionStore(base);
+  // The direct MCP server fixture bypasses index.ts, whose startup normally
+  // restores this fail-closed admission ledger before any effectful call.
+  initDurableStore(base);
+  await restoreNativeDelegations();
   initConfigPath(path.join(base, 'config'));
   approved = path.join(base, 'workspace');
   outside = path.join(base, 'private');
@@ -321,6 +327,48 @@ beforeEach(async () => {
 // ------------------------------------------------------------------- tests
 
 describe('endpoint hardening', () => {
+  it('waits for late exact Companion proof in work_context even when account-wide unattributed calls are allowed', async () => {
+    const previous = getConfig();
+    const requestId = 'wfr_work_context_late_exact';
+    const conversationId = 'conv-work-context-late-exact';
+    try {
+      await saveConfig({
+        ...previous,
+        multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true }
+      });
+      setTimeout(() => {
+        observeRequestCorrelation({
+          requestId,
+          conversationId,
+          sessionId: 'session-work-context-late-exact',
+          messageId: 'message-work-context-late-exact',
+          tool: 'work_context',
+          observedAt: Date.now()
+        });
+      }, 40).unref?.();
+
+      const reply = await modern(
+        'tools/call',
+        { name: 'work_context', arguments: {} },
+        { 'x-request-id': `${requestId}/att1` }
+      );
+      expect(failed(reply), textOf(reply)).toBe(false);
+      expect(reply.body.result?.structuredContent).toMatchObject({
+        callerIdentity: 'proven',
+        conversationId,
+        sessionId: 'session-work-context-late-exact',
+        callerProof: {
+          kind: 'exact_companion',
+          requestId,
+          conversationId,
+          sessionId: 'session-work-context-late-exact'
+        }
+      });
+    } finally {
+      await saveConfig(previous);
+    }
+  });
+
   it('does not expose native paths from uncommon filesystem errors', () => {
     const error = Object.assign(new Error(`ELOOP: too many symbolic links, realpath '${approved}\\loop\\file.txt'`), {
       code: 'ELOOP',
@@ -692,7 +740,7 @@ describe('model-facing surfaces', () => {
     try {
       everything();
       const agentsTool = toolList(await core('tools/list')).find((tool) => tool.name === 'agents')!;
-      expect(agentsTool.description).toContain('Run ChatGPT workers for Eva Å');
+      expect(agentsTool.description).toContain('ChatGPT worker coordination for Eva Å');
       expect(agentsTool.description).toContain('message routes Eva Å↔worker');
       expect(agentsTool.description).not.toMatch(/\bPrime\b/);
     } finally {
@@ -951,20 +999,23 @@ describe('model-facing surfaces', () => {
 
     // ParadigmEve carries local + enabled Computer-use tools; the legacy Desktop endpoint
     // still contains only its old Computer-use declaration. Both include one code-mode tool.
-    // `schedule` preserves authorized conversation context and owns verified completion. `chat_review_plan`
-    // and `chat_review_complete` are narrow lifecycle tools:
+    // `schedule` preserves authorized conversation context and owns verified completion. `chat_review_plan`,
+    // `chat_review_housekeeping`, and `chat_review_complete` are narrow lifecycle tools:
     // heartbeat Plan acknowledgement and debt completion require exact semantic review, and scheduled
     // work closes only from exact durable task-verification lineage rather than final prose/browser state.
     // Expenses is intentionally split: `expenses_read` is statically read-only for safe #expenses
     // queries, while `expenses` contains mutations only. Skills add one lazy view/manage tool;
     // their full bodies never live in tools/list. The provider-neutral file broker adds bounded
     // file_action/file_edit schemas while keeping provider-specific tool sets off Core.
+    // The c18 native_delegation declaration is one bounded Prime-owned research
+    // ledger, not a new worker executor or an API-backed hosted-child tool.
     // Debug builds also
     // expose one narrow authenticated `lan` peer-messaging primitive that is deliberately separate from agents.
-    expect(coreTools).toHaveLength(IS_WINDOWS ? 38 : process.platform === 'darwin' ? 25 : 23);
+    expect(coreTools).toHaveLength(IS_WINDOWS ? 40 : process.platform === 'darwin' ? 27 : 25);
     expect(desktopTools).toHaveLength(IS_WINDOWS ? 16 : 3);
     expect(coreTools.map(tool => tool.name)).toContain('pins');
     expect(coreTools.map(tool => tool.name)).toContain('schedule');
+    expect(coreTools.map(tool => tool.name)).toContain('chat_review_housekeeping');
     expect(coreTools.find(tool => tool.name === 'expenses_read')?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false
@@ -989,8 +1040,12 @@ describe('model-facing surfaces', () => {
     // Post-2.4 adds the provider-neutral file broker: read-only file_action (inspect/read plus
     // bounded per-format selectors) and its changing half file_edit (one flat object for
     // install_provider/provider_tools/edit). That is deliberate discovery cost in exchange for
-    // keeping all thirteen ArtCraft apps' own tool sets off Core.
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 47_000 : 46_800);
+    // keeping all thirteen ArtCraft apps' own tool sets off Core. Exact heartbeat
+    // housekeeping adds one bounded direct-call lifecycle schema to the Core budget.
+    // c18's single opt-in research-ledger tool is deliberately always discoverable
+    // so an existing request can still be inspected/closed after opt-out. Measured
+    // Windows worst case: 49,087 bytes; retain a narrow ceiling under 50 KB.
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(IS_WINDOWS ? 49_500 : 50_000);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 10_500 : 11_000);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
@@ -1747,7 +1802,7 @@ describe('capability gating', () => {
     const agentsDescription = (tools.body.result.tools as Array<{ name: string; description?: string }>).find(
       (tool) => tool.name === 'agents'
     )?.description;
-    expect(agentsDescription).toContain('Reuse a suitable sleeping worker with message before spawn');
+    expect(agentsDescription).toContain('Existing sleeping workers can be revived with message');
   });
 
   it('rejects action-specific agent fields instead of silently ignoring them', async () => {
@@ -3930,6 +3985,27 @@ describe('exec_command and write_stdin', () => {
     }
   });
 
+  it('redacts synthetic credentials from final Core file and command results, including structured output', async () => {
+    const secret = 'github_pat_' + 'A'.repeat(48);
+    await fs.writeFile(path.join(approved, 'synthetic-secret-fixture.txt'), `safe line\n${secret}\n`, 'utf8');
+    const read = await core('tools/call', { name: 'read', arguments: {
+      paths: ['/workspace/synthetic-secret-fixture.txt']
+    } });
+    expect(failed(read), textOf(read)).toBe(false);
+    expect(JSON.stringify(read.body.result)).not.toContain(secret);
+    expect(textOf(read)).toContain('[redacted]');
+    expect(textOf(read)).toContain('safe line');
+
+    const command = IS_WINDOWS ? `Write-Output '${secret}'; Write-Output 'safe line'` : `printf '%s\\n' '${secret}' 'safe line'`;
+    const exec = await core('tools/call', { name: 'exec_command', arguments: {
+      cmd: command, workdir: '/workspace', yield_time_ms: 5000
+    } });
+    expect(failed(exec), textOf(exec)).toBe(false);
+    expect(JSON.stringify(exec.body.result)).not.toContain(secret);
+    expect(exec.body.result?.structuredContent?.output).toContain('[redacted]');
+    expect(exec.body.result?.structuredContent?.output).toContain('safe line');
+  });
+
   it('reads a batch exit per command, so one search finding nothing is not a failure', async () => {
     // The batch that `cmds` exists for is several searches at once, and a search that finds
     // nothing exits 1. Handing the wrapper script to the single-command classifier would ask
@@ -4106,6 +4182,116 @@ describe('exec_command and write_stdin', () => {
 });
 
 describe('agent-maintained plans over MCP', () => {
+  it('assigns a remote call to the opted-in Prime without fabricating request proof or moving it after late evidence', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const owner = 'prime-fallback-plan-owner';
+    const source = await createSession({ conversationId: owner });
+    const other = await createSession({ conversationId: 'fallback-late-worker' });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    const requestId = 'wfr_prime_fallback_plan';
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      const reply = await modern('tools/call', { name: 'update_plan', arguments: {
+        plan: [{ step: 'Work assigned to Prime', status: 'in_progress' }]
+      } }, { 'x-request-id': requestId });
+      expect(failed(reply), textOf(reply)).toBe(false);
+      expect((await readSessionPlan(source.id))?.plan[0]?.step).toBe('Work assigned to Prime');
+      expect(requestCorrelation(requestId)).toBeNull();
+      const records = (await readEvents(source.id)).filter(event => event.kind === 'tool_call');
+      expect(records.at(-1)).toMatchObject({ call: { requestId, conversationId: owner,
+        attribution: 'installation_prime', attributionMethod: 'installation_prime' } });
+      expect(records.at(-1)?.turnId).toBeUndefined();
+      observeRequestCorrelation({ requestId, conversationId: other.conversationId!, sessionId: other.id,
+        messageId: 'late-fallback-proof', tool: 'update_plan', observedAt: Date.now() });
+      expect((await readEvents(source.id)).filter(event => event.kind === 'tool_call')).toEqual(records);
+      expect(await readSessionPlan(other.id)).toBeNull();
+    } finally {
+      resetAgentIdentityForTests();
+      await saveConfig(previous);
+    }
+  });
+
+  it('keeps exact callers and blocked Prime owners fenced with fallback enabled', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const owner = 'prime-fallback-blocked-owner';
+    const source = await createSession({ conversationId: owner });
+    const exact = await createSession({ conversationId: 'fallback-exact-other' });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      observeRequestCorrelation({ requestId: 'wfr_fallback_exact', conversationId: exact.conversationId!,
+        sessionId: exact.id, messageId: 'fallback-exact-message', tool: 'update_plan', observedAt: Date.now() });
+      const args = { plan: [{ step: 'Exact caller wins', status: 'in_progress' }] };
+      expect(failed(await modern('tools/call', { name: 'update_plan', arguments: args },
+        { 'x-request-id': 'wfr_fallback_exact' }))).toBe(false);
+      expect(await readSessionPlan(source.id)).toBeNull();
+      expect((await readSessionPlan(exact.id))?.plan[0]?.step).toBe('Exact caller wins');
+      setChatBlocked(owner, true);
+      const denied = await modern('tools/call', { name: 'update_plan', arguments: args },
+        { 'x-request-id': 'wfr_fallback_blocked' });
+      expect(failed(denied)).toBe(true);
+      expect(await readSessionPlan(source.id)).toBeNull();
+    } finally {
+      resetBlockedChatsForTests();
+      resetAgentIdentityForTests();
+      await saveConfig(previous);
+    }
+  });
+
+  it('does not assign calls to Prime when the opt-in is off or ingress is an app probe', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const owner = 'prime-fallback-opt-out';
+    const source = await createSession({ conversationId: owner });
+    restoreAgentIdentity({ version: 1, conversationId: owner });
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: false } });
+      const args = { plan: [{ step: 'Must not write', status: 'in_progress' }] };
+      expect(failed(await modern('tools/call', { name: 'update_plan', arguments: args },
+        { 'x-request-id': 'wfr_fallback_disabled' }))).toBe(true);
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      expect(failed(await modern('tools/call', { name: 'update_plan', arguments: args },
+        { ...selfTestHeaders(), 'x-request-id': 'wfr_fallback_probe' }))).toBe(true);
+      expect(await readSessionPlan(source.id)).toBeNull();
+    } finally {
+      resetAgentIdentityForTests();
+      await saveConfig(previous);
+    }
+  });
+
+  it('waits for the exact worker/Prime session on a late Plan call even with account-wide access enabled', async () => {
+    ctx.sessionTools = true;
+    const previous = getConfig();
+    const source = await createSession({ conversationId: 'plan-shared-late-owner' });
+    const requestId = 'wfr_plan_shared_late_owner';
+    try {
+      await saveConfig({ ...previous, multiAgent: { ...previous.multiAgent, allowUnattributedCalls: true } });
+      setTimeout(() => observeRequestCorrelation({
+        requestId, conversationId: 'plan-shared-late-owner', sessionId: source.id,
+        messageId: 'msg-plan-shared-late-owner', tool: 'update_plan', observedAt: Date.now()
+      }), 60).unref?.();
+      const reply = await modern('tools/call', { name: 'update_plan', arguments: {
+        plan: [{ step: 'Preserve exact Plan owner', status: 'in_progress' }]
+      } }, { 'x-request-id': `${requestId}/att1` });
+      expect(failed(reply), textOf(reply)).toBe(false);
+      expect((await readSessionPlan(source.id))?.plan).toEqual([
+        { step: 'Preserve exact Plan owner', status: 'in_progress' }
+      ]);
+      // No Companion elsewhere on the account must never silently adopt this session.
+      const foreign = await modern('tools/call', { name: 'update_plan', arguments: { plan: [] } },
+        { 'x-request-id': 'wfr_plan_shared_without_companion/att1' });
+      expect(failed(foreign)).toBe(true);
+      expect(textOf(foreign)).toContain('Exact chat identity');
+      expect((await readSessionPlan(source.id))?.plan).toHaveLength(1);
+      const read = await core('tools/call', { name: 'read', arguments: { paths: ['/workspace/src/app.ts'] } });
+      expect(failed(read), textOf(read)).toBe(false);
+    } finally {
+      await saveConfig(previous);
+    }
+  });
+
   it('uses exact request proof without workers, refuses foreign targets and retired chats', async () => {
     ctx.sessionTools = true;
     ctx.agentTools = false;
@@ -4197,6 +4383,28 @@ describe('exec sessions belong to the chat that opened them', () => {
       { name, arguments: args },
       requestId ? { 'x-request-id': `${requestId}/att1` } : {}
     );
+
+  it('applies the restored native research lock to real effectful MCP dispatch', async () => {
+    const owner = { conversationId: 'conv-native-parent', sessionId: 'session-conv-native-parent', primeRunId: null };
+    const request = await prepareNativeDelegation({
+      owner, assignments: [{ label: 'Read only', task: 'Inspect a source file' }],
+      acknowledgement: 'Experimental parent research was explicitly enabled'
+    });
+    try {
+      expect(prove('wfr_native_parent_denied', owner.conversationId, owner.sessionId)).toBe('stored');
+      const denied = await asChat('wfr_native_parent_denied', 'exec_command', {
+        cmd: 'echo should-not-run', workdir: '/workspace'
+      });
+      expect(failed(denied)).toBe(true);
+      expect(textOf(denied)).toContain('NATIVE_DELEGATION_PARENT_LOCKED');
+      expect(textOf(denied)).toContain('No effectful Eve tool ran');
+      expect(prove('wfr_native_parent_read', owner.conversationId, owner.sessionId)).toBe('stored');
+      const read = await asChat('wfr_native_parent_read', 'read', { paths: ['/workspace/notes.txt'] });
+      expect(failed(read), textOf(read)).toBe(false);
+    } finally {
+      await closeNativeDelegation({ owner, requestId: request.id, disposition: 'closed' });
+    }
+  });
 
   it('refuses write_stdin from a chat that does not own the session, and keeps serving the one that does', async () => {
     expect(prove('wfr_execown_opener', 'conv-execown-opener')).toBe('stored');

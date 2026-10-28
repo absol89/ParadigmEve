@@ -109,6 +109,32 @@ function initAgentExecutionControls(): void {
   $('agentBuildFlavor').textContent = BUILD_FLAVOR;
 }
 
+function updateWorkerExperimentStatus(): void {
+  const status = $('experimentalWorkerStatus');
+  const mode = $<HTMLSelectElement>('workerExecutionMode').value;
+  const model = $<HTMLInputElement>('experimentalApiWorkerModel').value.trim();
+  const otherProvider = mode === 'openrouter' || mode === 'ollama';
+  $('experimentalWorkerModelRow').hidden = !otherProvider;
+  if (mode === 'chatgpt') {
+    status.textContent = t('ChatGPT workers: reusable helper chats with individual Eve progress and review evidence. The exact worker chat must obtain its own ChatGPT approvals.');
+  } else if (mode === 'native') {
+    status.textContent = t('Native subagents require a ChatGPT Work parent. Eve cannot currently verify a hosted child launch, inherit its provider approvals, or authorize its writes. No worker is silently substituted.');
+  } else if (!model) {
+    status.textContent = t('Not ready: choose an exact worker model. No new worker starts on this provider yet.');
+  } else {
+    status.textContent = t('Selected for new workers: {0} · {1}. Provider credentials and availability are checked when work starts.', [mode === 'openrouter' ? 'OpenRouter' : 'Ollama', model]);
+  }
+}
+
+function updateHeartbeatExecutionStatus(): void {
+  const mode = $<HTMLSelectElement>('heartbeatExecutionMode').value;
+  $('heartbeatExecutionStatus').textContent = mode === 'auditable-chat'
+    ? t('Auditable chat: a separate read-only heartbeat worker reviews local evidence and reports to Prime. Its ChatGPT approvals are per-chat; no write permission is inherited.')
+    : mode === 'native-subagent'
+      ? t('Native subagent: the existing heartbeat scheduler queues a review in Prime when it is safe. Prime requests a hosted native child, interprets its answer and keeps only the outcome. Host delegation can be unavailable; no alternate chat or model is started.')
+      : t('OFF: no new automatic heartbeat reviews. Existing durable debt and findings remain saved.');
+}
+
 initAgentExecutionControls();
 
 let lanCreatedJoinKey: string | null = null;
@@ -1474,6 +1500,20 @@ function apply(next: AppState): void {
     config.multiAgent.enabled,
     previousState?.config.multiAgent.enabled
   );
+  $('experimentalWorkerControls').hidden = BUILD_FLAVOR !== 'debug';
+  applyValue($<HTMLSelectElement>('heartbeatExecutionMode'),
+    config.multiAgent.heartbeatMode ?? 'off', previousState?.config.multiAgent.heartbeatMode ?? 'off');
+  updateHeartbeatExecutionStatus();
+  applyValue($<HTMLSelectElement>('workerExecutionMode'),
+    config.multiAgent.workerRuntime === 'api' ? (config.multiAgent.experimentalApiWorkers?.provider ?? 'chatgpt') :
+      config.multiAgent.workerRuntime ?? (execution.worker === 'gpt-chat' ? 'chatgpt' : execution.worker === 'openrouter' || execution.worker === 'ollama' ? execution.worker : 'chatgpt'),
+    previousState?.config.multiAgent.workerRuntime === 'api' ? (previousState.config.multiAgent.experimentalApiWorkers?.provider ?? 'chatgpt') :
+      previousState?.config.multiAgent.workerRuntime ?? (previousExecution.worker === 'gpt-chat' ? 'chatgpt' : previousExecution.worker === 'openrouter' || previousExecution.worker === 'ollama' ? previousExecution.worker : 'chatgpt'));
+  applyValue($<HTMLInputElement>('experimentalApiWorkerModel'),
+    config.multiAgent.experimentalApiWorkers?.model ?? '',
+    previousState?.config.multiAgent.experimentalApiWorkers?.model ?? '');
+  $<HTMLInputElement>('experimentalApiWorkerModel').dataset.provider = config.multiAgent.experimentalApiWorkers?.provider ?? '';
+  updateWorkerExperimentStatus();
   ensureVisibleAgentBackend($<HTMLSelectElement>('agentOrchestratorBackend'), execution.orchestrator);
   ensureVisibleAgentBackend($<HTMLSelectElement>('agentWorkerBackend'), execution.worker);
   applyValue(
@@ -2592,6 +2632,9 @@ for (const id of [
   'instanceName',
   'agentOrchestratorBackend',
   'agentWorkerBackend',
+  'workerExecutionMode',
+  'heartbeatExecutionMode',
+  'experimentalApiWorkerModel',
   'ollamaWorkerEndpoint',
   'ollamaWorkerModel',
   'openrouterWorkerModel',
@@ -2600,7 +2643,19 @@ for (const id of [
   'maOllamaLocalWorkers',
   'maOllamaCloudWorkers'
 ]) {
-  $(id).addEventListener('change', () => void save());
+  $(id).addEventListener('change', () => {
+    if (id === 'workerExecutionMode') {
+      const mode = $<HTMLSelectElement>('workerExecutionMode').value;
+      const model = $<HTMLInputElement>('experimentalApiWorkerModel');
+      if ((mode === 'openrouter' || mode === 'ollama') && model.dataset.provider !== mode) {
+        model.value = '';
+        model.dataset.provider = mode;
+      }
+    }
+    if (id.startsWith('experimentalApiWorker') || id === 'workerExecutionMode') updateWorkerExperimentStatus();
+    if (id === 'heartbeatExecutionMode') updateHeartbeatExecutionStatus();
+    void save();
+  });
 }
 
 $('eveAllowOtherChats').addEventListener('change', () => void save());

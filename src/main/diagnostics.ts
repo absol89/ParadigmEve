@@ -24,6 +24,8 @@ import { listUsageSessions } from './session/store.js';
 import { APP_VERSION, BRIDGE_PROTOCOL } from './version.js';
 import { bundledVersion } from './tunnel/locate.js';
 import { recentOperationalErrorSummary, supportAge, supportLifecycleChecks } from './diagnostics-support.js';
+import { summarizeReliabilityDiagnostics } from './reliability-debug.js';
+import { BUILD_FLAVOR } from '../shared/build-flavor.js';
 import {
   ago,
   POLL_FRESH_MS,
@@ -449,6 +451,20 @@ export async function runDiagnostics(): Promise<Diagnosis> {
       detail: recentOperationalErrorSummary(getLog())
     }
   );
+  if (BUILD_FLAVOR === 'debug') {
+    checks.push({
+      name: 'GPT/Eve reliability signals (debug only)', status: 'skipped', ok: null,
+      detail: summarizeReliabilityDiagnostics(getLog())
+    });
+    const mode = getConfig().multiAgent.heartbeatMode ?? 'off';
+    checks.push({
+      name: 'Native heartbeat host proof (debug only)',
+      status: mode === 'native-subagent' ? 'not-run' : 'skipped', ok: null,
+      detail: mode === 'native-subagent'
+        ? 'Native selected, but this app has no authenticated hosted child-launch/status/callback interface. No child started, no tools authorized, and review debt remains outstanding.'
+        : `Heartbeat mode ${mode}. No native child-launch capability has been independently verified.`
+    });
+  }
 
   const broken = checks.filter((c) => c.status === 'fail');
   const incomplete = checks.filter((c) => c.status === 'not-run');

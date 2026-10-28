@@ -508,6 +508,81 @@ async function mountChat(
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+it('offers four user-facing worker modes with one dropdown independently of heartbeat selection', async () => {
+  const mounted = await mountChat();
+  const doc = mounted.window.document;
+  const mode = doc.getElementById('workerExecutionMode') as HTMLSelectElement;
+  const model = doc.getElementById('experimentalApiWorkerModel') as HTMLInputElement;
+  const status = doc.getElementById('experimentalWorkerStatus')!;
+  const modelRow = doc.getElementById('experimentalWorkerModelRow')!;
+  expect(doc.getElementById('experimentalApiWorkerEnabled')).toBeNull();
+  expect(doc.getElementById('experimentalApiWorkerProvider')).toBeNull();
+  expect(doc.getElementById('experimentalNativeDelegation')).toBeNull();
+  expect(mode.value).toBe('chatgpt');
+  expect([...mode.options].map(option => [option.value, option.textContent])).toEqual([
+    ['chatgpt', 'ChatGPT workers'],
+    ['native', 'Native subagents'],
+    ['openrouter', 'OpenRouter'],
+    ['ollama', 'Ollama']
+  ]);
+  expect(modelRow.hidden).toBe(true);
+  expect((doc.querySelector('.worker-legacy-settings') as HTMLDetailsElement).open).toBe(false);
+  expect(doc.querySelectorAll('#workerModel')).toHaveLength(1);
+  expect(doc.querySelectorAll('#workerReasoning')).toHaveLength(1);
+  expect(status.textContent).toContain('reusable');
+  mode.value = 'native';
+  mode.dispatchEvent(new mounted.window.Event('change'));
+  await settle();
+  expect(modelRow.hidden).toBe(true);
+  expect(status.textContent).toContain('Eve cannot currently verify');
+  expect(mounted.calls.at(-1)?.multiAgent.workerRuntime).toBe('native');
+  expect(mounted.calls.at(-1)?.multiAgent.experimentalNativeDelegation).toBe(true);
+  mode.value = 'openrouter';
+  mode.dispatchEvent(new mounted.window.Event('change'));
+  await settle();
+  expect(modelRow.hidden).toBe(false);
+  expect(status.textContent).toContain('Not ready');
+  model.value = 'fixture/worker-model';
+  model.dispatchEvent(new mounted.window.Event('change'));
+  await settle();
+  expect(status.textContent).toContain('fixture/worker-model');
+  expect(mounted.calls.at(-1)?.multiAgent).toMatchObject({
+    workerRuntime: 'openrouter',
+    experimentalApiWorkers: { enabled: true, provider: 'openrouter', model: 'fixture/worker-model' }
+  });
+  mode.value = 'ollama';
+  mode.dispatchEvent(new mounted.window.Event('change'));
+  await settle();
+  expect(model.value).toBe('');
+  expect(mounted.calls.at(-1)?.multiAgent).toMatchObject({
+    workerRuntime: 'ollama', experimentalApiWorkers: { enabled: true, provider: 'ollama', model: null }
+  });
+  mode.value = 'chatgpt';
+  mode.dispatchEvent(new mounted.window.Event('change'));
+  await settle();
+  expect(modelRow.hidden).toBe(true);
+  expect(mounted.calls.at(-1)?.multiAgent.experimentalApiWorkers.enabled).toBe(false);
+  expect(mounted.calls.at(-1)?.multiAgent.experimentalNativeDelegation).toBe(false);
+});
+it('persists OFF / Auditable chat / Native subagent as a separate heartbeat dropdown', async () => {
+  const mounted = await mountChat();
+  const doc = mounted.window.document;
+  const mode = doc.getElementById('heartbeatExecutionMode') as HTMLSelectElement;
+  const status = doc.getElementById('heartbeatExecutionStatus')!;
+  expect([...mode.options].map(option => [option.value, option.textContent])).toEqual([
+    ['off', 'OFF'], ['auditable-chat', 'Auditable chat'], ['native-subagent', 'Native subagent']
+  ]);
+  expect(mode.value).toBe('off');
+  expect(status.textContent).toContain('no new automatic heartbeat');
+  for (const [value, statusText] of [['auditable-chat', 'read-only'], ['native-subagent', 'queues a review'], ['off', 'no new automatic']] as const) {
+    mode.value = value;
+    mode.dispatchEvent(new mounted.window.Event('change'));
+    await settle();
+    expect(mounted.calls.at(-1)?.multiAgent.heartbeatMode).toBe(value);
+    expect(mounted.calls.at(-1)?.multiAgent.workerRuntime).toBeUndefined();
+    expect(status.textContent).toContain(statusText);
+  }
+});
 it('publishes a slow history read once across navigation while project loading is still pending', async () => {
   let resolveList!: (value: any) => void;
   let resolveProjects!: (value: any) => void;

@@ -856,6 +856,31 @@ describe('desktop input delivery and helper ownership', () => {
     expect(live.sent.filter(message => message.ack)).toHaveLength(change === 'accepted' ? 1 : 0);
     if (change === 'draft') expect(composerText(live.document)).toBe('My own draft');
   });
+  it.each(['stop-timeout', 'turn-changed'] as const)('labels a claimed rotation refusal without sending (%s)', async blocker => {
+    let directTurn: { id: string; startedAt: number };
+    live = await nonProHarness(`https://chatgpt.com/c/${chatA}`, {
+      desktop_input: message => ({ ok: true, data: message.fail || message.authorize || message.ack
+        ? { ok: true } : { input: claimed({ directTurn }) } })
+    });
+    startGenerating(live.document);
+    live.hook.observe(); await live.hook.flush();
+    const start = emitted(live.sent, 'turn_start').at(-1)!;
+    directTurn = { id: start.event.turnId as string, startedAt: start.event.time as number };
+    const stop = live.document.querySelector('[data-testid="stop-button"]')!;
+    Object.defineProperty(stop, 'getClientRects', { value: () => [{ width: 32, height: 32 }] });
+    // Never settle a stopped answer in this fixture. One case changes exact user ownership.
+    if (blocker === 'turn-changed') stop.addEventListener('click', () => {
+      userTurn(live!.document, 'later-question', 'A later human message');
+      live!.hook.observe();
+    });
+    const sends = watchSend(live.document);
+    expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA, directTurn }))
+      .toEqual({ ok: false });
+    expect(live.sent.find(message => message.type === 'desktop_input' && message.fail))
+      .toMatchObject({ detail: blocker });
+    expect(sends()).toBe(0);
+    expect(live.sent.filter(message => message.type === 'desktop_input' && message.ack)).toHaveLength(0);
+  });
   it('keeps a helper claim revocable until its delayed Send is ready', async () => {
     let authorized = true;
     live = await harness(`https://chatgpt.com/c/${chatA}`, {
@@ -7581,6 +7606,31 @@ describe('a stop button that goes missing while the turn is still running', () =
     expect(live.sent.some((message) => message.type === 'reload_owned_chat')).toBe(false);
   });
 
+  it('does not let request-id and owner metadata changes prolong a stalled response', async () => {
+    live = await harness();
+    userTurn(live.document, 'metadata-stall-user', 'continue the work');
+    startGenerating(live.document);
+    const section = assistantTurn(live.document, 'metadata-stall-turn', []);
+    live.hook.observe(); await settle();
+    section.setAttribute('data-clf-fiber-turn', '0');
+    live.advance(60_000);
+    const turn = (requestId: string, answered: boolean) => ({
+      turnId: 'metadata-stall-turn', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      calls: [{ messageId: 'metadata-stall-tool', tool: 'read', order: 0, answered, requestId }], messages: []
+    });
+    await replyFiber([], [turn('wfr_stall_first', false)]);
+    await live.hook.flush();
+    expect(emitted(live.sent, 'tool_evidence')).toHaveLength(1);
+    live.advance(live.hook.STALL_MS - 1000);
+    // A changed request-id is recording evidence, not a fresh model answer.
+    await replyFiber([], [turn('wfr_stall_metadata', false)]);
+    await live.hook.flush();
+    expect(emitted(live.sent, 'tool_evidence')).toHaveLength(2);
+    live.advance(1001);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'chat_error').some(row => row.event.text.includes('No visible progress for ten minutes'))).toBe(true);
+  });
+
   /**
    * The key claims the attempt, so an attempt that failed has to give it back.
    *
@@ -7742,6 +7792,40 @@ describe('a stop button that goes missing while the turn is still running', () =
     expect(events[1]).toMatchObject({ messageId, providerAssetId: assetId, previewWidth: 1254, previewHeight: 1254 });
     expect(JSON.stringify(events)).not.toContain('sig=private');
     expect(JSON.stringify(events)).not.toContain('/backend-api/estuary/content');
+  });
+
+  it('captures two opaque user-upload thumbnails only from the exact Fiber-stamped user message', async () => {
+    live = await harness();
+    const section = assistantTurn(live.document, 'turn-user-two-uploads', []);
+    section.setAttribute('data-clf-fiber-turn', '0');
+    const messageId = '7a1c0f3e-5b2d-4c8e-9f10-0123456789ab';
+    const assetIds = ['file_00000000000000000000000000000081', 'file_00000000000000000000000000000082'];
+    for (const [index, assetId] of assetIds.entries()) {
+      const image = live.document.createElement('img');
+      image.src = 'blob:https://chatgpt.com/' + assetId;
+      image.setAttribute('data-clf-fiber-image', '0:' + encodeURIComponent(messageId) + ':' + encodeURIComponent(assetId));
+      Object.defineProperties(image, {
+        complete: { configurable: true, value: true },
+        naturalWidth: { configurable: true, value: 640 + index },
+        naturalHeight: { configurable: true, value: 480 + index }
+      });
+      section.append(image);
+    }
+    (live.window.HTMLCanvasElement.prototype as any).getContext = () => ({ drawImage: () => undefined });
+    (live.window.HTMLCanvasElement.prototype as any).toBlob = function (callback: (blob: any) => void) {
+      const bytes = new TextEncoder().encode('bounded-user-webp');
+      callback({ type: 'image/webp', size: bytes.length, arrayBuffer: async () => bytes.buffer });
+    };
+    await replyFiber([], [{ turnId: 'turn-user-two-uploads', conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      messages: [], activities: [], images: assetIds.map((assetId, order) => ({
+        messageId, assetId, providerRole: 'user', providerStatus: 'finished_successfully',
+        width: 640 + order, height: 480 + order, order: 0, partOrder: order
+      })) }]);
+    await settle(); await live.hook.flush(); await settle();
+    const previews = emitted(live.sent, 'native_image').map(row => row.event);
+    expect(previews.filter(row => row.previewStatus === 'available').map(row => row.providerAssetId).sort())
+      .toEqual([...assetIds].sort());
+    expect(JSON.stringify(previews)).not.toContain('blob:');
   });
 
   it('forwards one bounded image trace per signature and drops invalid trace fields', async () => {
@@ -9823,6 +9907,30 @@ describe('evidence from the page context', () => {
     ]);
   });
 
+  it('retains the newest request after sixteen provisional streams during a provider approval handoff', async () => {
+    const conversationId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    live = await harness('https://chatgpt.com/');
+    const ids = Array.from({ length: 17 }, (_, i) => `wfr_approval_handoff_${i}`);
+    for (const requestId of ids) {
+      live.window.dispatchEvent(new live.window.MessageEvent('message', {
+        source: live.window as unknown as Window,
+        origin: 'https://chatgpt.com',
+        data: { type: 'cos-request-origin', conversationId, requestIds: [requestId] }
+      }));
+    }
+    await settle();
+    expect(live.sent.filter(message => message.type === 'correlate')).toEqual([]);
+
+    live.window.history.replaceState({}, '', `/c/${conversationId}`);
+    live.hook.observe();
+    await settle();
+    const correlated = live.sent.filter(message => message.type === 'correlate')
+      .flatMap(message => message.calls.map((call: any) => call.requestId));
+    expect(correlated).toContain(ids[16]);
+    expect(correlated).not.toContain(ids[0]);
+    expect(correlated).toHaveLength(16);
+  });
+
   /**
    * Upstream chat-on-steroids #432 (2026-09-26): a chat started by hand from a tab that already
    * showed another chat stayed Unattributed. ChatGPT publishes the request id before the new chat
@@ -9868,6 +9976,50 @@ describe('evidence from the page context', () => {
     await settle();
     expect(correlations()).toHaveLength(2);
     expect(correlations()[1]).toMatchObject({ conversationId: chat, calls: [expect.objectContaining({ requestId, messageId: null })] });
+  });
+
+  it('retains a live generating turn request after the ordinary replay TTL during app restart', async () => {
+    const chat = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const requestId = 'wfr_long_running_worker_review';
+    live = await harness(`https://chatgpt.com/c/${chat}`);
+    startGenerating(live.document);
+    live.hook.observe();
+    await settle();
+    live.window.dispatchEvent(new live.window.MessageEvent('message', {
+      source: live.window as unknown as Window, origin: 'https://chatgpt.com',
+      data: { type: 'cos-request-origin', conversationId: chat, requestIds: [requestId] }
+    }));
+    await settle();
+    const correlations = () => live!.sent.filter(message => message.type === 'correlate' &&
+      message.calls.some((call: any) => call.requestId === requestId));
+    expect(correlations()).toHaveLength(1);
+
+    // The page and its Stop control are still the same live generation after 34 minutes.
+    live.advance(34 * 60_000);
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ generating: true });
+    await live.runtimeMessage({ type: 'clf-recorder-reconnect', conversationId: chat });
+    await settle();
+    expect(correlations()).toHaveLength(2);
+    expect(correlations()[1]).toMatchObject({ conversationId: chat, calls: [expect.objectContaining({ requestId })] });
+  });
+
+  it('expires an old stream request after the turn settles, even if its chat remains open', async () => {
+    const chat = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const requestId = 'wfr_idle_stream_expires';
+    live = await harness(`https://chatgpt.com/c/${chat}`);
+    live.window.dispatchEvent(new live.window.MessageEvent('message', {
+      source: live.window as unknown as Window, origin: 'https://chatgpt.com',
+      data: { type: 'cos-request-origin', conversationId: chat, requestIds: [requestId] }
+    }));
+    await settle();
+    expect(await live.runtimeMessage({ type: 'clf-page-status' })).toMatchObject({ generating: false });
+    const before = live.sent.filter(message => message.type === 'correlate' &&
+      message.calls.some((call: any) => call.requestId === requestId)).length;
+    live.advance(34 * 60_000);
+    await live.runtimeMessage({ type: 'clf-recorder-reconnect', conversationId: chat });
+    await settle();
+    expect(live.sent.filter(message => message.type === 'correlate' &&
+      message.calls.some((call: any) => call.requestId === requestId))).toHaveLength(before);
   });
 
   it('retires fresh-chat stream proof when another concrete route wins first', async () => {
@@ -12103,6 +12255,41 @@ describe('the Compact & resume control', () => {
     expect(composerText(live.document)).toContain('my unrelated draft');
     const compacts = live.sent.filter((message) => message.type === 'compact');
     expect(compacts.at(-1)).toMatchObject({ cancel: true });
+  });
+
+  it('keeps injected rich-preview styles out of the handoff draft comparison and sends only once', async () => {
+    const prompt = '[[CLF-HANDOFF:0123456789abcdef0123456789abcdef]]\n\nWrite the handoff brief';
+    live = await harness(undefined, {
+      activity: () => ({ ok: true, data: { entries: [], stream: [], nextSince: 0, pendingTools: 0, job: null } }),
+      compact: (message) => ({ ok: true, data: message.sourceAttempt ? { allowed: true }
+        : message.sourceDispatch ? { armed: true }
+          : { started: true, token: '0123456789abcdef0123456789abcdef', prompt,
+            job: { sessionId: 's1', stage: 'handoff-pending', busy: true, handoffId: null, error: null } } })
+    });
+    live.hook.injectControl();
+    const sends = watchSend(live.document);
+    const document = live.document;
+    let authoredAtSend = '';
+    document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+      authoredAtSend = (live!.window as any).CLF_DOM.editorAuthoredText(document.querySelector('#prompt-textarea'));
+    });
+    const original = document.execCommand.bind(document);
+    document.execCommand = (command, ui, value) => {
+      const accepted = original(command, ui, value);
+      if (accepted && command === 'insertHTML') {
+        const box = document.querySelector('#prompt-textarea')!;
+        const style = document.createElement('style'); style.textContent = 'preview-title { display: none; }';
+        const script = document.createElement('script'); script.textContent = 'doNotRunPreview();';
+        box.append(style, script);
+      }
+      return accepted;
+    };
+
+    await live.hook.startCompact();
+    expect(sends()).toBe(1);
+    expect(authoredAtSend.replace(/\s+/g, '')).toBe(prompt.replace(/\s+/g, ''));
+    expect(live.sent.filter(message => message.type === 'compact' && message.sourceDispatch)).toHaveLength(1);
+    expect(live.sent.some(message => message.type === 'compact' && message.cancel)).toBe(false);
   });
 
   /**
@@ -15333,6 +15520,67 @@ describe('the context meter and automatic compaction', () => {
     expect(live.sent.filter((message) => message.type === 'compact')).toEqual([]);
   });
 
+  it('does not stop or file a manual compaction while Voice is active', async () => {
+    live = await harness(undefined, { activity: () => withContext(100, settings()) });
+    const voice = live.document.createElement('button');
+    voice.setAttribute('aria-label', 'End voice mode');
+    live.document.body.append(voice);
+    startGenerating(live.document);
+    const stopped = vi.fn();
+    live.document.querySelector('[data-testid="stop-button"]')!.addEventListener('click', stopped);
+    await live.hook.startCompact();
+    expect(stopped).not.toHaveBeenCalled();
+    expect(live.sent.filter(message => message.type === 'compact')).toEqual([]);
+    voice.remove();
+  });
+
+  it('keeps an unsent ticket when Voice starts during the ticket request', async () => {
+    let releaseTicket!: (value: unknown) => void;
+    const ticket = new Promise(resolve => { releaseTicket = resolve; });
+    live = await harness(undefined, {
+      activity: () => withContext(100, settings()),
+      compact: message => message.ticket ? ticket : { ok: false }
+    });
+    startGenerating(live.document);
+    const stopped = vi.fn();
+    live.document.querySelector('[data-testid="stop-button"]')!.addEventListener('click', stopped);
+    const pending = live.hook.startCompact();
+    await settle();
+    const voice = live.document.createElement('button');
+    voice.setAttribute('aria-label', 'End voice mode');
+    live.document.body.append(voice);
+    releaseTicket({ ok: true, data: { token: 'abcdefghijklmnop', sourceSend: { state: 'not-attempted' }, ...automaticTicket('not-attempted') } });
+    await pending;
+    expect(stopped).not.toHaveBeenCalled();
+    expect(startedCompactions(live)).toEqual([]);
+    expect(live.sent.filter(message => message.type === 'compact' && message.cancel)).toEqual([]);
+  });
+
+  it('does not click Send if Voice starts while the durable source dispatch is arming', async () => {
+    let releaseDispatch!: (value: unknown) => void;
+    const dispatch = new Promise(resolve => { releaseDispatch = resolve; });
+    live = await harness(undefined, {
+      activity: () => withContext(100, settings()),
+      compact: message => {
+        if (message.ticket) return { ok: true, data: { token: 'abcdefghijklmnop', sourceSend: { state: 'not-attempted' } } };
+        if (message.sourceAttempt) return { ok: true, data: { allowed: true } };
+        if (message.sourceDispatch) return dispatch;
+        return { ok: true, data: { prompt: '[[CLF-HANDOFF:abcdefghijklmnop]] Write the brief.', token: 'abcdefghijklmnop' } };
+      }
+    });
+    const sends = watchSend(live.document);
+    const pending = live.hook.startCompact();
+    await settle();
+    expect(live.sent.some(message => message.type === 'compact' && message.sourceDispatch)).toBe(true);
+    const voice = live.document.createElement('button');
+    voice.setAttribute('aria-label', 'End voice mode');
+    live.document.body.append(voice);
+    releaseDispatch({ ok: true, data: { armed: true } });
+    await pending;
+    expect(sends()).toBe(0);
+    expect(live.sent.filter(message => message.type === 'compact' && message.cancel)).toEqual([]);
+  });
+
   /**
    * The automatic trigger is the app's decision now (bridge `considerAutomaticCompaction`): it
    * files the ticket on the evidence that a working chat has crossed the line, because that
@@ -15679,6 +15927,101 @@ describe('the context meter and automatic compaction', () => {
    * Mid-tool-call is mid-turn, and is explicitly allowed. Local calls are not raced: the
    * same settle barrier a manual press goes through waits for them before anything is typed.
    */
+  it('waits for a collapsed provider approval before focusing, stopping or sending an automatic handoff', async () => {
+    let sendState = 'not-attempted';
+    let stops = 0;
+    let approval!: HTMLElement;
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: true, threshold: 200_000 }), automaticTicket(sendState)),
+      compact: (message: Record<string, unknown>) => {
+        if (message.sourceAttempt) {
+          sendState = 'attempted-unresolved';
+          return { ok: true, data: { allowed: true } };
+        }
+        if (message.sourceDispatch) {
+          sendState = 'dispatched-unresolved';
+          return { ok: true, data: { armed: true } };
+        }
+        return { ok: true, data: { started: false, token: 'tok-approval-wait', prompt: 'write the brief', ...automaticTicket(sendState) } };
+      }
+    }, document => {
+      startGenerating(document);
+      const stop = document.querySelector('[data-testid="stop-button"]') as HTMLButtonElement;
+      stop.addEventListener('click', () => { stops++; stopGenerating(document); });
+      const section = assistantTurn(document, 'awaiting-approval', []);
+      approval = document.createElement('div');
+      approval.setAttribute('data-codex-approval-surface', 'true');
+      approval.hidden = true; // A collapsed Previous activity still contains a pending decision.
+      const decision = document.createElement('button');
+      decision.textContent = 'Allow once';
+      approval.append(decision);
+      section.append(approval);
+    });
+    live.hook.injectControl();
+    expect((live.window as any).CLF_DOM.approvalWaiting()).toBe(true);
+    expect(live.sent.filter(message => message.type === 'focus_tab')).toHaveLength(0);
+
+    await live.hook.pullActivity();
+    await settle();
+    expect(stops).toBe(0);
+    expect(live.sent.filter(message => message.type === 'focus_tab')).toHaveLength(0);
+    expect(live.sent.filter(message => message.type === 'compact' && message.sourceAttempt)).toHaveLength(0);
+
+    // A real human decision removes the provider card; the same unsent ticket resumes once.
+    approval.remove();
+    await live.hook.pullActivity();
+    await settle();
+    expect(stops).toBe(1);
+    expect(live.sent.filter(message => message.type === 'focus_tab')).toHaveLength(1);
+    expect(live.sent.filter(message => message.type === 'compact' && message.sourceAttempt)).toHaveLength(1);
+  });
+
+  it('retries the same unsent ticket when approval appears after a pickup but before Stop', async () => {
+    let filed = false;
+    let approval: HTMLElement | null = null;
+    let stops = 0;
+    let sendState = 'not-attempted';
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: true, threshold: 200_000 }),
+        filed ? automaticTicket(sendState) : {}),
+      compact: (message: Record<string, unknown>) => {
+        if (message.ticket && !approval) {
+          const section = assistantTurn(live!.document, 'approval-during-pickup', []);
+          approval = live!.document.createElement('div');
+          approval.setAttribute('data-codex-approval-surface', 'true');
+          approval.innerHTML = '<button>Allow once</button>';
+          section.append(approval);
+        }
+        if (message.sourceAttempt) {
+          sendState = 'attempted-unresolved';
+          return { ok: true, data: { allowed: true } };
+        }
+        if (message.sourceDispatch) {
+          sendState = 'dispatched-unresolved';
+          return { ok: true, data: { armed: true } };
+        }
+        return { ok: true, data: { started: false, token: 'tok-mid-approval', prompt: 'write the brief', ...automaticTicket(sendState) } };
+      }
+    });
+    live.hook.injectControl();
+    startGenerating(live.document);
+    const stop = live.document.querySelector('[data-testid="stop-button"]') as HTMLButtonElement;
+    stop.addEventListener('click', () => { stops++; stopGenerating(live!.document); });
+    filed = true;
+
+    await live.hook.pullActivity();
+    await settle();
+    expect(approval).not.toBeNull();
+    expect(stops).toBe(0);
+    expect(live.sent.filter(message => message.type === 'compact' && message.sourceAttempt)).toHaveLength(0);
+
+    approval!.remove();
+    await live.hook.pullActivity();
+    await settle();
+    expect(stops).toBe(1);
+    expect(live.sent.filter(message => message.type === 'compact' && message.sourceAttempt)).toHaveLength(1);
+  });
+
   it('resumes while a local tool call is still running, and waits for it before typing', async () => {
     let asked = 0;
     let filed = false;
