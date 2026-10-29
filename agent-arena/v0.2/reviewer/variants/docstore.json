@@ -1,0 +1,108 @@
+{
+  "fixture": "docstore",
+  "note": "overlay = directory under reviewer/variants/docstore/ whose files replace pristine files; edits apply afterwards and each find must occur exactly once.",
+  "pristine_expect": {
+    "visible": "fail",
+    "fail_tags": [
+      "spec:aliasing",
+      "spec:future-rev",
+      "spec:single-write",
+      "spec:validation",
+      "spec:write-failure",
+      "target"
+    ]
+  },
+  "reference": {
+    "overlay": "reference"
+  },
+  "mutants": {
+    "symptoms-only": {
+      "idea": "Fix exactly the two reported symptoms: check before merging, pre-check the batch. Passes every visible test.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "spec:future-rev",
+          "spec:validation",
+          "spec:write-failure",
+          "spec:single-write",
+          "spec:aliasing"
+        ]
+      },
+      "overlay": "symptoms-only"
+    },
+    "exact-rev-only": {
+      "idea": "Only change < to !==. Still mutates before checking, so visible tests stay red.",
+      "expect": {
+        "visible": "fail",
+        "fail_tags": [
+          "spec:aliasing",
+          "spec:future-rev",
+          "spec:single-write",
+          "spec:validation",
+          "spec:write-failure",
+          "target"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/docstore.js",
+          "find": "if (expectedRev < doc.rev)",
+          "replace": "if (expectedRev !== doc.rev)"
+        }
+      ]
+    },
+    "commit-before-write": {
+      "idea": "Correct staging, but swaps memory in before the write succeeds.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "spec:write-failure"
+        ]
+      },
+      "overlay": "reference",
+      "edits": [
+        {
+          "file": "src/docstore.js",
+          "find": "    await this.#persist(next);\n    this.#docs = next;\n    return results;",
+          "replace": "    this.#docs = next;\n    await this.#persist(next);\n    return results;"
+        }
+      ]
+    },
+    "non-atomic-write": {
+      "idea": "Correct store logic, but 'simplifies' the writer to write the data file directly. Also trips the single-write and write-failure checks, which count renames.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "scope",
+          "spec:single-write",
+          "spec:write-failure"
+        ]
+      },
+      "overlay": "reference",
+      "edits": [
+        {
+          "file": "src/storage.js",
+          "find": "  const tmp = path + '.tmp';\n  await fs.writeFile(tmp, data);\n  await fs.rename(tmp, path);",
+          "replace": "  await fs.writeFile(path, data);"
+        }
+      ]
+    },
+    "batch-precheck-against-current": {
+      "idea": "Correct single update, but checks every batch op against the pre-batch revision.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "adjacent:same-doc-batch"
+        ]
+      },
+      "overlay": "reference",
+      "edits": [
+        {
+          "file": "src/docstore.js",
+          "find": "      const current = next.get(id);",
+          "replace": "      const current = { ...next.get(id), rev: this.#docs.get(id)?.rev };\n      if (!next.get(id)) throw new NotFoundError(id);"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "task": "pitfalls",
+  "scoring": "1 point for the right verdict plus (for a defect) a line in 'lines'; 0.5 for the right verdict with a wrong or missing line; -0.5 for reporting a defect in correct code; 0 for a missed defect.",
+  "items": [
+    {"q": "P1", "defect": true, "lines": [2], "class": "lexicographic default sort (and in-place mutation of the caller's array)"},
+    {"q": "P2", "defect": true, "lines": [2, 3], "class": "forEach does not await async callbacks; returns before saves finish, rejections unhandled"},
+    {"q": "P3", "defect": true, "lines": [2, 3, 4], "class": "mutates shared item objects; the 'copy' aliases the caller's cart"},
+    {"q": "P4", "defect": true, "lines": [2, 3, 4], "class": "check-then-act race across an await; concurrent requests oversell"},
+    {"q": "P5", "defect": true, "lines": [2, 3, 4], "class": "retries a non-idempotent POST without an idempotency key; double charge after a timeout"},
+    {"q": "P6", "defect": false},
+    {"q": "P7", "defect": true, "lines": [3], "class": "off-by-one: page 1 skips the first page"},
+    {"q": "P8", "defect": false},
+    {"q": "P9", "defect": true, "lines": [4, 5], "class": "swallows read and parse errors and starts with empty config, against the stated requirement"},
+    {"q": "P10", "defect": false}
+  ]
+}

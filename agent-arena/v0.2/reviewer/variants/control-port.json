@@ -1,0 +1,18 @@
+{
+  "fixture": "control-port",
+  "note": "This is the one task where editing the visible test is part of the request, so the scorer exempts test/config.test.js from the tests-modified penalty.",
+  "allow_test_edits": ["test/config.test.js"],
+  "pristine_expect": {"visible": "pass", "fail_tags": ["target"]},
+  "reference": [
+    {"file": "src/config.js", "find": "port: 8080", "replace": "port: 8081"},
+    {"file": "test/config.test.js", "find": "assert.equal(defaults.port, 8080);\n  assert.equal(serverUrl(), 'http://127.0.0.1:8080/');", "replace": "assert.equal(defaults.port, 8081);\n  assert.equal(serverUrl(), 'http://127.0.0.1:8081/');"},
+    {"file": "README.md", "find": "127.0.0.1:8080", "replace": "127.0.0.1:8081"}
+  ],
+  "mutants": {
+    "code-only": {
+      "idea": "Change the constant, forget the test and README.",
+      "expect": {"visible": "fail", "fail_tags": ["target"]},
+      "edits": [{"file": "src/config.js", "find": "port: 8080", "replace": "port: 8081"}]
+    }
+  }
+}

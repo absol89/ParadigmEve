@@ -1,0 +1,55 @@
+# Manual-only proposal. Deployment requires user approval, merge to default branch,
+# and GitHub Settings > Pages > Source: GitHub Actions.
+# Runs repository code only (the suite's own fixtures, scorers and self-tests). It never checks out or
+# runs a pull request or any contestant submission, and the only write token is the Pages deployment.
+name: EVE-Al suite Pages (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: "agent-arena-pages"
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/configure-pages@v5
+      - name: Verify the archived v0.1 prototype
+        run: |
+          node agent-arena/tools/build-results.mjs
+          node agent-arena/tools/build-lite-results.mjs
+          node agent-arena/tools/check-package.mjs
+          node --test agent-arena/tools/score.test.mjs agent-arena/tools/score-lite.test.mjs
+          git diff --exit-code -- agent-arena/results.json agent-arena/RESULTS.md agent-arena/lite-results.json agent-arena/LITE-RESULTS.md
+      - name: Verify EVE-Al v0.2 (rubric lock, fixtures vs hidden tests and mutants, scorers, downloads)
+        run: |
+          node agent-arena/v0.2/tools/check-v02.mjs
+          node agent-arena/v0.2/tools/selftest.mjs
+          node --test agent-arena/v0.2/tools/answers.test.mjs agent-arena/v0.2/tools/probe.test.mjs agent-arena/v0.2/tools/run.test.mjs agent-arena/v0.2/tools/seal.test.mjs
+          node agent-arena/v0.2/tools/build-downloads.mjs --check
+          node agent-arena/v0.2/tools/build-results.mjs
+          git diff --exit-code -- agent-arena/v0.2/results.json agent-arena/v0.2/RESULTS.md
+      - name: Assemble the site without reviewer material
+        run: |
+          mkdir _site
+          cp -R agent-arena/. _site/
+          rm -rf _site/v0.2/reviewer
+          test ! -e _site/v0.2/reviewer
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./_site
+      - uses: actions/deploy-pages@v4
+        id: deployment

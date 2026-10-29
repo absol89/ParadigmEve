@@ -1,0 +1,13 @@
+{
+  "task": "sources",
+  "corpus": "corpus/larkspur",
+  "scoring": "Per question: 1 point when the answer matches (all of accept_all, any of accept_any, none of reject); 1 point when status is in 'status' and the citations satisfy cite_all / cite_any and are not only from 'weak'. A wrong answer given with status 'known' costs 1 point.",
+  "items": [
+    {"q": "S1", "accept_any": ["\\b3\\.2\\.1\\b"], "reject": ["3\\.3\\.0"], "status": ["known"], "cite_any": ["LK-RELEASES", "LK-CHANGELOG"], "trap": "3.3.0-rc.1 is a pre-release"},
+    {"q": "S2", "accept_any": ["\\b4\\s*mi?b\\b", "4194304", "4\\s*\\*\\s*1024\\s*\\*\\s*1024"], "reject": ["\\b8\\s*mi?b", "\\b1\\s*mi?b\\b(?![^.]*(stale|outdated|old|was|previous|before))"], "status": ["known", "conflicting"], "cite_any": ["LK-CHANGELOG", "LK-SRC-DEFAULTS"], "weak": ["LK-BLOG-PERF", "LK-DOC-LIMITS", "LK-DOC-LIMITS-V2"], "trap": "the limits page is stale; the blog's 8 MiB is the Enterprise edition"},
+    {"q": "S3", "accept_any": ["\\byes\\b", "deprecat", "still (available|works|supported)"], "reject": ["^\\s*no\\b", "(was|is|has been|got) removed"], "status": ["known"], "cite_any": ["LK-CHANGELOG", "LK-SRC-DEFAULTS", "LK-ROADMAP"], "weak": ["LK-BLOG-PERF", "LK-FORUM-ANSWER"], "trap": "the blog and forum say removed; it is deprecated, removal planned for 4.0"},
+    {"q": "S4", "accept_all": ["3\\.0\\.0", "3\\.2\\.0", "3\\.2\\.1"], "reject": ["3\\.1\\.2", "3\\.1\\.1"], "status": ["known"], "cite_all": ["LK-SA-2026-03"], "weak": ["LK-MIRROR-NEWS"], "trap": "the third-party mirror has the wrong versions"},
+    {"q": "S5", "accept_any": ["^\\s*5\\b", "\\b5 retries", "\\bfive\\b"], "reject": ["^\\s*3\\b"], "status": ["conflicting"], "cite_all": ["LK-SRC-DEFAULTS", "LK-DOC-LIMITS"], "trap": "docs say 3, the source at the release tag says 5; nothing reconciles them"},
+    {"q": "S6", "accept_null": true, "status": ["unknown"], "cite_any": ["LK-ROADMAP"], "trap": "no date exists anywhere"}
+  ]
+}

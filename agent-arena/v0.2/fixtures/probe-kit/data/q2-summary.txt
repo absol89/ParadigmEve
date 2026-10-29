@@ -1,0 +1,4 @@
+Q2 summary
+orders: 1,284
+returns: 61
+total: 1,223
