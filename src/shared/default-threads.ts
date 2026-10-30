@@ -241,12 +241,15 @@ export const DEFAULT_THREAD_DEFINITIONS: readonly DefaultThreadDefinition[] = [
     starterId: 'eveal',
     title: 'eveal',
     introducedIn: 5,
-    // 2.4.5 c32/c33 candidates: no instruction for a chat without file tools.
-    supersededPromptSha256: ['6e51c2109bb3f1e8625d29329db7a1424f2c2f2f7adac47c122da8cf115abe4a'],
+    // Keep prior shipped prompt fingerprints so untouched built-in copies upgrade in place.
+    supersededPromptSha256: [
+      '6e51c2109bb3f1e8625d29329db7a1424f2c2f2f7adac47c122da8cf115abe4a',
+      'b5e070cba6b994b760e634d4460e52512f1c03cf66f2ec478c98611de62515da'
+    ],
     description: 'Run the EVE-Al Quick reveal: a short, offline check of how this setup works as an agent.',
     prompt: [
       'Run the EVE-Al Quick reveal in `/paradigmeve-eveal/EVEAL.md` exactly as written. The suite is read-only and opens with the read tool; read each file only when a step needs it.',
-      'Stay within its 20-minute target and stop at 30. Write the `eveal-run-…` output folder inside an approved folder, for example `/<root>/eveal-runs/`, copy the suite files a step needs into it with your file tools, and tell the user its full path. If no approved folder is writable, say so and stop.',
+      'Stay within its 20-minute target and stop at 30. Use the unique `eveal-run-…` output folder ParadigmEve gives this session when one is present; do not ask the user to choose or create another path. Only if the harness supplied no run folder may you create one inside an approved writable folder. Tell the user the full path.',
       'If this chat has no tool that reads files, say that the Quick reveal needs one, tell the user where the suite is, and stop. Never answer a task you have not read.',
       'Don\'t score yourself, and don\'t open anything outside the suite and that output folder. If the user pasted an honesty block, answer that one instead of the practice set.'
     ].join('\n\n')

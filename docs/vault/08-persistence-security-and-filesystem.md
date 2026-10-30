@@ -31,6 +31,7 @@ userData/
     blobs/                 # SHA-256-addressed retained bytes
     site/                  # rebuildable static HTML recovery browser
   plugins/
+  eveal-runs/                 # app-owned per-session EVE-Al outputs
   private-updates/
   updates/
   setup-browser-profile/
@@ -142,6 +143,20 @@ read-only file tools under the normal read permissions without enabling settings
 mutating or command access to `/appdata`, and any access to `/paradigmeve`, requires
 `eveAuthority.changeSettings`. Workers, unrelated chats and unattributed calls do not inherit these
 roots. Ordinary user-approved roots remain independent and keep their normal permissions.
+
+EVE-Al uses a narrower app-owned exception with different semantics: an activated local `%eveal`
+chat gets one virtual `/eveal-run` root backed by a physical
+`userData/eveal-runs/eveal-run-<session-start>-<session-suffix>` directory. ParadigmEve creates that
+directory from the durable session's `startedAt` before model tool execution and exposes only that
+single session directory as the writable sandbox root. Sibling EVE-Al runs are therefore not visible
+through the chat's filesystem tools. It does **not** expose neighboring `/appdata` state and does not
+depend on a configured Workspace root. Reopening the same durable session resolves to the same
+deterministic physical run path.
+
+The packaged contestant suite remains independently read-only at `/paradigmeve-eveal`. While an
+EVE-Al local chat is active, relative read-only suite paths are resolved under that root, so a
+Markdown link such as `tasks/pitfalls.md` cannot accidentally resolve against a user workspace or
+force the user to supply a native full path.
 
 `exec_command` remains shell-equivalent after the user grants Command permission: its **starting
 cwd** is still resolved through the same root/identity gate, but a spawned shell is not an OS

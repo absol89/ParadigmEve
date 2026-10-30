@@ -107,6 +107,8 @@ function parentContext(sessionId: string, conversationId: string | null, content
 
 export async function localChatCoreTools(input: {
   getContext: () => ToolContext;
+  /** Optional virtual base for relative read-only paths supplied by a harness such as `%eveal`. */
+  getRelativeReadRoot?: () => string | null;
   principal: LocalAgentExecutionPrincipal;
   sessionId: string;
   conversationId: string | null;
@@ -184,6 +186,22 @@ export async function localChatCoreTools(input: {
     }];
   }
 
+  const normalizeHarnessReadArgs = (name: string, args: unknown): unknown => {
+    const base = input.getRelativeReadRoot?.();
+    if (!base || !args || typeof args !== 'object') return args;
+    const absolute = (value: unknown): unknown => {
+      if (typeof value !== 'string' || value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')) return value;
+      return `${base.replace(/\/+$/g, '')}/${value.replace(/^[/\\]+/, '')}`;
+    };
+    const row = args as Record<string, unknown>;
+    if (name === 'read' && Array.isArray(row.paths)) return { ...row, paths: row.paths.map(absolute) };
+    if ((name === 'find' || name === 'view_image') && typeof row.path === 'string') return { ...row, path: absolute(row.path) };
+    if (name === 'file_action' && (row.op === 'inspect' || row.op === 'read') && typeof row.path === 'string') {
+      return { ...row, path: absolute(row.path) };
+    }
+    return args;
+  };
+
   return definitions.map(definition => ({
     ...definition,
     invoke: async (args, presentedPrincipal) => {
@@ -194,7 +212,7 @@ export async function localChatCoreTools(input: {
       await registerSurface(live);
       return localResult(await live.invokeNested(
         definition.name,
-        args,
+        normalizeHarnessReadArgs(definition.name, args),
         parentContext(input.sessionId, input.conversationId, input.route)
       ));
     }

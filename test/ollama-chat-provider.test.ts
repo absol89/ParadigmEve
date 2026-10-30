@@ -48,6 +48,7 @@ const { registerIpc } = await import('../src/main/ipc.js');
 const { bridgePort, startBridge, stopBridge } = await import('../src/main/bridge.js');
 const input = await import('../src/main/session/input.js');
 const { resetOllamaChatForTests } = await import('../src/main/session/ollama-chat.js');
+const { configureSelfMaintenanceRuntime, resetSelfMaintenanceRuntimeForTests } = await import('../src/main/self-maintenance.js');
 const { createSkill, initSkillStore, resetSkillStoreForTests } = await import('../src/main/skills.js');
 const history = await import('../src/main/session/provider-history.js');
 const { makeTempDir, removeTempDir } = await import('./helpers.js');
@@ -161,6 +162,7 @@ async function finished(sessionId: string, turnId: string) {
 beforeAll(async () => {
   vi.stubGlobal('fetch', fakeFetch);
   directory = await makeTempDir('eve-ollama-chat-');
+  configureSelfMaintenanceRuntime({ setLoginStartup: () => undefined, appDataPath: directory });
   initConfigPath(directory); initSecretsPath(directory); initDurableStore(directory); initSessionStore(directory);
   initSkillStore(directory);
   await saveConfig(defaultConfig());
@@ -185,6 +187,7 @@ afterAll(async () => {
   vi.unstubAllGlobals();
   await stopBridge(); await flushDurable(); resetSessionStoreForTests(); resetDurableForTests();
   resetSkillStoreForTests();
+  resetSelfMaintenanceRuntimeForTests();
   await removeTempDir(directory);
 });
 
@@ -793,6 +796,8 @@ it('activates %eveal for a local Ollama chat: its prompt, the suite location and
   expect(first).toContain('# EVE-Al Quick reveal');
   // A model on this computer may copy fixtures with a command, so it gets the folder on disk.
   expect(first).toContain(path.join(process.cwd(), 'eveal'));
+  expect(first).toContain('/eveal-run');
+  expect(first).toContain('Do not ask the user to create, choose or confirm another output path.');
   expect(first).not.toContain('no tool that reads files, so it cannot');
   expect(first).not.toContain('[[PARADIGMEVE_');
 
@@ -806,6 +811,41 @@ it('activates %eveal for a local Ollama chat: its prompt, the suite location and
   await sendAndFinish({ provider: 'ollama', model: 'llama3.2', text: 'What is 2+2?' });
   expect(systemOf(ollamaRequests.filter(request => isChat(request.url)).at(-1)!))
     .not.toContain('# Context ParadigmEve activated');
+});
+
+it('keeps an EVE-Al run bound to its session and resolves suite-relative reads into the read-only suite root', async () => {
+  const { initializeDefaultThreads } = await import('../src/main/pins.js');
+  await initializeDefaultThreads();
+  const base = defaultConfig();
+  await saveConfig({
+    ...base,
+    capabilities: { ...base.capabilities, read: true, browse: true, create: true, edit: true },
+    agentRuntime: { ollama: { ...base.agentRuntime.ollama, chatDirectTools: true } },
+    goal: { ...base.goal, enabled: false }
+  });
+  agentReplies = [
+    { choices: [{ message: { content: '', tool_calls: [{ id: 'suite-read', function: { name: 'read', arguments: JSON.stringify({ paths: ['tasks/pitfalls.md'] }) } }] } }] },
+    { choices: [{ message: { content: 'Read the coding task.' } }] }
+  ];
+
+  const firstId = randomUUID();
+  expect((await send({ id: firstId, provider: 'ollama', model: 'llama3.2', text: '%eveal' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === firstId)?.state).toBe('sent'));
+  const row = (await input.listInputs()).find(entry => entry.id === firstId)!;
+  const sessionId = row.deliveredSessionId!;
+  await finished(sessionId, `ollama-turn:${firstId}`);
+
+  const chats = ollamaRequests.filter(request => isChat(request.url));
+  const system = chats[0]!.body.messages.find((message: any) => message.role === 'system')?.content as string;
+  const runVirtual = system.match(/ParadigmEve already created this session's unique output folder: (\/eveal-run)/)?.[1];
+  expect(runVirtual).toBe('/eveal-run');
+  expect(chats[1]!.body.messages.find((message: any) => message.role === 'tool')?.content).toContain('# Coding pitfalls');
+  const nativeMatch = system.match(/Native path: ([^\n]+)/)?.[1];
+  expect(nativeMatch).toBeTruthy();
+  const runNative = nativeMatch!;
+  expect((await fs.stat(runNative)).isDirectory()).toBe(true);
+  expect(runNative.startsWith(path.join(directory, 'eveal-runs') + path.sep)).toBe(true);
+  expect(path.basename(runNative)).toMatch(/^eveal-run-/);
 });
 
 it('tells a remote model without file tools that %eveal needs one, without naming the user\'s disk', async () => {

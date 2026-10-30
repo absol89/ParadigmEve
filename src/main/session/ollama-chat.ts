@@ -38,6 +38,8 @@ import { skillCatalogInstructions } from '../skills.js';
 import { injectPinsContext } from '../pins-context.js';
 import { expandLocalOpeningContext } from './prompt.js';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../../shared/user-prompt.js';
+import { ensureEvealRunDirectory } from '../eveal-path.js';
+import type { Root } from '../../shared/types.js';
 
 const OWNER = 'ollama-local';
 const MAX_REPLY_INLINE = 256_000;
@@ -45,10 +47,13 @@ const SYSTEM_PROMPT_BASE =
   'You are answering one turn of a conversation the user keeps in ParadigmEve. Earlier assistant ' +
   'messages may have been written by ChatGPT or by other models; treat them as this conversation\'s own history. ';
 
-function chatToolContext(): ToolContext {
+const evealRunRoots = new Map<string, Root>();
+
+function chatToolContext(sessionId?: string): ToolContext {
   const config = getConfig();
+  const evealRoot = sessionId ? evealRunRoots.get(sessionId) : null;
   return {
-    roots: config.roots,
+    roots: evealRoot ? [...config.roots, evealRoot] : config.roots,
     caps: effectiveCapabilities(config),
     readOnly: config.readOnly,
     privacyScreenshots: config.ui.privacyScreenshots,
@@ -90,14 +95,30 @@ async function openingContext(sessionId: string, entry: InputEntry, route: Retur
     logWarn(`session ${sessionId}: opening Thread context unavailable: ${(error as Error).message}`);
     return '';
   }
+  let expanded = activated === opening.text ? '' : await expandLocalOpeningContext(activated, {
+    inline: true,
+    fileTools: toolNames.includes('read'),
+    nativePath: route === 'ollama-local'
+  });
+  if (expanded.includes('# EVE-Al suite') && route === 'ollama-local') {
+    const session = await getSession(sessionId);
+    const run = session ? await ensureEvealRunDirectory(sessionId, session.startedAt) : null;
+    if (run) {
+      evealRunRoots.set(sessionId, run.root);
+      expanded += [
+        '',
+        '# This EVE-Al run output',
+        `ParadigmEve already created this session's unique output folder: ${run.virtual}`,
+        `Native path: ${run.native}`,
+        'Use that exact folder for every run artifact. Do not ask the user to create, choose or confirm another output path.',
+        'When EVEAL.md links to a relative suite path such as `tasks/pitfalls.md`, read it relative to `/paradigmeve-eveal`.'
+      ].join('\n');
+    }
+  }
   const context = activated === opening.text ? '' : [
     '# Context ParadigmEve activated when this chat opened',
     'The opening message referenced a Thread or Quilt. ParadigmEve\'s context for it follows and ends with that opening message. Follow it for this chat; the newest user message stays authoritative.',
-    await expandLocalOpeningContext(activated, {
-      inline: true,
-      fileTools: toolNames.includes('read'),
-      nativePath: route === 'ollama-local'
-    })
+    expanded
   ].join('\n\n');
   // A chat started from a Thread in the app carries that Thread only on its first input; keep what it activated.
   if (isOpening || !entry.contextQuiltId) openings.set(sessionId, context);
@@ -247,7 +268,8 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
     const endpoint = provider.id === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint;
     try {
       const tools = !toolsSupported ? [] : await localChatCoreTools({
-        getContext: chatToolContext,
+        getContext: () => chatToolContext(sessionId),
+        getRelativeReadRoot: () => evealRunRoots.has(sessionId) ? '/paradigmeve-eveal' : null,
         principal,
         sessionId,
         conversationId: (await getSession(sessionId))?.conversationId ?? null,
@@ -332,5 +354,6 @@ export function resetOllamaChatForTests(): void {
   active.clear();
   chains.clear();
   openings.clear();
+  evealRunRoots.clear();
   changed = () => undefined;
 }

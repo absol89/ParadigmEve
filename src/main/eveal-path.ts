@@ -2,6 +2,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { rawPromises as fs } from './rawfs.js';
 import type { Root } from '../shared/types.js';
+import { selfMaintenanceRoots } from './self-maintenance.js';
 
 /**
  * The EVE-Al Quick reveal that `%eveal` runs. Only the contestant material ships (EVEAL.md,
@@ -9,6 +10,8 @@ import type { Root } from '../shared/types.js';
  * because anything installed is readable by Eve and a key she can read makes every run worthless.
  */
 export const EVEAL_SUITE_ROOT = 'paradigmeve-eveal';
+export const EVEAL_RUNS_ROOT = 'eveal-runs';
+export const EVEAL_RUN_ROOT = 'eveal-run';
 
 /** The shipped suite, outside app.asar in packaged builds. */
 export function evealSuiteDirectory(): string {
@@ -36,6 +39,38 @@ function namesEvealSuite(requested: string): boolean {
  */
 export function evealSuiteRoots(requestedPaths: readonly string[]): Root[] {
   return requestedPaths.some(namesEvealSuite) ? [{ name: EVEAL_SUITE_ROOT, path: evealSuiteDirectory() }] : [];
+}
+
+/**
+ * Durable app-owned EVE-Al output root. Unlike `/appdata`, this narrow subtree is safe to expose
+ * as an ordinary writable sandbox root to the one local chat that activated `%eveal`.
+ */
+export function evealRunsDirectory(): string | null {
+  const appData = selfMaintenanceRoots().find((root) => root.name === 'appdata');
+  return appData ? path.join(appData.path, EVEAL_RUNS_ROOT) : null;
+}
+
+function runTimestamp(startedAt: number): string {
+  const iso = new Date(startedAt).toISOString();
+  return iso.replace(/[-:]/g, '').replace('T', '-').replace('Z', '').replace('.', '-');
+}
+
+/**
+ * One immutable-by-name output location per durable session. Milliseconds plus the session suffix
+ * make accidental reuse impossible even if two sessions begin in the same clock tick.
+ */
+export async function ensureEvealRunDirectory(sessionId: string, startedAt: number): Promise<{
+  root: Root;
+  virtual: string;
+  native: string;
+} | null> {
+  const runsDirectory = evealRunsDirectory();
+  if (!runsDirectory) return null;
+  const suffix = sessionId.split('-').at(-1)?.replace(/[^a-zA-Z0-9_]+/g, '').slice(-12) || 'session';
+  const name = `eveal-run-${runTimestamp(startedAt)}-${suffix}`;
+  const native = path.join(runsDirectory, name);
+  await fs.mkdir(native, { recursive: true });
+  return { root: { name: EVEAL_RUN_ROOT, path: native }, virtual: `/${EVEAL_RUN_ROOT}`, native };
 }
 
 /** Where an activated `%eveal` gets its opening context, the way `%how` gets the Vault's. */

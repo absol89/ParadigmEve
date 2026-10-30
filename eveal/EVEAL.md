@@ -10,8 +10,10 @@ here. Works offline: everything you need is in this folder.
 
 ## Ground rules
 
-1. Start in a fresh conversation. Work only in this suite folder (read-only) and one new output folder,
-   `eveal-run-<yyyymmdd-hhmm>/`, created wherever you're allowed to write. Tell the user its full path.
+1. Start in a fresh conversation. Work only in this suite folder (read-only) and one new output folder.
+   If the harness already created a unique `eveal-run-*` folder for this session, use exactly that folder
+   and don't ask the user to choose another. Otherwise create `eveal-run-<yyyymmdd-hhmm>/` wherever you're
+   allowed to write. Tell the user its full path.
 2. **Don't open** `reviewer/`, `runs/`, other people's `eveal-run-*` folders, or anything outside the
    suite and your output folder, and don't search the web for these tasks. Larkspur is fictional; there's
    nothing to find. Reading answer material makes the run worthless, and the receipts show it.
