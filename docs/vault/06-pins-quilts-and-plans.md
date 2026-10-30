@@ -80,6 +80,8 @@ On a pristine install, ParadigmEve creates five empty starter Threads with Threa
   Create opens that Thread with the concrete onboarding request **“Make me a 3 step plan to get
   started with %plans”**, so the first conversation demonstrates the durable Plan workflow instead
   of asking the user to invent an outcome before they have seen it.
+- `%eveal` runs the EVE-Al Quick reveal from the read-only `/paradigmeve-eveal` suite. Its short prompt
+  points at `EVEAL.md` instead of pasting it; see [23 — `%eveal`](23-eveal-quick-reveal.md).
 
 Starter reconciliation uses a durable ownership ledger keyed by stable starter id. It remembers the
 concrete Thread id, the last app-owned prompt fingerprint, and whether the user explicitly saved a

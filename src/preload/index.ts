@@ -295,8 +295,8 @@ const api = {
   releaseSessionFinish: (id: string, expectedTurnId: string) => call<SessionControlsView>('sessions:releaseFinish', { id, expectedTurnId }),
   generateFinishGoal: (id: string, expectedTurnId: string) => call<string>('sessions:generateFinishGoal', { id, expectedTurnId }),
   getChatModels: () => call<ChatModelCatalog>('chatModels:get'),
-  setChatModelPreference: (model: string | null, reasoningEffort: ReasoningEffort | null) =>
-    call<AppState>('chatModels:preference', { model, reasoningEffort }),
+  setChatModelPreference: (model: string | null, reasoningEffort: ReasoningEffort | null, sessionId: string | null = null) =>
+    call<AppState>('chatModels:preference', { model, reasoningEffort, sessionId }),
   browserPreferences: (patch: Partial<BrowserPreferences> = {}) => call<BrowserPreferences>('browser:preferences', patch),
   openCompanionBrowserTab: () => call<AppState>('browser:openCompanionTab'),
   restoreCompanionBrowser: () => call<AppState>('browser:restoreCompanion'),

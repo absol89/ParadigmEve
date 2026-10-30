@@ -572,6 +572,11 @@ export interface SessionSummary {
   /** Latest proven native picker selection; scoped to its frontend, never worker creation intent. */
   selectedModel?: { conversationId: string; model: string; observedAt: number; reasoningEffort?: ReasoningEffort };
   /**
+   * Explicit model/reasoning pair the human chose in Eve's composer for this durable session.
+   * This is session-local UI intent, not provider proof. New Chat alone owns the global default.
+   */
+  composerPreference?: { model: string | null; reasoningEffort: ReasoningEffort | null; selectedAt: number };
+  /**
    * Latest proven ordinary app-authored browser send model intent for this frontend.
    *
    * `native` means the app deliberately left ChatGPT's model choice untouched (`model=null`);

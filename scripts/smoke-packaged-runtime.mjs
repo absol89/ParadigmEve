@@ -125,6 +125,29 @@ for (const name of sourceVaultPages) {
   }
 }
 
+// The EVE-Al suite ships as its contestant files only, byte for byte. Eve can read anything
+// installed, so an answer key or scoring tool in the package would make every %eveal run worthless.
+const evealFiles = (directory) => readdirSync(directory, { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name)).split(path.sep).join('/'))
+  .sort();
+const sourceEvealDir = path.join(repository, 'eveal');
+const packagedEvealDir = path.join(resourcesDir, 'eveal');
+const sourceEveal = evealFiles(sourceEvealDir);
+const packagedEveal = evealFiles(packagedEvealDir);
+const evealAnswerMaterial = packagedEveal.filter((name) => /(^|\/)reviewer\//i.test(name) || /^tools\//i.test(name));
+if (evealAnswerMaterial.length > 0) {
+  throw new Error(`Packaged EVE-Al suite contains answer material: ${evealAnswerMaterial.join(', ')}`);
+}
+if (!packagedEveal.includes('EVEAL.md') || JSON.stringify(packagedEveal) !== JSON.stringify(sourceEveal)) {
+  throw new Error(`Packaged EVE-Al file set ${JSON.stringify(packagedEveal)} != source ${JSON.stringify(sourceEveal)}`);
+}
+for (const name of sourceEveal) {
+  if (!readFileSync(required(`eveal/${name}`)).equals(readFileSync(path.join(sourceEvealDir, name)))) {
+    throw new Error(`Packaged EVE-Al file ${name} does not match the source bytes`);
+  }
+}
+
 // Bundled desktop pets ship as exactly their three validated package files, byte for byte.
 const sourcePetsDir = path.join(repository, 'pets');
 const sourcePets = readdirSync(sourcePetsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();

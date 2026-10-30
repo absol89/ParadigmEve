@@ -176,6 +176,7 @@ describe('the user’s own connector instructions', () => {
     expect(context.guidance).toContain('select or @mention Eva Å');
     expect(context.appNamespaces).toEqual({
       manual: '/paradigmeve-manual',
+      eveal: '/paradigmeve-eveal',
       appData: '/appdata',
       installation: '/paradigmeve'
     });

@@ -348,10 +348,13 @@ connector auto-connect and updater lifetime begin. Chat review uses the existing
 outbox and has an explicit shutdown stop hook; it is not another browser-opening authority.
 The current first-window model-discovery exception is noted in §21.
 
-The composer preference is the independent `ui.chatModel`/`ui.chatReasoning` pair, saved through
-`chatModels:preference`. Restore it before model discovery completes; worker/helper defaults are
-never migration evidence for that pair. Explicit native default is null/null. Existing sessions
-use their own model observations unless the current account surface proves Free/Go native-default.
+New Chat's composer default is the independent `ui.chatModel`/`ui.chatReasoning` pair, saved
+through `chatModels:preference`. Established sessions instead persist explicit
+`SessionSummary.composerPreference` intent for that durable session. Restore the session-local
+pair before model discovery completes; worker/helper defaults and another chat's global default are
+never migration evidence for it. Explicit native default is null/null. Provider observations are
+accepted only when their conversation id matches the session's current frontend, so Compact &
+Resume preserves the human's session-local choice without treating old-chat evidence as new-chat proof.
 On that surface Eve exposes only **ChatGPT Default**, hides the thinking-effort slider, and sends
 null/null; it must not surface a Free-account Think toggle or reuse an older paid selection.
 
@@ -455,9 +458,11 @@ menu and keep the draft, and nothing is sent with a manufactured or browser-left
 menu recommends, from the discovered catalog only, GPT-6.1 High when the account offers Pro and
 lists that step, else Sol 5.6 Medium when offered, else ChatGPT default; the recommendation is
 never applied without the user's click. A ready native-default (Free/Go) catalog is never held and
-sends `model=null` / `reasoningEffort=null`. The saved choice applies to later new chats. Explicit
-model choices and existing-session model observations must not silently become a default; native
-composer readiness, ownership, submission and receipt checks still govern delivery.
+sends `model=null` / `reasoningEffort=null`. A choice made in New Chat updates the default for
+later new chats. A choice made in an established session belongs only to that durable session and
+survives app restart and Compact & Resume. Another session's choice must never provisionally fill
+it while exact provider state is unavailable. Native composer readiness, ownership, submission and
+receipt checks still govern delivery.
 
 Discovery elects an existing visible composer. An explicitly authorized helper may transfer
 its still-empty document and opening authority to the first user input, rather than opening a

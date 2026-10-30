@@ -48,6 +48,14 @@ extraResources:
     to: docs/vault
     filter:
       - '*.md'
+  # EVE-Al Quick reveal for %eveal (/paradigmeve-eveal). eveal/ holds only contestant material;
+  # answer keys and scoring tools stay out of the repository's shipped tree and out of Eve's reach.
+  - from: eveal
+    to: eveal
+    filter:
+      - '**/*'
+      - '!**/reviewer/**'
+      - '!tools/**'
   - from: artwork/icon.png
     to: connector/icon.png
 

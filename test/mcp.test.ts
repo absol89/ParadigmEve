@@ -2664,6 +2664,35 @@ describe('sandbox enforcement through the tool layer', () => {
     expect(failed(write), textOf(write)).toBe(true);
   });
 
+  it('reads the shipped EVE-Al suite at /paradigmeve-eveal and never writes there', async () => {
+    ctx.roots = [];
+    ctx.readOnly = false;
+    ctx.caps = withCaps({ read: true, browse: true, create: true, edit: true });
+
+    const quick = await core('tools/call', { name: 'read', arguments: { paths: ['/paradigmeve-eveal/EVEAL.md'] } });
+    expect(failed(quick), textOf(quick)).toBe(false);
+    expect(textOf(quick)).toContain('EVE-Al Quick reveal');
+
+    const nested = await core('tools/call', {
+      name: 'read',
+      arguments: { paths: ['/paradigmeve-eveal/fixtures/probe-kit', '/paradigmeve-eveal/corpus/larkspur/*.md'] }
+    });
+    expect(failed(nested), textOf(nested)).toBe(false);
+    expect(textOf(nested)).toContain('TASK.md');
+    expect(textOf(nested)).toContain('/paradigmeve-eveal/corpus/larkspur/README.md');
+
+    for (const bad of ['/paradigmeve-eveal/../package.json', '/paradigmeve-eveal/reviewer/keys']) {
+      const reply = await core('tools/call', { name: 'read', arguments: { paths: [bad] } });
+      expect(failed(reply) || textOf(reply).includes('ERROR'), `${bad}: ${textOf(reply)}`).toBe(true);
+    }
+
+    const write = await core('tools/call', {
+      name: 'apply_patch',
+      arguments: { patch: addPatch('/paradigmeve-eveal/SHOULD-NOT-EXIST.md', ['no']) }
+    });
+    expect(failed(write), textOf(write)).toBe(true);
+  });
+
   it('accepts a native filesystem path when it is inside an approved root', async () => {
     const reply = await core('tools/call', {
       name: 'read',

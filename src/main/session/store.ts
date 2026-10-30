@@ -37,7 +37,7 @@ import type {
   SessionSummary,
   StoredText
 } from '../../shared/session.js';
-import { CONTINUATION_MARKER, eventTokens, normalizedToolOutcome } from '../../shared/session.js';
+import { CONTINUATION_MARKER, REASONING_EFFORTS, eventTokens, normalizedToolOutcome } from '../../shared/session.js';
 import { chronological } from '../../shared/chronology.js';
 import { automaticTitle, firstTitleMessage, legacyContextTitle, providerTitleIgnored, refreshUserTitle } from './title.js';
 import { agentPlanSchema, agentPlanUpdateSchema, MAX_AGENT_PLAN_BYTES, type AgentPlan, type AgentPlanUpdate } from '../../shared/agent-plan.js';
@@ -1874,6 +1874,15 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
         !/^[a-zA-Z0-9 ._-]{1,80}$/.test(selected.model) || !Number.isFinite(selected.observedAt))) {
       delete publicSummary.selectedModel;
     }
+    const composerPreference = publicSummary.composerPreference;
+    if (composerPreference !== undefined && (!composerPreference || typeof composerPreference !== 'object' ||
+        !((composerPreference.model === null && composerPreference.reasoningEffort === null) ||
+          (typeof composerPreference.model === 'string' && /^[a-zA-Z0-9 ._-]{1,80}$/.test(composerPreference.model) &&
+            typeof composerPreference.reasoningEffort === 'string' &&
+            REASONING_EFFORTS.includes(composerPreference.reasoningEffort as ReasoningEffort))) ||
+        !Number.isFinite(composerPreference.selectedAt))) {
+      delete publicSummary.composerPreference;
+    }
     const browserModelIntent = publicSummary.browserModelIntent;
     if (browserModelIntent !== undefined && (!browserModelIntent || typeof browserModelIntent !== 'object' ||
         typeof browserModelIntent.conversationId !== 'string' || !['native', 'explicit'].includes(browserModelIntent.mode) ||
@@ -2662,6 +2671,32 @@ export async function observeSessionModel(
     const selectedModel = { conversationId, model, observedAt, ...(reasoningEffort ? { reasoningEffort } : {}) };
     if (JSON.stringify(entry.summary.selectedModel) === JSON.stringify(selectedModel)) return;
     const staged = { ...entry.summary, selectedModel };
+    await writeSummary(staged, entry.historySeq);
+    entry.summary = staged;
+    publishAttachmentSummary(staged);
+    publishSessionProjectionCommit(id);
+  });
+}
+
+/** Persist explicit Eve-composer model intent for one established durable session. */
+export async function setSessionComposerPreference(
+  id: string,
+  model: string | null,
+  reasoningEffort: ReasoningEffort | null,
+  selectedAt = Date.now()
+): Promise<void> {
+  if ((model === null) !== (reasoningEffort === null) ||
+      (model !== null && !/^[a-zA-Z0-9 ._-]{1,80}$/.test(model)) ||
+      (reasoningEffort !== null && !REASONING_EFFORTS.includes(reasoningEffort)) ||
+      !Number.isFinite(selectedAt)) {
+    throw new Error('Invalid session composer preference');
+  }
+  const entry = await ensureOpen(id);
+  await enqueueSessionOperation(entry, 'composer-model-preference', async () => {
+    if (selectedAt < (entry.summary.composerPreference?.selectedAt ?? 0)) return;
+    const composerPreference = { model, reasoningEffort, selectedAt };
+    if (JSON.stringify(entry.summary.composerPreference) === JSON.stringify(composerPreference)) return;
+    const staged = { ...entry.summary, composerPreference };
     await writeSummary(staged, entry.historySeq);
     entry.summary = staged;
     publishAttachmentSummary(staged);

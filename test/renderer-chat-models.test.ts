@@ -54,15 +54,59 @@ it('keeps a newer user choice across a late startup config and persists explicit
   initChatModels(); applyComposerSessionModel(null, null);
   const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
-  expect(save).toHaveBeenLastCalledWith('5.6', 'high');
+  expect(save).toHaveBeenLastCalledWith('5.6', 'high', null);
   applyChatModels({ ui: { chatModel: '5.6', chatReasoning: 'medium' }, multiAgent: {}, goal: {} } as Config);
   await Promise.resolve();
   applyComposerSessionModel('history', null); applyComposerSessionModel(null, null);
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
   dom.window.document.querySelector<HTMLButtonElement>('#composerModelChoices button')!.click();
-  expect(save).toHaveBeenLastCalledWith(null, null);
+  expect(save).toHaveBeenLastCalledWith(null, null, null);
   applyComposerSessionModel('history', null); applyComposerSessionModel(null, null);
   expect(confirmedComposerModel()).toEqual({ model: null, reasoningEffort: null });
+});
+
+it('keeps Prime and Twin choices session-local across restart and lets newer durable state replace stale renderer cache', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const models = [
+    { id: '5.6', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5.6-sol'] },
+    { id: 'gpt-6', label: 'GPT-6', efforts: ['high'] }
+  ];
+  Object.assign(dom.window, { api: {
+    getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models } }),
+    setChatModelPreference: vi.fn(async () => ({ ok: true, data: null }))
+  } });
+  const { initChatModels, applyChatModels, applyComposerSessionModel, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels();
+  applyChatModels({ ui: { chatModel: 'gpt-6', chatReasoning: 'high' }, multiAgent: {}, goal: {} } as Config);
+  await Promise.resolve();
+
+  applyComposerSessionModel('session:prime-session', null, false,
+    { model: '5.6', reasoningEffort: 'medium', selectedAt: 10 });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
+  applyComposerSessionModel('session:twin-session', null, false,
+    { model: 'gpt-6', reasoningEffort: 'high', selectedAt: 11 });
+  expect(confirmedComposerModel()).toEqual({ model: 'gpt-6', reasoningEffort: 'high' });
+
+  applyComposerSessionModel('session:prime-session', null, false,
+    { model: '5.6', reasoningEffort: 'high', selectedAt: 20 });
+  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
+});
+
+it('rejects stale provider model evidence after Compact & Resume moves the durable session to a new conversation', async () => {
+  const { currentSessionModelObservation } = await import('../src/renderer/chat-models.js');
+  const stale = {
+    conversationId: 'chat-b',
+    selectedModel: { conversationId: 'chat-a', model: 'gpt-6', reasoningEffort: 'high' as const, observedAt: 10 }
+  };
+  expect(currentSessionModelObservation(stale)).toBeNull();
+  const current = {
+    ...stale,
+    selectedModel: { ...stale.selectedModel, conversationId: 'chat-b', observedAt: 11 }
+  };
+  expect(currentSessionModelObservation(current)).toEqual({
+    conversationId: 'chat-b', model: 'gpt-6', reasoningEffort: 'high', observedAt: 11
+  });
 });
 
 afterEach(() => { dom?.window.close(); vi.unstubAllGlobals(); vi.resetModules(); });
@@ -213,7 +257,7 @@ it.each(['unknown', 'pending', 'unavailable'])('holds an unselected new chat unt
   expect(confirmedComposerModel()).toBeNull();
 });
 
-it('keeps a fresh unselected chat waiting for a choice while refresh retains an older catalog', async () => {
+it('keeps a fresh unselected chat waiting for a choice and does not lend that choice to an established chat', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [{ id: 'stale-sol', label: 'GPT-5.6 Sol', efforts: ['high'] }];
@@ -233,7 +277,7 @@ it('keeps a fresh unselected chat waiting for a choice while refresh retains an 
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
   applyComposerSessionModel('existing:1', null);
-  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });
+  expect(confirmedComposerModel()).toBeNull();
 });
 
 it('uses a current native-default account surface instead of stale paid observations in every composer scope', async () => {
@@ -418,7 +462,7 @@ it('binds composer selection to the selected session across delayed catalog, use
   applyComposerSessionModel('session:worker', { ...high, observedAt: 3 });
   expect(confirmedComposerModel()?.reasoningEffort).toBe('xhigh');
   applyComposerSessionModel('session:other', null);
-  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'xhigh' });
+  expect(confirmedComposerModel()).toBeNull();
   applyComposerSessionModel('session:worker', high);
   expect(confirmedComposerModel()?.reasoningEffort).toBe('xhigh');
   applyComposerSessionModel('session:worker', { ...high, observedAt: Date.now() + 1_000 });
@@ -797,7 +841,7 @@ it('restores the persisted current-chat model pair into a fresh New Chat compose
   expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · High');
 });
 
-it('uses the persisted current-chat pair for an established chat until exact provider state is observed', async () => {
+it('does not lend New Chat global defaults to an established chat without session-local or provider proof', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5.6-sol'] }];
@@ -810,8 +854,7 @@ it('uses the persisted current-chat pair for an established chat until exact pro
   applyComposerSessionModel('session:legacy-without-observation', null);
   applyChatModels({ ui: { chatModel: 'gpt-5.6-sol', chatReasoning: 'medium' }, multiAgent: {}, goal: {} } as Config);
   await Promise.resolve(); await Promise.resolve();
-  expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'medium' });
-  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Sol · Medium');
+  expect(confirmedComposerModel()).toBeNull();
 
   applyComposerSessionModel('session:legacy-without-observation', { model: '5.6', reasoningEffort: 'high', observedAt: 3 });
   expect(confirmedComposerModel()).toEqual({ model: '5.6', reasoningEffort: 'high' });

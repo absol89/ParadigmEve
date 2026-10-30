@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +36,7 @@ import {
 import { pinsContextReferences, selectPinsContext } from '../src/shared/pins-context.js';
 import {
   DEFAULT_THREAD_DEFINITIONS,
+  DEFAULT_THREAD_GENERATION,
   SUPERSEDED_EXPENSES_THREAD_PROMPTS,
   SUPERSEDED_HOW_THREAD_PROMPT_SHA256,
   SUPERSEDED_HOW_THREAD_PROMPTS,
@@ -104,13 +106,13 @@ it('ships %how as a question-first helper that consults the current manual quiet
   expect(how.prompt).not.toContain('Chrome tab');
 });
 
-it('creates the six empty default Threads, including the #Eve how/appdata/claude starters and Plans starter, on a pristine install', async () => {
+it('creates the seven empty default Threads, including the #Eve how/appdata/claude starters, Plans and %eveal, on a pristine install', async () => {
   await initializeDefaultThreads();
 
   const snapshot = await pinsLibrary();
   expect(snapshot.pins).toEqual([]);
   expect(snapshot.collections).toEqual([expect.objectContaining({ name: 'Eve' })]);
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude', 'eveal']);
   const eve = snapshot.collections[0]!;
   const how = snapshot.quilts.find(thread => thread.title === 'how')!;
   const appdata = snapshot.quilts.find(thread => thread.title === 'appdata%')!;
@@ -174,7 +176,7 @@ it('creates the six empty default Threads, including the #Eve how/appdata/claude
 
   resetDurableForTests();
   initDurableStore(directory);
-  expect((await pinsLibrary()).quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
+  expect((await pinsLibrary()).quilts.map(thread => thread.title)).toEqual(['how', 'appdata%', 'expenses', 'organize', 'plans', 'claude', 'eveal']);
 });
 
 it('adds a starter generation to an older Pins library without rewriting its existing Threads', async () => {
@@ -190,7 +192,8 @@ it('adds a starter generation to an older Pins library without rewriting its exi
     'expenses',
     'organize',
     'plans',
-    'claude'
+    'claude',
+    'eveal'
   ]);
   expect(snapshot.pins).toEqual([]);
 });
@@ -301,7 +304,7 @@ it('adopts a legacy custom starter reference without duplicating it and restores
   const how = snapshot.quilts.find(thread => thread.id === customHow.id)!;
   expect(how).toMatchObject({ title: '%HOW', prompt: 'My own help prompt', collectionIds: [] });
   expect(snapshot.quilts.filter(thread => /^%?how$/i.test(thread.title))).toHaveLength(1);
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['%HOW', 'appdata%', 'expenses', 'organize', 'plans', 'claude']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['%HOW', 'appdata%', 'expenses', 'organize', 'plans', 'claude', 'eveal']);
 });
 
 it('upgrades an untouched legacy empty expenses starter into the shipped prompt', async () => {
@@ -350,7 +353,7 @@ it('recreates a shipped starter missing from an already-applied legacy generatio
   const restored = snapshot.quilts.filter(thread => thread.title === 'how');
   expect(restored).toHaveLength(1);
   expect(restored[0]).toMatchObject({ prompt: DEFAULT_THREAD_DEFINITIONS.find(thread => thread.title === 'how')!.prompt });
-  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['appdata%', 'expenses', 'organize', 'plans', 'claude', 'how']);
+  expect(snapshot.quilts.map(thread => thread.title)).toEqual(['appdata%', 'expenses', 'organize', 'plans', 'claude', 'eveal', 'how']);
 });
 
 it('updates an untouched old shipped how prompt but preserves a later explicitly saved prompt', async () => {
@@ -411,7 +414,7 @@ it('keeps a current shipped starter idempotent and follows a user rename by dura
     description: 'My own help card description.'
   });
   expect(renamed.quilts.filter(thread => thread.title === 'how')).toHaveLength(0);
-  expect(renamed.quilts).toHaveLength(6);
+  expect(renamed.quilts).toHaveLength(7);
 });
 
 it('upgrades untouched shipped expenses and legacy organizer prompts while preserving the Thread id and Pins', async () => {
@@ -1227,6 +1230,30 @@ it('does not let the legacy preview migration admit any other invalid Pin field'
   });
 
   await expect(pinsLibrary()).rejects.toThrow('Pins library is invalid');
+});
+
+it('ships a short %eveal starter that points at the read-only suite instead of pasting it', async () => {
+  const eveal = DEFAULT_THREAD_DEFINITIONS.find(thread => thread.starterId === 'eveal')!;
+  expect(eveal).toMatchObject({ title: 'eveal', introducedIn: DEFAULT_THREAD_GENERATION });
+  expect(eveal.quiltNames).toBeUndefined();
+  // Changing this prompt is a shipped-prompt revision: keep the old fingerprint in
+  // supersededPromptSha256 so untouched copies upgrade, then update this one.
+  expect(createHash('sha256').update(eveal.prompt, 'utf8').digest('hex'))
+    .toBe('b5e070cba6b994b760e634d4460e52512f1c03cf66f2ec478c98611de62515da');
+  expect(eveal.supersededPromptSha256).toEqual(['6e51c2109bb3f1e8625d29329db7a1424f2c2f2f7adac47c122da8cf115abe4a']);
+  expect(eveal.prompt).toContain('`/paradigmeve-eveal/EVEAL.md`');
+  expect(eveal.prompt).toContain('stop at 30');
+  expect(eveal.prompt).toContain('honesty block');
+  expect(eveal.prompt).toContain('score yourself');
+  expect(eveal.prompt).not.toMatch(/reviewer|answer key|tools\//i);
+  // Activation costs only the standing prompt: the agent reads EVEAL.md, it is never inlined.
+  expect(eveal.prompt.length).toBeLessThan(1000);
+  expect(eveal.prompt).toContain('no tool that reads files');
+  expect(eveal.prompt).not.toContain('Ground rules');
+
+  await initializeDefaultThreads();
+  const thread = (await pinsLibrary()).quilts.find(item => item.title === 'eveal')!;
+  expect(thread).toMatchObject({ state: 'pinned', prompt: eveal.prompt, collectionIds: [] });
 });
 
 it('ships a generic %claude starter that reaches Claude by CLI, shared file or the Claude app', () => {

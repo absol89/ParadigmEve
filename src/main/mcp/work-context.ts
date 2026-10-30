@@ -78,6 +78,7 @@ export function workContext(ctx: ToolContext, platform: NodeJS.Platform = proces
     roots,
     appNamespaces: {
       manual: '/paradigmeve-manual',
+      eveal: '/paradigmeve-eveal',
       appData: '/appdata',
       installation: '/paradigmeve'
     },

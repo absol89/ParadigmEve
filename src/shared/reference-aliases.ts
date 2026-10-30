@@ -1,7 +1,7 @@
 /**
  * Localized aliases for the shipped starter references.
  *
- * `%how`, `%expenses`, `%organize` and `#plans` are stored under their English names, because
+ * `%how`, `%expenses`, `%organize`, `%eveal` and `#plans` are stored under their English names, because
  * the starter Threads are app-owned and Eve's standing prompts name them that way. A person who
  * writes in Swedish or Spanish should be able to type `%utgifter` or `#planes` and reach the same
  * context, and see the localized name in the app. Aliases are accepted in every language, so a
@@ -54,6 +54,12 @@ export const REFERENCE_ALIASES: readonly ReferenceAliasEntry[] = [
     canonical: 'routines',
     aliases: { en: ['routine'], 'sv-SE': ['rutiner', 'rutin'], 'es-419': ['rutinas', 'rutina'] },
     display: { 'sv-SE': 'rutiner', 'es-419': 'rutinas' }
+  },
+  {
+    // The suite is called EVE-Al, so `%eve-al` is the spelling people will reach for.
+    canonical: 'eveal',
+    aliases: { en: ['eve-al'] },
+    display: { 'sv-SE': 'eveal', 'es-419': 'eveal' }
   },
   {
     // `plan`, `plans`, `planer`, `planen` and `planes` all mean the one Plans Thread / #plans Concept.

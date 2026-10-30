@@ -193,6 +193,7 @@ import {
   resolveVaultManualReadPath,
   VAULT_MANUAL_ROOT
 } from '../vault-path.js';
+import { evealSuiteRoots } from '../eveal-path.js';
 import { selfMaintenanceRoots, selfMaintenanceSettings, updateSelfMaintenanceSettings, type SelfMaintenanceUpdate } from '../self-maintenance.js';
 import { registerFileActionTool } from './file-action.js';
 import { registerFileEditTool } from './file-edit.js';
@@ -349,6 +350,8 @@ async function rootsForSelfMaintenance(
   ordinaryRoots: readonly Root[],
   requestedPaths: readonly string[]
 ): Promise<Root[]> {
+  // The shipped EVE-Al suite is public contestant material, so reading it needs no Eve authority.
+  if (SELF_INSPECTION_TOOLS.has(tool)) ordinaryRoots = [...ordinaryRoots, ...evealSuiteRoots(requestedPaths)];
   const managed = selfMaintenanceRoots();
   const requestedManaged = managed.filter((root) =>
     requestedPaths.some((requested) => requestedManagedSelfRoot(requested, [root]))

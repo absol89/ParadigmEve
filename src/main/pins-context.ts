@@ -13,6 +13,7 @@ import { listProjects } from './projects.js';
 import { getSession, readEvents, readOverflowText } from './session/store.js';
 import type { PromptLimits } from './session/prompt.js';
 import { VAULT_CONTEXT_MARKER } from './vault-path.js';
+import { EVEAL_CONTEXT_MARKER } from './eveal-path.js';
 
 const MAX_CONTEXT_CHARS = 48_000;
 const MAX_CONTEXT_BYTES = 72_000;
@@ -219,6 +220,9 @@ export async function injectPinsContext(
   }
   if (selected.activatedThreads.some((quilt) => quilt.title.replace(/^%/u, '').normalize('NFKC').toLocaleLowerCase() === 'how')) {
     chunks.push(VAULT_CONTEXT_MARKER);
+  }
+  if (selected.activatedThreads.some((quilt) => quilt.title.replace(/^%/u, '').normalize('NFKC').toLocaleLowerCase() === 'eveal')) {
+    chunks.push(EVEAL_CONTEXT_MARKER);
   }
   const aliasRows: Array<{ reference: string; canonical: string; language: ReturnType<typeof referenceAliasLanguage>; unresolved?: true }> =
     [...selected.aliasedReferences, ...scheduleAliases];

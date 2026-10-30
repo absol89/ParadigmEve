@@ -46,7 +46,7 @@ export interface StarterThreadEntry {
  * the last app-owned prompt fingerprint so deleted starters can be recreated and untouched prompts
  * can move forward without overwriting a prompt the user explicitly saved.
  */
-export const DEFAULT_THREAD_GENERATION = 4;
+export const DEFAULT_THREAD_GENERATION = 5;
 export const SUPERSEDED_HOW_THREAD_PROMPT_SHA256: readonly string[] = [
   '3ad913777f26764e765b93cb77b1f895ddc77665bb33a8b8c90f392d048e1e65'
 ];
@@ -234,6 +234,21 @@ export const DEFAULT_THREAD_DEFINITIONS: readonly DefaultThreadDefinition[] = [
       'BROWSER SAFETY — SUPERSEDED DOES NOT MEAN SAFE TO CLOSE:\nA ChatGPT browser conversation can be superseded and still be the user\'s active source material for reading, copying, verification, or recovery. Never close, navigate away from, replace, or otherwise dispose of a superseded conversation merely because it is superseded. Preserve the exact user-selected/source conversation and any tab the user is actively using unless the user explicitly authorizes closing or navigating it. During compaction, heartbeat, maintenance, or cleanup, treat superseded status as lifecycle metadata only, not as close authority. If close/navigation authority is ambiguous, fail closed and leave the conversation open. If an active/source conversation was reopened after being superseded, preserve it across later maintenance passes.\n\nWhen coordinating browser conversations, exact conversation identity is authoritative; do not infer that a tab is disposable from title, recency, sidebar state, unread indicators, or a superseded label. Do not use browser cleanup as a shortcut to complete compaction.',
       'DO NOT FIGHT THE USER\'S ACTIVE INPUT:\nIf the user is typing, editing, reading, or copying from a ChatGPT/ParadigmEve/Claude conversation, do not focus another control, navigate that conversation, reload it, switch it to another chat, or otherwise compete with their input unless the user explicitly asks for that interaction. Prefer read-only recorded/session state and source inspection when those can answer the question. If a required browser action would risk changing the user\'s active/source conversation, stop and ask instead of taking the action.',
       'When working on ParadigmEve itself, preserve unrelated repository work. A dirty worktree is evidence that files may belong to another task; inspect ownership before editing and fail closed on ambiguity.'
+    ].join('\n\n')
+  },
+  {
+    // Kept short on purpose: activation costs only this prompt, and the agent reads EVEAL.md itself.
+    starterId: 'eveal',
+    title: 'eveal',
+    introducedIn: 5,
+    // 2.4.5 c32/c33 candidates: no instruction for a chat without file tools.
+    supersededPromptSha256: ['6e51c2109bb3f1e8625d29329db7a1424f2c2f2f7adac47c122da8cf115abe4a'],
+    description: 'Run the EVE-Al Quick reveal: a short, offline check of how this setup works as an agent.',
+    prompt: [
+      'Run the EVE-Al Quick reveal in `/paradigmeve-eveal/EVEAL.md` exactly as written. The suite is read-only and opens with the read tool; read each file only when a step needs it.',
+      'Stay within its 20-minute target and stop at 30. Write the `eveal-run-…` output folder inside an approved folder, for example `/<root>/eveal-runs/`, copy the suite files a step needs into it with your file tools, and tell the user its full path. If no approved folder is writable, say so and stop.',
+      'If this chat has no tool that reads files, say that the Quick reveal needs one, tell the user where the suite is, and stop. Never answer a task you have not read.',
+      'Don\'t score yourself, and don\'t open anything outside the suite and that output folder. If the user pasted an honesty block, answer that one instead of the practice set.'
     ].join('\n\n')
   }
 ];

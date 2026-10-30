@@ -39,7 +39,7 @@ const RESERVED_NAMES = new Set([
  * `/skills/x/SKILL.md` is ambiguous between their disk and ours, and no amount of care in
  * the reader can undo that. Cheap to reserve now, impossible to reclaim later.
  */
-export const RESERVED_ROOT_NAMES = new Set(['skills', 'paradigmeve-manual', 'appdata', 'paradigmeve']);
+export const RESERVED_ROOT_NAMES = new Set(['skills', 'paradigmeve-manual', 'paradigmeve-eveal', 'appdata', 'paradigmeve']);
 
 export class SandboxError extends Error {}
 

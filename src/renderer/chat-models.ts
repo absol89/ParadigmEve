@@ -13,6 +13,10 @@ let discovery: Promise<void> | null = null;
 let catalogSubscribed = false;
 let lastSettingsPassiveDiscoveryAt = 0;
 type ObservedSelection = { model: string; reasoningEffort?: ReasoningEffort; observedAt: number };
+type SessionModelObservationSource = {
+  conversationId: string | null;
+  selectedModel?: ({ conversationId: string } & ObservedSelection);
+};
 let composerContext: { scope: string | null; observation: ObservedSelection | null; nativeDefault: boolean; edited: boolean } | null = null;
 type ComposerChoice = { model: string; reasoningEffort: ReasoningEffort | null; editedAt: number };
 const composerChoices = new Map<string, ComposerChoice>();
@@ -23,6 +27,15 @@ let composerNeverChosen = false;
 const MAX_COMPOSER_CHOICES = 128;
 const MODEL_CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MODEL_REFRESH_RETRY_MS = 10 * 60 * 1000;
+
+/** Provider picker proof belongs only to the session's current ChatGPT frontend. */
+export function currentSessionModelObservation(
+  summary: SessionModelObservationSource | null | undefined
+): ObservedSelection | null {
+  return summary?.conversationId && summary.selectedModel?.conversationId === summary.conversationId
+    ? summary.selectedModel
+    : null;
+}
 const pairs = [['composerModel', 'composerReasoning'], ['workerModel', 'workerReasoning'], ['helperModel', 'helperReasoning']] as const;
 const effortNames: Record<string, string> = { none: "Instant", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "xhigh", max: "Max", ultra: "Ultra", pro: 'Pro' } satisfies Record<ReasoningEffort, string>;
 const composerEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'pro'] as const;
@@ -105,14 +118,19 @@ function rememberComposerChoice(): void {
   if (!selected) return;
   const model = selected.model ?? CHATGPT_DEFAULT_MODEL_ID;
   if (model !== CHATGPT_DEFAULT_MODEL_ID && !selected.reasoningEffort) return;
+  const editedAt = Date.now();
   composerPreferenceLoaded = true;
   composerNeverChosen = false;
-  defaultComposerChoice = model === CHATGPT_DEFAULT_MODEL_ID
-    ? null
-    : { model, reasoningEffort: selected.reasoningEffort, editedAt: Date.now() };
+  if (!scope) {
+    defaultComposerChoice = model === CHATGPT_DEFAULT_MODEL_ID
+      ? null
+      : { model, reasoningEffort: selected.reasoningEffort, editedAt };
+  }
+  const sessionId = scope?.startsWith('session:') ? scope.slice('session:'.length) : null;
   const save = window.api.setChatModelPreference?.(
     model === CHATGPT_DEFAULT_MODEL_ID ? null : model,
-    model === CHATGPT_DEFAULT_MODEL_ID ? null : selected.reasoningEffort
+    model === CHATGPT_DEFAULT_MODEL_ID ? null : selected.reasoningEffort,
+    sessionId
   );
   if (save) void run(save).catch(error => {
     // Keep the current draft choice, but make a failed durable save visible.
@@ -123,13 +141,26 @@ function rememberComposerChoice(): void {
   composerChoices.set(scope, {
     model,
     reasoningEffort: model === CHATGPT_DEFAULT_MODEL_ID ? null : selected.reasoningEffort,
-    editedAt: Date.now()
+    editedAt
   });
   while (composerChoices.size > MAX_COMPOSER_CHOICES) composerChoices.delete(composerChoices.keys().next().value!);
 }
 
 /** Existing chats use their durable session identity; null retains New Chat's native/default semantics. */
-export function applyComposerSessionModel(scope: string | null, observation: ObservedSelection | null, nativeDefault = false): void {
+export function applyComposerSessionModel(
+  scope: string | null,
+  observation: ObservedSelection | null,
+  nativeDefault = false,
+  durablePreference?: { model: string | null; reasoningEffort: ReasoningEffort | null; selectedAt: number }
+): void {
+  const cached = rememberedComposerChoice(scope);
+  if (scope && durablePreference && (!cached || durablePreference.selectedAt > cached.editedAt)) {
+    composerChoices.set(scope, {
+      model: durablePreference.model ?? CHATGPT_DEFAULT_MODEL_ID,
+      reasoningEffort: durablePreference.reasoningEffort,
+      editedAt: durablePreference.selectedAt
+    });
+  }
   let remembered = rememberedComposerChoice(scope);
   const observationConfirmsRemembered = !!remembered && !!observation &&
     configuredChatSettingsModel(observation.model) === configuredChatSettingsModel(remembered.model) &&
@@ -144,7 +175,7 @@ export function applyComposerSessionModel(scope: string | null, observation: Obs
     // the provisional choice for any chat that has no exact per-conversation observation yet.
     // A proven native-default session keeps provider-native semantics, and a later exact browser
     // observation supersedes this provisional value below.
-    const useDefault = !observation && !nativeDefault && defaultComposerChoice;
+    const useDefault = !scope && !observation && !nativeDefault && defaultComposerChoice;
     composerContext = { scope, observation, nativeDefault, edited: !!remembered || !!useDefault };
     if (useDefault) paintPair('composerModel', 'composerReasoning', useDefault.model, useDefault.reasoningEffort ?? '');
     else if (scope === null) paintPair('composerModel', 'composerReasoning', '', '');
@@ -614,7 +645,7 @@ export function applyChatModels(config: Config, previous?: Config): void {
   if (!composerContext) applyComposerSessionModel(null, null);
   // Any chat without exact provider state (fresh or established) shows the saved current-chat pair
   // until the page reports what it is really using; an explicit native default is left alone.
-  if (composerContext && !composerContext.observation && !composerContext.nativeDefault && !composerContext.edited && defaultComposerChoice) {
+  if (composerContext?.scope === null && !composerContext.observation && !composerContext.nativeDefault && !composerContext.edited && defaultComposerChoice) {
     composerContext.edited = true;
     paintPair('composerModel', 'composerReasoning', defaultComposerChoice.model, defaultComposerChoice.reasoningEffort ?? '');
     paintStatus();

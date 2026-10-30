@@ -188,7 +188,8 @@ import {
   findSessionByConversation,
   readEvents,
   readRecentEvents,
-  readHandoff
+  readHandoff,
+  setSessionComposerPreference
 } from './session/store.js';
 import { activeSessionId, forgetSession, onSessionChange } from './session/recorder.js';
 import { blockedChatIds, setChatBlocked } from './session/blocked-chats.js';
@@ -998,16 +999,21 @@ export function registerIpc(
   handle('chatModels:preference', async (payload) => {
     const request = z.object({
       model: z.string().trim().min(1).max(80).nullable(),
-      reasoningEffort: z.enum(REASONING_EFFORTS).nullable()
+      reasoningEffort: z.enum(REASONING_EFFORTS).nullable(),
+      sessionId: z.string().regex(/^[0-9a-z-]{8,64}$/i).nullable().optional()
     }).strict().parse(payload);
     if ((request.model === null) !== (request.reasoningEffort === null)) {
       throw new Error('Chat model and reasoning preference must both be native-default or both explicit');
     }
-    await updateConfig(config => ({ ...config, ui: {
-      ...config.ui,
-      chatModel: request.model,
-      chatReasoning: request.reasoningEffort
-    } }));
+    if (request.sessionId) {
+      await setSessionComposerPreference(request.sessionId, request.model, request.reasoningEffort);
+    } else {
+      await updateConfig(config => ({ ...config, ui: {
+        ...config.ui,
+        chatModel: request.model,
+        chatReasoning: request.reasoningEffort
+      } }));
+    }
     return buildState();
   });
 

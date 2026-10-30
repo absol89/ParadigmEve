@@ -181,6 +181,24 @@ describe('cross-platform packaging targets', () => {
     expect(smoke).toContain('runtime.electron !== expectedElectronVersion');
   });
 
+  it('ships only the EVE-Al contestant files, never its answer keys or scoring tools', () => {
+    const builder = yamlFile('electron-builder.yml');
+    const entry = (builder.extraResources ?? []).find((item: any) => item.from === 'eveal');
+    expect(entry).toMatchObject({ to: 'eveal' });
+    expect(entry.filter).toEqual(expect.arrayContaining(['!**/reviewer/**', '!tools/**']));
+    const files = (readdirSync(path.join(root, 'eveal'), { recursive: true, withFileTypes: true }) as any[])
+      .filter(item => item.isFile())
+      .map(item => path.relative(path.join(root, 'eveal'), path.join(item.parentPath, item.name)).split(path.sep).join('/'));
+    expect(files).toContain('EVEAL.md');
+    expect(files.filter(name => /(^|\/)reviewer(\/|$)/i.test(name))).toEqual([]);
+    for (const name of files) {
+      expect(name, name).toMatch(/^(?:EVEAL\.md$|tasks\/|corpus\/|fixtures\/|runs\/[A-Z-]+\.template\.json$)/);
+    }
+    const packagedRuntime = readFileSync(path.join(root, 'scripts', 'smoke-packaged-runtime.mjs'), 'utf8');
+    expect(packagedRuntime).toContain('Packaged EVE-Al suite contains answer material');
+    expect(packagedRuntime).toContain('Packaged EVE-Al file ${name} does not match the source bytes');
+  });
+
   it('keeps common release resources on an explicit ParadigmEve allowlist', () => {
     const builder = yamlFile('electron-builder.yml');
     const packagedRuntime = readFileSync(path.join(root, 'scripts', 'smoke-packaged-runtime.mjs'), 'utf8');
@@ -194,6 +212,7 @@ describe('cross-platform packaging targets', () => {
       'extension',
       'pets',
       'docs/vault',
+      'eveal',
       'artwork/icon.png'
     ]);
     expect(builder.extraResources ?? []).toEqual(expect.arrayContaining([

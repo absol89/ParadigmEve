@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import sharp from 'sharp';
 import { APP_VERSION, BRIDGE_PROTOCOL } from '../src/main/version.js';
 
@@ -70,6 +71,8 @@ let chatGate: Promise<void> | null = null;
 /** No internet: everything except loopback fails as an offline fetch does, and is recorded. */
 let offline = false;
 const offlineAttempts: string[] = [];
+/** An Ollama chat request: native on this computer, OpenAI-compatible for a cloud route. */
+const isChat = (url: string): boolean => url.endsWith('/api/chat') || url.endsWith('/v1/chat/completions');
 function sse(chunks: string[]): Response {
   const body = chunks.map((chunk) => `data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
@@ -98,6 +101,12 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
   if (url === 'https://ollama.com/api/tags') return Response.json({ models: [{ name: 'gemma4:31b' }, { name: 'kimi-k3' }, { name: 'mistral-large-3:675b' }] });
   if (url.endsWith('/api/pull')) { pulled.push(body.model); return Response.json({ status: 'success' }); }
   if (url.endsWith('/api/show')) return Response.json({ capabilities: visionModels.has(body.model) ? ['completion', 'vision'] : ['completion'] });
+  // The daemon on this computer is asked through its native API, which answers with one message.
+  if (url === 'http://127.0.0.1:11434/api/chat') {
+    if (chatGate) { const gate = chatGate; ollamaRequests.pop(); await gate; ollamaRequests.push({ url, body, headers: {} }); }
+    const choice = agentReplies.length ? (agentReplies.shift() as any).choices[0] : { message: { content: replyText } };
+    return Response.json({ message: { role: 'assistant', ...choice.message }, done: true, prompt_eval_count: 120 });
+  }
   if (url.endsWith('/v1/chat/completions')) {
     if (chatGate) { const gate = chatGate; ollamaRequests.pop(); await gate; ollamaRequests.push({ url, body, headers: {} }); }
     if (agentReplies.length) return Response.json(agentReplies.shift());
@@ -197,8 +206,10 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
   });
   expect(events.find((event) => event.kind === 'turn_end')).toMatchObject({ outcome: 'completed' });
 
-  const chat = ollamaRequests.find((request) => request.url.endsWith('/chat/completions'))!;
-  expect(chat.url).toBe('http://127.0.0.1:11434/v1/chat/completions');
+  const chat = ollamaRequests.find((request) => isChat(request.url))!;
+  expect(chat.url).toBe('http://127.0.0.1:11434/api/chat');
+  // Ollama's default window is often 4k tokens; the request names one large enough instead.
+  expect(chat.body.options.num_ctx).toBeGreaterThanOrEqual(8192);
   expect(chat.body.model).toBe('llama3.2');
   expect(chat.body.messages.at(-1)).toEqual({ role: 'user', content: 'What is 2+2?' });
   // The local daemon never receives the stored cloud key.
@@ -232,7 +243,7 @@ it('lets a direct Ollama chat use an approved local read tool and feeds the resu
   const events = await finished(session.id, `ollama-turn:${id}`);
   expect(events.find(event => event.kind === 'assistant_message')).toMatchObject({ message: { text: 'I read the Vault note.' } });
 
-  const chats = ollamaRequests.filter(request => request.url.endsWith('/v1/chat/completions'));
+  const chats = ollamaRequests.filter(request => isChat(request.url));
   expect(chats).toHaveLength(2);
   const toolMessage = chats[1]!.body.messages.find((message: any) => message.role === 'tool');
   expect(toolMessage?.content).toContain('VAULT TOOL CONTENT');
@@ -253,8 +264,8 @@ it('keeps natural-language skills available in conversational local chat without
   await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
 
   // 'sent' means the turn was accepted; its chat payload (skills included) is built afterwards.
-  await vi.waitFor(() => expect(ollamaRequests.some(request => request.url.endsWith('/v1/chat/completions'))).toBe(true), { timeout: 5000 });
-  const chat = ollamaRequests.find(request => request.url.endsWith('/v1/chat/completions'))!;
+  await vi.waitFor(() => expect(ollamaRequests.some(request => isChat(request.url))).toBe(true), { timeout: 5000 });
+  const chat = ollamaRequests.find(request => isChat(request.url))!;
   const system = chat.body.messages.find((message: any) => message.role === 'system')?.content ?? '';
   expect(system).toContain('# Available skills');
   expect(system).toContain('token-insights: Diagnose context and workflow token pressure.');
@@ -304,12 +315,14 @@ it('gives Ollama the ChatGPT history and its images, and refuses an image the mo
   expect(accepted.ok, accepted.error).toBe(true);
   await finished(session.id, `ollama-turn:${id}`);
 
-  const chat = ollamaRequests.find((request) => request.url.endsWith('/chat/completions'))!;
+  const chat = ollamaRequests.find((request) => isChat(request.url))!;
   const [system, user, assistant, current] = chat.body.messages;
   expect(system.role).toBe('system');
   expect(user.role).toBe('user');
-  expect(user.content[0]).toEqual({ type: 'text', text: 'Look at this' });
-  expect(user.content[1].image_url.url).toMatch(/^data:image\/png;base64,/);
+  // Ollama's native API carries images as bare base64 beside the text.
+  expect(user.content).toBe('Look at this');
+  expect(user.images).toHaveLength(1);
+  expect(Buffer.from(user.images[0], 'base64').subarray(1, 4).toString('ascii')).toBe('PNG');
   expect(assistant).toEqual({ role: 'assistant', content: 'A red square.' });
   expect(current).toEqual({ role: 'user', content: 'What colour was it?' });
 
@@ -492,7 +505,7 @@ it('pulls a cloud model picked from the catalog before its first turn, never a l
   const row = (await input.listInputs()).find(entry => entry.id === id)!;
   await finished(row.deliveredSessionId!, `ollama-turn:${id}`);
   expect(pulled).toEqual(['kimi-k3:cloud']);
-  expect(ollamaRequests.find(request => request.url.endsWith('/chat/completions'))?.body.model).toBe('kimi-k3:cloud');
+  expect(ollamaRequests.find(request => isChat(request.url))?.body.model).toBe('kimi-k3:cloud');
 
   const local = randomUUID();
   expect((await send({ id: local, provider: 'ollama', model: 'llama3.2', text: 'Hello local' })).ok).toBe(true);
@@ -566,10 +579,10 @@ it('previews and enqueues a switch on a long cold chat promptly, preparing the O
     expect(accepted.ok, accepted.error).toBe(true);
     expect(Date.now() - sendStartedAt).toBeLessThan(5_000);
     expect((await input.listInputs()).find(row => row.id === id)).toBeTruthy();
-    expect(ollamaRequests.some(request => request.url.endsWith('/chat/completions') && request.body?.messages)).toBe(false);
+    expect(ollamaRequests.some(request => isChat(request.url) && request.body?.messages)).toBe(false);
     release();
     await finished(session.id, `ollama-turn:${id}`);
-    const chat = ollamaRequests.find(request => request.url.endsWith('/chat/completions'))!;
+    const chat = ollamaRequests.find(request => isChat(request.url))!;
     // The real payload, built after enqueue, does carry the long answers in full.
     expect(chat.body.messages.some((message: { content: unknown }) => typeof message.content === 'string' && message.content.length === long.length)).toBe(true);
   } finally {
@@ -760,3 +773,74 @@ it('keeps OpenRouter out of local-only chats and asks before handing a chat to i
   const unconsented = await send({ id: randomUUID(), sessionId, provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'Go remote' });
   expect(unconsented.ok).toBe(false);
 });
+
+it('activates %eveal for a local Ollama chat: its prompt, the suite location and the steps reach the model on every turn', async () => {
+  const { initializeDefaultThreads } = await import('../src/main/pins.js');
+  await initializeDefaultThreads();
+  const base = defaultConfig();
+  await saveConfig({
+    ...base,
+    capabilities: { ...base.capabilities, read: true },
+    agentRuntime: { ollama: { ...base.agentRuntime.ollama, chatDirectTools: true } },
+    goal: { ...base.goal, enabled: false }
+  });
+  replyText = 'Starting the Quick reveal.';
+  const sessionId = await sendAndFinish({ provider: 'ollama', model: 'llama3.2', text: '%eveal' });
+  const systemOf = (request: { body: any }) => request.body.messages.find((message: any) => message.role === 'system')?.content as string;
+  const first = systemOf(ollamaRequests.filter(request => isChat(request.url)).at(-1)!);
+  expect(first).toContain('# Eve Thread prompt · eveal');
+  expect(first).toContain('`/paradigmeve-eveal/EVEAL.md`');
+  expect(first).toContain('# EVE-Al Quick reveal');
+  // A model on this computer may copy fixtures with a command, so it gets the folder on disk.
+  expect(first).toContain(path.join(process.cwd(), 'eveal'));
+  expect(first).not.toContain('no tool that reads files, so it cannot');
+  expect(first).not.toContain('[[PARADIGMEVE_');
+
+  ollamaRequests.length = 0;
+  await sendAndFinish({ sessionId, provider: 'ollama', model: 'llama3.2', text: 'Carry on.' });
+  const second = systemOf(ollamaRequests.filter(request => isChat(request.url)).at(-1)!);
+  expect(second).toContain('# Eve Thread prompt · eveal');
+
+  // An ordinary local chat gets no Thread context.
+  ollamaRequests.length = 0;
+  await sendAndFinish({ provider: 'ollama', model: 'llama3.2', text: 'What is 2+2?' });
+  expect(systemOf(ollamaRequests.filter(request => isChat(request.url)).at(-1)!))
+    .not.toContain('# Context ParadigmEve activated');
+});
+
+it('tells a remote model without file tools that %eveal needs one, without naming the user\'s disk', async () => {
+  const { initializeDefaultThreads } = await import('../src/main/pins.js');
+  await initializeDefaultThreads();
+  resetOpenRouterCatalogForTests();
+  await setSecret('openRouterApiKey', 'or-test-key');
+  try {
+    await sendAndFinish({ provider: 'openrouter', model: 'plain/no-tools', text: '%eveal' });
+    const chat = routerRequests.find((request) => request.url.endsWith('/chat/completions'))!;
+    const system = chat.body.messages.find((message: any) => message.role === 'system')?.content as string;
+    expect(system).toContain('# Eve Thread prompt · eveal');
+    expect(system).toContain('This chat has no tool that reads files');
+    expect(system).toContain('# EVE-Al Quick reveal');
+    expect(system).not.toContain(process.cwd());
+  } finally {
+    await clearSecret('openRouterApiKey');
+  }
+});
+
+// The user's own wording, with and without sentence punctuation after the reference.
+it.each(['', '.', '!', '?'].map(end => `Help me get started with %eveal${end}`))(
+  'activates %%eveal from the very first input of a fresh local chat (%s) and asks Ollama for a window that fits it',
+  async (text) => {
+    const { initializeDefaultThreads } = await import('../src/main/pins.js');
+    await initializeDefaultThreads();
+    const sessionId = await sendAndFinish({ provider: 'ollama', model: 'gemma4:e2b', text });
+    const chat = ollamaRequests.filter(request => isChat(request.url)).at(-1)!;
+    expect(chat.url).toBe('http://127.0.0.1:11434/api/chat');
+    const system = chat.body.messages.find((message: any) => message.role === 'system')?.content as string;
+    expect(system).toContain('# Eve Thread prompt · eveal');
+    expect(chat.body.messages.at(-1)).toEqual({ role: 'user', content: text });
+    // The whole request, tool schemas included, fits the window: nothing is cut from its front.
+    const { options, ...rest } = chat.body;
+    expect(options.num_ctx).toBeGreaterThan(JSON.stringify(rest).length / 3);
+    expect(sessionId).toBeTruthy();
+  }
+);

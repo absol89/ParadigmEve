@@ -14,6 +14,9 @@ it('routes localized spellings of the shipped starters to their canonical refere
   expect(canonicalReference('%cómo')).toBe('%how');
   expect(canonicalReference('%organisera')).toBe('%organize');
   expect(canonicalReference('%organizar')).toBe('%organize');
+  expect(canonicalReference('%eve-al')).toBe('%eveal');
+  expect(canonicalReference('%EVE-Al')).toBe('%eveal');
+  expect(canonicalReference('%eveal')).toBeNull();
   // plan, plans, planer, planen and planes are one reference, for a Thread and for a Concept.
   for (const form of ['plan', 'planer', 'planen', 'planes', 'PLANER']) {
     expect(canonicalReference(`%${form}`), form).toBe('%plans');

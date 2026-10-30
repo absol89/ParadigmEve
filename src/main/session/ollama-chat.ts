@@ -32,9 +32,12 @@ import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, 
 import { issueLocalAgentExecutionPrincipal, revokeLocalAgentExecutionPrincipal, runLocalAgent, type LocalAgentMessage } from '../local-agent-runtime.js';
 import { localChatCoreTools } from '../local-chat-tools.js';
 import type { ToolContext } from '../mcp/kernel.js';
-import { ollamaConversation, ProviderCapabilityError, providerRoute } from './provider-history.js';
+import { archivedTurns, ollamaConversation, ProviderCapabilityError, providerRoute } from './provider-history.js';
 import { OLLAMA_CONVERSATION_PREFIX, OLLAMA_TURN_PREFIX, type ChatProvider, type StoredText } from '../../shared/session.js';
 import { skillCatalogInstructions } from '../skills.js';
+import { injectPinsContext } from '../pins-context.js';
+import { expandLocalOpeningContext } from './prompt.js';
+import { MAX_CHATGPT_MESSAGE_CHARS } from '../../shared/user-prompt.js';
 
 const OWNER = 'ollama-local';
 const MAX_REPLY_INLINE = 256_000;
@@ -63,6 +66,42 @@ async function chatSystemPrompt(direct: boolean, skillsAvailable: boolean): Prom
   if (!skillsAvailable) return base;
   const catalog = await skillCatalogInstructions({ platform: process.platform, capabilities: effectiveCapabilities(config) }).catch(() => '');
   return catalog ? `${base}\n\n${catalog}` : base;
+}
+
+/** The Thread context each local chat's opening message activated, so later turns keep the same one. */
+const openings = new Map<string, string>();
+
+/**
+ * What the opening message's `%Thread` / `#Quilt` references activate, as ChatGPT gets it in its
+ * opening message. Local chats are rebuilt from the archive every turn and long ones are trimmed
+ * from the oldest message, so the context rides in the system prompt instead of the first turn.
+ */
+async function openingContext(sessionId: string, entry: InputEntry, route: ReturnType<typeof providerRoute>, toolNames: readonly string[]): Promise<string> {
+  const cached = openings.get(sessionId);
+  if (cached !== undefined) return cached;
+  const opening = (await archivedTurns(sessionId)).find((turn) => turn.role === 'user');
+  if (!opening?.text.trim()) return '';
+  const isOpening = opening.inputId === entry.id;
+  let activated: string;
+  try {
+    activated = await injectPinsContext(opening.text, { maxChars: MAX_CHATGPT_MESSAGE_CHARS, maxBytes: Infinity },
+      isOpening && entry.contextQuiltId ? { quiltId: entry.contextQuiltId } : {});
+  } catch (error) {
+    logWarn(`session ${sessionId}: opening Thread context unavailable: ${(error as Error).message}`);
+    return '';
+  }
+  const context = activated === opening.text ? '' : [
+    '# Context ParadigmEve activated when this chat opened',
+    'The opening message referenced a Thread or Quilt. ParadigmEve\'s context for it follows and ends with that opening message. Follow it for this chat; the newest user message stays authoritative.',
+    await expandLocalOpeningContext(activated, {
+      inline: true,
+      fileTools: toolNames.includes('read'),
+      nativePath: route === 'ollama-local'
+    })
+  ].join('\n\n');
+  // A chat started from a Thread in the app carries that Thread only on its first input; keep what it activated.
+  if (isOpening || !entry.contextQuiltId) openings.set(sessionId, context);
+  return context;
 }
 
 interface LocalTurn { turnId: string; controller: AbortController }
@@ -204,7 +243,6 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
       vision = capabilities ? capabilities.includes('vision') : null;
     }
     const direct = settings.chatDirectTools !== false;
-    const messages = await ollamaConversation(sessionId, vision, await chatSystemPrompt(direct, toolsSupported));
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: `chat:${sessionId}`, agentId: turnId });
     const endpoint = provider.id === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint;
     try {
@@ -216,6 +254,11 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
         route: providerRoute(provider, endpoint),
         mode: direct ? 'direct' : 'delegate'
       });
+      const opening = await openingContext(sessionId, entry, providerRoute(provider, endpoint), tools.map((tool) => tool.name));
+      const threads = [...opening.matchAll(/^# Eve Thread prompt · (.{1,60})$/gmu)].map((match) => match[1]).slice(0, 8);
+      logInfo(`session ${sessionId}: ${providerName(provider)} opening context ${threads.length ? `activates ${threads.join(', ')}` : 'activates no Thread'} (${opening.length} chars, ${tools.length} tools)`);
+      const system = await chatSystemPrompt(direct, toolsSupported);
+      const messages = await ollamaConversation(sessionId, vision, opening ? `${system}\n\n${opening}` : system);
       const result = await runLocalAgent({
         backend: 'ollama',
         principal,
@@ -225,7 +268,9 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
         task: '',
         initialMessages: messages as LocalAgentMessage[],
         tools,
-        runtime: routerKey ? createOpenRouterAgentModelRuntime(routerKey) : createOllamaAgentModelRuntime(),
+        // The daemon on this computer gets its native API, the only one that takes a context window.
+        runtime: routerKey ? createOpenRouterAgentModelRuntime(routerKey)
+          : createOllamaAgentModelRuntime(globalThis.fetch, { native: providerRoute(provider, endpoint) === 'ollama-local' }),
         signal: controller.signal,
         allowNoTools: true
       });
@@ -286,5 +331,6 @@ export function resetOllamaChatForTests(): void {
   for (const turn of active.values()) turn.controller.abort();
   active.clear();
   chains.clear();
+  openings.clear();
   changed = () => undefined;
 }

@@ -12,7 +12,7 @@ import {
   type LocalAgentModelRuntime,
   type LocalAgentTool
 } from '../src/main/local-agent-runtime.js';
-import { createOllamaAgentModelRuntime } from '../src/main/ollama-agent-runtime.js';
+import { createOllamaAgentModelRuntime, resetOllamaNativeContextForTests } from '../src/main/ollama-agent-runtime.js';
 
 afterEach(() => resetLocalAgentRuntimeForTests());
 
@@ -154,6 +154,53 @@ describe('Ollama agent model transport', () => {
       Response.json({ choices: [{ message: { tool_calls: [{ id: 'x', function: { name: 'read', arguments: '{' } }] } }] })) as typeof globalThis.fetch);
     await expect(badRuntime.complete({ endpoint: 'http://localhost:11434/v1', model: 'qwen3', messages: [], tools: [] }))
       .rejects.toThrow(/tool arguments were invalid JSON/);
+  });
+
+  it('asks the local daemon natively for a window that fits the request, never shrinks it, and stays within the model', async () => {
+    resetOllamaNativeContextForTests();
+    const requests: Array<{ url: string; body: any }> = [];
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      requests.push({ url, body });
+      if (url.endsWith('/api/show')) return Response.json({ model_info: { 'gemma4.context_length': 20_000 } });
+      return Response.json({
+        message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read', arguments: { path: '/a' } } }] },
+        done: true, prompt_eval_count: 900
+      });
+    });
+    const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
+    const ask = (content: string) => runtime.complete({
+      endpoint: 'http://127.0.0.1:11434/v1', model: 'gemma4:e2b',
+      messages: [
+        { role: 'system', content: 'rules' },
+        { role: 'user', content: [{ type: 'text', text: content }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'read', arguments: { path: '/b' } }] },
+        { role: 'tool', content: 'B', toolCallId: 'c1', name: 'read', isError: false }
+      ],
+      tools: [{ name: 'read', description: 'read', inputSchema: { type: 'object' } }]
+    });
+
+    await expect(ask('short')).resolves.toEqual({ type: 'tool_calls', content: '', calls: [{ id: 'ollama-call-1', name: 'read', arguments: { path: '/a' } }] });
+    const first = requests.find(request => request.url === 'http://127.0.0.1:11434/api/chat')!;
+    expect(first.body.messages).toEqual([
+      { role: 'system', content: 'rules' },
+      { role: 'user', content: 'short', images: ['AAAA'] },
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read', arguments: { path: '/b' } } }] },
+      { role: 'tool', content: 'B', tool_name: 'read' }
+    ]);
+    expect(first.body).toMatchObject({ model: 'gemma4:e2b', stream: false, options: { num_ctx: 8_192 } });
+
+    // A long prompt grows the window to the next step, capped by the model's own maximum.
+    await ask('x'.repeat(30_000));
+    expect(requests.filter(request => request.url.endsWith('/api/chat')).at(-1)!.body.options.num_ctx).toBe(16_384);
+    await ask('y'.repeat(120_000));
+    expect(requests.filter(request => request.url.endsWith('/api/chat')).at(-1)!.body.options.num_ctx).toBe(20_000);
+    // A short turn after a long one keeps the window, so Ollama does not reload the model.
+    await ask('short again');
+    expect(requests.filter(request => request.url.endsWith('/api/chat')).at(-1)!.body.options.num_ctx).toBe(20_000);
+    expect(requests.filter(request => request.url.endsWith('/api/show'))).toHaveLength(1);
+    // Without the native flag the same endpoint keeps the OpenAI-compatible transport.
+    expect(requests.some(request => request.url.endsWith('/chat/completions'))).toBe(false);
   });
 
   it('does not promote transport reachability to agent backend readiness', () => {

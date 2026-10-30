@@ -1,5 +1,5 @@
 import { ui, t } from './i18n.js';
-import { applyChatModels, applyComposerSessionModel, initChatModels, confirmedComposerModel, ensureComposerModel, firstModelChoiceNeeded, refreshSettingsModelsOnOpen } from './chat-models.js';
+import { applyChatModels, applyComposerSessionModel, currentSessionModelObservation, initChatModels, confirmedComposerModel, ensureComposerModel, firstModelChoiceNeeded, refreshSettingsModelsOnOpen } from './chat-models.js';
 import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
@@ -2637,7 +2637,7 @@ function paintDetail(followBottom = true): void {
   const selectedProject = selectedId === null && selectedProjectId
     ? projects.find(project => project.id === selectedProjectId)
     : null;
-  applyComposerSessionModel(composerModelScope(), summary?.selectedModel ?? null, sessionUsesNativeModel(summary));
+  applyComposerSessionModel(composerModelScope(), currentSessionModelObservation(summary), sessionUsesNativeModel(summary), summary?.composerPreference);
   applyComposerProvider(summary?.id ?? null, summary ?? null);
   const config = deps.state()?.config;
   if (config) paintContextMeter(summary, config, confirmedComposerModel());
@@ -4339,7 +4339,7 @@ function selectSession(
   // existing-chat navigation must obey the same presentation boundary.
   showView('timeline');
   const selected = sessions.find(row => row.id === id);
-  applyComposerSessionModel(composerModelScope(), selected?.selectedModel ?? null, sessionUsesNativeModel(selected));
+  applyComposerSessionModel(composerModelScope(), currentSessionModelObservation(selected), sessionUsesNativeModel(selected), selected?.composerPreference);
   applyComposerProvider(selected?.id ?? null, selected ?? null);
   const parent = selected?.origin?.kind === 'worker' ? selected.origin.fromSessionId : null;
   if (parent) expandedWorkers.add(parent);

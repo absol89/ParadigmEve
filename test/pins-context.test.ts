@@ -5,6 +5,7 @@ import path from 'node:path';
 import { initDurableStore, resetDurableForTests, writeDurableNow } from '../src/main/durable.js';
 import { createCollection, createPin, createQuilt, initializeDefaultThreads, PINS_STATE, resetPinsForTests, setCollectionDescription, setQuiltPrompt, updateQuiltMetadata } from '../src/main/pins.js';
 import { injectPinsContext } from '../src/main/pins-context.js';
+import { pinsContextReferences } from '../src/shared/pins-context.js';
 import { scheduleDeliveryText } from '../src/main/session/input.js';
 import { VAULT_CONTEXT_MARKER } from '../src/main/vault-path.js';
 import {
@@ -648,4 +649,14 @@ it('explains a localized Schedule shortcut to Eve even when no Quilt exists, and
   const real = await injectPinsContext('#agendas summarize its saved context.', limits);
   expect(real).toContain('# Eve Quilt description missing · #agendas');
   expect(real).not.toContain('Schedule workspace shortcut');
+});
+
+it('reads a reference followed by sentence punctuation as the reference alone', () => {
+  for (const end of ['.', '...', '!', '?', ',', ':', ';', ')']) {
+    for (const reference of ['%eveal', '#Eve']) {
+      expect(pinsContextReferences(`Help me get started with ${reference}${end}`), `${reference}${end}`).toEqual([reference]);
+    }
+  }
+  // A dot inside a name stays part of it; only trailing dots are sentence punctuation.
+  expect(pinsContextReferences('Open %v2.4-notes now')).toEqual(['%v2.4-notes']);
 });

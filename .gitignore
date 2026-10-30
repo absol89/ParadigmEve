@@ -40,6 +40,8 @@ docs/android-mcp-brainstorm/
 smoke/
 smoke-switch.txt
 HANDOFF.md
+# A fictional handoff note the EVE-Al probe kit ships as contestant material.
+!/eveal/fixtures/probe-kit/docs/HANDOFF.md
 docs/handoff-*.md
 docs/open-issues-*.md
 

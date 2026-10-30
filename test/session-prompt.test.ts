@@ -184,3 +184,13 @@ it('bounds a large file and refuses invalid file types and revoked access withou
   await saveConfig(defaultConfig());
   await expect(prepareSessionPrompt('Revoked', { projectId: project.id })).rejects.toThrow();
 });
+
+it('points a ChatGPT %eveal opening at the read-only suite without pasting it or naming the user\'s disk', async () => {
+  const { EVEAL_CONTEXT_MARKER } = await import('../src/main/eveal-path.js');
+  const text = await prepareSessionPrompt(['# Eve Thread prompt · eveal', EVEAL_CONTEXT_MARKER, '--- Current request ---', '%eveal'].join('\n'));
+  expect(text).toContain('# EVE-Al suite');
+  expect(text).toContain('/paradigmeve-eveal/EVEAL.md');
+  expect(text).not.toContain(EVEAL_CONTEXT_MARKER);
+  expect(text).not.toContain('# EVE-Al Quick reveal');
+  expect(text).not.toContain(path.join(process.cwd(), 'eveal'));
+});

@@ -6,6 +6,7 @@ import { getSessionProject, projectWorkspace } from '../projects.js';
 import { resolvePath } from '../sandbox.js';
 import { MAX_CHATGPT_MESSAGE_CHARS, prependUserPrompt } from '../../shared/user-prompt.js';
 import { readHowOpeningManualText, VAULT_CONTEXT_MARKER, VAULT_MANUAL_ROOT } from '../vault-path.js';
+import { EVEAL_CONTEXT_MARKER, evealOpeningContext, type EvealOpeningOptions } from '../eveal-path.js';
 
 type PromptScope = { sessionId?: string | null; projectId?: string | null };
 export type PromptLimits = { maxChars: number; maxBytes: number };
@@ -63,6 +64,26 @@ async function expandPackagedVault(text: string, core: string, budget: PromptLim
     else high = Math.max(0, middle - 1);
   }
   return render(manual.slice(0, low), true);
+}
+
+async function expandEvealSuite(text: string, options: EvealOpeningOptions): Promise<string> {
+  if (!text.includes(EVEAL_CONTEXT_MARKER)) return text;
+  return text.replace(EVEAL_CONTEXT_MARKER, await evealOpeningContext(options));
+}
+
+/**
+ * Opening context for a chat answered by Ollama or OpenRouter. These chats never pass through
+ * `prepareSessionPrompt`, so the app-owned markers an activated Thread carries are expanded here.
+ * A local model's context is small and may lack tools, so `%how` gets its quick reference and
+ * `%eveal` its location and steps rather than a bare pointer.
+ */
+export async function expandLocalOpeningContext(text: string, eveal: EvealOpeningOptions): Promise<string> {
+  const located = await expandEvealSuite(text, eveal);
+  if (!located.includes(VAULT_CONTEXT_MARKER)) return located;
+  const manual = await readHowOpeningManualText().catch(() => null);
+  return located.replace(VAULT_CONTEXT_MARKER, manual
+    ? `# Packaged ParadigmEve Vault manual\n\n${manual}`
+    : `# Packaged ParadigmEve Vault\nRead /${VAULT_MANUAL_ROOT} for the current manual.`);
 }
 
 /** One selected folder, never cwd inference, global discovery or a recursive document scan. */
@@ -131,7 +152,9 @@ export function fitSessionPrompt(text: string, core: string, agents: ProjectInst
  * follow-ups, helpers, handoff requests and resumed bootstraps never call this. */
 export async function prepareSessionPrompt(text: string, scope: PromptScope = {}, budget = limits): Promise<string> {
   const core = await currentCoreInstructions();
-  const contextual = await expandPackagedVault(text, core, budget);
+  // ChatGPT has the read tool and runs off this computer: point at the suite, never at the user's disk.
+  const located = await expandEvealSuite(text, { inline: false, fileTools: true, nativePath: false });
+  const contextual = await expandPackagedVault(located, core, budget);
   fitSessionPrompt(contextual, core, null, budget); // Reject mandatory overflow before reading optional files.
   return fitSessionPrompt(contextual, core, await projectInstructions(scope), budget);
 }
