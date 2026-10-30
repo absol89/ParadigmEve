@@ -12,16 +12,16 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current **2.4.4 source-release preparation line** is `release/2.4.4`,
-cumulative over public `v2.4.3`. Tag, main integration and remote push require
-independent verification; neither a planned tag nor an installed c7 candidate
-proves public installers. The earlier **App + Companion 2.2.2** Angel checkpoint remains
-part of the release history, and the current bridge protocol is **15**. A package is not coherent
+The current **2.4.6 local candidate preparation line** is `release/2.4.6`,
+branched directly from published `v2.4.5`. Candidate 1 has not yet been built
+or installed, and no 2.4.6 tag, push or public release is claimed. The earlier
+**App + Companion 2.2.2** Angel checkpoint remains part of release history,
+and the current bridge protocol is **15**. A package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
 authorities and must not be inferred from each other. This tagged *source* checkpoint is not
 itself a published installer or proof of live operation on every target platform.
 
-The 2.4.4 c2 Windows x64 debug candidate was later installed locally and its
+Historically, the 2.4.4 c2 Windows x64 debug candidate was installed locally and its
 installed app bundle hash matched the packaged c2 source. Its incremental
 static-site refresh reused 34 of 35 chats, but a full startup archive index
 scan still reached about 921 MiB RSS. Candidate 3 adds the delivery-icon and

@@ -2,12 +2,12 @@
 
 Back to [vault index](README.md).
 
-This page contains historical **2.4.1 source and acceptance evidence** and a current feature checklist. The current development source line is **2.4.4** on `release/2.4.4`; c2 was installed and hash-verified, while c3 delivery-action source changes require separate package/installed acceptance. Candidate packaging and installed acceptance are separate checks. It records
+This page contains historical **2.4.1 source and acceptance evidence** and a current feature checklist. The current development source line is **2.4.6** on `release/2.4.6`, branched from published `v2.4.5`; c1 packaging and installed acceptance are not yet proven. Earlier 2.4.4 c2 was installed and hash-verified, while later source changes require separate package/installed acceptance. Candidate packaging and installed acceptance are separate checks. It records
 verified source, local candidate evidence and the checks still needed before
 calling a feature installed or a downloadable release ready. A Git tag, a local
 installer and a live acceptance run are different evidence levels.
 
-## Historical 2.4.1 product state (not current 2.4.4 installation evidence)
+## Historical 2.4.1 product state (not current 2.4.6 installation evidence)
 
 - Current tagged source: **`v2.4.1`** on public `main` and `release/2.4.1` (2026-10-17; the
   GitHub release page shows the tagged commit): onboarding fixes on top of `v2.4.0`. A Windows

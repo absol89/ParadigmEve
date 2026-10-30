@@ -13,6 +13,24 @@ runtime. If the app and Companion bridge protocols are incompatible, ParadigmEve
 peer until the matching Companion is active. Connector-schema refresh in ChatGPT is a separate
 operation.
 
+## [2.4.6] — Twinning model integrity and EVE-Al local-agent reliability
+
+**Candidate preparation (2026-10-30):** c1 starts from the published 2.4.5
+release checkpoint and keeps Prime/Twin model intent session-local. It also
+restores persistent %Thread context and tool schemas to local Ollama chats by
+using Ollama's native chat API with an explicitly sized context window.
+
+- Established chats persist their explicit composer model/reasoning choice;
+  New Chat alone owns the global default. Compact & Resume accepts provider
+  model evidence only from the durable session's current ChatGPT conversation.
+- Local Ollama uses native /api/chat with bounded num_ctx sizing so system
+  instructions, activated Threads and tool schemas are not silently cut from
+  the front of a longer prompt.
+- %eveal ships as a read-only Quick reveal suite at /paradigmeve-eveal;
+  its opening Thread context remains available on later local-chat turns.
+- Candidate/source verification is separate from installed acceptance and
+  public release.
+
 ## [2.4.5] — Heartbeat, worker choice and Compact & Resume safety
 
 **Source-release preparation (2026-10-28):** c26 is the latest locally built,
