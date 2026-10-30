@@ -93,11 +93,13 @@ export interface EvealOpeningOptions {
 export async function evealOpeningContext(options: EvealOpeningOptions): Promise<string> {
   const lines = [
     '# EVE-Al suite',
-    `The suite is read-only at /${EVEAL_SUITE_ROOT}; read its files there with the read tool, starting with /${EVEAL_SUITE_ROOT}/EVEAL.md. It holds the same files as the offline eveal-suite.zip download.`,
+    `The suite is read-only at /${EVEAL_SUITE_ROOT}; read its files there with the read tool, starting with /${EVEAL_SUITE_ROOT}/EVEAL.md. It holds only the task material, never answer keys.`,
     // EVEAL.md links its files relatively; spelled out, a small model does not have to resolve them.
     `Nothing can be written there: write your output in the /${EVEAL_RUN_ROOT} folder ParadigmEve gives this session, or with a full path inside an approved folder. ` +
       `Read every suite file by its full path, /${EVEAL_SUITE_ROOT}/ followed by the path EVEAL.md gives, for example:\n` +
-      ['tasks/pitfalls.md', 'tasks/sources.md', 'tasks/honesty-practice.md', 'corpus/larkspur/', 'fixtures/probe-kit/TASK.md', 'runs/QUICK-RUN.template.json']
+      ['tasks/pitfalls.md', 'tasks/sources.md', 'tasks/honesty-practice.md', 'corpus/larkspur/', 'fixtures/probe-kit/TASK.md',
+        'tasks/swedish.md', 'tasks/instructions.md', 'tasks/general-fix.md', 'tasks/pushback.md', 'tasks/calibration.md',
+        'runs/QUICK-RUN.template.json']
         .map((relative) => `- /${EVEAL_SUITE_ROOT}/${relative}`).join('\n')
   ];
   if (options.nativePath) {

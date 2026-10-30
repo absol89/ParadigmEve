@@ -23,6 +23,12 @@ const tool = (invoke: LocalAgentTool['invoke'] = async () => ({ content: 'ok' })
   invoke
 });
 
+function nativeEvents(...events: unknown[]): Response {
+  return new Response(events.map(event => JSON.stringify(event)).join('\n') + '\n', {
+    headers: { 'content-type': 'application/x-ndjson' }
+  });
+}
+
 describe('local agent execution principal', () => {
   it('is app-issued, backend-bound and revocable', () => {
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: 'run-a', agentId: 'worker-1' });
@@ -163,10 +169,10 @@ describe('Ollama agent model transport', () => {
       const body = JSON.parse(String(init.body));
       requests.push({ url, body });
       if (url.endsWith('/api/show')) return Response.json({ model_info: { 'gemma4.context_length': 20_000 } });
-      return Response.json({
-        message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read', arguments: { path: '/a' } } }] },
-        done: true, prompt_eval_count: 900
-      });
+      return nativeEvents(
+        { message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read', arguments: { path: '/a' } } }] }, done: false },
+        { done: true, prompt_eval_count: 900 }
+      );
     });
     const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
     const ask = (content: string) => runtime.complete({
@@ -188,7 +194,7 @@ describe('Ollama agent model transport', () => {
       { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read', arguments: { path: '/b' } } }] },
       { role: 'tool', content: 'B', tool_name: 'read' }
     ]);
-    expect(first.body).toMatchObject({ model: 'gemma4:e2b', stream: false, options: { num_ctx: 8_192 } });
+    expect(first.body).toMatchObject({ model: 'gemma4:e2b', stream: true, options: { num_ctx: 8_192 } });
 
     // A long prompt grows the window to the next step, capped by the model's own maximum.
     await ask('x'.repeat(30_000));
@@ -201,6 +207,69 @@ describe('Ollama agent model transport', () => {
     expect(requests.filter(request => request.url.endsWith('/api/show'))).toHaveLength(1);
     // Without the native flag the same endpoint keeps the OpenAI-compatible transport.
     expect(requests.some(request => request.url.endsWith('/chat/completions'))).toBe(false);
+  });
+
+  it('assembles fragmented UTF-8, text, thinking and native tool calls without waiting for the socket to close', async () => {
+    resetOllamaNativeContextForTests();
+    let cancelled = false;
+    const wire = new TextEncoder().encode([
+      JSON.stringify({ message: { thinking: 'working…' }, done: false }),
+      JSON.stringify({ message: { content: 'café ' }, done: false }),
+      JSON.stringify({ message: { content: 'ready', tool_calls: [{ function: { name: 'read', arguments: { path: '/a' } } }] }, done: false }),
+      JSON.stringify({ done: true, prompt_eval_count: 72 })
+    ].join('\n') + '\n');
+    const splitAt = wire.indexOf(0xc3) + 1; // The middle of the UTF-8 encoding of é.
+    expect(splitAt).toBeGreaterThan(1);
+    const fetch = vi.fn(async (url: string) => url.endsWith('/api/show')
+      ? Response.json({ model_info: { 'lfm3.context_length': 131_072 } })
+      : new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(wire.subarray(0, splitAt));
+          controller.enqueue(wire.subarray(splitAt));
+          // Deliberately do not close; the terminal done event must finish the request.
+        },
+        cancel() { cancelled = true; }
+      })));
+    const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
+    await expect(runtime.complete({
+      endpoint: 'http://localhost:11434/v1', model: 'eve-lfm3-eval',
+      messages: [{ role: 'user', content: 'read /a' }],
+      tools: [{ name: 'read', description: 'read', inputSchema: { type: 'object' } }]
+    })).resolves.toEqual({
+      type: 'tool_calls', content: 'café ready',
+      calls: [{ id: 'ollama-call-1', name: 'read', arguments: { path: '/a' } }]
+    });
+    expect(cancelled).toBe(true);
+  });
+
+  it('rejects incomplete, malformed, and output-limit streams instead of treating partial text as a final answer', async () => {
+    const cases = [
+      [nativeEvents({ message: { content: 'partial' }, done: false }), /streaming response ended without done/],
+      [new Response('not-json\n'), /invalid streaming JSON/],
+      [nativeEvents({ error: 'runner failed' }), /OLLAMA_STREAM_ERROR: runner failed/],
+      [nativeEvents({ message: { content: 'incomplete' }, done: false }, { done: true, done_reason: 'length' }), /OLLAMA_OUTPUT_LIMIT/]
+    ] as const;
+    for (const [response, error] of cases) {
+      const fetch = vi.fn(async (url: string) => url.endsWith('/api/show')
+        ? Response.json({ model_info: {} })
+        : response);
+      const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
+      await expect(runtime.complete({
+        endpoint: 'http://localhost:11434/v1', model: 'qwen', messages: [], tools: []
+      })).rejects.toThrow(error);
+    }
+  });
+
+  it('allows 8192 streamed tokens even when the NDJSON framing exceeds the nonstream byte limit', async () => {
+    const part = JSON.stringify({ model: 'eve-lfm3-eval', created_at: '2026-10-30T22:00:00Z', message: { content: 'x', thinking: 'r'.repeat(80) }, done: false });
+    const payload = (part + '\n').repeat(8192) + JSON.stringify({ done: true }) + '\n';
+    expect(new TextEncoder().encode(payload).byteLength).toBeGreaterThan(1024 * 1024);
+    const fetch = vi.fn(async (url: string) => url.endsWith('/api/show')
+      ? Response.json({ model_info: {} })
+      : new Response(payload));
+    const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
+    await expect(runtime.complete({ endpoint: 'http://localhost:11434/v1', model: 'qwen', messages: [], tools: [] }))
+      .resolves.toEqual({ type: 'final', content: 'x'.repeat(8192) });
   });
 
   it('does not promote transport reachability to agent backend readiness', () => {

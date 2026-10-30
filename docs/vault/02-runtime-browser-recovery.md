@@ -128,6 +128,16 @@ document is not an expendable recovery target. Foreground-window tab switches ca
 focus even without raising a Windows window, so the Companion checks both the actual window focus
 and whether the exact target is already active. Background-window maintenance has its own proof.
 
+A repair handout the browser cannot carry out because the human holds the exact page (selected
+tab, typing, draft, Voice, a pending ChatGPT tool-approval card, or an app-owned composer
+transaction) is answered as `repairAction=held&why=<reason>`, never claimed and never skipped in
+silence. A hold keeps the repair queued, names the wait in the chat's repair row, and does not count
+toward the ten-offer stop; only handouts nobody claimed or answered count, so a page that cannot
+answer or shows another chat still stops. For an interrupted response the Companion may read the
+held page without mutating it: a failure ChatGPT already recovered from retires as `preserved`;
+anything still broken waits, and no Stop, Continue or reload touches a page the human holds. A
+transport failure reported for a turn that a newer turn has already followed is ignored.
+
 App-owned command pages carry explicit markers, and browser repair rechecks the exact request at
 the last claim before acting. If the current tab or composer no longer matches, leave it alone;
 do not open a second copy of an active conversation or resend an uncertain message. See

@@ -22,6 +22,9 @@ import { ollamaHeaders } from './ollama-client.js';
 import { logInfo, logWarn } from './logger.js';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+// A long native response repeats the JSON envelope for each token. Bound the wire separately
+// from the assembled assistant content; 8K generated tokens can exceed 1 MiB of NDJSON framing.
+const MAX_NATIVE_STREAM_BYTES = 16 * 1024 * 1024;
 
 /**
  * Execution readiness from app-owned prerequisites only. Deliberately performs no network
@@ -167,6 +170,100 @@ async function parsedResponse(response: Response, label: string): Promise<unknow
   }
 }
 
+/**
+ * Ollama's native streaming API emits one JSON object per line. Consume the chunks while they
+ * arrive so a long local generation does not hit Node/Undici's five-minute response-headers
+ * deadline. Tool calls are emitted as complete entries among text/thinking deltas; only a
+ * terminal done event makes the assembled message executable by the agent loop.
+ */
+async function parsedNativeStream(response: Response, label: string): Promise<unknown> {
+  if (!response.ok) return parsedResponse(response, label);
+  if (!response.body) throw new Error('OLLAMA_PROTOCOL_ERROR: streaming response had no body');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let pending = '';
+  let content = '';
+  const toolCalls: unknown[] = [];
+  let promptTokens: number | undefined;
+  let done = false;
+
+  function acceptLine(line: string): void {
+    if (!line.trim()) return;
+    if (done) throw new Error('OLLAMA_PROTOCOL_ERROR: stream contained data after done');
+    let payload: unknown;
+    try {
+      payload = JSON.parse(line);
+    } catch {
+      throw new Error('OLLAMA_PROTOCOL_ERROR: invalid streaming JSON');
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('OLLAMA_PROTOCOL_ERROR: streaming chunk was not an object');
+    }
+    const chunk = payload as { error?: unknown; message?: unknown; done?: unknown; done_reason?: unknown; prompt_eval_count?: unknown };
+    if (chunk.error !== undefined) {
+      const detail = (typeof chunk.error === 'string' ? chunk.error : JSON.stringify(chunk.error)).slice(0, 240);
+      throw new Error(`${label}_STREAM_ERROR: ${detail}`);
+    }
+    if (chunk.message !== undefined) {
+      if (!chunk.message || typeof chunk.message !== 'object' || Array.isArray(chunk.message)) {
+        throw new Error('OLLAMA_PROTOCOL_ERROR: streaming message was not an object');
+      }
+      const message = chunk.message as { content?: unknown; thinking?: unknown; tool_calls?: unknown };
+      if (message.content !== undefined && typeof message.content !== 'string') {
+        throw new Error('OLLAMA_PROTOCOL_ERROR: streaming content was not text');
+      }
+      if (message.thinking !== undefined && typeof message.thinking !== 'string') {
+        throw new Error('OLLAMA_PROTOCOL_ERROR: streaming thinking was not text');
+      }
+      if (message.tool_calls !== undefined && !Array.isArray(message.tool_calls)) {
+        throw new Error('OLLAMA_PROTOCOL_ERROR: streaming tool calls were not an array');
+      }
+      content += message.content ?? '';
+      if (content.length > MAX_RESPONSE_BYTES) throw new Error('OLLAMA_RESPONSE_TOO_LARGE');
+      if (Array.isArray(message.tool_calls)) toolCalls.push(...message.tool_calls);
+    }
+    if (typeof chunk.prompt_eval_count === 'number') promptTokens = chunk.prompt_eval_count;
+    if (chunk.done === true) {
+      done = true;
+      // Never report a truncated answer as an agent's successful final response.
+      if (chunk.done_reason === 'length' && toolCalls.length === 0) {
+        throw new Error('OLLAMA_OUTPUT_LIMIT: model stopped at its output-token limit');
+      }
+    }
+  }
+
+  try {
+    while (!done) {
+      const { done: ended, value } = await reader.read();
+      if (ended) {
+        pending += decoder.decode();
+        if (pending.trim()) acceptLine(pending);
+        break;
+      }
+      bytes += value.byteLength;
+      if (bytes > MAX_NATIVE_STREAM_BYTES) throw new Error('OLLAMA_RESPONSE_TOO_LARGE');
+      const lines = (pending + decoder.decode(value, { stream: true })).split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        acceptLine(line);
+        if (done) break;
+      }
+      if (pending.length > MAX_RESPONSE_BYTES) throw new Error('OLLAMA_RESPONSE_TOO_LARGE');
+    }
+  } finally {
+    // A malformed or interrupted stream must never leave a live generation behind.
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  if (!done) throw new Error('OLLAMA_PROTOCOL_ERROR: streaming response ended without done');
+  return {
+    message: { role: 'assistant', content, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+    done: true,
+    ...(promptTokens !== undefined ? { prompt_eval_count: promptTokens } : {})
+  };
+}
+
 function completionFrom(payload: unknown): LocalAgentCompletion {
   if (!payload || typeof payload !== 'object') throw new Error('OLLAMA_PROTOCOL_ERROR: response was not an object');
   // OpenAI-compatible routers (OpenRouter) can report a provider failure inside a 200 response.
@@ -231,7 +328,7 @@ export function createOllamaAgentModelRuntime(
         const headers = await headersFor(request.endpoint);
         const unsized = {
           model: request.model,
-          stream: false,
+          stream: true,
           messages: request.messages.map(nativeMessage),
           ...(request.tools.length ? {
             tools: request.tools.map((tool) => ({
@@ -241,7 +338,7 @@ export function createOllamaAgentModelRuntime(
           } : {})
         };
         const numCtx = await nativeContext(fetchImpl, base, request.model, headers, JSON.stringify(unsized));
-        const payload = await parsedResponse(await fetchImpl(`${base}/api/chat`, {
+        const payload = await parsedNativeStream(await fetchImpl(`${base}/api/chat`, {
           method: 'POST',
           redirect: 'error',
           headers,

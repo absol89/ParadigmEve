@@ -2318,12 +2318,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const repairFailed = url.searchParams.get('repairFailed');
     const repairAction = url.searchParams.get('repairAction');
     const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ||
-      repairAction === 'preserved' || repairAction === 'continued' || repairAction === 'blocked' ? repairAction : null;
+      repairAction === 'preserved' || repairAction === 'continued' || repairAction === 'blocked' ||
+      repairAction === 'held' ? repairAction : null;
+    const why = url.searchParams.get('why');
+    const repairWhy = why && /^[a-z-]{1,24}$/.test(why) ? why : null;
     if (repaired) {
-      const why = url.searchParams.get('why');
-      await confirmRepair(repaired.slice(0, 64), action, why && /^[a-z-]{1,24}$/.test(why) ? why : null);
+      await confirmRepair(repaired.slice(0, 64), action === 'held' ? null : action, repairWhy);
     } else if (repairFailed) {
-      await failRepairAttempt(repairFailed.slice(0, 64), action);
+      await failRepairAttempt(repairFailed.slice(0, 64), action, repairWhy);
     }
     // `/status` is the browser's authoritative current census. Reconsider durable worker inboxes
     // here as well as at the instant Prime enqueues them: after restart the initial enqueue may
@@ -6907,8 +6909,14 @@ interface Repair {
   assistantKey?: string;
   /** Restart-only open authority, checked again at the final browser-action claim. */
   restartWakeInput?: { id: string; turnId: string | null };
-  /** Attempts offered without a browser action claim, scoped to this recovery episode. */
+  /**
+   * Handouts the browser neither claimed nor answered, scoped to this recovery episode. A pass
+   * that answers with a hold (selected tab, human draft, approval card, Voice) is not counted:
+   * the page is there and is only waiting for the human (installed 2.4.6 c2, 2026-10-30).
+   */
   offers?: number;
+  /** The last hold the browser named for this repair, so the log says each new wait once. */
+  heldWhy?: string;
 }
 
 /**
@@ -7003,6 +7011,26 @@ async function assistantRepairKey(sessionId: string): Promise<string> {
     if (question?.kind === 'user_message' && question.messageId) return `user:${question.messageId}`;
   } catch { /* Unreadable history: one shared key, so the budget still holds. */ }
   return 'page';
+}
+
+/**
+ * Whether `turnId` is a turn of this session that ended while a newer turn has started since.
+ *
+ * A page kept instead of reloaded can report its old turn's failure after the chat moved on
+ * (Chat On Steroids #1922/#1927, MIT: a 16:03 stall report for a turn that ended at 15:54, after
+ * a replacement turn had completed). Ordered by the recorder's own sequence, never by clocks.
+ * An unreadable history or an unknown turn id is not proof of staleness.
+ */
+async function supersededTurn(sessionId: string, turnId: string): Promise<boolean> {
+  try {
+    const rows = await readRecentEvents(sessionId, 64, { kinds: ['turn_start', 'turn_end'] });
+    const start = rows.find(row => row.kind === 'turn_start' && row.turnId === turnId);
+    if (!start) return false;
+    const ended = rows.some(row => row.kind === 'turn_end' && row.turnId === turnId && row.seq > start.seq);
+    return ended && rows.some(row => row.kind === 'turn_start' && row.turnId !== turnId && row.seq > start.seq);
+  } catch {
+    return false;
+  }
 }
 
 /** A parked or finished worker has nothing for recovery to bring back; its revival owns its page. */
@@ -7332,6 +7360,12 @@ async function noteRecoveryObservations(
       continue;
     }
     if (item.recoverable !== true) continue;
+    // A report about a turn the chat has already moved past is stale: recovering now would only
+    // interrupt the newer turn.
+    if (sessionId && item.turnId && await supersededTurn(sessionId, item.turnId)) {
+      logInfo(`bridge: ignored an error report for ${conversationId}: its turn ${item.turnId} ended before a newer turn`);
+      continue;
+    }
     const lastRecoveryAt = lastBrowserRecoveryAt.get(conversationId) ?? 0;
     if (
       lastBrowserRecoveryReason.get(conversationId) === 'unattributed' &&
@@ -8640,7 +8674,10 @@ async function takePendingRepairs(
   // starved every other chat behind it — precisely when several chats break at once.
   for (const [conversationId, repair] of [...repairsInFlight]) {
     if (repair.state !== 'handed') continue;
-    if ((repair.offers ?? 0) >= UNCLAIMED_REPAIR_OFFER_LIMIT) {
+    // Still `handed`: the browser neither claimed nor answered it. Answered holds and failures
+    // went back to `queued` in failRepairAttempt and are not counted here.
+    repair.offers = (repair.offers ?? 0) + 1;
+    if (repair.offers >= UNCLAIMED_REPAIR_OFFER_LIMIT) {
       // An unclaimed handout cannot consume any of the page-confirmed failure budgets.
       // Stop this episode and its successors until this exact page polls /activity again.
       releaseBrowserRepairAuthority(repair);
@@ -8668,11 +8705,12 @@ async function takePendingRepairs(
     if (repair.state !== 'queued') continue;
     if (now < repair.notBefore) continue;
     repair.state = 'handed';
-    repair.offers = (repair.offers ?? 0) + 1;
     // A fresh token every time it goes out. A handout that was not carried out is dead the
     // moment it is re-queued, so a receipt that arrives for it later cannot close anything.
     repair.token = randomBytes(9).toString('base64url');
-    await updateRepairProgress(
+    // While the browser is holding for the human, the row keeps saying what it waits for
+    // instead of flipping back to "Trying to reload" on every pass.
+    if (!repair.heldWhy) await updateRepairProgress(
       conversationId,
       repair,
       repair.reason === 'prime-restart'
@@ -8759,7 +8797,23 @@ function dropBrowserRepair(conversationId: string, repair: Repair): void {
  * this app is no longer waiting on - an older turn's, or one already re-queued - matches
  * nothing and closes nothing, which is the only safe reading of it.
  */
-type RepairAction = 'reloaded' | 'reopened' | 'resumed' | 'preserved' | 'continued' | 'blocked';
+type RepairAction = 'reloaded' | 'reopened' | 'resumed' | 'preserved' | 'continued' | 'blocked' | 'held';
+
+/**
+ * What the browser waited for instead of acting, in the chat's own timeline. Each is the human
+ * (or an app-owned composer transaction) holding the exact page; none is a failed repair.
+ */
+const REPAIR_HOLDS: Readonly<Record<string, string>> = {
+  'tab-active': 'you are viewing this chat. Eve will not reload the tab in front of you',
+  'human-typing': 'you are typing in this chat. Eve will not reload it under you',
+  'human-draft': 'this chat has an unsent draft. Eve will not reload it until the box is empty',
+  'stale-draft': 'this chat\'s message box still holds text. Eve will not reload it until the box is empty',
+  'approval-waiting': 'ChatGPT is waiting for your tool approval. Eve will not reload underneath it',
+  'voice-active': 'a Voice call is live in this chat. Eve will not reload it until the call ends',
+  'app-busy': 'Eve is still using this chat\'s message box',
+  'conversation-changed': 'the tab now shows a different chat',
+  'status-unknown': 'the page did not answer its safety check. Eve will not reload a page it cannot inspect'
+};
 
 /** Spends this question's one transport remedy, whatever form the browser chose for it. */
 function chargeAssistantRepair(conversationId: string, repair: Repair): void {
@@ -8872,10 +8926,26 @@ async function confirmRepair(token: string, action: RepairAction | null, why: st
 }
 
 /** An exact browser action failed; keep the episode queued and replace its one debug row. */
-async function failRepairAttempt(token: string, action: RepairAction | null): Promise<void> {
+async function failRepairAttempt(token: string, action: RepairAction | null, why: string | null = null): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if ((repair.state !== 'handed' && repair.state !== 'claimed') || repair.token !== token) continue;
     releaseBrowserRepairAuthority(repair);
+    if (action === 'held') {
+      // An answered hold: the page is there and the human holds it. It stays queued for the next
+      // pass and does not count toward the unclaimed-offer stop (see takePendingRepairs).
+      const hold = why && REPAIR_HOLDS[why] ? why : 'status-unknown';
+      if (repair.heldWhy !== hold) {
+        logInfo(`bridge: browser repair for ${conversationId} (${repair.reason}) held: ${hold}`);
+      }
+      repair.heldWhy = hold;
+      await updateRepairProgress(conversationId, repair,
+        `Waiting to recover ${repairReason(repair)}: ${REPAIR_HOLDS[hold]}.`);
+      repair.state = 'queued';
+      repairsInFlight.delete(conversationId);
+      repairsInFlight.set(conversationId, repair);
+      return;
+    }
+    repair.heldWhy = undefined;
     logInfo(`bridge: browser repair for ${conversationId} (${repair.reason}) not done: ${action === 'preserved' ? 'page still streaming, kept open' : `${action ?? 'action'} failed`}; kept queued`);
     await updateRepairProgress(
       conversationId,

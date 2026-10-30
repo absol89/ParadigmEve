@@ -239,6 +239,25 @@ describe('session finish turn identity', () => {
     expect(notify).not.toHaveBeenCalled();
     expect(hooks.followup).toHaveBeenCalledTimes(1);
   }, 60_000); // Writes 8,400 durable events and rebuilds metadata across two restarts.
+  it('does not count a progress note drawn after its turn completed as new finish work', async () => {
+    // Chat On Steroids #1931 (MIT): ChatGPT draws a finished turn's steps as one collapsed group,
+    // so the note written before its tool calls can reach the page only after the turn ended. As
+    // work it made the finish check ask the provider again about a turn that was already done.
+    const note = (messageId: string, time: number, state: 'streaming' | 'final' = 'streaming') => appendEvent(sessionId, {
+      source: 'extension', kind: 'assistant_message', turnId: 'turn-one', messageId, state, final: state === 'final', time,
+      message: { text: `note ${messageId}`, chars: 6 + messageId.length, truncated: false }
+    } as never);
+    await note('answer', 2500, 'final');
+    await appendEvent(sessionId, { source: 'extension', kind: 'turn_end', turnId: 'turn-one', outcome: 'completed', time: 3000 });
+    const settled = (await getSession(sessionId))!.finishTurn!.workSeq;
+    await note('late-note', 3100);
+    expect((await getSession(sessionId))!.finishTurn!.workSeq).toBe(settled);
+
+    // A turn open again counts its notes.
+    await appendEvent(sessionId, { source: 'app', kind: 'turn_start', turnId: 'turn-one', detail: 'Reopened by exact tool evidence', time: 3500 });
+    await note('reopened-note', 3600);
+    expect((await getSession(sessionId))!.finishTurn!.workSeq).toBeGreaterThan(settled);
+  });
   it('preserves same-turn repair receipts but resets them for the next turn and frontend rebind', async () => {
     await announceSessionFinish(sessionId, 'First');
     await releaseSessionFinish(sessionId, 'turn-one');

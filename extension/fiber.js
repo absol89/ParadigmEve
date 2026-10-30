@@ -2301,7 +2301,8 @@
         if (props.modelSwitcherDenialsBySlug && typeof props.modelSwitcherDenialsBySlug === 'object') denialMaps.push(props.modelSwitcherDenialsBySlug);
       }
     }
-    if (!state || !data || data.versions.length > 20 || !Array.isArray(state.bucketSelections) || state.bucketSelections.length > 12) return null;
+    if (!state || !data || data.versions.length > PICKER_MAX_ENTRIES || !Array.isArray(state.bucketSelections) ||
+        state.bucketSelections.length > PICKER_MAX_ENTRIES) return null;
     {
       const id = value => typeof value === 'string' && /^[a-zA-Z0-9._-]{1,80}$/.test(value) ? value : null;
       const groupId = value => typeof value === 'string' && value.length <= 80 && /^[\p{L}\p{N}._ -]+$/u.test(value) && value.trim() === value && value.trim() ? value : null;
@@ -2310,7 +2311,7 @@
         : ['auto', 'instant'].includes(choice.category?.modelLane) ? 'none'
         : choice.thinkingEffort === 'max' && choice.modelConfig?.isWorkModeModel === true ? 'max'
         : ({ min: 'low', standard: 'medium', extended: 'high', max: 'xhigh', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', ultra: 'ultra' })[choice.thinkingEffort] || null;
-      const choices = state.bucketSelections.map(choice => {
+      const allChoices = state.bucketSelections.map(choice => {
         const name = label(choice.category?.shortLabel);
         const familyId = id(choice.category?.modelVersion) || id(choice.modelSlug);
         const family = data.versions.find(version => version.id === choice.category?.modelVersion);
@@ -2319,16 +2320,37 @@
           familyId, familyLabel: label(family?.displayTextForIntelligence) || label(choice.modelConfig?.title) || (name && (/^\d/.test(name) ? `GPT-${name}` : name)),
           available: choice.availability?.status === 'available' && !denialMaps.some(denials => denials?.[choice.modelSlug]) };
       });
-      const versions = data.versions.filter(version => version.enabled === true).map(version => ({ id: groupId(version.id), label: label(version.displayTextForIntelligence) }));
-      if (!versions.length || versions.some(v => !v.id || !v.label) || choices.some(c => !Number.isInteger(c.bucket) || !c.id || !c.label || !c.effort) ||
-          new Set(versions.map(v => v.id)).size !== versions.length || new Set(choices.map(c => c.bucket)).size !== choices.length) return null;
+      const allVersions = data.versions.filter(version => version.enabled === true).map(version => ({ id: groupId(version.id), label: label(version.displayTextForIntelligence) }));
       const version = groupId(state.selectedVersionEntry?.id), currentBucket = state.currentBucket;
-      if (!versions.some(v => v.id === version) || !choices.some(c => c.bucket === currentBucket)) return null;
+      // Unreadable unselected entries are skipped, never guessed; the selected ones must read
+      // exactly (Chat On Steroids #1907).
+      const { versions, choices } = readablePickerEntries(allVersions, allChoices, version, currentBucket);
+      if (!versions || !choices) return null;
       const selected = state.currentSelection;
       const chosen = choices.find(c => c.bucket === currentBucket);
       if (selected?.modelSlug !== chosen.id || effortOf(selected) !== chosen.effort) return null;
       return { version, currentBucket, versions, choices };
     }
+  }
+
+  /**
+   * Account pickers can list dozens of entries, colon ids and efforts this app does not know
+   * (Chat On Steroids #1905/#1907, MIT). Bounded; an unreadable *unselected* version or choice is
+   * skipped rather than discarding the whole catalog, while the selected version and bucket must
+   * each read exactly or nothing is proven. Duplicates among what remains still fail closed.
+   */
+  const PICKER_MAX_ENTRIES = 64;
+  function readablePickerEntries(allVersions, allChoices, version, currentBucket) {
+    const none = { versions: null, choices: null };
+    const versionOk = v => !!v.id && !!v.label;
+    const choiceOk = c => Number.isInteger(c.bucket) && !!c.id && !!c.label && !!c.effort;
+    const selectedVersion = allVersions.filter(v => v.id === version);
+    const selectedChoice = allChoices.filter(c => c.bucket === currentBucket);
+    if (!version || selectedVersion.length !== 1 || !versionOk(selectedVersion[0])) return none;
+    if (selectedChoice.length !== 1 || !choiceOk(selectedChoice[0])) return none;
+    const versions = allVersions.filter(versionOk), choices = allChoices.filter(choiceOk);
+    if (new Set(versions.map(v => v.id)).size !== versions.length || new Set(choices.map(c => c.bucket)).size !== choices.length) return none;
+    return { versions, choices };
   }
 
   /** Alternate ChatGPT shell picker state. It exposes evaluated powers directly on
@@ -2338,7 +2360,7 @@
       const p = fiber.memoizedProps;
       if (!Array.isArray(p?.powerSelections)) continue;
       const selected = p.selectedPowerSelection ?? p.selectedLabelCandidate, options = p.modelListConfig?.options;
-      if (!selected || !Array.isArray(options) || options.length > 20 || p.powerSelections.length > 12) return null;
+      if (!selected || !Array.isArray(options) || options.length > PICKER_MAX_ENTRIES || p.powerSelections.length > PICKER_MAX_ENTRIES) return null;
       const id = value => typeof value === 'string' && /^[a-zA-Z0-9._-]{1,80}$/.test(value) ? value : null;
       const group = value => typeof value === 'string' && /^[\p{L}\p{N}._ -]{1,80}$/u.test(value) && value.trim() === value ? value : null;
       const label = value => typeof value === 'string' && value.trim() && value.length <= 80 ? value.trim() : null;
@@ -2353,16 +2375,21 @@
       const current = options.filter(o => o?.selected === true);
       if (current.length !== 1) return null;
       const version = group(current[0].id);
-      const versions = options.filter(o => o && o.disabled !== true).map(o => ({ id: group(o.id), label: label(o.label) }));
+      const allVersions = options.filter(o => o && o.disabled !== true).map(o => ({ id: group(o.id), label: label(o.label) }));
+      // Unreadable unselected versions are skipped; the selected one must read (#1907).
+      const versions = allVersions.filter(v => v.id && v.label);
+      if (!version || !versions.some(v => v.id === version)) return null;
       // The shell names older models by number alone ("5.6"); the September picker's own rule
       // names them in full, so the list reads GPT-6, GPT-5.6, GPT-5.5 alike.
       const modelName = value => { const name = label(value); return name && /^\d/.test(name) ? `GPT-${name}` : name; };
+      // Unreadable lanes are skipped. The selected lane is matched below among readable ones
+      // only, so an unreadable selection proves nothing.
       const choices = p.powerSelections.map(c => ({ bucket: c?.powerSettingIndex, id: id(c?.model),
         label: modelName(c?.modelLabel), familyId: id(c?.model), familyLabel: modelName(c?.modelLabel), effort: laneEffort(c),
         available: p.modelSelectionDisabled !== true && c?.disabled !== true &&
-          (!c?.availability || c.availability.status === 'available') && !p.modelSwitcherDenialsBySlug?.[c?.model] }));
-      if (!version || !versions.length || versions.some(v => !v.id || !v.label) || !choices.length ||
-          choices.some(c => !Number.isInteger(c.bucket) || !c.id || !c.label || !c.effort) ||
+          (!c?.availability || c.availability.status === 'available') && !p.modelSwitcherDenialsBySlug?.[c?.model] }))
+        .filter(c => Number.isInteger(c.bucket) && c.id && c.label && c.effort);
+      if (!choices.length ||
           new Set(versions.map(v => v.id)).size !== versions.length || new Set(choices.map(c => c.bucket)).size !== choices.length || !versions.some(v => v.id === version)) return null;
       // One model's Instant and thinking lanes are separate slugs under one name (gpt-6 and
       // gpt-6-thinking, both "GPT-6"; observed 2026-10-07). They are one family, as the September

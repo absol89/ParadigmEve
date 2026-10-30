@@ -13,8 +13,9 @@ For a build to be coherent, these declarations must agree:
 Tests enforce agreement.
 
 The current **2.4.6 local candidate preparation line** is `release/2.4.6`,
-branched directly from published `v2.4.5`. Candidate 1 has not yet been built
-or installed, and no 2.4.6 tag, push or public release is claimed. The earlier
+branched directly from published `v2.4.5`. Source, numbered candidates,
+installed bytes and live acceptance have separate receipts; no 2.4.6 tag, push
+or public release is claimed. The earlier
 **App + Companion 2.2.2** Angel checkpoint remains part of release history,
 and the current bridge protocol is **15**. A package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate

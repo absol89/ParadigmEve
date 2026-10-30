@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const domSource = readFileSync(new URL('../extension/chatgpt-dom.js', import.meta.url), 'utf8');
 const fiberSource = readFileSync(new URL('../extension/fiber.js', import.meta.url), 'utf8');
@@ -461,6 +461,55 @@ it('invalidates mounted selection proof when provider state becomes unrecognized
   expect(await read()).toEqual({ model: 'gpt-5-6-thinking', reasoningEffort: 'high' });
   f.state.currentSelection.thinkingEffort = 'unknown-provider-value';
   expect(await read()).toBeNull();
+});
+// Chat On Steroids #1905/#1907 (MIT): an account picker can list colon ids, unknown Work efforts
+// and dozens of entries. One unreadable unselected entry must not hide the known selected model;
+// an unreadable selected entry still proves nothing.
+describe('an expanded account model menu', () => {
+  const extras = (count: number) => Array.from({ length: count }, (_, index) => ({
+    bucket: 40 + index,
+    modelSlug: index % 2 ? `research:preview-${index}` : `work-model-${index}`,
+    thinkingEffort: index % 2 ? 'standard' : 'deliberate-work',
+    availability: { status: 'available' },
+    category: { modelLane: 'thinking', shortLabel: `Extra ${index}` }
+  }));
+  const read = async (f: ReturnType<typeof fixture>) => {
+    await new Promise<void>(resolve => {
+      const receive = (event: MessageEvent) => { if (event.data?.source === 'clf-picker-reply') { page.window.removeEventListener('message', receive as any); resolve(); } };
+      page.window.addEventListener('message', receive as any);
+      page.window.postMessage({ source: 'clf-picker-ask', nonce: 'fixture' }, page.window.location.origin);
+    });
+    return f.api.visibleModelSelection();
+  };
+
+  it('confirms the exact selected model and effort beside unreadable entries and more than twelve choices', async () => {
+    const f = fixture();
+    f.selections[0]!.push(...extras(14));
+    page.window.document.querySelector('button')!.dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(await read(f)).toEqual({ model: 'gpt-5-6-thinking', reasoningEffort: 'high' });
+    const models = await f.api.inspectModelSettings();
+    expect(models[0]).toEqual({ id: 'gpt-5-6-thinking', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'], aliases: ['gpt-5-6-thinking'] });
+    // Readable extra entries are offered; unreadable ones are skipped, never guessed.
+    expect(JSON.stringify(models)).not.toContain('research:preview');
+    expect(JSON.stringify(models)).not.toContain('deliberate');
+  });
+
+  it('refuses when the selected entry itself is unreadable', async () => {
+    const f = fixture();
+    const [odd] = extras(2).slice(1);
+    f.selections[0]!.push(odd!);
+    f.state.currentBucket = odd!.bucket;
+    f.state.currentSelection = odd as never;
+    page.window.document.querySelector('button')!.dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(await read(f)).toBeNull();
+  });
+
+  it('still refuses an unbounded menu', async () => {
+    const f = fixture();
+    f.selections[0]!.push(...extras(70));
+    page.window.document.querySelector('button')!.dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(await read(f)).toBeNull();
+  });
 });
 it.each([false, true])('observes direct Chrome selection with the picker closed and invalidates another route (idless=%s)', async idless => {
   const f = fixture();

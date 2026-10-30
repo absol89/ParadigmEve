@@ -8027,6 +8027,56 @@ describe('unattributed activity recovery', () => {
     expect((await maintenance())?.conversationId).toBe(PRIME);
   });
 
+  it('keeps a repair the browser explicitly held for the human queued without spending unclaimed offers', async () => {
+    // Installed 2.4.6 c2, 2026-10-30 16:17-16:21Z: the failed chat was the selected tab, the
+    // Companion skipped it silently on every pass, and ten silent skips stopped recovery for good.
+    // An answered hold names why it waited; only handouts nobody answered count toward the stop.
+    await pair();
+    const reply = await events(PRIME, [openTurn('held-turn'), { kind: 'chat_error', time: Date.now(),
+      turnId: 'held-turn', text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    const sessionId = reply.body.sessionId as string;
+    const before = (await readEvents(sessionId)).reduce((seq, event) => Math.max(seq, event.seq), 0);
+    let handout = await maintenance();
+    expect(handout).toMatchObject({ conversationId: PRIME, reason: 'assistant-error' });
+    const holds = ['tab-active', 'human-draft', 'approval-waiting', 'voice-active'];
+    for (let pass = 0; pass < 14; pass++) {
+      const held = await request('GET',
+        `/status?repairFailed=${encodeURIComponent(handout!.token)}&repairAction=held&why=${holds[pass % holds.length]}`);
+      expect(held.status).toBe(200);
+      handout = await maintenance();
+      expect(handout?.conversationId).toBe(PRIME);
+    }
+    expect((await sessionControlsFor(sessionId)).repairStopped).toBe(false);
+    await request('GET', `/status?repairFailed=${encodeURIComponent(handout!.token)}&repairAction=held&why=human-draft`);
+    const waiting = foldProgress((await readEvents(sessionId)).filter(
+      (row): row is Extract<SessionEvent, { kind: 'progress' }> =>
+        row.kind === 'progress' && row.source === 'app' && row.seq > before));
+    expect(waiting.map(row => row.kind === 'progress' ? row.message.text : '')).toEqual([
+      'Waiting to recover an interrupted response: this chat has an unsent draft. Eve will not reload it until the box is empty.'
+    ]);
+
+    // The unanswered budget still stops a handout nobody answers at all.
+    for (let attempt = 0; attempt < 10; attempt++) expect((await maintenance())?.conversationId).toBe(PRIME);
+    expect(await maintenance()).toBeNull();
+    expect((await sessionControlsFor(sessionId)).repairStopped).toBe(true);
+  });
+
+  it('ignores a transport failure reported for a turn that a newer turn has already followed', async () => {
+    // Upstream chat-on-steroids #1922/#1927: a kept page reported its old stalled turn after a
+    // replacement turn had started and completed. Recovering then only interrupts the newer work.
+    await pair();
+    await events(PRIME, [openTurn('stale-old'), endTurn('stale-old', 'failed'), openTurn('stale-new'),
+      endTurn('stale-new', 'completed')]);
+    await events(PRIME, [{ kind: 'chat_error', time: Date.now(), turnId: 'stale-old',
+      text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    expect(await maintenance()).toBeNull();
+
+    // The current turn's own failure still recovers.
+    await events(PRIME, [openTurn('stale-current'), { kind: 'chat_error', time: Date.now() + 1, turnId: 'stale-current',
+      text: 'Message delivery timed out. Please try again.', recoverable: true }]);
+    expect((await maintenance())?.reason).toBe('assistant-error');
+  });
+
   it('reloads for recognized transport errors, once per user turn', async () => {
     vi.useFakeTimers();
     try {

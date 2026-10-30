@@ -15244,7 +15244,9 @@ the carried handoff behind a lost reply`;
     await expect(live.runtimeMessage({ type: 'clf-browser-repair-state', conversationId: repairChat })).resolves.toEqual({
       ok: true,
       protect: false,
-      conversationId: repairChat
+      conversationId: repairChat,
+      // Reported beside `protect` so only browser repair waits on a tool-approval card.
+      approvalWaiting: false
     });
   });
 

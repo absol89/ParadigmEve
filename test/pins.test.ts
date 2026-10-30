@@ -1239,14 +1239,16 @@ it('ships a short %eveal starter that points at the read-only suite instead of p
   // Changing this prompt is a shipped-prompt revision: keep the old fingerprint in
   // supersededPromptSha256 so untouched copies upgrade, then update this one.
   expect(createHash('sha256').update(eveal.prompt, 'utf8').digest('hex'))
-    .toBe('24127f3f003eb446b19748187b1dc0780c6a1c873526857ce6b9ea1fda1ba0bf');
+    .toBe('ec33506db36a2bc24fe60450a23ffbbb80752a4173bb00e0433b1b2076c566bb');
   expect(eveal.supersededPromptSha256).toEqual([
     '6e51c2109bb3f1e8625d29329db7a1424f2c2f2f7adac47c122da8cf115abe4a',
-    'b5e070cba6b994b760e634d4460e52512f1c03cf66f2ec478c98611de62515da'
+    'b5e070cba6b994b760e634d4460e52512f1c03cf66f2ec478c98611de62515da',
+    '24127f3f003eb446b19748187b1dc0780c6a1c873526857ce6b9ea1fda1ba0bf'
   ]);
   expect(eveal.prompt).toContain('`/paradigmeve-eveal/EVEAL.md`');
-  expect(eveal.prompt).toContain('stop at 30');
+  expect(eveal.prompt).toContain('stop at 55');
   expect(eveal.prompt).toContain('honesty block');
+  expect(eveal.prompt).toContain('challenge folder');
   expect(eveal.prompt).toContain('score yourself');
   expect(eveal.prompt).not.toMatch(/reviewer|answer key|tools\//i);
   // Activation costs only the standing prompt: the agent reads EVEAL.md, it is never inlined.

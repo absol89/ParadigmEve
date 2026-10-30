@@ -25,6 +25,14 @@ beforeAll(async () => {
   backgroundSource = backgroundSource.replace(/\r\n/g, '\n');
 });
 
+/**
+ * Repair harnesses inject the page probe as `browserRepairProtected`; the repair slice asks
+ * `browserRepairHold` for a reason. A harness that names no hold of its own maps a protected
+ * page to a human draft, which is what that probe answers in the real Companion.
+ */
+const REPAIR_HOLD_SHIM =
+  "globalThis.browserRepairHold ??= async (target, id) => (await browserRepairProtected(target, id)) ? 'human-draft' : null;";
+
 /** The logged-close helper for harnesses that run a slice of background.js; unpaired, so it never reports. */
 const tabLogSource = () => `let token = null; let disconnected = false;\n${backgroundSource.slice(
   backgroundSource.indexOf('function tabMarkers('), backgroundSource.indexOf('/** Bound waiting for a page'))}`;
@@ -995,7 +1003,7 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
   });
 
   it('defers an exact-tab repair while the page reports human typing or a draft, then retries without consuming the claim', async () => {
-    const { fetch, asked, claims } = appWith(CHAT);
+    const { fetch, asked, claims, failedActions } = appWith(CHAT);
     let protectedPage = true;
     const tabsSendMessage = vi.fn(async (_tabId: number, message: Record<string, unknown>) => {
       if (message.type === 'clf-browser-repair-state') {
@@ -1021,7 +1029,10 @@ describe('exact chat recovery from a fresh Chrome tab scan', () => {
     expect(worker.tabsUpdate).not.toHaveBeenCalled();
     expect(worker.tabsReload).not.toHaveBeenCalled();
     expect(claims).toEqual([]);
-    expect(asked.filter(item => item !== 'status')).toEqual([]);
+    // Answered as a hold for the human, never left as an unanswered (budget-spending) handout.
+    expect(asked.filter(item => item !== 'status')).toEqual([`failed:${CHAT}`]);
+    expect(failedActions).toEqual(['held']);
+    expect(fetch.mock.calls.some(([input]) => String(input).includes('repairAction=held&why=human-draft'))).toBe(true);
 
     protectedPage = false;
     await worker.fireAlarm();
@@ -5082,7 +5093,7 @@ it.each([
   const call = vi.fn(async (url: string) => url === '/browser-repair/claim' ? { ok: true, data: { ok: true } } : { ok: true });
   const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
     backgroundSource.indexOf('\nfunction conversationStillOpen('));
-  const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+  const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
     tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
     conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
     browserRepairProtected: async () => false,
@@ -5114,7 +5125,7 @@ it('does not claim or reload a selected ChatGPT tab merely to recover missing to
   const call = vi.fn(async () => ({ ok: true, data: { ok: true } }));
   const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
     backgroundSource.indexOf('\nfunction conversationStillOpen('));
-  const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+  const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
     tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
     conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
     browserRepairProtected: async () => false,
@@ -5124,7 +5135,10 @@ it('does not claim or reload a selected ChatGPT tab merely to recover missing to
   });
   await repair([{ conversationId, token: 'selected-unattributed', reason: 'unattributed', focus: false }], {});
   expect(reload).not.toHaveBeenCalled();
-  expect(call).not.toHaveBeenCalled();
+  // Answered as a hold for the human; never claimed.
+  expect(call.mock.calls.map((args: unknown[]) => String(args[0]))).toEqual([
+    '/status?repairFailed=selected-unattributed&repairAction=held&why=tab-active'
+  ]);
 });
 
 it('does not reload an unattributed tab that becomes selected while page safety is being checked', async () => {
@@ -5134,7 +5148,7 @@ it('does not reload an unattributed tab that becomes selected while page safety 
   const call = vi.fn(async (url: string) => url === '/browser-repair/claim' ? { ok: true, data: { ok: true } } : { ok: true });
   const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
     backgroundSource.indexOf('\nfunction conversationStillOpen('));
-  const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+  const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
     tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
     conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
     browserRepairProtected: async () => false,
@@ -5173,7 +5187,7 @@ describe.each(['unattributed', 'assistant-error', 'silence', 'goal', 'compaction
       let probes = 0;
       const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
         backgroundSource.indexOf('\nfunction conversationStillOpen('));
-      const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+      const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
         tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
         conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
         browserRepairProtected: async () => {
@@ -5226,7 +5240,7 @@ it.each(['silence', 'assistant-error', 'goal', 'compaction', 'identity-probe', '
     const call = vi.fn(async () => ({ ok: true, data: { ok: true } }));
     const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
       backgroundSource.indexOf('\nfunction conversationStillOpen('));
-    const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+    const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
       tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
       conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
       browserRepairProtected: async () => false,
@@ -5236,8 +5250,59 @@ it.each(['silence', 'assistant-error', 'goal', 'compaction', 'identity-probe', '
     });
     await repair([{ conversationId, token: `selected-${reason}`, reason, focus: false }], {});
     expect(reload).not.toHaveBeenCalled();
-    expect(call).not.toHaveBeenCalled();
+    // Installed 2.4.6 c2: ten silent skips of the selected tab stopped recovery for good. The skip
+    // is now answered as a hold, never claimed, and the page is still not touched.
+    expect(call.mock.calls.map((args: unknown[]) => String(args[0]))).toEqual([
+      `/status?repairFailed=selected-${reason}&repairAction=held&why=tab-active`
+    ]);
   });
+
+it.each([
+  [{ ok: true, protect: false, approvalWaiting: true }, 'approval-waiting'],
+  [{ ok: true, protect: true, reason: 'human_draft', approvalWaiting: true }, 'human-draft'],
+  [{ ok: true, protect: true, reason: 'voice_active' }, 'voice-active'],
+  [{ ok: true, protect: false, approvalWaiting: false }, null],
+  [{ ok: false }, 'status-unknown']
+])('names the browser-repair hold for page answer %j as %s', async (reply, hold) => {
+  const source = backgroundSource.slice(backgroundSource.indexOf('async function browserRepairHold('),
+    backgroundSource.indexOf('\nasync function performBrowserRepairs('));
+  const probe = vm.runInNewContext(`${source}\nbrowserRepairHold`, {
+    tabDocuments: { '76': 'live-document' }, setTimeout, clearTimeout,
+    chrome: { tabs: { sendMessage: async () => reply } }
+  });
+  expect(await probe({ id: 76 }, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')).toBe(hold);
+});
+
+it.each([
+  ['recovered on its own', { ok: true, streaming: false, assistantError: false, assistantErrorKind: null }, 'repaired'],
+  ['still broken', { ok: true, streaming: false, assistantError: true, assistantErrorKind: 'stream-interrupted' }, 'held'],
+  ['answering again', { ok: true, streaming: true, assistantError: false }, 'held'],
+  ['another chat', { ok: true, streaming: false, assistantError: false, conversationId: 'ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee' }, 'held']
+])('reads but never touches a selected tab for an interrupted response that %s', async (_label, page, outcome) => {
+  const conversationId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const tab = { id: 76, active: true, url: `https://chatgpt.com/c/${conversationId}` };
+  const reload = vi.fn();
+  const update = vi.fn();
+  const call = vi.fn(async () => ({ ok: true, data: { ok: true } }));
+  const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
+    backgroundSource.indexOf('\nfunction conversationStillOpen('));
+  const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
+    tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
+    conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
+    browserRepairProtected: async () => false,
+    createChatTab: vi.fn(), call, tabReply: async () => ({ conversationId, ...page }),
+    chrome: { tabs: { query: async () => [tab], get: async () => tab, reload, update } },
+    CHATGPT_TAB_URLS: ['https://chatgpt.com/*']
+  });
+  await repair([{ conversationId, token: 'selected-error', reason: 'assistant-error', focus: true }], {});
+  expect(reload).not.toHaveBeenCalled();
+  expect(update).not.toHaveBeenCalled();
+  const reported = call.mock.calls.map((args: unknown[]) => String(args[0]));
+  expect(reported.some(url => url.includes('/browser-repair/claim'))).toBe(false);
+  expect(reported).toEqual([outcome === 'repaired'
+    ? '/status?repaired=selected-error&repairAction=preserved'
+    : '/status?repairFailed=selected-error&repairAction=held&why=tab-active']);
+});
 
 describe('exact Prime restart tab recovery', () => {
   const conversationId = 'aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -5262,7 +5327,7 @@ describe('exact Prime restart tab recovery', () => {
     };
     const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
       backgroundSource.indexOf('\nfunction conversationStillOpen('));
-    const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+    const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
       chrome, tabConversations: {}, tabDocuments: {},
       conversationForTab: (tab: { url?: string }) => tab.url?.split('/c/')[1] ?? null,
       browserRepairProtected: vi.fn(async () => false),
@@ -5318,7 +5383,7 @@ describe('interrupted-response recovery by page failure kind', () => {
     let probes = 0;
     const source = backgroundSource.slice(backgroundSource.indexOf('async function performBrowserRepairs('),
       backgroundSource.indexOf('\nfunction conversationStillOpen('));
-    const repair = vm.runInNewContext(`${source}\nperformBrowserRepairs`, {
+    const repair = vm.runInNewContext(`${source}\n${REPAIR_HOLD_SHIM}\nperformBrowserRepairs`, {
       tabConversations: { '76': conversationId }, tabDocuments: { '76': 'live-document' },
       conversationForTab: (value: { url?: string }) => value.url?.split('/c/')[1] ?? null,
       browserRepairProtected: async () => (probes += 1) > 1 && change === 'draft',

@@ -3559,7 +3559,17 @@ async function performAttributionReconnects(reconnects, observedTabs) {
 }
 
 async function browserRepairProtected(target, conversationId) {
-  if (!target || !Number.isInteger(target.id)) return true;
+  return (await browserRepairHold(target, conversationId)) !== null;
+}
+
+/**
+ * Why the exact document must not be touched by a repair right now, or null when nothing holds it.
+ *
+ * Every reason is a hold for the human (or an app-owned composer transaction), never evidence that
+ * the page is gone, so the app keeps the repair queued and says what it waits for.
+ */
+async function browserRepairHold(target, conversationId) {
+  if (!target || !Number.isInteger(target.id)) return 'status-unknown';
   const documentId = typeof tabDocuments[String(target.id)] === 'string'
     ? tabDocuments[String(target.id)]
     : null;
@@ -3578,10 +3588,12 @@ async function browserRepairProtected(target, conversationId) {
     // An immediate sendMessage rejection proves only that the Companion cannot currently inspect
     // the page. It does not prove that the human has no live voice session or unsent draft there.
     // Browser repair therefore also fails closed on a missing receiver.
-    if (outcome?.kind === 'timeout') return true;
-    if (outcome?.kind !== 'reply') return true;
-    if (outcome.reply?.ok !== true) return true;
-    return outcome.reply.protect === true;
+    if (outcome?.kind !== 'reply' || outcome.reply?.ok !== true) return 'status-unknown';
+    if (outcome.reply.protect === true) {
+      const reason = typeof outcome.reply.reason === 'string' ? outcome.reply.reason.replace(/_/g, '-') : '';
+      return /^[a-z-]{1,24}$/.test(reason) ? reason : 'status-unknown';
+    }
+    return outcome.reply.approvalWaiting === true ? 'approval-waiting' : null;
   } finally {
     clearTimeout(timer);
   }
@@ -3619,13 +3631,37 @@ async function performBrowserRepairs(repairs, policy) {
     // normal maintenance cadence can retry once the page is free.
     // Chrome's audible bit is a fail-safe for a live Voice call the page could not describe in
     // time: a reload would end the call. Leave the repair unclaimed for a later pass.
-    if (target && target.audible === true) continue;
     // No repair reason makes a selected human ChatGPT tab safe to destroy. In c4 an unattributed
     // request reloaded the selected Prime tab and interrupted its provider turn; silence, error,
     // Goal, compaction and identity recovery have the same destructive edge. Wait for the user to
     // leave this tab rather than claim/reload it as a repair side effect.
-    if (target && target.active === true) continue;
-    if (target && await browserRepairProtected(target, conversationId)) continue;
+    // Every hold is answered, never skipped in silence: on installed 2.4.6 c2 (2026-10-30) the
+    // failed chat was the selected tab, ten silent skips read as ten unclaimed offers, and the app
+    // stopped recovering that chat for good while the page sat right there.
+    const hold = !target ? null
+      : target.audible === true ? 'voice-active'
+        : target.active === true ? 'tab-active'
+          : await browserRepairHold(target, conversationId);
+    // A page that cannot answer, or that shows another chat, is not a human hold: it stays an
+    // unanswered handout, which is what the app's unclaimed-offer stop exists to bound.
+    if (hold === 'status-unknown' || hold === 'conversation-changed') continue;
+    if (hold) {
+      if (reason === 'assistant-error') {
+        // Reading the page is not a mutation. A failure ChatGPT has already recovered from on its
+        // own retires here without waiting for the human to leave the tab; anything still broken
+        // keeps waiting, and no Stop or Continue is pressed on a page the human holds.
+        const documentId = typeof tabDocuments[String(target.id)] === 'string' ? tabDocuments[String(target.id)] : null;
+        const status = await tabReply(target.id, { type: 'clf-page-status' }, documentId ? { documentId } : undefined);
+        if (status?.ok === true && status.conversationId === conversationId && status.streaming !== true &&
+            status.assistantError === false && status.assistantErrorKind !== 'conversation-unavailable') {
+          const why = typeof status.assistantErrorWhy === 'string' ? status.assistantErrorWhy.slice(0, 24) : '';
+          await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=preserved${why ? `&why=${encodeURIComponent(why)}` : ''}`);
+          continue;
+        }
+      }
+      await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=held&why=${hold}`);
+      continue;
+    }
     // `/status` only hands the repair out. The tab scan above can take long enough for the user
     // to Block/Stop the chat, or for its durable source identity to be superseded. Claim this
     // exact token after deciding the concrete browser action and immediately before the first

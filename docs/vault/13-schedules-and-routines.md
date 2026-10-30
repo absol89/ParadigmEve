@@ -280,6 +280,14 @@ valid; changed history/instructions replace context in the same helper instead o
 another helper automatically. Clear temporary-planner answer content before durable state
 publication; it is not a normal recorded executor task.
 
+A custom endpoint is asked for the strict `json_schema` decision first. Only an HTTP 400 that
+refuses the response format itself steps that exact endpoint+model down to `json_object`, then to
+no format, with the JSON shape asked for in words; the learned step is kept for this run of the
+app. Without the schema only a JSON decision is accepted, never prose. Every other 400, and every
+401/403/429/5xx, keeps its ordinary meaning; OpenRouter is never downgraded. This is the decision
+request alone: local tool calling keeps its own schema projection, and Ollama and llama.cpp stay
+separately selected providers.
+
 Provider progress updates one existing timeline row and is never sendable text. Validate the
 final bounded decision schema before publication. Goal may return stop/no reply. Loop requires
 a continuation and has a bounded three-retry invalid-stop policy. API SSE is used when publishing

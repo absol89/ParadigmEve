@@ -1206,6 +1206,7 @@ export function resetGoalStateForTests(): void {
   for (const draft of drafts.values()) draft.abort?.abort();
   drafts.clear();
   goalReplies.clear();
+  customResponseFormats.clear();
   goalObjectives.clear();
   goalSwitches.clear();
   goalSwitchWrites = Promise.resolve();
@@ -1438,6 +1439,36 @@ function helperModelLabel(): string {
   return configuredChatModelLabel(goalHelperSelection().model);
 }
 
+/**
+ * What a custom endpoint accepts as `response_format`, learned only from its own refusal.
+ *
+ * Adapted from Chat On Steroids #1924 (MIT, issue #1921): DeepSeek answers json_schema with
+ * HTTP 400 "This response_format type is unavailable now". The request then steps down to
+ * json_object, then to no format, asking for the JSON in words, and the answer is validated as
+ * strictly as ever. Kept for this run of the app per exact endpoint and model, so a changed
+ * endpoint or model starts again from the schema. OpenRouter is never downgraded: it is asked to
+ * route only to providers that honour the parameter. This is the Goal/Loop decision request
+ * alone; local tool calling keeps its own schema projection (`llamaCompatibleSchema`).
+ */
+type GoalResponseFormat = 'json_schema' | 'json_object' | 'none';
+const customResponseFormats = new Map<string, GoalResponseFormat>();
+const CUSTOM_RESPONSE_FORMAT_MEMORY = 64;
+/** A refusal of the format itself, not of anything else the request carried. */
+const FORMAT_REFUSED = /\b(?:response[ _-]?format|json[ _-]?schema|json[ _-]?object|structured[ _-]?outputs?)\b.*\b(?:unavailable|unsupported|not (?:be )?supported|not available|not allowed|does not support|invalid|unknown|unrecognized)\b|\b(?:unavailable|unsupported|not supported|does not support|invalid|unknown|unrecognized)\b.*\b(?:response[ _-]?format|json[ _-]?schema|json[ _-]?object|structured[ _-]?outputs?)\b/i;
+/** The shape in words, when no schema carries it. Loop's never offers "stop". */
+const jsonInWords = (mode: GoalMode): string => mode === 'loop'
+  ? 'Answer with exactly one JSON object and nothing else: {"action": "continue", "reply": "the message"}. The action is always "continue".'
+  : 'Answer with exactly one JSON object and nothing else: {"action": "stop" or "continue", "reply": "the message"}.';
+
+function rememberResponseFormat(key: string, format: GoalResponseFormat): void {
+  customResponseFormats.delete(key);
+  customResponseFormats.set(key, format);
+  for (const oldest of customResponseFormats.keys()) {
+    if (customResponseFormats.size <= CUSTOM_RESPONSE_FORMAT_MEMORY) break;
+    customResponseFormats.delete(oldest);
+  }
+}
+
 async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision | { action: 'http'; error: string; retryAfterMs?: number }> {
   if (request.backend === 'chatgpt') {
     const protocol = request.mode === 'loop' ? LOOP_OUTPUT_PROTOCOL : GOAL_OUTPUT_PROTOCOL;
@@ -1520,22 +1551,46 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
   // not share that extension, so they are attempted locally one model at a time below.
   if (!custom) body['models'] = request.models;
   const attempts = custom ? request.models : [''];
+  const schema = body['response_format'];
+  const messages = body['messages'] as Array<{ role: string; content: string }>;
   for (let index = 0; index < attempts.length; index += 1) {
     const model = attempts[index] ?? '';
     const hasFallback = custom && index + 1 < attempts.length;
+    const formatKey = `${baseUrl}\u0000${model}`;
+    let format: GoalResponseFormat = custom ? customResponseFormats.get(formatKey) ?? 'json_schema' : 'json_schema';
+    const send = (): Promise<Response> => fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      // A redirect must not hand conversation content or credentials to a different endpoint.
+      redirect: 'error',
+      headers: {
+        ...(request.key ? { authorization: `Bearer ${request.key}` } : {}),
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(custom ? {
+        ...body,
+        model,
+        // Without a schema the shape is asked for in words (json_object also needs "JSON" in the prompt).
+        messages: format === 'json_schema' ? messages : [...messages, { role: 'system', content: jsonInWords(request.mode) }],
+        response_format: format === 'json_schema' ? schema : format === 'json_object' ? { type: 'json_object' } : undefined
+      } : body),
+      signal: request.signal
+    });
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        // A redirect must not hand conversation content or credentials to a different endpoint.
-        redirect: 'error',
-        headers: {
-          ...(request.key ? { authorization: `Bearer ${request.key}` } : {}),
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify(custom ? { ...body, model } : body),
-        signal: request.signal
-      });
+      response = await send();
+      // One step down per confirmed refusal of the format itself, at most twice per model. Any
+      // other 400, and every 401/403/429/5xx, keeps its ordinary meaning below.
+      while (custom && response.status === 400 && format !== 'none') {
+        const error = await httpFailure(response);
+        if (!FORMAT_REFUSED.test(error)) {
+          return { action: 'http', error };
+        }
+        const next: GoalResponseFormat = format === 'json_schema' ? 'json_object' : 'none';
+        logInfo(`goal: custom model ${model} refused response_format ${format} (${error}); asking with ${next === 'none' ? 'no response_format' : next} and the JSON in words`);
+        format = next;
+        rememberResponseFormat(formatKey, format);
+        response = await send();
+      }
     } catch (error) {
       request.signal.throwIfAborted();
       // Node's fetch reports transport failures as TypeError. A different model may still work
@@ -1560,8 +1615,9 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
     try {
       const completion = await readGoalCompletion(response, request.publish);
       // A syntactically successful completion belongs to this model even if its Goal decision
-      // is weak/invalid. Never shop that semantic answer across fallback models.
-      return normalizeGoalDecision(completion.text, completion.legacy);
+      // is weak/invalid. Never shop that semantic answer across fallback models. Without the
+      // schema, only a JSON decision is accepted: prose is never typed as the user.
+      return normalizeGoalDecision(completion.text, format === 'json_schema' && completion.legacy);
     } catch (error) {
       request.signal.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);

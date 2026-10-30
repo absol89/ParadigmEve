@@ -2614,6 +2614,110 @@ describe('a custom OpenAI-compatible provider', () => {
     expect(seen).toEqual(['missing-model', 'busy-model', 'backup-model']);
   });
 
+  describe('when the endpoint refuses the response format', () => {
+    // Chat On Steroids #1921/#1924 (MIT): DeepSeek answers json_schema with HTTP 400 "This
+    // response_format type is unavailable now". Eve steps down only on that confirmed refusal.
+    const refused = (type: string): Response =>
+      Response.json({ error: { message: `This response_format type ${type} is unavailable now` } }, { status: 400 });
+    const plain = (content: string): Response => Response.json({ choices: [{ message: { content } }] });
+
+    it('asks again with json_object and the JSON in words, then remembers it for that model', async () => {
+      await useCustom({ models: { ...defaultConfig().goal.models, custom: ['deepseek-chat'] } });
+      const session = await userSession('c-format-object');
+      const bodies: any[] = [];
+      globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        bodies.push(body);
+        return body.response_format?.type === 'json_schema' ? refused('json_schema') : decision('continue', 'run the tests');
+      }) as never;
+
+      goal.startGoalDraft({ sessionId: session.id, conversationId: 'c-format-object', turnId: 'g-object' });
+      const view = await settled('c-format-object');
+      expect(view.stage).toBe('ready');
+      expect(view.reply).toBe(goal.humanReply('run the tests'));
+      expect(bodies.map(body => body.response_format?.type ?? 'none')).toEqual(['json_schema', 'json_object']);
+      expect(JSON.stringify(bodies[1].messages)).toContain('exactly one JSON object');
+      expect(bodies.every(body => body.model === 'deepseek-chat')).toBe(true);
+
+      // The learned format is reused for the same endpoint and model: no second refusal round trip.
+      const again = await userSession('c-format-object-2');
+      goal.startGoalDraft({ sessionId: again.id, conversationId: 'c-format-object-2', turnId: 'g-object-2' });
+      expect((await settled('c-format-object-2')).stage).toBe('ready');
+      expect(bodies.map(body => body.response_format?.type ?? 'none')).toEqual(['json_schema', 'json_object', 'json_object']);
+    });
+
+    it('drops the format when json_object is refused too, and still validates the JSON strictly', async () => {
+      await useCustom({ models: { ...defaultConfig().goal.models, custom: ['strict-local'] } });
+      const session = await userSession('c-format-none');
+      const types: string[] = [];
+      let answer = JSON.stringify({ action: 'continue', reply: 'check the parser' });
+      globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        const type = body.response_format?.type ?? 'none';
+        types.push(type);
+        return type === 'none' ? plain(answer) : refused(type);
+      }) as never;
+
+      goal.startGoalDraft({ sessionId: session.id, conversationId: 'c-format-none', turnId: 'g-none' });
+      const view = await settled('c-format-none');
+      expect(view.stage).toBe('ready');
+      expect(view.reply).toBe(goal.humanReply('check the parser'));
+      expect(types).toEqual(['json_schema', 'json_object', 'none']);
+
+      // Without a format, prose is never typed into the chat as a user message.
+      answer = 'Sure! You should check the parser next.';
+      const prose = await userSession('c-format-prose');
+      goal.startGoalDraft({ sessionId: prose.id, conversationId: 'c-format-prose', turnId: 'g-prose' });
+      const refusedProse = await settled('c-format-prose');
+      expect(refusedProse.stage).toBe('failed');
+      expect(refusedProse.error).toBe('invalid_goal_decision_json');
+    });
+
+    it('keeps any other HTTP 400 terminal and never downgrades OpenRouter', async () => {
+      await useCustom({ models: { ...defaultConfig().goal.models, custom: ['bad-request-model'] } });
+      const session = await userSession('c-format-other-400');
+      const types: string[] = [];
+      globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        types.push(JSON.parse(String(init.body)).response_format?.type ?? 'none');
+        return Response.json({ error: { message: 'messages: context length exceeded' } }, { status: 400 });
+      }) as never;
+      goal.startGoalDraft({ sessionId: session.id, conversationId: 'c-format-other-400', turnId: 'g-400' });
+      expect((await settled('c-format-other-400')).stage).toBe('failed');
+      expect(types).toEqual(['json_schema']);
+
+      await useCustom({ provider: { kind: 'openrouter' } });
+      const routed = await userSession('c-format-openrouter');
+      types.length = 0;
+      globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        types.push(JSON.parse(String(init.body)).response_format?.type ?? 'none');
+        return refused('json_schema');
+      }) as never;
+      goal.startGoalDraft({ sessionId: routed.id, conversationId: 'c-format-openrouter', turnId: 'g-routed' });
+      expect((await settled('c-format-openrouter')).stage).toBe('failed');
+      expect(types).toEqual(['json_schema']);
+    });
+
+    it('learns per model: another model on the same endpoint still starts with the schema', async () => {
+      await useCustom({ models: { ...defaultConfig().goal.models, custom: ['refuses-schema'] } });
+      const types: string[] = [];
+      globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        types.push(`${body.model}:${body.response_format?.type ?? 'none'}`);
+        return body.model === 'refuses-schema' && body.response_format?.type === 'json_schema'
+          ? refused('json_schema') : decision('stop');
+      }) as never;
+      const first = await userSession('c-format-model-a');
+      goal.startGoalDraft({ sessionId: first.id, conversationId: 'c-format-model-a', turnId: 'g-a' });
+      expect((await settled('c-format-model-a')).stage).toBe('no-reply');
+
+      await useCustom({ models: { ...defaultConfig().goal.models, custom: ['accepts-schema'] } });
+      const second = await userSession('c-format-model-b');
+      goal.startGoalDraft({ sessionId: second.id, conversationId: 'c-format-model-b', turnId: 'g-b' });
+      expect((await settled('c-format-model-b')).stage).toBe('no-reply');
+      expect(types).toEqual(['refuses-schema:json_schema', 'refuses-schema:json_object', 'accepts-schema:json_schema']);
+    });
+  });
+
   it('does not try a fallback after a successful but semantically unusable custom answer', async () => {
     await useCustom({
       models: {

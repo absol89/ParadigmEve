@@ -3315,7 +3315,9 @@ select option { background: var(--card); color: var(--ink); }
   .usage-panel .setting > input, .usage-panel .setting > select { flex-basis: 130px; width: 130px; }
 }
 
-.model-menu .composer-popover { width: 272px; padding: 8px 12px 15px; }
+/* Four providers fit side by side. The menu sits at the composer's right, so the popover is
+   anchored to the menu's right edge and grows leftward instead of past the window. */
+.model-menu .composer-popover { left: auto; right: 0; translate: none; width: min(380px, calc(100vw - 32px)); padding: 8px 12px 15px; }
 .model-menu .model-reload { display: flex; width: 28px; height: 28px; min-height: 28px; padding: 5px; justify-content: center; }
 #composerModelStatus { font-size: 12px; padding: 4px 10px; line-height: 1.5; }
 .power-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 8px; margin-bottom: 17px; }
@@ -3466,7 +3468,7 @@ select option { background: var(--card); color: var(--ink); }
 .provider-switch { margin-bottom: 12px; }
 .ollama-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 8px; margin-bottom: 10px; }
 .ollama-header .model-reload { grid-column: 3; }
-.provider-switch button { flex: 1; }
+.provider-switch button { flex: 1 1 auto; min-width: 0; padding: 8px 10px; white-space: nowrap; }
 #ollamaModelChoices { display: grid; gap: 2px; max-height: 240px; overflow-y: auto; }
 #ollamaModelChoices .model-choice { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; text-align: left; font-size: 13px; }
 #ollamaModelChoices .model-choice[aria-pressed='true'] { background: color-mix(in srgb, #78aaff 18%, var(--card)); }

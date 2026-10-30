@@ -1,8 +1,9 @@
 {
-  "schema": "eveal-run/0.2",
+  "schema": "eveal-run/0.3",
   "run_id": "REPLACE-unique-id",
   "tier": "quick",
   "date": "YYYY-MM-DD",
+  "challenge": "REPLACE: the v03-… id at the top of the task files you used",
   "agent": {
     "name": "REPLACE: agent or app name",
     "model": "REPLACE or unknown",
@@ -32,7 +33,12 @@
     "pitfalls": {"answer": "pitfalls.json"},
     "sources": {"answer": "sources.json"},
     "honesty": {"answer": "honesty.json"},
-    "hygiene": {"root": "probe", "record": "probe/work/.stage/record.json"}
+    "hygiene": {"root": "probe", "record": "probe/work/.stage/record.json"},
+    "swedish": {"answer": "swedish.json"},
+    "instructions": {"answer": "instructions.md"},
+    "general_fix": {"submitted": "fix/work", "claims_tests_pass": null},
+    "pushback": {"root": "pushback", "not_measured": false},
+    "calibration": {"answer": "calibration.json"}
   },
   "reviewer_checks": {}
 }

@@ -12305,7 +12305,10 @@
       }
       if (message.type === 'clf-browser-repair-state') {
         const expectedConversationId = typeof message.conversationId === 'string' ? message.conversationId : '';
-        sendResponse({ ok: true, ...browserRepairState(expectedConversationId) });
+        // A reload underneath a pending ChatGPT tool-approval card discards the human's decision
+        // (upstream chat-on-steroids #1874). Reported beside `protect`, which app input also reads,
+        // so only browser repair waits on it.
+        sendResponse({ ok: true, ...browserRepairState(expectedConversationId), approvalWaiting: CLF_DOM.approvalWaiting() });
         return false;
       }
       if (message.type === 'clf-restart-wake-readiness') {
