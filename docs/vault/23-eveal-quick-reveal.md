@@ -42,6 +42,11 @@ conflicting sources, honest "I don't know" answers and agentic hygiene, is worth
   traversal and link confinement of approved roots.
 - To run a fixture, the agent copies it into its output folder with its file tools; nothing executes
   inside the shipped suite.
+- Reading a suite file by its full path makes the suite the chat's working folder, and `EVEAL.md` links
+  its files relatively, so relative reads (`tasks/pitfalls.md`) resolve inside the suite too. A write or
+  command that lands there is refused as read-only and told to use a full path in an approved folder;
+  the mount is never reported as an unknown root. The opening context also writes the main paths out
+  in full.
 
 ## What ships, and what never does
 

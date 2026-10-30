@@ -1850,7 +1850,10 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
     case 'user_message': {
       const box = el('div', 'said is-user');
       const you = el('b', '', () => event.messageId?.startsWith('transcription:') ? t('Eve · Transcript') : t("You"));
-      if (event.provider) you.append(el('span', 'provider-tag', () => t("to Ollama · {0}", [event.provider!.model])));
+      if (event.provider) you.append(el('span', 'provider-tag', () =>
+        event.provider!.id === 'llamacpp' ? t('to llama.cpp · {0}', [event.provider!.model])
+          : event.provider!.id === 'openrouter' ? t('to OpenRouter · {0}', [event.provider!.model])
+          : t('to Ollama · {0}', [event.provider!.model])));
       box.append(you);
       const attachments = el('div', 'message-attachments');
       if (event.attachments?.length) attachments.append(...event.attachments.map(file => attachmentCard(file)));
@@ -1895,7 +1898,9 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       box.append(el('b', '', () => event.provider
         ? event.provider.id === 'openrouter'
           ? event.final ? t("OpenRouter · {0}", [event.provider.model]) : t("OpenRouter · {0} (partial)", [event.provider.model])
-          : event.final ? t("Ollama · {0}", [event.provider.model]) : t("Ollama · {0} (partial)", [event.provider.model])
+          : event.provider.id === 'llamacpp'
+            ? event.final ? t("llama.cpp · {0}", [event.provider.model]) : t("llama.cpp · {0} (partial)", [event.provider.model])
+            : event.final ? t("Ollama · {0}", [event.provider.model]) : t("Ollama · {0} (partial)", [event.provider.model])
         : event.final ? 'ChatGPT' : t("ChatGPT (partial)")));
       // A GPT-6 reply can first arrive as only a reference to its words; never show the pointer as them.
       box.append(isUnresolvedContentReference(event.message.text)
@@ -3807,7 +3812,7 @@ async function refreshInputQueue(): Promise<void> {
     const reflectsReceipt = (candidate: SessionSummary | undefined): boolean => {
       if (!candidate || !delivered.deliveredAt || candidate.conversationId !== delivered.conversationId) return false;
       // An Ollama turn has no browser model receipt; the session's provider is its proof.
-      if (delivered.provider === 'ollama' || delivered.provider === 'openrouter') return candidate.provider?.id === delivered.provider && candidate.provider.model === delivered.model;
+      if (delivered.provider === 'ollama' || delivered.provider === 'llamacpp' || delivered.provider === 'openrouter') return candidate.provider?.id === delivered.provider && candidate.provider.model === delivered.model;
       if (delivered.model !== null) {
         const observed = candidate.selectedModel;
         return observed?.conversationId === candidate.conversationId && observed.model === delivered.model &&
@@ -4172,7 +4177,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const discoverySelection = selectionGeneration, discoverySession = selectedId, discoveryDraft = input.value;
   // The chat owns its history; the provider only answers this turn.
   const provider = composerProvider();
-  if (provider && !provider.model) { toast(t("Choose an Ollama model, then send again.")); return false; }
+  if (provider && !provider.model) { toast(t("Choose a provider model, then send again.")); return false; }
   const selectedSession = selectedId ? sessions.find(row => row.id === selectedId) : null;
   // An Ollama-born chat has no ChatGPT conversation yet, so there is no existing ChatGPT picker
   // state to discover or confirm. Its first ChatGPT turn opens a fresh provider conversation;
@@ -4201,7 +4206,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   if (switching) markProviderSwitch(switchTrace, 'before-send', switchStartedAt);
   if (providerConsent === false) return false;
   if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
-  const providerIntent = provider ? { provider: provider.id, ...(provider.id === 'ollama' && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
+  const providerIntent = provider ? { provider: provider.id, ...((provider.id === 'ollama' || provider.id === 'llamacpp') && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
   const consentIntent = providerConsent ? { providerConsent } : {};
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
   const mode = chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;
@@ -4385,7 +4390,7 @@ function selectNewChat(
   // Keep its durable id as context authority; never copy the standing prompt into the draft.
   // A saved draft (even deliberately emptied) belongs to the user and must survive Back/Forward.
   if (contextQuiltId && !inputDrafts.has(draftKey()) && !freshInput.value) {
-    freshInput.value = t('Help me get started with {0}.', [threadContextLabel(contextQuiltId) ?? t('this Thread')]);
+    freshInput.value = t('Help me get started with {0}', [threadContextLabel(contextQuiltId) ?? t('this Thread')]);
     paintDeliveryControls();
   }
   if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {

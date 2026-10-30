@@ -1167,10 +1167,29 @@ export function appendEvent(sessionId: string, event: NewSessionEvent): Promise<
  * preserves the sequence/time position where that stable website message first appeared, so
  * revisions cannot move either a user response boundary or assistant prose through later work.
  */
+/** The recorded position and first-seen time of a canonical message. */
+export interface MessageAnchor { origin: number; time: number }
+
+/** Look up existing messages before placing a late page-scan observation in history. */
+export function readMessageAnchors(
+  sessionId: string,
+  messages: ReadonlyArray<{ kind: 'user_message' | 'assistant_message'; messageId: string }>
+): Promise<Map<string, MessageAnchor>> {
+  return ensureOpen(sessionId).then((entry) => entry.queue.then(() => {
+    const out = new Map<string, MessageAnchor>();
+    for (const message of messages) {
+      const known = entry.messages.get(`${message.kind}\u0000${message.messageId}`);
+      if (known && (known.kind === 'user_message' || known.kind === 'assistant_message'))
+        out.set(message.messageId, { origin: known.origin ?? known.seq, time: known.time });
+    }
+    return out;
+  }));
+}
+
 export function upsertMessageEvent(
   sessionId: string,
   event: NewMessageEvent,
-  options: { preferTime?: boolean } = {}
+  options: { preferTime?: boolean; placement?: MessageAnchor } = {}
 ): Promise<{ event: MessageEvent; changed: boolean }> {
   const directKey = messageKey(event as MessageEvent);
   if (!directKey) throw new Error('Canonical message update requires ChatGPT messageId');
@@ -1317,11 +1336,11 @@ export function upsertMessageEvent(
         // A page-model authored timestamp is stronger than a DOM first-sight timestamp. The
         // recorder opts into that correction explicitly; ordinary revisions still keep the
         // original first-seen time forever.
-        time: preferTime ? nextEvent.time : previous?.time ?? nextEvent.time,
+        time: preferTime ? nextEvent.time : previous?.time ?? options.placement?.time ?? nextEvent.time,
         ...(settledTurnId === undefined ? {} : { turnId: settledTurnId }),
         ...(previous?.agent && !nextEvent.agent ? { agent: previous.agent } : {}),
         ...(nextEvent.kind === 'assistant_message' || nextEvent.kind === 'user_message'
-          ? { origin: previous?.kind === nextEvent.kind ? previous.origin ?? previous.seq : entry.nextSeq }
+          ? { origin: previous?.kind === nextEvent.kind ? previous.origin ?? previous.seq : options.placement?.origin ?? entry.nextSeq }
           : {}),
         seq: entry.nextSeq
       } as MessageEvent;

@@ -61,6 +61,15 @@ describe('dynamic skill store', () => {
     expect(await skillCatalogInstructions({ platform: 'win32', capabilities: { read: false } })).not.toContain('windows-read');
   });
 
+  it('shortlists plausible skills and allows choosing no skill', async () => {
+    await createSkill('shortlist-probe', '---\nname: shortlist-probe\ndescription: Probe.\n---\nBODY');
+    const catalog = await skillCatalogInstructions();
+    expect(catalog).toContain('- Shortlist the skills that plausibly fit');
+    expect(catalog).toContain('No skill is a valid outcome');
+    expect(catalog).toContain('only when it adds something distinct');
+    expect(catalog).not.toContain('When one skill clearly matches');
+  });
+
   it('versions Eve-owned rewrites and keeps the previous procedure as history', async () => {
     await createSkill('token-insights', skill('token-insights', 'Old description.', 'REVISION_ONE'));
     const updated = await updateSkill('token-insights', skill('token-insights', 'New description.', 'REVISION_TWO'));

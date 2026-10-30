@@ -319,3 +319,31 @@ it('an old canonical message cannot hide a gap before a byte-bounded cold journa
   // General explicit history must still fall back to disk instead of trusting that gap.
   expect((await readEvents(session.id, { from: 2, limit: 1 }))[0]?.seq).toBe(2);
 });
+
+it('places late page-scan history behind known messages without moving a new live message', async () => {
+  const conversationId = 'conv-late-scan-order';
+  const msg = (kind: 'user_message' | 'assistant_message', messageId: string, text: string, time: number) =>
+    kind === 'user_message' ? { kind, messageId, text, time } : { kind, messageId, text, time, state: 'final' as const, final: true };
+  await recordChatObservations(conversationId, [msg('assistant_message', 'a-old', 'First answer', 1_000)]);
+  await recordChatObservations(conversationId, [msg('user_message', 'u-later', 'Later question', 5_000)]);
+  await recordChatObservations(conversationId, [msg('assistant_message', 'a-later', 'Later answer', 6_000)]);
+  await recordChatObservations(conversationId, [
+    msg('assistant_message', 'a-old', 'First answer', 90_000),
+    msg('user_message', 'u-missing', 'Recovered question', 90_000),
+    msg('assistant_message', 'a-missing', 'Recovered answer', 90_000),
+    msg('user_message', 'u-later', 'Later question', 90_000),
+    msg('assistant_message', 'a-later', 'Later answer', 90_000)
+  ]);
+  await recordChatObservations(conversationId, [
+    msg('assistant_message', 'a-later', 'Later answer', 90_001),
+    msg('user_message', 'u-new', 'New now', 90_001)
+  ]);
+  await flushRecorder();
+  const id = await sessionForConversation(conversationId);
+  const { readCanonicalTranscriptEvents } = await import('../src/main/session/store.js');
+  const events = (await readCanonicalTranscriptEvents(id!)).filter(e => e.kind === 'user_message' || e.kind === 'assistant_message');
+  expect(events.map(e => (e as { messageId: string }).messageId))
+    .toEqual(['a-old', 'u-missing', 'a-missing', 'u-later', 'a-later', 'u-new']);
+  expect(events.find(e => 'messageId' in e && e.messageId === 'u-missing')!.time).toBeLessThanOrEqual(5_000);
+  expect(events.find(e => 'messageId' in e && e.messageId === 'u-new')!.time).toBe(90_001);
+});

@@ -27,6 +27,7 @@ import { userTitle } from './title.js';
 import { effectiveCapabilities, getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
 import { ensureOllamaModel, ollamaModelCapabilities, resolveOllamaEndpoint } from '../ollama-client.js';
+import { createLlamaCppAgentModelRuntime, LLAMACPP_ENDPOINT, listLlamaCppModels } from '../llamacpp-client.js';
 import { createOllamaAgentModelRuntime } from '../ollama-agent-runtime.js';
 import { OPENROUTER_API_BASE, createOpenRouterAgentModelRuntime, openRouterKey, openRouterModelInfo } from '../openrouter-client.js';
 import { issueLocalAgentExecutionPrincipal, revokeLocalAgentExecutionPrincipal, runLocalAgent, type LocalAgentMessage } from '../local-agent-runtime.js';
@@ -98,9 +99,9 @@ async function openingContext(sessionId: string, entry: InputEntry, route: Retur
   let expanded = activated === opening.text ? '' : await expandLocalOpeningContext(activated, {
     inline: true,
     fileTools: toolNames.includes('read'),
-    nativePath: route === 'ollama-local'
+    nativePath: route === 'ollama-local' || route === 'llamacpp-local'
   });
-  if (expanded.includes('# EVE-Al suite') && route === 'ollama-local') {
+  if (expanded.includes('# EVE-Al suite') && (route === 'ollama-local' || route === 'llamacpp-local')) {
     const session = await getSession(sessionId);
     const run = session ? await ensureEvealRunDirectory(sessionId, session.startedAt) : null;
     if (run) {
@@ -178,7 +179,7 @@ export function deliverLocalInput(entry: InputEntry): Promise<void> {
 
 async function run(entry: InputEntry): Promise<void> {
   if (!isLocalProviderInput(entry) || !entry.model) return;
-  const provider: ChatProvider = { id: entry.provider === 'openrouter' ? 'openrouter' : 'ollama', model: entry.model };
+  const provider: ChatProvider = { id: entry.provider === 'openrouter' ? 'openrouter' : entry.provider === 'llamacpp' ? 'llamacpp' : 'ollama', model: entry.model };
   if (!getConfig().sessions.record) {
     // Without the archive there is no history to give the model, and no place for its reply.
     await claimAndFail(entry, 'Ollama chats need session recording. Turn recording on in Settings and send again.');
@@ -216,7 +217,7 @@ async function claimAndFail(entry: InputEntry, reason: string): Promise<void> {
   changed();
 }
 
-const providerName = (provider: ChatProvider): string => provider.id === 'openrouter' ? 'OpenRouter' : 'Ollama';
+const providerName = (provider: ChatProvider): string => provider.id === 'openrouter' ? 'OpenRouter' : provider.id === 'llamacpp' ? 'llama.cpp' : 'Ollama';
 
 async function answer(sessionId: string, entry: InputEntry, provider: ChatProvider): Promise<void> {
   const turnId = `${OLLAMA_TURN_PREFIX}${entry.id}`;
@@ -258,14 +259,23 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
       const info = await openRouterModelInfo(provider.model);
       vision = info ? info.vision : null;
       toolsSupported = info ? info.tools : true;
+    } else if (provider.id === 'llamacpp') {
+      const available = await listLlamaCppModels();
+      if (!available.some((row) => row.id === provider.model)) {
+        throw new ProviderCapabilityError('This model is not loaded in llama.cpp. Start llama-server with the GGUF, refresh the model picker, and select its advertised id.');
+      }
+      // Text-only until the local server proves an image-capable model/transport.
+      vision = false;
     } else {
       await ensureOllamaModel(provider.model);
       const capabilities = await ollamaModelCapabilities(provider.model);
       vision = capabilities ? capabilities.includes('vision') : null;
     }
-    const direct = settings.chatDirectTools !== false;
-    const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: `chat:${sessionId}`, agentId: turnId });
-    const endpoint = provider.id === 'openrouter' ? OPENROUTER_API_BASE : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint;
+    const direct = provider.id === 'llamacpp' || settings.chatDirectTools !== false;
+    const backend = provider.id === 'llamacpp' ? 'llamacpp' as const : 'ollama' as const;
+    const principal = issueLocalAgentExecutionPrincipal({ backend, runId: `chat:${sessionId}`, agentId: turnId });
+    const endpoint = provider.id === 'openrouter' ? OPENROUTER_API_BASE
+      : provider.id === 'llamacpp' ? LLAMACPP_ENDPOINT : resolveOllamaEndpoint(settings.endpoint) ?? settings.endpoint;
     try {
       const tools = !toolsSupported ? [] : await localChatCoreTools({
         getContext: () => chatToolContext(sessionId),
@@ -282,7 +292,7 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
       const system = await chatSystemPrompt(direct, toolsSupported);
       const messages = await ollamaConversation(sessionId, vision, opening ? `${system}\n\n${opening}` : system);
       const result = await runLocalAgent({
-        backend: 'ollama',
+        backend,
         principal,
         endpoint,
         model: provider.model,
@@ -291,7 +301,8 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
         initialMessages: messages as LocalAgentMessage[],
         tools,
         // The daemon on this computer gets its native API, the only one that takes a context window.
-        runtime: routerKey ? createOpenRouterAgentModelRuntime(routerKey)
+        runtime: provider.id === 'llamacpp' ? createLlamaCppAgentModelRuntime()
+          : routerKey ? createOpenRouterAgentModelRuntime(routerKey)
           : createOllamaAgentModelRuntime(globalThis.fetch, { native: providerRoute(provider, endpoint) === 'ollama-local' }),
         signal: controller.signal,
         allowNoTools: true

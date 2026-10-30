@@ -1550,6 +1550,7 @@ describe('2025-era clients', () => {
     // Always-on safe-change habits, with the longer checklists read from the packaged Vault on demand.
     expect(instructions).toContain('# Changing code safely');
     expect(instructions).toContain('find every copy (schemas, validators, tests, docs)');
+    expect(instructions).toContain('weigh two or three candidates');
     expect(instructions).toContain('`/paradigmeve-manual/14-coding-skills.md`');
     expect(instructions).toContain('/paradigmeve-manual/release-visual-design.md');
     expect(instructions).toContain('one verified benefit');
@@ -1561,6 +1562,7 @@ describe('2025-era clients', () => {
     for (const heading of ['## Code review', '## Debug systematically', '## Refactor safely', '## Security review']) {
       expect(vaultPage).toContain(heading);
     }
+    expect(vaultPage).toContain('If the cause is not already evident, list two or three competing hypotheses');
     // 2.3.8 carries Eve's general visual-design guidance (release-visual-design.md) in the
     // coding instructions themselves, not only behind the manual link (~650 characters).
     // Broker discovery is part of the fresh-chat instructions, not a %how-only manual.

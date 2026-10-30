@@ -36,7 +36,7 @@ async function localRecordingSession(principal: LocalAgentExecutionPrincipal): P
   const existing = localRecordingSessions.get(key);
   if (existing) return existing;
   const creating = createSession({
-    title: `${principal.agentId} · ${AGENT_BACKEND_LABELS[principal.backend]}`
+    title: `${principal.agentId} · ${principal.backend === 'llamacpp' ? 'llama.cpp' : AGENT_BACKEND_LABELS[principal.backend]}`
   }).then((session) => session.id);
   localRecordingSessions.set(key, creating);
   try {

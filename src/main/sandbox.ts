@@ -358,6 +358,14 @@ export async function resolvePath(
   const root = roots.find((r) => r.name.toLowerCase() === rootName);
   if (!root) {
     const names = roots.map((r) => `/${r.name}`).join(', ') || '(none approved)';
+    // The EVE-Al suite is mounted for the inspection tools only. "Unknown root" here read as
+    // "the mount does not exist" and made a model that had just read from it give up on files.
+    if (rootName === 'paradigmeve-eveal') {
+      throw new SandboxError(
+        '/paradigmeve-eveal is the read-only EVE-Al suite: open its files with read, find or view_image as /paradigmeve-eveal/<path>. ' +
+          `Nothing can be written or run there; write your output folder with a full path inside an approved root: ${names}`
+      );
+    }
     const suggestion = suggestApprovedSpelling(roots, segments.slice(1));
     throw new SandboxError(
       `Unknown root "/${segments[0]}". Approved roots: ${names}` +

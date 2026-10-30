@@ -408,6 +408,26 @@ describe('durable user input ownership', () => {
     });
   });
 
+  it('logs an expired unauthorized claim and its late page failure without a replay', async () => {
+    const row: InputEntry = { ...input(), model: 'gpt-6', reasoningEffort: 'high', state: 'browser', owner: 'native-page',
+      conversationId: binding.conversationId, offeredAt: now, requiresAuthorization: true, createdAt: now };
+    await writeDurableNow('session-input', [row]);
+    resetInputForTests();
+    const logged: string[] = [];
+    const stop = onLog(entry => logged.push(entry.message));
+    try {
+      vi.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+      expect((await listInputs())[0]).toMatchObject({ state: 'cancelled' });
+      expect(logged.some(line => line.includes('browser claim expired before Send was authorized') && line.includes('model=gpt-6/high'))).toBe(true);
+      expect(await failBrowserInput(row.id, 'native-page', 'Picker did not settle', 'model-picker-deadline')).toBe(false);
+      expect((await listInputs())[0]).toMatchObject({ state: 'cancelled' });
+      expect(logged.some(line => line.includes('browser reported a failure after the row became cancelled') && line.includes('(model-picker-deadline)'))).toBe(true);
+      logged.length = 0;
+      expect(await failBrowserInput(row.id, 'wrong-owner', 'x')).toBe(false);
+      expect(logged.some(line => line.includes('browser reported a failure'))).toBe(false);
+    } finally { stop(); }
+  });
+
   it('keeps the plain timeout message for a wake into an idle chat', async () => {
     const wake: InputEntry = { ...input({ text: '[[PARADIGMEVE-AGENT-RESTART-WAKE:v1]] resume' }), restartWake: true,
       state: 'browser', owner: 'native-page', conversationId: binding.conversationId,

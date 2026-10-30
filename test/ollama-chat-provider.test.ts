@@ -63,6 +63,8 @@ const rendererEvent = { sender: rendererWebContents };
 
 const realFetch = globalThis.fetch;
 const ollamaRequests: Array<{ url: string; body: any; headers: Record<string, string> }> = [];
+const llamaCppRequests: Array<{ url: string; body: any; headers: Record<string, string> }> = [];
+const LFM3 = 'LiquidAI/LFM3-1.7B-GGUF:Q4_K_M';
 let replyText = 'Hello from Ollama';
 let visionModels = new Set<string>(['llava']);
 let pulled: string[] = [];
@@ -87,6 +89,17 @@ const fakeFetch = async (resource: string | URL | Request, init?: RequestInit): 
     throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }) });
   }
   if (url.startsWith('https://openrouter.ai/api/v1/')) return openRouterFetch(url, init);
+  if (url === 'http://127.0.0.1:8080/props') return Response.json({ default_generation_settings: { n_ctx: 16384 } });
+  if (url.startsWith('http://127.0.0.1:8080/v1/')) {
+    const body = init?.body ? JSON.parse(String(init.body)) : null;
+    llamaCppRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
+    if (url.endsWith('/models')) return Response.json({ data: [{ id: LFM3 }] });
+    if (url.endsWith('/chat/completions')) {
+      if (agentReplies.length) return Response.json(agentReplies.shift());
+      return Response.json({ choices: [{ message: { role: 'assistant', content: 'Hello from llama.cpp' } }] });
+    }
+    throw new Error(`unexpected llama.cpp request: ${url}`);
+  }
   if (!url.startsWith('http://127.0.0.1:11434/') && !url.startsWith('https://ollama.com/')) throw new Error(`unexpected network request: ${url}`);
   const body = init?.body ? JSON.parse(String(init.body)) : null;
   ollamaRequests.push({ url, body, headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });
@@ -175,6 +188,7 @@ beforeEach(async () => {
   await writeDurableNow('session-input', []);
   input.resetInputForTests();
   ollamaRequests.length = 0;
+  llamaCppRequests.length = 0;
   routerRequests.length = 0;
   routerReply = 'Hello from OpenRouter';
   pulled = [];
@@ -219,6 +233,32 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
   expect(chat.headers.authorization).toBeUndefined();
   // The browser transport never sees an Ollama row.
   expect(await input.pendingBrowserInputs()).toEqual([]);
+});
+
+it('keeps llama.cpp distinct from Ollama: local-only LFM3, OpenAI tool calls, no credentials or native Ollama APIs', async () => {
+  const models = await handlers.get('llamacpp:models')!(rendererEvent, undefined);
+  expect(models.data).toEqual([{ id: LFM3 }]);
+  expect(history.providerRoute({ id: 'llamacpp', model: LFM3 }, 'https://ollama.com/v1')).toBe('llamacpp-local');
+  const id = randomUUID();
+  agentReplies = [
+    { choices: [{ message: { content: '', tool_calls: [{ id: 'call-1', function: { name: 'session', arguments: '{"action":"search","query":"unlikely"}' } }] } }] },
+    { choices: [{ message: { content: 'Hello from llama.cpp after tool' } }] }
+  ];
+  const accepted = await send({ id, provider: 'llamacpp', model: LFM3, localOnly: true, text: 'Test tool use' });
+  expect(accepted.ok, accepted.error).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  const sessionId = (await input.listInputs()).find(row => row.id === id)!.deliveredSessionId!;
+  const events = await finished(sessionId, `ollama-turn:${id}`);
+  expect(events.find(e => e.kind === 'assistant_message')).toMatchObject({
+    provider: { id: 'llamacpp', model: LFM3 }, final: true, message: { text: 'Hello from llama.cpp after tool' }
+  });
+  expect((await getSession(sessionId))?.localOnly).toBe(true);
+  expect(llamaCppRequests.some(row => row.url.endsWith('/chat/completions'))).toBe(true);
+  expect(llamaCppRequests.every(row => row.url.startsWith('http://127.0.0.1:8080/v1/'))).toBe(true);
+  expect(llamaCppRequests.every(row => !row.headers.authorization)).toBe(true);
+  expect(ollamaRequests).toEqual([]);
+  expect((await send({ sessionId, provider: 'openrouter', model: 'stepfun/step-5-preview' })).error).toMatch(/local only/i);
+  expect((await history.providerSwitchPreview(sessionId, { id: 'ollama', model: 'llama3.2' })).to).toBe('ollama-local');
 });
 
 it('lets a direct Ollama chat use an approved local read tool and feeds the result back to the model', async () => {
@@ -884,3 +924,43 @@ it.each(['', '.', '!', '?'].map(end => `Help me get started with %eveal${end}`))
     expect(sessionId).toBeTruthy();
   }
 );
+
+it('lets a local model read EVEAL.md by its full path and then follow its relative links, but never write into the suite', async () => {
+  const projects = `${directory}/projects-eveal`;
+  await fs.mkdir(projects, { recursive: true });
+  const base = defaultConfig();
+  await saveConfig({
+    ...base,
+    roots: [{ name: 'projects', path: projects }],
+    capabilities: { ...base.capabilities, read: true, browse: true, create: true, edit: true },
+    agentRuntime: { ollama: { ...base.agentRuntime.ollama, chatDirectTools: true } },
+    goal: { ...base.goal, enabled: false }
+  });
+  const call = (id: string, name: string, args: unknown) =>
+    ({ choices: [{ message: { content: '', tool_calls: [{ id, function: { name, arguments: JSON.stringify(args) } }] } }] });
+  // Exactly what gemma4:e2b did: EVEAL.md by its full path, then the relative link it gives.
+  agentReplies = [
+    call('r1', 'read', { paths: ['/paradigmeve-eveal/EVEAL.md'] }),
+    call('r2', 'read', { paths: ['tasks/pitfalls.md'] }),
+    { choices: [{ message: { content: 'Read both.' } }] }
+  ];
+  await sendAndFinish({ provider: 'ollama', model: 'gemma4:e2b', text: 'Help me get started with %eveal' });
+
+  const chats = ollamaRequests.filter(request => isChat(request.url));
+  const toolResult = (index: number) => chats[index]!.body.messages.filter((message: any) => message.role === 'tool').at(-1)!.content as string;
+  expect(toolResult(1)).toContain('# EVE-Al Quick reveal');
+  expect(toolResult(2)).toContain('/paradigmeve-eveal/tasks/pitfalls.md');
+  expect(toolResult(2)).not.toMatch(/Unknown root/i);
+  // Anything but an inspection tool resolves without the suite: a write there (relative paths now
+  // land on it) is refused as read-only and told where to write, never "Unknown root".
+  const { resolvePath } = await import('../src/main/sandbox.js');
+  const refused = await resolvePath([{ name: 'projects', path: projects }], 'pitfalls.json', { base: '/paradigmeve-eveal', allowMissing: true })
+    .then(() => '', (error: Error) => error.message);
+  expect(refused).toContain('/paradigmeve-eveal is the read-only EVE-Al suite');
+  expect(refused).toContain('/projects');
+  expect(refused).not.toMatch(/Unknown root/i);
+  // The opening context spells out full suite paths, so the model need not resolve them.
+  const system = chats[0]!.body.messages.find((message: any) => message.role === 'system').content as string;
+  expect(system).toContain('- /paradigmeve-eveal/tasks/pitfalls.md');
+  expect(system).toContain('- /paradigmeve-eveal/fixtures/probe-kit/TASK.md');
+});

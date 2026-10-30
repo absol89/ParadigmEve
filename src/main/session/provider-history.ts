@@ -31,6 +31,7 @@ export const PROVIDER_ROUTE_LABELS: Record<ProviderRoute, string> = {
   chatgpt: 'ChatGPT (OpenAI)',
   'ollama-local': 'Ollama on this computer',
   'ollama-cloud': 'Ollama Cloud',
+  'llamacpp-local': 'llama.cpp on this computer',
   openrouter: 'OpenRouter'
 };
 
@@ -42,6 +43,7 @@ export function isOllamaCloudModel(model: string): boolean {
 /** Where a turn's history actually goes. A loopback daemon serving a cloud model is still cloud. */
 export function providerRoute(provider: ChatProvider | null | undefined, endpoint = resolveOllamaEndpoint()): ProviderRoute {
   if (!provider) return 'chatgpt';
+  if (provider.id === 'llamacpp') return 'llamacpp-local';
   // OpenRouter is always a remote service, whichever model it routes to.
   if (provider.id === 'openrouter') return 'openrouter';
   if (!endpoint || endpoint.startsWith('https://') || isOllamaCloudModel(provider.model) || knownCloudModel(provider.model)) return 'ollama-cloud';
@@ -184,7 +186,7 @@ export async function providerSwitchPreview(
     messages: unseen.length,
     images: unseen.reduce((sum, turn) => sum + turn.images.length, 0),
     files: unseen.reduce((sum, turn) => sum + turn.files.length, 0),
-    blockedByLocalOnly: localOnly && to !== 'ollama-local'
+    blockedByLocalOnly: localOnly && to !== 'ollama-local' && to !== 'llamacpp-local'
   };
 }
 
@@ -204,7 +206,7 @@ export async function assertProviderSwitchAllowed(
 ): Promise<void> {
   const preview = await providerSwitchPreview(sessionId, provider, localOnly, authorizedRoutes);
   if (preview.blockedByLocalOnly) {
-    throw new Error(`This chat is local only. ${preview.toLabel} cannot read it; choose a local Ollama model or turn local only off.`);
+    throw new Error(`This chat is local only. ${preview.toLabel} cannot read it; choose a local model or turn local only off.`);
   }
   if (!preview.switching) return;
   if (!consent || consent.to !== preview.to || consent.messages < preview.messages ||
@@ -415,7 +417,7 @@ export async function admitChatProvider(input: {
   localOnly?: true;
 }, session: { id: string; localOnly?: boolean; provider?: ChatProvider; providerAuthorizations?: ChatProviderRoute[] } | null): Promise<void> {
   if (!input.sessionId) {
-    if (input.localOnly && providerRoute(input.provider && input.model ? { id: input.provider, model: input.model } : null) !== 'ollama-local') {
+    if (input.localOnly && !['ollama-local', 'llamacpp-local'].includes(providerRoute(input.provider && input.model ? { id: input.provider, model: input.model } : null))) {
       throw new Error('This new chat is local only, so it needs a model on this computer, not a cloud model.');
     }
     return;

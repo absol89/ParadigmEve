@@ -197,8 +197,9 @@ const api = {
   transcriptionGpuProbe: () => call<AppState>('transcription:gpuProbe'),
   transcriptionCancel: (id: string) => call<boolean>('transcription:cancel', { id }),
   listOllamaModels: () => call<Array<{ id: string; route: 'chatgpt' | 'ollama-local' | 'ollama-cloud'; cloud: boolean; installed: boolean; vision?: boolean }>>('ollama:models'),
+  listLlamaCppModels: () => call<Array<{ id: string }>>('llamacpp:models'),
   listOpenRouterModels: () => call<{ models: Array<{ id: string; name: string; route: 'openrouter'; vision: boolean; tools: boolean; contextLength: number | null; free: boolean }>; hasKey: boolean }>('openrouter:models'),
-  providerPreview: (id: string, provider: { id: 'ollama' | 'openrouter'; model: string } | null, traceId?: string) =>
+  providerPreview: (id: string, provider: { id: 'ollama' | 'llamacpp' | 'openrouter'; model: string } | null, traceId?: string) =>
     call<ProviderSwitchPreview>('sessions:providerPreview', { id, provider, ...(traceId ? { traceId } : {}) }),
   providerSwitchMark: (id: string, step: string, ms: number) => call<boolean>('diagnostics:providerSwitchMark', { id, step, ms }),
   setSessionLocalOnly: (id: string, localOnly: boolean) => call<SessionSummary | null>('sessions:setLocalOnly', { id, localOnly }),

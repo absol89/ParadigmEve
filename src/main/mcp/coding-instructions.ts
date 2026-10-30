@@ -110,6 +110,7 @@ Release art: one verified benefit for newcomers and a real first action, checked
 
 # Changing code safely
 
+- When a diagnosis or design is uncertain, weigh two or three candidates; first test what best tells them apart.
 - Before changing a limit, rule or name, find every copy (schemas, validators, tests, docs) and change them together.
 - Prove a bug fix with a test that fails without it and passes with it, or say why you could not.
 - Keep refactors separate from behavior changes, one kind of change per commit, and run the tests after each step.

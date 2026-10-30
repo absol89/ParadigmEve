@@ -61,8 +61,10 @@ import {
   setSessionOrigin,
   upsertNativeImageEvent,
   upsertMessageEvent,
+  readMessageAnchors,
   writeAsset,
-  writeOverflowText
+  writeOverflowText,
+  type MessageAnchor
 } from './store.js';
 import {
   awaitRequestCorrelation,
@@ -2288,6 +2290,44 @@ async function recordSupersededMessages(
   return stored;
 }
 
+/**
+ * Recovered messages in a full page scan belong between their already-recorded neighbours.
+ * Give those messages an origin and time inside the known interval rather than appending them
+ * as the newest chat activity. A live message at the end of the scan still appends normally.
+ */
+async function placeBehindKnownHistory(
+  sessionId: string,
+  observations: readonly ChatObservation[]
+): Promise<Map<string, MessageAnchor>> {
+  const placements = new Map<string, MessageAnchor>();
+  const messages = observations.flatMap(item =>
+    (item.kind === 'user_message' || item.kind === 'assistant_message') && item.messageId
+      ? [{ kind: item.kind, messageId: item.messageId, time: item.time, live: item.authoredNow === true || item.activeNow === true }] : []);
+  if (messages.length < 2) return placements;
+  const known = await readMessageAnchors(sessionId, messages);
+  if (known.size === 0 || known.size === messages.length) return placements;
+  let previous: MessageAnchor | null = null;
+  let run: typeof messages = [];
+  for (const item of messages) {
+    const anchor = known.get(item.messageId);
+    if (!anchor) {
+      if (item.live) run = [];
+      else if (!run.some(member => member.messageId === item.messageId)) run.push(item);
+      continue;
+    }
+    if (run.length) {
+      const low = previous && previous.origin < anchor.origin ? previous : { origin: anchor.origin - 1, time: previous?.time ?? -Infinity };
+      run.forEach((member, index) => placements.set(member.messageId, {
+        origin: low.origin + (anchor.origin - low.origin) * (index + 1) / (run.length + 1),
+        time: Math.min(anchor.time, Math.max(low.time, member.time))
+      }));
+      run = [];
+    }
+    previous = anchor;
+  }
+  return placements;
+}
+
 async function recordChatObservationsNow(
   conversationId: string,
   observations: readonly ChatObservation[],
@@ -2346,6 +2386,7 @@ async function recordChatObservationsNow(
   // observations so a newer turn or an explicit verdict cannot be overwritten.
   const recoverableTurns = new Set(live?.openTurns);
   let recoveredFinal: { turnId: string; time: number; seq: number; origin: number; native: boolean } | undefined;
+  const placements = await placeBehindKnownHistory(sessionId, observations);
 
   for (const item of observations) {
     const base = {
@@ -2373,7 +2414,7 @@ async function recordChatObservationsNow(
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
           ...(item.voice === true ? { voice: true as const } : {}),
           messageId: item.messageId
-        }, { preferTime: item.authoredTime === true });
+        }, { preferTime: item.authoredTime === true, placement: placements.get(item.messageId) });
         if (!written.changed) continue;
         if (item.authoredNow === true) {
           activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time);
@@ -2430,7 +2471,7 @@ async function recordChatObservationsNow(
             ? { providerMessageId: item.providerMessageId ?? contentReference!.sourceMessageId }
             : {}),
           ...(goalEligible && state === 'final' ? { goalEligible: true } : {})
-        }, { preferTime: item.authoredTime === true });
+        }, { preferTime: item.authoredTime === true, placement: placements.get(item.messageId) });
         const canonicalTurn = written.event.turnId;
         // A stopped partial answer stays streaming in history. Re-observing its
         // DOM after restart cannot renew work, nor can an old message borrow a

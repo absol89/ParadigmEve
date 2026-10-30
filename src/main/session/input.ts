@@ -55,12 +55,12 @@ const inputArgsBase = z.object({
    * Provider for this one turn. Absent means ChatGPT in the browser. A chat may switch provider
    * between turns; the session archive stays the single history both providers read.
    */
-  provider: z.enum(['ollama', 'openrouter']).optional(),
+  provider: z.enum(['ollama', 'llamacpp', 'openrouter']).optional(),
   /** A new Ollama chat that starts locked to this computer (Local only ticked before the first send). */
   localOnly: z.literal(true).optional(),
   /** The switch scope the user confirmed in the composer (see provider-history.ts). */
   providerConsent: z.object({
-    to: z.enum(['chatgpt', 'ollama-local', 'ollama-cloud', 'openrouter']),
+    to: z.enum(['chatgpt', 'ollama-local', 'ollama-cloud', 'llamacpp-local', 'openrouter']),
     messages: z.number().int().nonnegative(),
     images: z.number().int().nonnegative(),
     files: z.number().int().nonnegative()
@@ -105,7 +105,7 @@ function validateOpeningContext(
     });
   }
   if (input.provider) {
-    const name = input.provider === 'openrouter' ? 'OpenRouter' : 'Ollama';
+    const name = input.provider === 'openrouter' ? 'OpenRouter' : input.provider === 'llamacpp' ? 'llama.cpp' : 'Ollama';
     const refuse = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
     if (!input.model?.trim()) refuse('model', `Choose an ${name} model before sending`);
     if (input.reasoningEffort !== null || input.nativeMode) refuse('reasoningEffort', `ChatGPT thinking levels do not apply to ${name}`);
@@ -114,8 +114,8 @@ function validateOpeningContext(
     if (input.stages?.length || input.mode === 'finish') refuse('mode', 'Staged plans and finish tasks run in ChatGPT');
     if (input.contextQuiltId) refuse('contextQuiltId', 'Thread context openings run in ChatGPT');
   }
-  if (input.localOnly && (input.provider !== 'ollama' || input.sessionId !== null)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['localOnly'], message: 'Local only can be chosen for a new Ollama chat; an existing chat changes it in its options' });
+  if (input.localOnly && (!['ollama', 'llamacpp'].includes(input.provider ?? '') || input.sessionId !== null)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['localOnly'], message: 'Local only can be chosen for a new local-model chat; an existing chat changes it in its options' });
   }
   if (input.nativeMode && (input.model !== null || input.reasoningEffort !== null)) {
     ctx.addIssue({
@@ -591,7 +591,7 @@ const inBandHeartbeat = (row: InputEntry): boolean =>
   row.transportIntent === 'tool' && (nativeHeartbeatReview(row) || row.purpose === 'heartbeat-finding');
 /** Rows answered in-process by a local provider. The browser and tool transports never claim them. */
 /** Rows ParadigmEve answers in-process (Ollama, OpenRouter): never offered to the browser. */
-export const isLocalProviderInput = (row: Pick<InputEntry, 'provider'>): boolean => row.provider === 'ollama' || row.provider === 'openrouter';
+export const isLocalProviderInput = (row: Pick<InputEntry, 'provider'>): boolean => row.provider === 'ollama' || row.provider === 'llamacpp' || row.provider === 'openrouter';
 const preparable = (row: InputEntry): boolean => !nativeHeartbeatReview(row) &&
   !(row.purpose === 'heartbeat-finding' && getConfig().multiAgent.heartbeatMode === 'native-subagent') &&
   !inBandHeartbeat(row) && !isLocalProviderInput(row) && (row.state === 'queued' ||
@@ -779,7 +779,11 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
         return { ...rest, state: 'queued', mode: 'after-turn', owner: null,
           error: 'Kept for after the running answer: ChatGPT could not take it into the answer.' };
       }
-      return { ...row, state: 'cancelled', error: row.requiresAuthorization && row.sendAuthorizedAt === undefined
+      const unsent = row.requiresAuthorization && row.sendAuthorizedAt === undefined;
+      logWarn(`input ${row.id}: browser claim expired ${unsent ? 'before Send was authorized' : 'awaiting receipt'}` +
+        ` purpose=${row.purpose ?? 'user'} claim_age_ms=${Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt)}` +
+        `${row.model ? ` model=${row.model}/${row.reasoningEffort ?? '-'}` : ''}`);
+      return { ...row, state: 'cancelled', error: unsent
         ? await unsentPreparationError(row)
         : 'Stopped waiting for delivery confirmation. The message may already have been sent; it will not be resent.' };
     }
@@ -1035,7 +1039,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
         throw new Error('The current Eve conversation is still live or ambiguous; refresh before replacing it');
       }
     }
-    const local = input.provider === 'ollama' || input.provider === 'openrouter';
+    const local = isLocalProviderInput(input);
     if (local && input.mode !== 'auto') input.mode = 'auto';
     let policy = input.sessionId && !local ? await sessionInputPolicy(input.sessionId) : null;
     const requestedMode = input.mode;
@@ -2538,6 +2542,8 @@ export function failBrowserInput(id: string, owner: string, error: string, detai
   return serial(async () => {
     const current = await load();
     const entry = current.find((row) => row.id === id && row.owner === owner && row.state === 'browser');
+    const late = !entry ? current.find((row) => row.id === id && row.owner === owner) : null;
+    if (late) logWarn(`input ${id}: browser reported a failure after the row became ${late.state} — ${error.slice(0, 160)}${detail && /^[a-z][a-z0-9 _-]{0,79}$/.test(detail) ? ` (${detail})` : ''}`);
     if (!entry) return false;
     const boundedDetail = detail && /^[a-z][a-z0-9 _-]{0,79}$/.test(detail) ? detail : null;
     const explanation = (error.slice(0, boundedDetail ? 115 : 200) + (boundedDetail ? ` (${boundedDetail})` : '')).slice(0, 200);

@@ -51,7 +51,7 @@ export async function cancelDesktopInput(id: string): Promise<boolean> {
   return cancelInput(id);
 }
 export async function sendDesktopInput(input: InputArgs): Promise<InputEntry> {
-  if (input.provider === 'ollama' || input.provider === 'openrouter') {
+  if (input.provider === 'ollama' || input.provider === 'llamacpp' || input.provider === 'openrouter') {
     // Persist first, then answer: the accepted row is the user's message whatever happens next.
     const entry = await enqueueInput(input);
     markProviderSwitch(`enqueueInput:${input.provider}`, `state=${entry.state}`);

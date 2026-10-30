@@ -26,14 +26,17 @@ The normal flow is:
 ```text
 user asks normally
   -> Eve scans compact installed Skill metadata
-  -> one Skill clearly matches
-  -> Eve loads that SKILL.md with `skills view`
+  -> Eve shortlists Skills that plausibly fit (usually up to three)
+  -> she chooses based on the request; no Skill is also valid
+  -> a second Skill is used only when it covers something distinct
+  -> Eve loads each chosen SKILL.md with `skills view`
   -> support files are loaded only if the Skill requires them
   -> Eve performs the user's request
 ```
 
-The user should not have to know a Skill's name or type `/skill-name`. If no Skill clearly matches,
-Eve continues normally rather than loading vaguely related procedures.
+The user should not have to know a Skill's name or type `/skill-name`. If a loaded Skill does not
+fit, Eve switches to another only if it fits; otherwise she proceeds without a Skill. The detailed
+selection rules live in the compact per-message catalog, so the first matching name does not win by default.
 The route is available only when that installation actually has a matching
 Skill package, the per-message catalog exposes it, and the selected model/client
 can invoke the `skills` tool. The catalog can be empty or omit entries when its

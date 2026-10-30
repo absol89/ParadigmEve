@@ -19,6 +19,7 @@ import { stageInputAttachment, type AttachmentSource } from './session/input-att
 import { recordDeliveredInput, recordedInputImage, recordedInputImageThumbnail } from './session/input-history.js';
 import { admitChatProvider, chatGptCatchUp, providerRoute, providerSwitchPreview } from './session/provider-history.js';
 import { listOllamaModels } from './ollama-client.js';
+import { listLlamaCppModels } from './llamacpp-client.js';
 import { listOpenRouterModels, openRouterKey } from './openrouter-client.js';
 import { isOllamaConversation } from '../shared/session.js';
 import { UI_BASE_ZOOM, titleBarOverlayForTheme } from './window-layout.js';
@@ -1613,6 +1614,7 @@ export function registerIpc(
     const models = await listOllamaModels();
     return models.map((model) => ({ ...model, route: model.cloud ? 'ollama-cloud' as const : providerRoute({ id: 'ollama', model: model.id }) }));
   });
+  handle('llamacpp:models', async () => listLlamaCppModels());
   // ---- OpenRouter as a chat provider: its public catalog, and whether the shared key is stored.
   handle('openrouter:models', async () => {
     const [models, key] = await Promise.all([listOpenRouterModels(), openRouterKey()]);
@@ -1620,7 +1622,7 @@ export function registerIpc(
   });
   handle('sessions:providerPreview', async (payload) => {
     const { id, provider, traceId } = sessionIdArg.extend({
-      provider: z.object({ id: z.enum(['ollama', 'openrouter']), model: z.string().trim().min(1).max(160) }).strict().nullable(),
+      provider: z.object({ id: z.enum(['ollama', 'llamacpp', 'openrouter']), model: z.string().trim().min(1).max(160) }).strict().nullable(),
       traceId: z.string().uuid().optional()
     }).parse(payload);
     return traceProviderSwitch(traceId ?? randomUUID(), 'preview', async () => {

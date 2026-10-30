@@ -32,6 +32,16 @@ The store never decides two messages are the same because their text looks alike
 
 ## Recording is more than a transcript
 
+### Explicit local chat engines
+
+The composer may select **Ollama** (native loopback/cloud), **llama.cpp** (a distinct
+loopback-only `/v1` server) or OpenRouter for an individual turn. The durable outbox,
+session archive, tool ownership and provider-switch consent remain common. llama.cpp
+never reuses Ollama's credentials, model catalogue or native `/api/chat` path. A
+local-only session may use either local Ollama or local llama.cpp; other destinations
+remain blocked. The server is opt-in and must be running before discovery; no fallback
+chooses a different provider. See [llama.cpp LFM3 setup](../local-llamacpp-lfm3.md).
+
 Session recording supplies evidence for:
 
 - exact tool attribution;

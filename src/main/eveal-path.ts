@@ -37,8 +37,12 @@ function namesEvealSuite(requested: string): boolean {
  * roots, keeps every write and command tool from ever seeing it, and the ordinary root
  * resolver then supplies traversal and link confinement unchanged.
  */
-export function evealSuiteRoots(requestedPaths: readonly string[]): Root[] {
-  return requestedPaths.some(namesEvealSuite) ? [{ name: EVEAL_SUITE_ROOT, path: evealSuiteDirectory() }] : [];
+export function evealSuiteRoots(requestedPaths: readonly string[], workspace: string | null = null): Root[] {
+  // Reading EVEAL.md makes the suite the chat's workspace, and its own links are relative
+  // (`tasks/pitfalls.md`). Those resolve against that workspace, so they must find the root too.
+  const relativeInSuite = workspace !== null && namesEvealSuite(workspace) &&
+    requestedPaths.some((requested) => !requested.startsWith('/') && !path.isAbsolute(requested));
+  return relativeInSuite || requestedPaths.some(namesEvealSuite) ? [{ name: EVEAL_SUITE_ROOT, path: evealSuiteDirectory() }] : [];
 }
 
 /**
@@ -89,7 +93,12 @@ export interface EvealOpeningOptions {
 export async function evealOpeningContext(options: EvealOpeningOptions): Promise<string> {
   const lines = [
     '# EVE-Al suite',
-    `The suite is read-only at /${EVEAL_SUITE_ROOT}; read its files there with the read tool, starting with /${EVEAL_SUITE_ROOT}/EVEAL.md. It holds the same files as the offline eveal-suite.zip download.`
+    `The suite is read-only at /${EVEAL_SUITE_ROOT}; read its files there with the read tool, starting with /${EVEAL_SUITE_ROOT}/EVEAL.md. It holds the same files as the offline eveal-suite.zip download.`,
+    // EVEAL.md links its files relatively; spelled out, a small model does not have to resolve them.
+    `Nothing can be written there: write your output in the /${EVEAL_RUN_ROOT} folder ParadigmEve gives this session, or with a full path inside an approved folder. ` +
+      `Read every suite file by its full path, /${EVEAL_SUITE_ROOT}/ followed by the path EVEAL.md gives, for example:\n` +
+      ['tasks/pitfalls.md', 'tasks/sources.md', 'tasks/honesty-practice.md', 'corpus/larkspur/', 'fixtures/probe-kit/TASK.md', 'runs/QUICK-RUN.template.json']
+        .map((relative) => `- /${EVEAL_SUITE_ROOT}/${relative}`).join('\n')
   ];
   if (options.nativePath) {
     lines.push(`On this computer the same folder is ${evealSuiteDirectory()}. Use it as the source when a command copies suite files, such as the probe kit, into your output folder.`);

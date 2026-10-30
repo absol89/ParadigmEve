@@ -1137,14 +1137,14 @@ it('starts the organize tutorial from its card without models and preserves its 
   doc.querySelector<HTMLButtonElement>('.quilt-chat-button')!.click();
   await settle();
   const input = doc.getElementById('chatInput') as HTMLTextAreaElement;
-  expect(input.value).toBe('Help me get started with %organize.');
+  expect(input.value).toBe('Help me get started with %organize');
   expect(doc.getElementById('chatTitle')!.textContent).toBe('New chat · %organize');
   // Unknown models cannot authorize an automatic paid-model choice.
   expect(doc.getElementById('composerModelLabel')!.textContent).toBe('ChatGPT default');
   doc.getElementById('composer')!.dispatchEvent(new mounted.window.Event('submit', { bubbles: true, cancelable: true }));
   await settle();
   expect(sent).toHaveLength(1);
-  expect(sent[0]).toMatchObject({ sessionId: null, contextQuiltId: id, text: 'Help me get started with %organize.', model: null, reasoningEffort: null });
+  expect(sent[0]).toMatchObject({ sessionId: null, contextQuiltId: id, text: 'Help me get started with %organize', model: null, reasoningEffort: null });
   expect(requestChatModels).not.toHaveBeenCalled();
   input.value = 'Organize my Downloads by project.';
   navigateWorkspace({ screen: 'chat' });

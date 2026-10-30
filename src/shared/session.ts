@@ -535,7 +535,7 @@ export function originTitle(origin: SessionOrigin, source: string | null): strin
  * exact id (for example `gemma4:cloud`), passed through without family-specific handling.
  */
 /** Providers ParadigmEve answers in-process, beside ChatGPT in the browser. */
-export type ChatProviderId = 'ollama' | 'openrouter';
+export type ChatProviderId = 'ollama' | 'llamacpp' | 'openrouter';
 
 export interface ChatProvider {
   id: ChatProviderId;
@@ -543,7 +543,7 @@ export interface ChatProvider {
 }
 
 /** Privacy destination that may receive this chat's archived history after explicit user approval. */
-export type ChatProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud' | 'openrouter';
+export type ChatProviderRoute = 'chatgpt' | 'ollama-local' | 'ollama-cloud' | 'llamacpp-local' | 'openrouter';
 
 /** Local frontend id for an Ollama chat. Never a ChatGPT conversation, never opened in a browser. */
 export const OLLAMA_CONVERSATION_PREFIX = 'ollama-';
@@ -564,7 +564,7 @@ export interface SessionSummary {
   providerAuthorizations?: ChatProviderRoute[];
   /**
    * The user locked this chat to on-device inference: no ChatGPT turn and no Ollama Cloud turn
-   * may read its history. Only a loopback Ollama endpoint with a non-cloud model may answer.
+   * may read its history. Only a loopback local Ollama or llama.cpp model may answer.
    */
   localOnly?: boolean;
   /** Durable naming authority; absent only on legacy recordings. */

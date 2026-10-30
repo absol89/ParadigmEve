@@ -11715,6 +11715,8 @@
       const reply = await ask({ type: 'desktop_input', id: message.id, conversationId: target, requiresAuthorization: true });
       const input = reply?.data?.input;
       if (!input || !onTarget()) return false;
+      const preparedBy = Date.now() + 50_000;
+      const inTime = () => onTarget() && Date.now() < preparedBy;
       const fail = async (error, detail = 'page-prepare-failure') => {
         await ask({ type: 'desktop_input', id: input.id, owner: input.owner, fail: true, error, detail });
         return false;
@@ -11768,11 +11770,16 @@
       const providerLimitation = () => CLF_DOM.errors().find(error => error.blocking === true)?.text;
       const limitation = providerLimitation();
       if (limitation) return fail(limitation);
-      if (!(await CLF_DOM.selectModelSettings(input.model, input.reasoningEffort, onTarget))) {
+      const outOfTime = () => onTarget() && Date.now() >= preparedBy;
+      if (!(await CLF_DOM.selectModelSettings(input.model, input.reasoningEffort, inTime))) {
+        if (outOfTime()) return fail("ChatGPT's model picker did not settle in time. The message was not sent.", 'model-picker-deadline');
         const reason = CLF_DOM.modelSelectionFailureReason?.();
         return fail(providerLimitation() || `Requested model or reasoning could not be confirmed${reason ? ` (${reason})` : ''}`);
       }
-      if (!(await CLF_DOM.selectNativeMode(input.nativeMode, onTarget))) return fail(providerLimitation() || 'Requested ChatGPT Think mode could not be confirmed', 'native-mode-unconfirmed');
+      if (!(await CLF_DOM.selectNativeMode(input.nativeMode, inTime))) {
+        if (outOfTime()) return fail("ChatGPT's Think mode did not settle in time. The message was not sent.", 'native-mode-deadline');
+        return fail(providerLimitation() || 'Requested ChatGPT Think mode could not be confirmed', 'native-mode-unconfirmed');
+      }
       if (!onTarget() || CLF_DOM.generating() || (!freshDraftReplaceable() && (CLF_DOM.composer()?.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return fail('The ChatGPT composer changed before sending');
       if (!CLF_DOM.insertPrompt(input.text, freshDraftReplaceable())) return fail('ChatGPT did not accept the text');
       const sendingTarget = submittedSendLifetime(target, forEpoch);

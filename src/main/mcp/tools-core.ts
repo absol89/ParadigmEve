@@ -351,7 +351,7 @@ async function rootsForSelfMaintenance(
   requestedPaths: readonly string[]
 ): Promise<Root[]> {
   // The shipped EVE-Al suite is public contestant material, so reading it needs no Eve authority.
-  if (SELF_INSPECTION_TOOLS.has(tool)) ordinaryRoots = [...ordinaryRoots, ...evealSuiteRoots(requestedPaths)];
+  if (SELF_INSPECTION_TOOLS.has(tool)) ordinaryRoots = [...ordinaryRoots, ...evealSuiteRoots(requestedPaths, currentWorkspace()?.virtual ?? null)];
   const managed = selfMaintenanceRoots();
   const requestedManaged = managed.filter((root) =>
     requestedPaths.some((requested) => requestedManagedSelfRoot(requested, [root]))

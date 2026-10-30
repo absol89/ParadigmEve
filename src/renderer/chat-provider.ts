@@ -15,10 +15,14 @@ import type { ChatProvider, ChatProviderRoute, SessionSummary } from '../shared/
 
 type Route = ChatProviderRoute;
 interface OllamaChoice { id: string; route: Route; cloud?: boolean; installed?: boolean; vision?: boolean }
+interface LlamaCppChoice { id: string }
 interface RouterChoice { id: string; name: string; vision: boolean; tools: boolean; contextLength: number | null; free: boolean }
 export interface ProviderConsent { to: Route; messages: number; images: number; files: number }
 
 let models: OllamaChoice[] = [];
+let llamaCppModels: LlamaCppChoice[] = [];
+let llamaCppState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+let llamaCppError = '';
 let modelsState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 let modelsError = '';
 let routerModels: RouterChoice[] = [];
@@ -31,6 +35,7 @@ const choices = new Map<string | null, ChatProvider | null>();
 /** Chats whose next send follows an explicit provider/model picker change. */
 const explicitSwitchIntent = new Set<string | null>();
 let lastOllamaModel: string | null = null;
+let lastLlamaCppModel: string | null = null;
 let lastRouterModel: string | null = null;
 /** Local only for the chat being composed: the selected chat's lock, or the choice for a new chat. */
 let newChatLocalOnly = false;
@@ -52,11 +57,12 @@ function current(): ChatProvider | null {
 function routeOfProvider(provider: ChatProvider | null | undefined): Route | null {
   if (!provider) return 'chatgpt';
   if (provider.id === 'openrouter') return 'openrouter';
+  if (provider.id === 'llamacpp') return 'llamacpp-local';
   return models.find((choice) => choice.id === provider.model)?.route ?? null;
 }
 
 const routeLabel = (route: Route | null): string =>
-  route === 'ollama-local' ? t("On this computer") : route === 'ollama-cloud' ? t("Ollama Cloud") : route === 'openrouter' ? t("OpenRouter") : '';
+  route === 'ollama-local' ? t("On this computer") : route === 'llamacpp-local' ? 'llama.cpp · ' + t("On this computer") : route === 'ollama-cloud' ? t("Ollama Cloud") : route === 'openrouter' ? t("OpenRouter") : '';
 
 /** The provider the composer will send the next turn to (null = ChatGPT). */
 export function composerProvider(): ChatProvider | null {
@@ -83,6 +89,7 @@ function choose(provider: ChatProvider | null): void {
   // consent is actually necessary; the user's picker action decides whether to ask it.
   explicitSwitchIntent.add(scope);
   if (provider?.id === 'ollama') lastOllamaModel = provider.model;
+  if (provider?.id === 'llamacpp') lastLlamaCppModel = provider.model;
   if (provider?.id === 'openrouter') lastRouterModel = provider.model;
   paint();
 }
@@ -131,6 +138,45 @@ async function loadRouterModels(): Promise<void> {
     routerError = reply.error;
   }
   paint();
+}
+
+async function loadLlamaCppModels(): Promise<void> {
+  if (llamaCppState === 'loading') return;
+  llamaCppState = 'loading';
+  paint();
+  const reply = await window.api.listLlamaCppModels().catch((error: Error) => ({ ok: false as const, error: error.message }));
+  if (reply.ok) {
+    llamaCppModels = reply.data;
+    llamaCppState = 'ready';
+    llamaCppError = '';
+  } else {
+    llamaCppModels = [];
+    llamaCppState = 'error';
+    llamaCppError = reply.error;
+  }
+  paint();
+}
+
+function paintLlamaCpp(provider: ChatProvider | null): HTMLElement[] {
+  const status = $('ollamaModelStatus');
+  ui(status, 'textContent', () => llamaCppState === 'loading' ? t("Loading models…")
+    : llamaCppState === 'error' ? llamaCppError
+    : llamaCppState === 'ready' ? t("{0} models", [String(llamaCppModels.length)])
+    : t("Not loaded yet"));
+  const query = modelSearch.trim().toLowerCase();
+  const visible = llamaCppModels.filter((model) => !query || model.id.toLowerCase().includes(query));
+  $<HTMLInputElement>('ollamaModelSearch').hidden = llamaCppModels.length <= 10;
+  const nodes: HTMLElement[] = visible.map((choice) => {
+    const button = el('button', 'btn model-choice') as HTMLButtonElement;
+    button.type = 'button';
+    button.dataset.keepMenu = 'true';
+    button.setAttribute('aria-pressed', provider?.id === 'llamacpp' && provider.model === choice.id ? 'true' : 'false');
+    button.append(el('span', '', choice.id), el('span', 'route-badge is-local', () => t("On this computer")));
+    button.onclick = () => choose({ id: 'llamacpp', model: choice.id });
+    return button;
+  });
+  if (!nodes.length && llamaCppState === 'ready') nodes.push(el('p', 'muted', () => 'No llama.cpp model is loaded. Start llama-server with a GGUF model.'));
+  return nodes;
 }
 
 function paintOllama(provider: ChatProvider | null): HTMLElement[] {
@@ -206,10 +252,11 @@ function paint(): void {
   $('ollamaModelPanel').hidden = !provider;
   $('chatgptModelPanel').hidden = !!provider;
   const router = provider?.id === 'openrouter';
+  const llamaCpp = provider?.id === 'llamacpp';
   const title = $('ollamaModelPanel').querySelector('.power-caption strong');
-  if (title) ui(title as HTMLElement, 'textContent', () => router ? t("OpenRouter model") : t("Ollama model"));
+  if (title) ui(title as HTMLElement, 'textContent', () => router ? t("OpenRouter model") : llamaCpp ? 'llama.cpp model' : t("Ollama model"));
   ($('ollamaLocalOnly').closest('label') as HTMLElement | null)?.toggleAttribute('hidden', router);
-  $('ollamaModelChoices').replaceChildren(...(router ? paintRouter(provider) : paintOllama(provider)));
+  $('ollamaModelChoices').replaceChildren(...(router ? paintRouter(provider) : llamaCpp ? paintLlamaCpp(provider) : paintOllama(provider)));
   repaintComposerLabel();
 }
 
@@ -283,6 +330,10 @@ export function initChatProvider(): void {
         const model = current()?.id === 'ollama' ? current()!.model : lastOllamaModel ?? '';
         choose({ id: 'ollama', model });
         if (modelsState !== 'ready') void loadModels();
+      } else if (button.dataset.provider === 'llamacpp') {
+        const model = current()?.id === 'llamacpp' ? current()!.model : lastLlamaCppModel ?? '';
+        choose({ id: 'llamacpp', model });
+        if (llamaCppState !== 'ready') void loadLlamaCppModels();
       } else if (button.dataset.provider === 'openrouter') {
         // OpenRouter is never on this computer; a chat locked to it cannot use it.
         if (localOnlyNow()) {
@@ -297,6 +348,7 @@ export function initChatProvider(): void {
   }
   $('refreshOllamaModels').addEventListener('click', () => {
     if (current()?.id === 'openrouter') void loadRouterModels();
+    else if (current()?.id === 'llamacpp') void loadLlamaCppModels();
     else void loadModels();
   });
   $<HTMLInputElement>('ollamaModelSearch').addEventListener('input', () => {
@@ -315,7 +367,7 @@ export function initChatProvider(): void {
     }
     // A cloud model cannot stay selected in a local-only chat.
     const current = choices.get(scope);
-    if (box.checked && current && routeOfProvider(current) !== 'ollama-local') choices.set(scope, { id: 'ollama', model: '' });
+    if (box.checked && current && !['ollama-local', 'llamacpp-local'].includes(routeOfProvider(current) ?? '')) choices.set(scope, { id: 'ollama', model: '' });
     paint();
   });
   $<HTMLInputElement>('chatLocalOnly').addEventListener('change', async () => {

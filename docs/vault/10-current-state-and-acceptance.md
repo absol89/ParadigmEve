@@ -89,8 +89,8 @@ installer and a live acceptance run are different evidence levels.
 
 - Skills are reusable procedures selected by semantic relevance from a compact installed catalog;
   they are not slash commands and are not a replacement for Threads, Pins or Quilts.
-- Ordinary user language is sufficient. When one Skill clearly matches, Eve loads that Skill's
-  `SKILL.md` on demand and loads support files only when that procedure requires them.
+- Ordinary user language is sufficient. Eve shortlists Skills that plausibly fit, loads the
+  `SKILL.md` of each selected Skill on demand, and loads support files only when required.
 - The current authored user request remains higher authority than a Skill. Explicit Thread prompts
   also remain durable authored context rather than being silently rewritten by a Skill.
 - Imported/external Skills are readable but not silently rewritten. Eve-owned Skills may be revised
@@ -333,7 +333,7 @@ Prove the installed package contains the current main/renderer bundle and packag
   verified instead of guessing;
 - `%how` can explain installed Skills and local transcription/diarization without requiring slash
   commands or stale chat memory;
-- the Skills catalog remains metadata-only until one clearly matching Skill is selected, and a large
+- the Skills catalog remains metadata-only until a Skill is selected, and a large
   installed catalog stays bounded without truncating the authored request;
 - a packaged transcription runtime reports its real CPU/GPU capability, and a GPU proof records the
   actual backend/device/fallback state rather than inferring it from CLI flags;

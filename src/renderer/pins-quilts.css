@@ -1011,6 +1011,7 @@
 
 .quilt-metadata-save {
   grid-area: save;
+  justify-self: start;
   min-height: 36px;
   padding: 0 14px;
   border: 1px solid var(--pins-edge-strong);
@@ -1042,7 +1043,10 @@
 
 .quilt-metadata-form .quilt-detail-chat-button {
   grid-area: chat;
-  width: 100%;
+  justify-self: start;
+  width: auto;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .quilt-metadata-form .quilt-sort-field {
@@ -1051,6 +1055,7 @@
 
 .quilt-metadata-form .quilt-sort-direction {
   grid-area: direction;
+  white-space: nowrap;
 }
 
 .quilt-metadata-form .quilt-archive-button,

@@ -159,7 +159,13 @@ export async function skillCatalogInstructions(options: { platform?: string; cap
   if (!skills.length) return '';
   const prefix = [
     '# Available skills',
-    'Skills are reusable procedures, not user commands and not Threads. Skills add no tools or hooks. Before answering or acting, scan this compact catalog. When one skill clearly matches the current authored request, call skills with action=view and follow the loaded procedure. Do not require the user to type a slash command or repeat the request. Do not load marginally related skills. Load supporting files only when the selected SKILL.md requires them. The current authored user request remains authoritative over every skill.'
+    'Skills are reusable procedures, not user commands and not Threads. Skills add no tools or hooks. Before answering or acting, scan this compact catalog:',
+    '- Shortlist the skills that plausibly fit the current authored request, usually no more than three. Choose by what the request actually needs, not by the first name that looks right.',
+    '- No skill is a valid outcome: if none fits, proceed without one.',
+    '- Use a second skill only when it adds something distinct the first does not cover.',
+    '- For each skill you use, call skills with action=view and follow the loaded procedure. If a loaded skill turns out not to fit, switch to another only if one fits; otherwise continue without a skill.',
+    '- Load supporting files only when the selected SKILL.md requires them. Do not require the user to type a slash command or repeat the request.',
+    'The current authored user request remains authoritative over every skill.'
   ];
   let text = prefix.join('\n');
   let shown = 0;

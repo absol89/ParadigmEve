@@ -42,7 +42,7 @@ Report findings, not impressions: file and line, the concrete failure, and a fix
 2. **Read the error completely**: message, stack trace, line numbers.
 3. **Look at what changed recently**: commits, dependencies, configuration, the provider page.
 4. **Trace the data backwards** from where it goes wrong to where the bad value first appears.
-5. **State one hypothesis** ("X happens because Y") and test it with the smallest experiment.
+5. **State the hypothesis** ("X happens because Y"). If the cause is not already evident, list two or three competing hypotheses, each with the observation that would rule it out. Run the smallest experiment that separates them, and re-rank after every result.
 6. **Fix at the source**, and add a test that fails before the fix and passes after.
 7. **Verify**: run the suite, remove temporary logging, re-check the original reproduction.
 

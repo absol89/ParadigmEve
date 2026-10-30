@@ -20,6 +20,57 @@ import type { ChatProviderRoute } from '../shared/session.js';
 const CHAT_LIFECYCLE_ONLY = new Set(['chat_review_plan', 'chat_review_complete', 'chat_review_housekeeping', 'session_finish']);
 const DELEGATE_TIMEOUT_MS = 10 * 60_000;
 
+function schemaObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Ollama's llama-server rejects a function schema whose root has oneOf/anyOf but
+ * no `properties` object (HTTP 500 before the model can call any tool). Project
+ * object unions into a broad object declaration for the local model, retaining
+ * discriminator choices. Core's original Zod schema remains the execution-side
+ * validator, so a cross-variant or incomplete call still cannot be executed.
+ * OpenRouter keeps the exact JSON Schema with its full unions.
+ */
+function llamaCompatibleSchema(value: Record<string, unknown>): Record<string, unknown> {
+  const alternatives = Array.isArray(value.oneOf) ? value.oneOf : Array.isArray(value.anyOf) ? value.anyOf : null;
+  if (alternatives?.length && alternatives.every(schemaObject) && alternatives.every(variant => schemaObject(variant.properties))) {
+    const variants = alternatives.map(variant => llamaCompatibleSchema(variant));
+    const propertyNames = new Set(variants.flatMap(variant => Object.keys(variant.properties as Record<string, unknown>)));
+    const properties: Record<string, unknown> = {};
+    for (const name of propertyNames) {
+      const choices = variants.map(variant => (variant.properties as Record<string, unknown>)[name]).filter(schemaObject)
+        .map(choice => llamaCompatibleSchema(choice));
+      if (choices.length === 0) continue;
+      if (choices.every(choice => JSON.stringify(choice) === JSON.stringify(choices[0]))) {
+        properties[name] = choices[0];
+        continue;
+      }
+      const literals = choices.flatMap(choice => typeof choice.const === 'string' ? [choice.const]
+        : Array.isArray(choice.enum) && choice.enum.every(item => typeof item === 'string') ? choice.enum : []);
+      if (literals.length && literals.length === choices.length) {
+        properties[name] = { type: 'string', enum: [...new Set(literals)] };
+      } else {
+        // This is a hint to the model, not a widening of executable tool arguments.
+        // The original registrar still applies the precise discriminated union.
+        const types = [...new Set(choices.map(choice => choice.type))];
+        properties[name] = types.length === 1 && typeof types[0] === 'string' ? { type: types[0] } : {};
+      }
+    }
+    const required = (variants[0]?.required as string[] | undefined ?? []).filter(name =>
+      variants.every(variant => Array.isArray(variant.required) && variant.required.includes(name)));
+    return { type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false };
+  }
+  if (schemaObject(value.properties)) {
+    return {
+      ...value,
+      properties: Object.fromEntries(Object.entries(value.properties).map(([name, child]) =>
+        [name, schemaObject(child) ? llamaCompatibleSchema(child) : child]))
+    };
+  }
+  return value;
+}
+
 function localResult(result: ToolResult): LocalAgentToolResult {
   const text: string[] = [];
   let unsupported = false;
@@ -129,7 +180,9 @@ export async function localChatCoreTools(input: {
     definitions.push({
       name,
       description: config.description,
-      inputSchema: { type: 'object', ...toolSchemaJson(config.inputSchema) }
+      inputSchema: input.route === 'ollama-local' || input.route === 'llamacpp-local'
+        ? llamaCompatibleSchema({ type: 'object', ...toolSchemaJson(config.inputSchema) })
+        : { type: 'object', ...toolSchemaJson(config.inputSchema) }
     });
   });
   await registerSurface(registrar);
