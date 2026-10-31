@@ -39,7 +39,9 @@ import { skillCatalogInstructions } from '../skills.js';
 import { injectPinsContext } from '../pins-context.js';
 import { expandLocalOpeningContext } from './prompt.js';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../../shared/user-prompt.js';
-import { ensureEvealRunDirectory } from '../eveal-path.js';
+import path from 'node:path';
+import { ensureEvealRunDirectory, evealSuiteDirectory } from '../eveal-path.js';
+import { localModelFetch } from '../local-model-fetch.js';
 import type { Root } from '../../shared/types.js';
 
 const OWNER = 'ollama-local';
@@ -112,6 +114,8 @@ async function openingContext(sessionId: string, entry: InputEntry, route: Retur
         `ParadigmEve already created this session's unique output folder: ${run.virtual}`,
         `Native path: ${run.native}`,
         'Use that exact folder for every run artifact. Do not ask the user to create, choose or confirm another output path.',
+        `Run every command with workdir ${run.virtual}; in a command, ${run.virtual} also means that folder. Never use the suite or another ParadigmEve folder as workdir: both are protected and the command is refused.`,
+        `To copy a suite folder into the run with a command, read it by its native path from there, for example, for the probe kit: New-Item -ItemType Directory probe; Copy-Item -Recurse '${path.join(evealSuiteDirectory(), 'fixtures', 'probe-kit')}' '${path.join('probe', 'work')}'`,
         'When EVEAL.md links to a relative suite path such as `tasks/pitfalls.md`, read it relative to `/paradigmeve-eveal`.'
       ].join('\n');
     }
@@ -305,9 +309,9 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
         initialMessages: messages as LocalAgentMessage[],
         tools,
         // The daemon on this computer gets its native API, the only one that takes a context window.
-        runtime: provider.id === 'llamacpp' ? createLlamaCppAgentModelRuntime()
+        runtime: provider.id === 'llamacpp' ? createLlamaCppAgentModelRuntime(localModelFetch)
           : routerKey ? createOpenRouterAgentModelRuntime(routerKey)
-          : createOllamaAgentModelRuntime(globalThis.fetch, {
+          : createOllamaAgentModelRuntime(localModelFetch, {
             native: providerRoute(provider, endpoint) === 'ollama-local',
             think: provider.think
           }),

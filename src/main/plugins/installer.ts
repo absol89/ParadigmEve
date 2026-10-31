@@ -277,7 +277,8 @@ export async function installSource(source: PluginSource, dir: string): Promise<
     throw new Error('Specify a package name and an explicit version (no URLs or version ranges)');
   if (source.kind === 'npm') {
     // Use npm's JS entry point on Windows: .cmd files need a shell and untrusted shell interpolation is not acceptable.
-    const node = await findExecutable('node');
+    const node = await findExecutable('node').catch(needNodeWithNpm);
+    if (process.platform !== 'win32') await findExecutable('npm').catch(needNodeWithNpm);
     const args = [
       'install',
       '--ignore-scripts',
@@ -291,7 +292,7 @@ export async function installSource(source: PluginSource, dir: string): Promise<
       try {
         await fs.access(npm);
       } catch {
-        throw new Error('Install the standard Node.js distribution including npm, then restart ParadigmEve');
+        await needNodeWithNpm();
       }
       await runInstaller(node, [npm, ...args], dir);
     } else await runInstaller('npm', args, dir);
@@ -334,6 +335,20 @@ export async function installSource(source: PluginSource, dir: string): Promise<
     };
   }
   throw new Error('Unsupported installation source');
+}
+
+/**
+ * No Node with npm: offer the official Node.js 24 LTS installer (node-install.ts), then stop this
+ * install either way. Eve's bundled Node serves commands but has no npm, so it cannot help here.
+ */
+async function needNodeWithNpm(): Promise<never> {
+  const { NODE_LTS_VERSION, offerNodeLtsInstallInApp } = await import('../node-install.js');
+  const outcome = await offerNodeLtsInstallInApp().catch((error: Error) => {
+    throw new Error(`Node.js ${NODE_LTS_VERSION} could not be installed: ${error.message}`);
+  });
+  throw new Error(outcome === 'opened'
+    ? `Finish the Node.js ${NODE_LTS_VERSION} installer, then restart ParadigmEve and install this plugin again`
+    : `This plugin needs Node.js ${NODE_LTS_VERSION} (LTS) with npm. Install it from https://nodejs.org/, then restart ParadigmEve`);
 }
 
 async function findExecutable(name: string): Promise<string> {

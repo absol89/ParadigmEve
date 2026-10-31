@@ -483,12 +483,36 @@ export async function validateNewRoot(folderPath: string, existing: readonly Roo
  * `https://host/example` are left alone because neither starts at a boundary a virtual path
  * can start at.
  */
+// A candidate must start the string or follow whitespace or an opening quote/bracket:
+// anything else in front of it means it is part of a longer token, not a path.
+const VIRTUAL_PATH_CANDIDATE = /(^|[\s'"`(,=[{])(\/[A-Za-z0-9._-]+(?:\/[^\s'"`;|)\]}]*)?)/g;
+
+/**
+ * The one exception to "never rewrite a command": an `%eveal` chat's own `/eveal-run` folder.
+ *
+ * Small local models write `/eveal-run/probe` in commands however often they are told the native
+ * path, and the folder's native spelling is a long %APPDATA% path. The root name is reserved, so it
+ * cannot be a user's folder, and it only exists in the one chat that activated `%eveal`. The same
+ * boundary rule as `strayVirtualPath` applies, so a regex or URL is never touched. A native path
+ * with whitespace or quotes is left alone (it would need quoting); the refusal then names it.
+ */
+export function translateEvealRunPaths(text: string, roots: readonly Root[]): string {
+  const run = roots.find((root) => root.name === 'eveal-run');
+  if (typeof text !== 'string' || !run || /[\s'"`]/.test(run.path)) return text;
+  return text.replace(VIRTUAL_PATH_CANDIDATE, (whole, before: string, found: string) => {
+    const segments = found.slice(1).split('/');
+    if (segments[0]!.toLowerCase() !== 'eveal-run') return whole;
+    const rest = segments.slice(1).filter((segment) => segment !== '');
+    // Never climb out: such a path stays virtual, and the caller refuses it.
+    if (rest.some((segment) => segment === '..' || segment === '.' || segment.includes('\\'))) return whole;
+    return before + (rest.length ? path.join(run.path, ...rest) : run.path);
+  });
+}
+
 export function strayVirtualPath(text: string, roots: readonly Root[]): string | null {
   if (typeof text !== 'string' || roots.length === 0) return null;
   const names = new Set(roots.map((root) => root.name.toLowerCase()));
-  // A candidate must start the string or follow whitespace or an opening quote/bracket:
-  // anything else in front of it means it is part of a longer token, not a path.
-  const candidate = /(^|[\s'"`(,=[{])(\/[A-Za-z0-9._-]+(?:\/[^\s'"`;|)\]}]*)?)/g;
+  const candidate = new RegExp(VIRTUAL_PATH_CANDIDATE);
   for (let match = candidate.exec(text); match; match = candidate.exec(text)) {
     const found = match[2]!;
     const first = found.slice(1).split('/')[0]!.toLowerCase();

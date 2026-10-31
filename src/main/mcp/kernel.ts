@@ -1182,6 +1182,20 @@ export interface ResolvedCwd {
 }
 
 /**
+ * Where a write or command with no path of its own starts: the chat's workspace, else its first root.
+ *
+ * Reading the EVE-Al suite makes that read-only suite the workspace, which no write or command can
+ * use, so an `%eveal` chat starts in its own run folder instead. Before this, a patch that named
+ * /eveal-run/pitfalls.json in full was refused as a write into the suite (Nanbeige, 2026-10-31).
+ */
+export function defaultWorkVirtual(roots: readonly Root[], workspaceVirtual: string | null | undefined): string | null {
+  if (!workspaceVirtual) return roots[0] ? `/${roots[0].name}` : null;
+  const first = workspaceVirtual.replace(/^[/\\]+/, '').split(/[/\\]/, 1)[0]!.toLowerCase();
+  const suiteOnly = first === 'paradigmeve-eveal' && !roots.some((root) => root.name.toLowerCase() === first);
+  return suiteOnly && roots.some((root) => root.name === 'eveal-run') ? '/eveal-run' : workspaceVirtual;
+}
+
+/**
  * The working directory a command tool may use, restricted to an approved root.
  *
  * The caller is told which folder this turned out to be, and whether it was a default,
@@ -1201,7 +1215,7 @@ export async function resolveCwd(ctx: ToolContext, virtualPath: string | undefin
       'WORKSPACE_REQUIRED: this multi-agent chat has no proven workspace. Supply an explicit approved workdir before running a command.'
     );
   }
-  const target = provided ? virtualPath : (workspace?.virtual ?? (ctx.roots[0] ? `/${ctx.roots[0].name}` : ''));
+  const target = provided ? virtualPath : (defaultWorkVirtual(ctx.roots, workspace?.virtual) ?? '');
   if (!target) throw new SandboxError('No folder is approved, so there is nowhere to run');
   const resolved = await resolveIn(ctx.roots, target);
   const stat = await fs.stat(resolved.real);

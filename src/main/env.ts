@@ -131,6 +131,15 @@ export function prependPath(env: MutableEnvironment, dir: string): void {
   setEnvValue(env, 'PATH', [dir, ...kept].join(PATH_SEPARATOR));
 }
 
+/** Puts a directory at the end of the search path, unless it is already there anywhere. */
+export function appendPath(env: MutableEnvironment, dir: string): void {
+  const held = pathEntries(env);
+  const same = CASE_INSENSITIVE_ENVIRONMENT
+    ? (entry: string): boolean => entry.toLowerCase() === dir.toLowerCase()
+    : (entry: string): boolean => entry === dir;
+  if (!held.some(same)) setEnvValue(env, 'PATH', [...held, dir].join(PATH_SEPARATOR));
+}
+
 /**
  * Applies caller-supplied variables, matching names the way the OS does.
  *

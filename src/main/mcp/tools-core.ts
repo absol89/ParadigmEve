@@ -38,7 +38,7 @@ import {
   viewImage
 } from '../codex/view-image.js';
 import { logInfo, logWarn } from '../logger.js';
-import { SandboxError, isNativeWindowsPath, resolvePath, strayVirtualPath } from '../sandbox.js';
+import { SandboxError, isNativeWindowsPath, resolvePath, strayVirtualPath, translateEvealRunPaths } from '../sandbox.js';
 import { currentWorkspace } from '../workspace.js';
 import { DEFAULT_CORE_CONNECTOR_NAME, type Capabilities, type Root } from '../../shared/types.js';
 import { moveEveToConversation } from '../eve-handover.js';
@@ -174,6 +174,7 @@ import {
   pathArg,
   lineNumberArg,
   resolveCwd,
+  defaultWorkVirtual,
   resolveIn,
   type SurfaceRegistrar,
   type ToolResult
@@ -193,7 +194,7 @@ import {
   resolveVaultManualReadPath,
   VAULT_MANUAL_ROOT
 } from '../vault-path.js';
-import { evealSuiteRoots } from '../eveal-path.js';
+import { EVEAL_RUN_ROOT, evealSuiteRoots } from '../eveal-path.js';
 import { selfMaintenanceRoots, selfMaintenanceSettings, updateSelfMaintenanceSettings, type SelfMaintenanceUpdate } from '../self-maintenance.js';
 import { registerFileActionTool } from './file-action.js';
 import { registerFileEditTool } from './file-edit.js';
@@ -353,8 +354,14 @@ async function rootsForSelfMaintenance(
   // The shipped EVE-Al suite is public contestant material, so reading it needs no Eve authority.
   if (SELF_INSPECTION_TOOLS.has(tool)) ordinaryRoots = [...ordinaryRoots, ...evealSuiteRoots(requestedPaths, currentWorkspace()?.virtual ?? null)];
   const managed = selfMaintenanceRoots();
+  // The `%eveal` run folder is carved out of AppData on purpose (eveal-path.ts): its native path is
+  // that run folder, not Eve's AppData. Only that reserved root counts, and only when it lies inside
+  // a managed root, so no other approved folder ever opens managed state this way.
+  const carvedOut = ordinaryRoots.filter((root) =>
+    root.name === EVEAL_RUN_ROOT && managed.some((owner) => requestedManagedSelfRoot(root.path, [owner]))
+  );
   const requestedManaged = managed.filter((root) =>
-    requestedPaths.some((requested) => requestedManagedSelfRoot(requested, [root]))
+    requestedPaths.some((requested) => !requestedManagedSelfRoot(requested, carvedOut) && requestedManagedSelfRoot(requested, [root]))
   );
   if (requestedManaged.length === 0) {
     return [...ordinaryRoots];
@@ -844,7 +851,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             ctx.roots,
             workspace ? [...patchPaths, workspace.virtual] : patchPaths
           );
-          const baseVirtual = workspace?.virtual ?? (roots[0] ? `/${roots[0].name}` : null);
+          const baseVirtual = defaultWorkVirtual(roots, workspace?.virtual);
           if (baseVirtual === null) {
             return fail('No folder is approved, so there is nowhere to apply the patch.');
           }
@@ -907,7 +914,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             root: dir.virtual.replace(/^[/\\]+/, '').split(/[/\\]/, 1)[0] || undefined,
             allowedRoots
           });
-          const rawCommands = input.cmd === undefined ? input.cmds! : [input.cmd];
+          const rawCommands = (input.cmd === undefined ? input.cmds! : [input.cmd]).map((command) => translateEvealRunPaths(command, roots));
           const isBatch = input.cmd === undefined;
           for (const [index, rawCommand] of rawCommands.entries()) {
             const virtualCommandPath = strayVirtualPath(rawCommand, roots);

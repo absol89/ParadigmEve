@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
+  appendPath,
   applyEnvOverrides,
   deleteEnvValue,
   ensureUsablePath,
@@ -22,6 +23,7 @@ import {
   pathEntries,
   prependPath
 } from './env.js';
+import { bundledNodeDirectory } from './bundled-node.js';
 import { locateRipgrep } from './ripgrep.js';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -109,6 +111,9 @@ export function childEnv(overrides?: CommandEnvironment): NodeJS.ProcessEnv {
   for (const secret of SECRET_ENV_KEYS) deleteEnvValue(env, secret);
   if (overrides) applyEnvOverrides(env, overrides);
   ensureUsablePath(env);
+  // Last, so any Node the user installed (or put in an override PATH) is found first.
+  const bundledNode = bundledNodeDirectory();
+  if (bundledNode) appendPath(env, bundledNode);
   return env as NodeJS.ProcessEnv;
 }
 

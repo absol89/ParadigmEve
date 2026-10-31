@@ -27,6 +27,15 @@ vi.mock('electron', () => ({
   }
 }));
 vi.mock('../src/main/extension-path.js', () => ({ extensionDir: () => process.cwd() }));
+// Local model servers get their own transport (no five-minute header limit); route it through the
+// stubbed global fetch below so every request still lands in `ollamaRequests`, and count its calls.
+const localModelFetchCalls = vi.hoisted(() => [] as string[]);
+vi.mock('../src/main/local-model-fetch.js', () => ({
+  localModelFetch: (input: RequestInfo | URL, init?: RequestInit) => {
+    localModelFetchCalls.push(String(input));
+    return globalThis.fetch(input, init);
+  }
+}));
 // The tool loop is under test here, not native Desktop registration: keep it off on every CI host.
 vi.mock('../src/main/platform.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/main/platform.js')>()),
@@ -914,6 +923,10 @@ it('keeps an EVE-Al run bound to its session and resolves suite-relative reads i
   expect((await fs.stat(runNative)).isDirectory()).toBe(true);
   expect(runNative.startsWith(path.join(directory, 'eveal-runs') + path.sep)).toBe(true);
   expect(path.basename(runNative)).toMatch(/^eveal-run-/);
+  // Commands get a workdir rule and a working copy example with the suite's real path.
+  expect(system).toContain('Run every command with workdir /eveal-run');
+  expect(system).toContain(`'${path.join(process.cwd(), 'eveal', 'fixtures', 'probe-kit')}' '${path.join('probe', 'work')}'`);
+  expect(system).toMatch(/'probe[\\/]work'/);
 });
 
 it('tells a remote model without file tools that %eveal needs one, without naming the user\'s disk', async () => {
@@ -953,6 +966,12 @@ it.each(['', '.', '!', '?'].map(end => `Help me get started with %eveal${end}`))
   }
 );
 
+it('sends a local Ollama chat through the transport without the five-minute header limit', async () => {
+  localModelFetchCalls.length = 0;
+  await sendAndFinish({ provider: 'ollama', model: 'gemma4:e2b', text: 'Hello there' });
+  expect(localModelFetchCalls).toContain('http://127.0.0.1:11434/api/chat');
+});
+
 it('lets a local model read EVEAL.md by its full path and then follow its relative links, but never write into the suite', async () => {
   const projects = `${directory}/projects-eveal`;
   await fs.mkdir(projects, { recursive: true });
@@ -991,4 +1010,41 @@ it('lets a local model read EVEAL.md by its full path and then follow its relati
   const system = chats[0]!.body.messages.find((message: any) => message.role === 'system').content as string;
   expect(system).toContain('- /paradigmeve-eveal/tasks/pitfalls.md');
   expect(system).toContain('- /paradigmeve-eveal/fixtures/probe-kit/TASK.md');
+});
+
+it('writes and runs in the run folder after a local model has read the suite', async () => {
+  // Nanbeige on 2026-10-31: once EVEAL.md was read the suite became the chat's workspace, so a
+  // patch naming /eveal-run/pitfalls.json in full, and a command with no workdir, were refused as
+  // writes into the read-only suite.
+  const { initializeDefaultThreads } = await import('../src/main/pins.js');
+  await initializeDefaultThreads();
+  // Effectful tools stay closed until the native-delegation ledger is known, as at app start.
+  const { restoreNativeDelegations } = await import('../src/main/native-delegation.js');
+  await restoreNativeDelegations();
+  const base = defaultConfig();
+  await saveConfig({
+    ...base,
+    capabilities: { ...base.capabilities, read: true, browse: true, create: true, edit: true, command: true },
+    agentRuntime: { ollama: { ...base.agentRuntime.ollama, chatDirectTools: true } },
+    goal: { ...base.goal, enabled: false }
+  });
+  const call = (id: string, name: string, args: unknown) =>
+    ({ choices: [{ message: { content: '', tool_calls: [{ id, function: { name, arguments: JSON.stringify(args) } }] } }] });
+  agentReplies = [
+    call('r1', 'read', { paths: ['/paradigmeve-eveal/EVEAL.md'] }),
+    call('p1', 'apply_patch', { patch: '*** Begin Patch\n*** Add File: /eveal-run/pitfalls.json\n+{"answers": {}}\n*** End Patch' }),
+    call('c1', 'exec_command', { cmd: 'node -p "process.cwd()"' }),
+    { choices: [{ message: { content: 'Wrote pitfalls.json.' } }] }
+  ];
+  await sendAndFinish({ provider: 'ollama', model: 'gemma4:e2b', text: 'Help me get started with %eveal' });
+
+  const chats = ollamaRequests.filter(request => isChat(request.url));
+  const system = chats[0]!.body.messages.find((message: any) => message.role === 'system').content as string;
+  const runNative = system.match(/Native path: ([^\n]+)/)![1]!;
+  const toolResult = (index: number) => chats[index]!.body.messages.filter((message: any) => message.role === 'tool').at(-1)!.content as string;
+  expect(toolResult(2), toolResult(2)).not.toContain('read-only EVE-Al suite');
+  expect(toolResult(2), toolResult(2)).not.toMatch(/rejected|error|refus|disabled/i);
+  expect(await fs.readFile(path.join(runNative, 'pitfalls.json'), 'utf8')).toBe('{"answers": {}}\n');
+  expect(toolResult(3)).not.toContain('read-only EVE-Al suite');
+  expect(toolResult(3).toLowerCase()).toContain(path.basename(runNative).toLowerCase());
 });

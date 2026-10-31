@@ -1314,6 +1314,57 @@ describe('self-maintenance settings authority', () => {
     expect(failed(normal)).toBe(false);
   });
 
+  it('lets an ordinary EVE-Al chat use its own run folder inside AppData, and nothing else there', async () => {
+    // Nanbeige on 2026-10-31: the run folder lives under %APPDATA%, so its native path was taken
+    // for Eve's managed AppData, and `/eveal-run` in command text was refused. (The workspace half,
+    // a chat whose workspace became the suite, is in ollama-chat-provider.test.ts: these calls
+    // carry no chat identity, so they never hold a workspace.)
+    await saveConfig(defaultConfig());
+    const savedRoots = ctx.roots;
+    const run = path.join(managedAppData(), 'eveal-runs', 'eveal-run-20261031-051547-373-6a593878');
+    await fs.mkdir(run, { recursive: true });
+    ctx.roots = [...savedRoots, { name: 'eveal-run', path: run }];
+    ctx.readOnly = false;
+    ctx.caps = withCaps({ read: true, browse: true, create: true, edit: true, command: true });
+    try {
+      const suite = await core('tools/call', { name: 'read', arguments: { paths: ['/paradigmeve-eveal/EVEAL.md'] } });
+      expect(failed(suite), textOf(suite)).toBe(false);
+
+      const patch = await core('tools/call', {
+        name: 'apply_patch',
+        arguments: { patch: addPatch('/eveal-run/pitfalls.json', ['{"answers": {}}']) }
+      });
+      expect(failed(patch), textOf(patch)).toBe(false);
+      expect(await fs.readFile(path.join(run, 'pitfalls.json'), 'utf8')).toBe('{"answers": {}}\n');
+
+      // The %APPDATA% spelling of the run folder is the run folder, not Eve's managed AppData.
+      const native = await core('tools/call', { name: 'exec_command', arguments: { cmd: 'node --version', workdir: run } });
+      expect(failed(native), textOf(native)).toBe(false);
+
+      // `/eveal-run` in command text becomes the folder's native path.
+      const translated = await core('tools/call', {
+        name: 'exec_command',
+        arguments: { cmd: 'node -p "require(\'fs\').readFileSync(process.argv[1], \'utf8\')" /eveal-run/pitfalls.json', workdir: '/eveal-run' }
+      });
+      expect(failed(translated), textOf(translated)).toBe(false);
+      expect(textOf(translated)).toContain('{"answers": {}}');
+
+      // Everything else in AppData stays Eve's: a guessed sibling folder and AppData itself.
+      for (const workdir of [path.join(managedAppData(), 'eveal-runs'), managedAppData()]) {
+        const refused = await core('tools/call', { name: 'exec_command', arguments: { cmd: 'node --version', workdir } });
+        expect(failed(refused), `${workdir}: ${textOf(refused)}`).toBe(true);
+        expect(textOf(refused)).toContain('SELF_MAINTENANCE_IDENTITY_REQUIRED');
+      }
+      // Only the reserved run root is carved out: another approved folder inside AppData opens nothing.
+      ctx.roots = [...savedRoots, { name: 'docs', path: path.join(managedAppData(), 'docs') }];
+      const other = await core('tools/call', { name: 'exec_command', arguments: { cmd: 'node --version', workdir: path.join(managedAppData(), 'docs') } });
+      expect(failed(other), textOf(other)).toBe(true);
+      expect(textOf(other)).toContain('SELF_MAINTENANCE_IDENTITY_REQUIRED');
+    } finally {
+      ctx.roots = savedRoots;
+    }
+  });
+
   it('lets the exact owner inspect AppData before settings authority while keeping self-maintenance mutations closed', async () => {
     await saveConfig(defaultConfig());
     ctx.readOnly = false;

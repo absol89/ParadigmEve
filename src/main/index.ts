@@ -134,6 +134,7 @@ import {
   type RestartRecoveryPlan
 } from './session/recovery-memory.js';
 import { configureSelfMaintenanceRuntime } from './self-maintenance.js';
+import { configureBundledNode } from './bundled-node.js';
 import { claimNativeNotification } from './native-notification-dedupe.js';
 import { requestApprovalTabFocus, setApprovalNotifier } from './approval-wait.js';
 import { debugReliabilityEvent } from './reliability-debug-events.js';
@@ -643,6 +644,8 @@ void app.whenReady().then(async () => {
     appDataPath: userData,
     installationPath: installationDirectory
   });
+  // Commands on a computer without Node get Eve's own Node 24 as `node` (last on their PATH).
+  configureBundledNode(path.join(userData, 'runtime', 'node'));
   initLogFile(path.join(userData, 'app.log'));
   process.on('uncaughtExceptionMonitor', (error, origin) => {
     snapshotLogOnCrash(`${origin}: ${error.stack ?? error.message}`);

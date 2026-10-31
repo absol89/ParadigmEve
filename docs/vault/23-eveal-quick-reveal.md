@@ -39,9 +39,12 @@ for 40 minutes with a hard stop at 55. `%eve-al` routes to the same Thread.
   against `num_ctx`; a count at the window's edge is logged as a warning.
 - The native Ollama chat response is read as bounded newline-delimited JSON with `stream: true`,
   accumulating content and tool-call entries before the agent loop can execute anything. A complete
-  `done` event is required; truncated/error streams fail closed. This avoids the five-minute
-  response-header timeout that formerly cancelled long `stream: false` generations (the 2026-10-30
-  LFM3 run had generated about 6,142 tokens at 21 tokens/s before its client disconnected).
+  `done` event is required; truncated/error streams fail closed. Streaming alone did not lift the
+  five-minute limit: Ollama sends its response headers only with the first token, and Node's global
+  `fetch` gives up when headers take more than 300 seconds. A 27K-token prompt on Nanbeige
+  (2026-10-31) was still being evaluated at that point, and Ollama logged a 500 as the client left.
+  Local model servers (Ollama and llama.cpp) are therefore reached over Node's own HTTP client
+  (`local-model-fetch.ts`), which has no header limit; stopping the turn still cancels the request.
 - If the user pastes an honesty block (it starts with `Honesty check (challenge hon-`), the agent answers
   that one instead of the practice set. If the user names a v0.3 challenge folder, the agent reads the
   five v0.3 tasks from it instead of the practice files; the folder must be one the chat can read (an
@@ -68,6 +71,13 @@ for 40 minutes with a hard stop at 55. `%eve-al` routes to the same Thread.
   command that lands there is refused as read-only and told to use a full path in an approved folder;
   the mount is never reported as an unknown root. The opening context also writes the main paths out
   in full.
+- In a local `%eveal` chat, a write or command with no folder of its own starts in `/eveal-run`, not in
+  the suite it just read. The run folder sits under `%APPDATA%\ParadigmEve\eveal-runs`, and its native
+  path counts as that run folder, not as Eve's protected AppData; any other AppData path still needs
+  Eve's identity. In command text `/eveal-run` is rewritten to its native path (the one exception to
+  "never rewrite a command": the name is reserved, and `..` is never followed). The opening context
+  tells the model to run commands there and gives a copy command for the probe kit with the suite's
+  native path as the source; the installed suite is never a working folder.
 
 ## What ships, and what never does
 
