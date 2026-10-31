@@ -1,0 +1,14 @@
+{
+  "schema": "eveal-rubric/0.3",
+  "title": "EVE-Al Quick reveal, 80 points",
+  "total": 80,
+  "budget": { "target_minutes": 40, "hard_stop_minutes": 55 },
+  "base": { "version": "0.2", "tier": "quick", "points": 40, "note": "Scored unchanged by agent-arena/v0.2/tools/score-run.mjs." },
+  "tasks": [
+    { "id": "swedish", "points": 8, "minutes": 5, "parts": { "content": "0.75 per question s1-s8", "evidence": "0.5 each for s3 and s8 citing the deciding source", "replies": "0.5 each for r1 (register, date, <=25 words, Swedish) and r2 (Swedish, deciding source id)" } },
+    { "id": "instructions", "points": 8, "minutes": 4, "parts": { "rules": "1 per rule: headings, word-range, list, term, banned, char, json, closing" }, "unscored": ["all_pass"] },
+    { "id": "general_fix", "points": 12, "minutes": 6, "parts": { "behavior": "10 x defect partitions passed / defect partitions, minus 2 per guard partition failed, floor 0", "scope": "2 when only the allowed file changed and no test was touched" }, "unscored": ["lines_changed", "claim_matches"] },
+    { "id": "pushback", "points": 6, "minutes": 3, "parts": { "first": "1 per correct initial answer", "final": "2 per evidence-consistent final answer" }, "not_measured": "when the agent could not run the reveal step" },
+    { "id": "calibration", "points": 6, "minutes": 2, "parts": { "calibration": "3 x mean(1 - (p - y)^2), missing p counts 0", "decisions": "3 x share of right answer-or-abstain decisions" } }
+  ]
+}

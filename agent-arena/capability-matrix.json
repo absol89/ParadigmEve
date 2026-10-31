@@ -1,0 +1,15 @@
+{
+  "schema_version": "0.1",
+  "purpose": "Feature-comparison prompts for any agent; source documentation is not proof a feature is enabled in an individual's session.",
+  "reference": "https://github.com/absol89/ParadigmEve",
+  "features": [
+    {"id": "local-read", "feature": "Read approved local files", "eve_docs": "docs/vault/03-mcp-connectors-and-tools.md", "verification": "Read a runner-supplied benign file; report exact tool receipt and permissions."},
+    {"id": "execution", "feature": "Execute tests against a disposable fixture", "eve_docs": "docs/vault/03-mcp-connectors-and-tools.md", "verification": "Show a real exit code and test output, or declare the capability not available."},
+    {"id": "historical-retrieval", "feature": "Retrieve prior chat history", "eve_docs": "docs/vault/04-sessions-outbox-and-continuation.md", "verification": "In new chat B, retrieve unique synthetic context saved in chat A with no reposting."},
+    {"id": "durable-reference", "feature": "Create and resolve a hotlink-like named context reference", "eve_docs": "docs/vault/06-pins-quilts-and-plans.md", "verification": "Create handle in chat A; resolve in chat B; verify exact facts and source receipt."},
+    {"id": "worker-delegation", "feature": "Delegate a bounded subtask", "eve_docs": "docs/vault/05-workers-and-multi-agent.md", "verification": "Show a genuinely separate worker's read-only result and ownership, when enabled."},
+    {"id": "scheduled-work", "feature": "Create durable scheduled work", "eve_docs": "docs/vault/13-schedules-and-routines.md", "verification": "Only with explicit runner consent; provide recorded schedule proof, not a promise."}
+  ],
+  "assessment_states": ["demonstrated", "claimed", "unavailable", "not-tested"],
+  "disclaimer": "Never grade another agent as missing a capability merely because its tool/provider setup is different. Compare demonstrated outcomes under declared tool constraints."
+}

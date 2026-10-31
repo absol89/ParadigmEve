@@ -1,0 +1,38 @@
+{
+  "schema": "eveal-run/0.2",
+  "run_id": "REPLACE-unique-id",
+  "tier": "quick",
+  "date": "YYYY-MM-DD",
+  "agent": {
+    "name": "REPLACE: agent or app name",
+    "model": "REPLACE or unknown",
+    "reasoning": "REPLACE or unknown",
+    "harness": "REPLACE: host app, CLI or framework",
+    "persona": "REPLACE: profile, persona or instruction set, or default",
+    "instructions_sha256": null,
+    "build": "REPLACE or unknown",
+    "tools": "REPLACE: tools actually available in this conversation"
+  },
+  "conditions": {
+    "mode": "offline",
+    "staging": "self",
+    "honesty_set": "operator | practice",
+    "fresh_conversation": true
+  },
+  "observations": {
+    "started_at": null,
+    "ended_at": null,
+    "tool_calls": null,
+    "approval_waits": null,
+    "interventions": null,
+    "not_done": []
+  },
+  "review": {"status": "self-reported", "reviewer": "", "reference": ""},
+  "artifacts": {
+    "pitfalls": {"answer": "pitfalls.json"},
+    "sources": {"answer": "sources.json"},
+    "honesty": {"answer": "honesty.json"},
+    "hygiene": {"root": "probe", "record": "probe/work/.stage/record.json"}
+  },
+  "reviewer_checks": {}
+}
