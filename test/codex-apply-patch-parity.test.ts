@@ -447,3 +447,46 @@ describe('a second Update File hunk for a path already targeted', () => {
     ).rejects.toThrow(/path outside the approved roots/);
   });
 });
+
+describe('a file header written without its *** prefix', () => {
+  // Nanbeige on 2026-10-31 wrote `Add File: /eveal-run/pitfalls.json`; after a 20-minute generation on
+  // a small GPU, the refusal cost a whole second round. Such a line was an error in every parser state
+  // (content lines start with "+", update lines with " ", "+", "-" or "@@"), so reading it as the
+  // header it can only mean changes no patch that parsed before.
+  it('reads Nanbeige\'s exact patch as an Add File hunk', () => {
+    const parsed = parsePatch('*** Begin Patch\nAdd File: /eveal-run/pitfalls.json\n+{\n+  "answers": {}\n+}\n*** End Patch');
+    expect(parsed.hunks).toEqual([{ kind: 'add_file', path: '/eveal-run/pitfalls.json', contents: '{\n  "answers": {}\n}\n' }]);
+  });
+
+  it('accepts every file header and the end marker without the prefix', () => {
+    const parsed = parsePatch([
+      '*** Begin Patch',
+      'Update File: a.txt',
+      '@@',
+      '-old',
+      '+new',
+      'Delete File: b.txt',
+      'Add File: c.txt',
+      '+c',
+      'End Patch'
+    ].join('\n'));
+    expect(parsed.hunks.map((hunk) => [hunk.kind, hunk.path])).toEqual([['update_file', 'a.txt'], ['delete_file', 'b.txt'], ['add_file', 'c.txt']]);
+  });
+
+  it('leaves lines that already meant something unchanged, and still refuses an unknown header', () => {
+    const parsed = parsePatch([
+      '*** Begin Patch',
+      '*** Add File: notes.md',
+      '+Add File: not a header, file content',
+      '*** Update File: other.md',
+      '@@',
+      ' Update File: context line',
+      '-Delete File: removed line',
+      '+End Patch kept as text',
+      '*** End Patch'
+    ].join('\n'));
+    expect(parsed.hunks).toHaveLength(2);
+    expect(parsed.hunks[0]).toMatchObject({ kind: 'add_file', contents: 'Add File: not a header, file content\n' });
+    expect(() => parsePatch('*** Begin Patch\nRemove File: x.txt\n*** End Patch')).toThrow(/is not a valid hunk header/);
+  });
+});

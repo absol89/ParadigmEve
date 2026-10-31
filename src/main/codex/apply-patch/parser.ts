@@ -97,23 +97,28 @@ function checkPatchBoundariesStrict(lines: readonly string[]): readonly string[]
  * at least 4 lines total: the two markers plus at least two lines of patch.
  */
 function checkPatchBoundariesLenient(originalLines: readonly string[]): readonly string[] {
+  // The streaming parser accepts Nanbeige's unprefixed end marker. Normalize the outer
+  // boundary as well, otherwise a complete patch is rejected before streaming begins.
+  const lines = originalLines.at(-1)?.trim() === 'End Patch'
+    ? [...originalLines.slice(0, -1), END_PATCH_MARKER]
+    : originalLines;
   let originalParseError: PatchParseError;
   try {
-    return checkPatchBoundariesStrict(originalLines);
+    return checkPatchBoundariesStrict(lines);
   } catch (error) {
     if (!(error instanceof PatchParseError)) throw error;
     originalParseError = error;
   }
 
-  const first = originalLines.at(0);
-  const last = originalLines.at(-1);
-  if (originalLines.length >= 2 && first !== undefined && last !== undefined) {
+  const first = lines.at(0);
+  const last = lines.at(-1);
+  if (lines.length >= 2 && first !== undefined && last !== undefined) {
     if (
       (first === '<<EOF' || first === "<<'EOF'" || first === '<<"EOF"') &&
       last.endsWith('EOF') &&
-      originalLines.length >= 4
+      lines.length >= 4
     ) {
-      return checkPatchBoundariesStrict(originalLines.slice(1, originalLines.length - 1));
+      return checkPatchBoundariesStrict(lines.slice(1, lines.length - 1));
     }
   }
   throw originalParseError;

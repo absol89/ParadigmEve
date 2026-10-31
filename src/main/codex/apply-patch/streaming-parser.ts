@@ -28,6 +28,7 @@ import {
 
 const ENVIRONMENT_ID_MARKER = '*** Environment ID:';
 
+const UNPREFIXED_HEADER = /^(?:(?:Add|Delete|Update) File: |End Patch$)/;
 const INVALID_HUNK_HEADER_SUFFIX =
   "is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'";
 
@@ -118,7 +119,12 @@ export class StreamingPatchParser {
   }
 
   /** Returns true when `trimmed` was consumed as a hunk header or the end marker. */
-  private handleHunkHeadersAndEndPatch(trimmed: string): boolean {
+  private handleHunkHeadersAndEndPatch(line: string): boolean {
+    // A file header or the end marker written without its `*** ` (Nanbeige, 2026-10-31). Such a line
+    // was refused in every state, since content lines start with "+" and update lines with " ", "+",
+    // "-" or "@@", so reading it as the header it can only mean changes no patch that parsed before.
+    // Deliberately more lenient than upstream Codex.
+    const trimmed = UNPREFIXED_HEADER.test(line) ? `*** ${line}` : line;
     if (this.mode.kind === 'started_patch' && trimmed.startsWith(ENVIRONMENT_ID_MARKER)) {
       if (this.environmentIdValue !== null) {
         throw PatchParseError.invalidPatch(
