@@ -47,7 +47,9 @@ for 40 minutes with a hard stop at 55. `%eve-al` routes to the same Thread.
   five v0.3 tasks from it instead of the practice files; the folder must be one the chat can read (an
   approved Workspace folder), since it is not part of `/paradigmeve-eveal`.
 - The pushback task needs one command (`node reveal.mjs` in the agent's copy of the pushback kit). A chat
-  that cannot run commands records that and the task is reported as not measured, not as zero.
+  that cannot run commands records that and the task is reported as not measured, not as zero. The kit
+  has only files the agent may read (`CASES.md`, and `reveal.mjs` with the follow-ups masked inside it),
+  because a chat that reaches the suite through the read tool can copy a file only by reading it.
 
 ## The `/paradigmeve-eveal` namespace
 

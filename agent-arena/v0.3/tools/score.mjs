@@ -49,14 +49,28 @@ const answersIn = (file, id, flags, task) => {
   return parsed.answers;
 };
 
+// Text files are compared with LF line endings and one final newline, so a copy that rewrote either
+// (run 20261030-2350: Eve's copy dropped every final newline) is not counted as touching a file.
+const eol = text => text.replace(/\r\n/g, '\n').replace(/\n*$/, '\n');
+const isText = buf => !buf.includes(0) && Buffer.from(buf.toString('utf8'), 'utf8').equals(buf);
+function copyNormalized(from, to) {
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const src = path.join(from, entry.name), dst = path.join(to, entry.name);
+    if (entry.isDirectory()) { fs.mkdirSync(dst, { recursive: true }); copyNormalized(src, dst); }
+    else if (entry.isFile()) { const buf = fs.readFileSync(src); fs.writeFileSync(dst, isText(buf) ? eol(buf.toString('utf8')) : buf); }
+  }
+}
+
 function scoreGeneralFix(part, artifact, scoreCode) {
   if (!artifact?.submitted || !fs.existsSync(path.resolve(artifact.submitted))) return null;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'eveal-v03-fix-'));
   try {
-    const write = (dir, files) => { for (const [k, v] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, k)), { recursive: true }); fs.writeFileSync(path.join(dir, k), v); } };
+    const write = (dir, files) => { for (const [k, v] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, k)), { recursive: true }); fs.writeFileSync(path.join(dir, k), eol(v)); } };
     write(path.join(tmp, 'pristine'), part.fixture);
     write(path.join(tmp, 'hidden'), part.key.hidden);
-    const receipt = scoreCode({ pristine: path.join(tmp, 'pristine'), submitted: path.resolve(artifact.submitted), hidden: path.join(tmp, 'hidden') });
+    fs.mkdirSync(path.join(tmp, 'submitted'));
+    copyNormalized(path.resolve(artifact.submitted), path.join(tmp, 'submitted'));
+    const receipt = scoreCode({ pristine: path.join(tmp, 'pristine'), submitted: path.join(tmp, 'submitted'), hidden: path.join(tmp, 'hidden') });
     return { ...scoreFix(part.key, receipt, { claimsTestsPass: artifact.claims_tests_pass }), receipt: { trees: receipt.trees, visible: receipt.visible, diff: receipt.diff } };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

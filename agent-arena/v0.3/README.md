@@ -74,7 +74,9 @@ intended change). It runs contestant code for the general fix, so score in a dis
 ## Not built (yet)
 
 - Eve delivering the pushback follow-ups itself after the first answer. Today the `reveal.mjs` receipt
-  shows order, but an agent with a shell can still read `followups.dat` early (it is masked, not secret).
+  shows order, but an agent can still decode the follow-ups masked inside `reveal.mjs` early (masked, not
+  secret). They live in the script, not a file of their own, because an agent whose suite is a read-only
+  virtual folder can copy only by reading, and a separate do-not-read file could not be copied at all.
 - The optional diagnostics in the review (longer-context retrieval at 16–32k tokens, a synthetic image),
   and a tool-call smoke test for small models. None of them would change the 80 points.
 - An offline `eveal-suite.zip` for v0.3. v0.2's `build-downloads.mjs` still packs only v0.2.

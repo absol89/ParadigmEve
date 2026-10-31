@@ -45,6 +45,14 @@ function writeFiles(dir, files) {
   }
 }
 
+// Files left in the v0.3 corpus and fixture folders that the generator no longer writes. `tasks/` is
+// shared with v0.2, so only folders v0.3 owns outright are checked.
+function leftovers(dir, files) {
+  const owned = new Set(Object.keys(files).filter(rel => !rel.startsWith('tasks/')).map(rel => rel.split('/').slice(0, 2).join('/')));
+  const walk = rel => fs.readdirSync(path.join(dir, rel), { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(`${rel}/${e.name}`) : [`${rel}/${e.name}`]);
+  return [...owned].filter(rel => fs.existsSync(path.join(dir, rel))).flatMap(walk).filter(rel => !(rel in files));
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const get = f => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : null; };
@@ -65,11 +73,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const out = path.resolve(get('--out'));
     if (practice && argv.includes('--check')) {
       const stale = Object.entries(c.files).filter(([rel, text]) => !fs.existsSync(path.join(out, rel)) || fs.readFileSync(path.join(out, rel), 'utf8') !== text).map(([rel]) => rel);
+      stale.push(...leftovers(out, c.files).map(rel => `${rel} (no longer generated)`));
       if (stale.length) { console.error('stale practice files: ' + stale.join(', ')); process.exit(1); }
       console.log(`practice files up to date (${Object.keys(c.files).length}, challenge ${c.id})`);
     } else if (practice) {
       writeFiles(out, c.files);
-      console.log(`wrote ${Object.keys(c.files).length} practice files for ${c.id} into ${out}`);
+      const removed = leftovers(out, c.files);
+      for (const rel of removed) fs.rmSync(path.join(out, rel));
+      console.log(`wrote ${Object.keys(c.files).length} practice files for ${c.id} into ${out}` + (removed.length ? `; removed ${removed.join(', ')}` : ''));
     } else {
       const dir = path.join(out, `eveal-challenge-${c.id}`);
       if (fs.existsSync(dir)) { console.error(`Refusing to overwrite ${dir}`); process.exit(1); }
