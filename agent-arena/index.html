@@ -52,15 +52,15 @@
     </section>
 
     <section class="section" id="generator" aria-labelledby="gen-title">
-      <div class="section-heading"><div><p class="eyebrow">FOR THE OPERATOR, NOT THE AGENT</p><h2 id="gen-title">Challenge generator</h2></div><a class="text-link" href="v0.2/tasks/memory-and-refs.md">Protocol</a></div>
-      <p class="explainer">Memory, references and honesty challenges are generated in your browser from a random seed. <strong>The seed is the answer key.</strong> Write it on paper or your phone, never on the machine the agent can read. The page doesn't store it, and the scorer regenerates the key from it later. Nothing is sent anywhere.</p>
-      <div class="generator-controls"><label for="gen-kind">Challenge</label><select id="gen-kind"><option value="honesty">Honesty block (Quick reveal or full)</option><option value="memory">Cross-chat memory (4 conversations)</option><option value="refs">Durable references (3 conversations)</option></select><button id="gen-new" type="button">New challenge</button><label for="gen-seed">or seed</label><input id="gen-seed" type="password" autocomplete="off" spellcheck="false" placeholder="re-open an existing seed"><button id="gen-open" type="button">Open</button><span id="gen-status" role="status"></span></div>
+      <div class="section-heading"><div><p class="eyebrow">FOR THE OPERATOR, NOT THE AGENT</p><h2 id="gen-title">Challenge generator</h2></div><a class="text-link" href="v0.3/suite/EVEAL.md">Quick reveal step 3</a></div>
+      <p class="explainer">The honesty block is generated in your browser from a random seed. <strong>The seed is the answer key.</strong> Write it on paper or your phone, never on the machine the agent can read. The page doesn't store it, and the scorer regenerates the key from it later. Nothing is sent anywhere.</p>
+      <div class="generator-controls"><label for="gen-kind">Challenge</label><select id="gen-kind"><option value="honesty">Honesty block (Quick reveal step 3)</option></select><button id="gen-new" type="button">New challenge</button><label for="gen-seed">or seed</label><input id="gen-seed" type="password" autocomplete="off" spellcheck="false" placeholder="re-open an existing seed"><button id="gen-open" type="button">Open</button><span id="gen-status" role="status"></span></div>
       <div id="gen-seed-box" class="seed-box" hidden><b>Seed, shown once. Write it down off this machine:</b> <code id="gen-seed-value"></code></div>
       <div id="gen-output" class="challenge-panels"></div>
     </section>
 
     <section class="section results" id="results" aria-labelledby="results-title">
-      <div class="section-heading"><div><p class="eyebrow">VERIFIED RUNS ONLY</p><h2 id="results-title">Results</h2></div><a class="text-link" href="v0.2/results.json">results.json</a></div>
+      <div class="section-heading"><div><p class="eyebrow">VERIFIED RUNS ONLY</p><h2 id="results-title">Results</h2></div></div>
       <div class="table-scroll"><table><thead><tr><th>Agent / persona</th><th>Model · reasoning</th><th>Harness</th><th>Tier</th><th>Score</th><th>Hallucinated</th><th>Minutes</th><th>Review</th></tr></thead>
         <tbody id="results-body"><tr><td colspan="8">Loading…</td></tr></tbody></table></div>
       <p id="results-meta" class="small"></p>
@@ -70,9 +70,8 @@
       <div class="section-heading"><div><p class="eyebrow">EVERYTHING IS IN THE REPO</p><h2 id="sources-title">Eval sources</h2></div></div>
       <div class="task-grid">
         <article class="task"><div class="tag">contestant material</div><h3>Tasks, corpus, fixtures</h3><p>The prompts, the fictional Fernhollow, Larkspur and Swedish source pages and the code fixtures an agent works on. Also bundled as one offline ZIP.</p><div class="links"><a href="v0.3/suite/EVEAL.md">EVEAL.md</a><a href="v0.3/suite/corpus/fernhollow/README.md">corpus/</a><a href="v0.3/suite/fixtures/probe-kit/TASK.md">fixtures/</a><a href="v0.3/downloads/eveal-suite-v0.3.zip">ZIP</a></div></article>
-        <article class="task"><div class="tag">reviewer material · not published</div><h3>Keys and hidden tests</h3><p>Seeded tasks regenerate their keys from a seed only the operator holds. The fixed pitfalls and sources keys were rotated on 31 October 2026 after the first set was published, and the current keys are kept encrypted by the operator, off this site and out of the repository.</p><div class="links"><a href="v0.2/HOLDOUT-ISOLATION.md">Held-out isolation</a><a href="v0.3/README.md">Operator notes</a></div></article>
+        <article class="task"><div class="tag">reviewer material · not published</div><h3>Keys and hidden tests</h3><p>Seeded tasks regenerate their keys from a seed only the operator holds. The fixed pitfalls and sources keys were rotated on 31 October 2026 after the first set was published, and the current keys are kept encrypted by the operator, off this site and out of the repository.</p><div class="links"><a href="v0.3/README.md">Operator notes</a></div></article>
         <article class="task"><div class="tag">scoring</div><h3>Offline scorers</h3><p>Zero-dependency Node scripts re-run tests in a temp copy, score answers from a seed, read probe ledgers, and aggregate against the hash-locked rubric. The browser scorer covers every task whose key follows from a seed.</p><div class="links"><a href="v0.3/web/">Browser scorer</a><a href="v0.3/rubric.json">rubric</a></div></article>
-        <article class="task"><div class="tag">method</div><h3>Review, pilot, report</h3><p>What was wrong with v0.1, how to run a controlled comparison of agents, personas or builds, and exactly what has and hasn't been tested.</p><div class="links"><a href="v0.2/REVIEW-v0.1.md">Review</a><a href="v0.2/PILOT-PROTOCOL.md">Pilot</a><a href="v0.2/REPORT.md">Report</a></div></article>
       </div>
     </section>
   </main>
