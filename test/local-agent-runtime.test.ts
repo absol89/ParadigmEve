@@ -231,6 +231,33 @@ describe('Ollama agent model transport', () => {
     expect(requests.some(request => request.url.endsWith('/chat/completions'))).toBe(false);
   });
 
+  it('uses the 24576-token Nanbeige tier to save KV memory, then grows without shrinking; other models keep existing tiers', async () => {
+    resetOllamaNativeContextForTests();
+    const chatRequests: Array<{ model: string; options: { num_ctx: number } }> = [];
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (url.endsWith('/api/show')) return Response.json({ model_info: { 'nanbeige.context_length': 262_144 } });
+      chatRequests.push(body);
+      return nativeEvents({ message: { content: 'ok' }, done: false }, { done: true, prompt_eval_count: 250 });
+    });
+    const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
+    const ask = (model: string, chars: number) => runtime.complete({
+      endpoint: 'http://127.0.0.1:11434/v1', model,
+      messages: [{ role: 'user', content: 'x'.repeat(chars) }], tools: []
+    });
+
+    await ask('nanbeige-3B-fable:latest', 54_000);
+    expect(chatRequests.at(-1)?.options.num_ctx).toBe(24_576);
+    await ask('unrelated-model:latest', 54_000);
+    expect(chatRequests.at(-1)?.options.num_ctx).toBe(32_768);
+    await ask('nanbeige-3B-fable:latest', 70_000);
+    expect(chatRequests.at(-1)?.options.num_ctx).toBe(32_768);
+    await ask('nanbeige-3B-fable:latest', 10);
+    expect(chatRequests.at(-1)?.options.num_ctx).toBe(32_768);
+    await ask('nanbeige-3B-fable:latest', 104_000);
+    expect(chatRequests.at(-1)?.options.num_ctx).toBe(65_536);
+  });
+
   it('assembles fragmented UTF-8, text, thinking and native tool calls without waiting for the socket to close', async () => {
     resetOllamaNativeContextForTests();
     let cancelled = false;

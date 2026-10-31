@@ -113,6 +113,11 @@ function nativeMessage(message: LocalAgentMessage): Record<string, unknown> {
 
 /** Context windows Ollama is asked for. Few, so a growing chat reloads the model rarely. */
 const NATIVE_CONTEXT_STEPS = [8_192, 16_384, 32_768, 65_536, 131_072];
+/** Nanbeige's q4_0 KV cache uses 48.375 MiB per 1K tokens. At 24K it saves
+ * 396 MiB versus 32K on a 4 GiB GPU, without capping future context growth.
+ * Keep the smaller step scoped to this alias: other models retain their proven tiers.
+ */
+const NANBEIGE_CONTEXT_STEPS = [8_192, 16_384, 24_576, 32_768, 65_536, 131_072];
 /** Room left for the reply on top of the prompt. */
 const NATIVE_REPLY_TOKENS = 4_096;
 /** Largest window per model this process asked for: never shrink it, or Ollama reloads the model. */
@@ -145,7 +150,8 @@ async function modelMaxContext(fetchImpl: typeof fetch, base: string, model: str
 async function nativeContext(fetchImpl: typeof fetch, base: string, model: string, headers: Record<string, string>, body: string): Promise<number> {
   const wanted = Math.ceil(body.length / 3) + NATIVE_REPLY_TOKENS;
   const max = await modelMaxContext(fetchImpl, base, model, headers);
-  const step = NATIVE_CONTEXT_STEPS.find((size) => size >= wanted) ?? NATIVE_CONTEXT_STEPS.at(-1)!;
+  const steps = /^nanbeige-3b-fable(?::|$)/i.test(model) ? NANBEIGE_CONTEXT_STEPS : NATIVE_CONTEXT_STEPS;
+  const step = steps.find((size) => size >= wanted) ?? steps.at(-1)!;
   const chosen = Math.max(nativeContextByModel.get(model) ?? 0, max ? Math.min(step, max) : step);
   nativeContextByModel.set(model, chosen);
   return chosen;
