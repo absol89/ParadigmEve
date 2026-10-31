@@ -58,7 +58,7 @@ for 40 minutes with a hard stop at 55. `%eve-al` routes to the same Thread.
   `find` and `view_image` see it, and only when a call names it; `apply_patch`, file actions and commands
   never do. It needs no approved folder and no self-maintenance authority. The root name is reserved, so
   a user folder cannot shadow it.
-- Unlike the flat manual it has subfolders (`tasks/`, `corpus/larkspur/`, `corpus/v03-svenska/`,
+- Unlike the flat manual it has subfolders (`tasks/`, `corpus/fernhollow/`, `corpus/larkspur/`, `corpus/v03-svenska/`,
   `corpus/v03-calibration/`, `fixtures/…`), with the normal
   traversal and link confinement of approved roots.
 - To run a fixture, the agent copies it into its output folder with its file tools; nothing executes

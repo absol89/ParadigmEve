@@ -16,7 +16,8 @@ the server. It is written for the Web `fetch` API (`core.mjs`, `createHandler(en
 
 - **Seeds:** HMAC-SHA256 of the ticket under `SEED_SECRET`. Whoever holds the ticket can fetch the
   files, but can't derive the key.
-- **Fixed keys:** the v0.2 pitfalls and sources keys come from `V02_KEYS` and are never sent out.
+- **Fixed keys:** the pitfalls and sources keys (the 2026-10-31 rotation) come from `V02_KEYS` and are
+  never sent out.
 - **Receipts:** a canonical JSON payload with totals per dimension only, signed with Ed25519
   (`SIGNING_KEY`). `verifyReceipt(publicKey, receipt)` checks one, and the public key can go on the site.
 - **Rate limits:** per address, 10 new tickets, 30 pushback commits and 30 scoring calls an hour.
@@ -44,7 +45,8 @@ the server. It is written for the Web `fetch` API (`core.mjs`, `createHandler(en
   `tools/score-answers.mjs` (scoreAnswers). The second imports `node:fs`, which is another reason to
   use a Node host.
 - Secrets: `SEED_SECRET` (32 random bytes, base64), `SIGNING_KEY` (Ed25519 PKCS#8, base64), and
-  `V02_KEYS` (the JSON from `v0.2/reviewer/keys`). Keep them out of the repo and out of the agent's
+  `V02_KEYS` (the pitfalls and sources JSON from the operator's encrypted key archive; the copies in the
+  public v0.2 tree are the retired set). Keep them out of the repo and out of the agent's
   machine.
 
 ## Tests

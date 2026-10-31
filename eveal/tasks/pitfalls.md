@@ -14,89 +14,87 @@ Reply with JSON:
 
 **P1**
 ```js
-function topThree(scores) {
-  return scores.sort().reverse().slice(0, 3);
+function toNumbers(strings) {
+  return strings.map(parseInt);
 }
 ```
 
 **P2**
 ```js
-async function saveAll(items, db) {
-  items.forEach(async item => {
-    await db.save(item);
-  });
-  return 'saved';
+function isoDay(year, month, day) {
+  // month is 1-12
+  return new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10);
 }
 ```
 
-**P3** (the caller keeps using `cart` after calling this)
+**P3** (`size` is a positive integer)
 ```js
-function applyDiscount(cart, pct) {
-  const items = cart.items;
-  for (const item of items) item.price = item.price * (1 - pct);
-  return { ...cart, items };
+function chunk(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
 ```
 
-**P4** (`store` is a shared async key-value store used by many requests at once)
+**P4** (amounts are dollars with cents, such as 19.99)
 ```js
-async function reserve(store, sku) {
-  const stock = await store.get(sku);
-  if (stock > 0) {
-    await store.set(sku, stock - 1);
-    return true;
-  }
-  return false;
+function isPaidInFull(payments, total) {
+  const paid = payments.reduce((sum, p) => sum + p.amount, 0);
+  return paid === total;
 }
 ```
 
-**P5** (`api.post` can time out after the server has already processed the request)
+**P5** (`times` are future timestamps in milliseconds)
 ```js
-async function charge(api, order) {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try { return await api.post('/charges', { amount: order.total }); }
-    catch (e) { if (attempt === 3) throw e; }
+function scheduleReminders(times, notify) {
+  for (var i = 0; i < times.length; i++) {
+    setTimeout(() => notify(times[i]), times[i] - Date.now());
   }
 }
 ```
 
 **P6**
 ```js
-function unique(values) {
-  return [...new Set(values)];
+async function firstOk(tasks) {
+  const errors = [];
+  for (const task of tasks) {
+    try { return await task(); } catch (e) { errors.push(e); }
+  }
+  throw new AggregateError(errors, 'all tasks failed');
 }
 ```
 
-**P7**
+**P7** (called many times, on many different strings)
 ```js
-function page(items, pageNumber, size) {
-  // pageNumber starts at 1
-  const start = pageNumber * size;
-  return items.slice(start, start + size);
+const DIGITS = /^\d+$/g;
+function isAllDigits(s) {
+  return DIGITS.test(s);
 }
 ```
 
-**P8**
+**P8** (`load` returns a promise that may reject; callers must get `null` on any failure)
 ```js
-function clamp(n, lo, hi) {
-  return Math.min(hi, Math.max(lo, n));
-}
-```
-
-**P9** (a missing or corrupt config file must stop the service from starting)
-```js
-function loadConfig(path) {
+async function safeLoad(load) {
   try {
-    return JSON.parse(fs.readFileSync(path, 'utf8'));
-  } catch {
-    return {};
+    return load();
+  } catch (e) {
+    return null;
   }
 }
 ```
 
-**P10**
+**P9** (the result goes into HTML text and quoted attribute values)
 ```js
-async function fetchAll(urls, get) {
-  return Promise.all(urls.map(url => get(url)));
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+```
+
+**P10** (`words` come from text that users type)
+```js
+function countWords(words) {
+  const counts = {};
+  for (const w of words) counts[w] = (counts[w] || 0) + 1;
+  return counts;
 }
 ```

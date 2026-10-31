@@ -12,7 +12,7 @@
 // - It never runs contestant code: hygiene and the general fix stay with the offline scorer.
 //
 // env: SEED_SECRET (32+ random bytes, base64), SIGNING_KEY (Ed25519 PKCS#8, base64), V02_KEYS (JSON
-// {"pitfalls": ..., "sources": ...} from agent-arena/v0.2/reviewer/keys).
+// {"pitfalls": ..., "sources": ...} from the operator's encrypted key archive, not the retired public set).
 // store: { hit(key, windowSeconds, max) -> Promise<boolean>, putIfAbsent(key, value) -> Promise<string|null>,
 //          get(key) -> Promise<string|null> }. memoryStore() below is for tests; a deployment uses its
 //          host's KV (Netlify Blobs, Upstash Redis, Workers KV).

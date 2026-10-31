@@ -39,6 +39,12 @@ patch that special-cases the visible example passes it but earns no behavior poi
 EVEAL_V02=<agent-arena/v0.2> node tools/score.mjs <run>/run.json [--seed <seed>] [--seeds v02-seeds.json] [--hidden-root <v0.2 tier>] --out scored.json
 ```
 
+Pitfalls and sources are scored against fixed keys. The keys published with v0.2 were rotated on
+2026-10-31 (new snippets, and the Fernhollow corpus in place of Larkspur), and the new keys live only in
+the operator's encrypted archive, never in this repository. Extract the archive to a private folder and
+pass it as `--hidden-root`; it holds `reviewer/keys/`. Without it, pitfalls and sources are scored
+against the old public keys, which no longer match the questions.
+
 Without `--seed` the run must use the practice challenge. The scorer refuses to run when `rubric.json`,
 `lib/` or `tools/score.mjs` no longer match `RUBRIC.lock` (`node tools/freeze.mjs` rewrites it after an
 intended change). It runs contestant code for the general fix, so score in a disposable VM or container.
