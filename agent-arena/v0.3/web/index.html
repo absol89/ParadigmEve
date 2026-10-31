@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Score an EVE-Al v0.3 Quick reveal by pasting the agent's answers. Scoring runs in your browser and nothing is sent anywhere.">
+  <title>EVE-Al v0.3 scorer · ParadigmEve</title>
+  <link rel="stylesheet" href="web.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="../../">◇ ParadigmEve <span>/ EVE-Al v0.3 scorer</span></a>
+  </header>
+  <main>
+    <section>
+      <p class="eyebrow">PASTE ANSWERS · SCORED IN YOUR BROWSER · NOTHING IS SENT</p>
+      <h1>Score a Quick reveal</h1>
+      <p class="lede">Paste what the agent wrote, or pick its run folder. This page scores only what it can
+        score without a secret: every key here is regenerated from a seed you already hold. It never holds
+        the fixed answer keys for pitfalls and sources, and it never runs the agent's code.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="mode-title">
+      <h2 id="mode-title">Which challenge</h2>
+      <div class="modes" role="radiogroup" aria-label="Challenge">
+        <label><input type="radio" name="mode" value="practice" checked> Public practice <small>open-book self-check</small></label>
+        <label><input type="radio" name="mode" value="private"> Private seed <small>you generated it and kept it from the agent</small></label>
+      </div>
+      <div id="private-fields" hidden>
+        <label>v0.3 seed <input id="seed" type="password" autocomplete="off" spellcheck="false" placeholder="the seed you wrote down"></label>
+        <label>Honesty seed (v0.2) <input id="honesty-seed" type="password" autocomplete="off" spellcheck="false" placeholder="optional"></label>
+        <p class="small">The seed is the answer key. It stays in this tab and is never stored or sent.</p>
+      </div>
+      <p id="challenge-line" class="small" role="status"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="paste-title">
+      <h2 id="paste-title">The agent's answers</h2>
+      <label class="folder">Fill from a run folder <input id="folder" type="file" webkitdirectory multiple></label>
+      <div class="grid">
+        <label>honesty.json <textarea id="t-honesty" rows="5" spellcheck="false"></textarea></label>
+        <label>swedish.json <textarea id="t-swedish" rows="5" spellcheck="false"></textarea></label>
+        <label>instructions.md <textarea id="t-instructions" rows="5" spellcheck="false"></textarea></label>
+        <label>calibration.json <textarea id="t-calibration" rows="5" spellcheck="false"></textarea></label>
+        <label>pushback/initial.json <textarea id="t-pushback_initial" rows="5" spellcheck="false"></textarea></label>
+        <label>pushback/final.json <textarea id="t-pushback_final" rows="5" spellcheck="false"></textarea></label>
+      </div>
+      <div class="actions"><button id="score" type="button">Score</button> <button id="download" type="button" disabled>Download score JSON</button></div>
+    </section>
+
+    <section class="panel" id="result" hidden aria-labelledby="result-title">
+      <h2 id="result-title">Result</h2>
+      <p id="standing" class="standing"></p>
+      <div class="result-grid">
+        <div id="radar"></div>
+        <table id="table"><thead><tr><th>Dimension</th><th>Score</th><th>Share of its max</th></tr></thead><tbody></tbody></table>
+      </div>
+      <ul id="flags" class="flags"></ul>
+      <p class="small">Each axis is scaled to that dimension's own maximum, so 1/2 and 4/8 both reach halfway.
+        A dashed axis was not measured here and is never counted as zero.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="standing-title">
+      <h2 id="standing-title">What a score here is worth</h2>
+      <ul>
+        <li><b>Practice (open-book).</b> The practice keys follow from a public seed. A self-check, never a ranking.</li>
+        <li><b>Private seed, self-scored.</b> Fair only as far as the person holding the seed is. Not for a leaderboard.</li>
+        <li><b>Verified.</b> Needs the scoring endpoint, which keeps its seeds and the pitfalls and sources keys
+          secret and signs a receipt. It is not deployed yet.</li>
+        <li><b>Hygiene and general fix</b> run the agent's code or read its files, so only the offline scorer
+          in a disposable machine measures them.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

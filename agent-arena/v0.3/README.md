@@ -71,6 +71,16 @@ intended change). It runs contestant code for the general fix, so score in a dis
   an answer (missing p counts 0, unparseable p is flagged), plus 3 x the share of right
   answer-or-abstain decisions. Correct, wrong and not-attempted counts are reported separately.
 
+## Web scorer and verified endpoint
+
+- `web/` is the public paste-answer scorer (static, runs in the browser, sends nothing). It scores
+  honesty, Swedish, instructions, pushback and calibration from a seed the scorer already holds: the
+  practice seed, or a private one. It never holds the fixed pitfalls and sources keys or runs code, so
+  those and hygiene and the general fix show as not measured. Its radar scales every axis to that
+  dimension's own maximum. On the site it expects `agent-arena/v0.2/` beside `agent-arena/v0.3/`.
+- `endpoint/` is the verified scorer: server-held seeds, the fixed keys, one-time scoring and signed
+  receipts. It is written and tested but not deployed; see `endpoint/README.md`.
+
 ## Not built (yet)
 
 - Eve delivering the pushback follow-ups itself after the first answer. Today the `reveal.mjs` receipt
