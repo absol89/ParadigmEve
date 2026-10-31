@@ -179,7 +179,11 @@ export function deliverLocalInput(entry: InputEntry): Promise<void> {
 
 async function run(entry: InputEntry): Promise<void> {
   if (!isLocalProviderInput(entry) || !entry.model) return;
-  const provider: ChatProvider = { id: entry.provider === 'openrouter' ? 'openrouter' : entry.provider === 'llamacpp' ? 'llamacpp' : 'ollama', model: entry.model };
+  const provider: ChatProvider = {
+    id: entry.provider === 'openrouter' ? 'openrouter' : entry.provider === 'llamacpp' ? 'llamacpp' : 'ollama',
+    model: entry.model,
+    ...(entry.provider === 'ollama' && entry.ollamaThink !== undefined ? { think: entry.ollamaThink } : {})
+  };
   if (!getConfig().sessions.record) {
     // Without the archive there is no history to give the model, and no place for its reply.
     await claimAndFail(entry, 'Ollama chats need session recording. Turn recording on in Settings and send again.');
@@ -303,7 +307,10 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
         // The daemon on this computer gets its native API, the only one that takes a context window.
         runtime: provider.id === 'llamacpp' ? createLlamaCppAgentModelRuntime()
           : routerKey ? createOpenRouterAgentModelRuntime(routerKey)
-          : createOllamaAgentModelRuntime(globalThis.fetch, { native: providerRoute(provider, endpoint) === 'ollama-local' }),
+          : createOllamaAgentModelRuntime(globalThis.fetch, {
+            native: providerRoute(provider, endpoint) === 'ollama-local',
+            think: provider.think
+          }),
         signal: controller.signal,
         allowNoTools: true
       });

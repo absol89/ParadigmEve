@@ -540,6 +540,8 @@ export type ChatProviderId = 'ollama' | 'llamacpp' | 'openrouter';
 export interface ChatProvider {
   id: ChatProviderId;
   model: string;
+  /** Explicit native Ollama thinking choice; absent keeps the model's default behavior. */
+  think?: boolean;
 }
 
 /** Privacy destination that may receive this chat's archived history after explicit user approval. */

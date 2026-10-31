@@ -316,6 +316,8 @@ export function createOllamaAgentModelRuntime(
      * window sized to the request. The endpoint stays the daemon's OpenAI-compatible `…/v1`.
      */
     native?: boolean;
+    /** Explicit per-chat native thinking override; omit to preserve Ollama's model default. */
+    think?: boolean;
   } = {}
 ): LocalAgentModelRuntime {
   const headersFor = options.headers ?? ollamaHeaders;
@@ -323,6 +325,9 @@ export function createOllamaAgentModelRuntime(
   return {
     async complete(request: LocalAgentModelRequest): Promise<LocalAgentCompletion> {
       const trimmed = request.endpoint.replace(/\/+$/, '');
+      if (options.think !== undefined && !(options.native && trimmed.endsWith('/v1'))) {
+        throw new Error('OLLAMA_THINK_UNSUPPORTED: thinking on/off requires a local Ollama native /api/chat endpoint');
+      }
       if (options.native && trimmed.endsWith('/v1')) {
         const base = trimmed.slice(0, -'/v1'.length);
         const headers = await headersFor(request.endpoint);
@@ -342,7 +347,7 @@ export function createOllamaAgentModelRuntime(
           method: 'POST',
           redirect: 'error',
           headers,
-          body: JSON.stringify({ ...unsized, options: { num_ctx: numCtx } }),
+          body: JSON.stringify({ ...unsized, ...(options.think !== undefined ? { think: options.think } : {}), options: { num_ctx: numCtx } }),
           signal: request.signal
         }), label);
         const promptTokens = (payload as { prompt_eval_count?: unknown } | null)?.prompt_eval_count;

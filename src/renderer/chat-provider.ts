@@ -32,6 +32,8 @@ let routerHasKey = false;
 let scope: string | null = null;
 /** Per chat (null = New chat): the provider picked for the next turn. */
 const choices = new Map<string | null, ChatProvider | null>();
+/** Explicit per-chat Ollama thinking choice. Missing means use the model's default. */
+const thinkChoices = new Map<string | null, boolean>();
 /** Chats whose next send follows an explicit provider/model picker change. */
 const explicitSwitchIntent = new Set<string | null>();
 let lastOllamaModel: string | null = null;
@@ -72,6 +74,9 @@ export function composerProvider(): ChatProvider | null {
 /** Called whenever the selected chat changes. Defaults to the provider of the chat's newest turn. */
 export function applyComposerProvider(nextScope: string | null, session: SessionSummary | null): void {
   scope = nextScope;
+  if (!thinkChoices.has(scope) && session?.provider?.id === 'ollama' && session.provider.think !== undefined) {
+    thinkChoices.set(scope, session.provider.think);
+  }
   if (!choices.has(scope)) choices.set(scope, session?.provider ? { ...session.provider } : null);
   const localOnly = session?.localOnly === true;
   selectedLocalOnly = localOnly;
@@ -82,13 +87,15 @@ export function applyComposerProvider(nextScope: string | null, session: Session
 }
 
 function choose(provider: ChatProvider | null): void {
-  choices.set(scope, provider);
+  const ollamaLocal = provider?.id === 'ollama' && models.find((choice) => choice.id === provider.model)?.route === 'ollama-local';
+  const chosen = ollamaLocal && thinkChoices.has(scope) ? { ...provider, think: thinkChoices.get(scope)! } : provider;
+  choices.set(scope, chosen);
   // `choose()` is only called by an explicit provider/model picker action. Do not infer whether
   // that action "really changed" the provider from the renderer's cached choice: while another
   // provider is answering, that cache can lag main. Main's authoritative preview decides whether
   // consent is actually necessary; the user's picker action decides whether to ask it.
   explicitSwitchIntent.add(scope);
-  if (provider?.id === 'ollama') lastOllamaModel = provider.model;
+  if (chosen?.id === 'ollama') lastOllamaModel = chosen.model;
   if (provider?.id === 'llamacpp') lastLlamaCppModel = provider.model;
   if (provider?.id === 'openrouter') lastRouterModel = provider.model;
   paint();
@@ -253,6 +260,8 @@ function paint(): void {
   $('chatgptModelPanel').hidden = !!provider;
   const router = provider?.id === 'openrouter';
   const llamaCpp = provider?.id === 'llamacpp';
+  $('ollamaThinkRow').hidden = provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local';
+  $<HTMLInputElement>('ollamaThink').checked = thinkChoices.get(scope) ?? provider?.think !== false;
   const title = $('ollamaModelPanel').querySelector('.power-caption strong');
   if (title) ui(title as HTMLElement, 'textContent', () => router ? t("OpenRouter model") : llamaCpp ? 'llama.cpp model' : t("Ollama model"));
   ($('ollamaLocalOnly').closest('label') as HTMLElement | null)?.toggleAttribute('hidden', router);
@@ -283,7 +292,9 @@ export function markProviderSwitch(traceId: string | undefined, step: string, st
 export async function confirmProviderSwitch(sessionId: string, provider: ChatProvider | null, traceId?: string): Promise<ProviderConsent | undefined | false> {
   // Main enforces the same rule on send; without a preview, let it decide and explain.
   const previewStartedAt = performance.now();
-  const reply = await window.api.providerPreview?.(sessionId, provider, traceId).catch(() => null);
+  // Consent previews accept exact provider identity, not per-turn inference settings.
+  const previewProvider = provider ? { id: provider.id, model: provider.model } : null;
+  const reply = await window.api.providerPreview?.(sessionId, previewProvider, traceId).catch(() => null);
   markProviderSwitch(traceId, 'preview-ipc', previewStartedAt);
   if (!reply?.ok) return undefined;
   const preview = reply.data;
@@ -353,6 +364,15 @@ export function initChatProvider(): void {
   });
   $<HTMLInputElement>('ollamaModelSearch').addEventListener('input', () => {
     modelSearch = $<HTMLInputElement>('ollamaModelSearch').value;
+    paint();
+  });
+  $<HTMLInputElement>('ollamaThink').addEventListener('change', () => {
+    const provider = current();
+    if (provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local') return;
+    const think = $<HTMLInputElement>('ollamaThink').checked;
+    thinkChoices.set(scope, think);
+    choices.set(scope, { ...provider, think });
+    // Changing Ollama thinking does not switch providers or authorize a new privacy route.
     paint();
   });
   $<HTMLInputElement>('ollamaLocalOnly').addEventListener('change', async () => {

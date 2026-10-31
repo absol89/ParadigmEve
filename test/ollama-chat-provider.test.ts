@@ -235,6 +235,34 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
   expect(await input.pendingBrowserInputs()).toEqual([]);
 });
 
+it('keeps an explicit Ollama Think choice across turns and restart, changing the native payload', async () => {
+  const first = randomUUID();
+  expect((await send({ id: first, provider: 'ollama', model: 'llama3.2', ollamaThink: false, text: 'Quick answer' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === first)?.state).toBe('sent'));
+  const sessionId = (await input.listInputs()).find((row) => row.id === first)!.deliveredSessionId!;
+  await finished(sessionId, `ollama-turn:${first}`);
+  expect(ollamaRequests.find((row) => row.url.endsWith('/api/chat'))?.body.think).toBe(false);
+  expect((await getSession(sessionId))?.provider).toMatchObject({ id: 'ollama', model: 'llama3.2', think: false });
+
+  const second = randomUUID();
+  expect((await send({ id: second, sessionId, provider: 'ollama', model: 'llama3.2', ollamaThink: true, text: 'Think again' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === second)?.state).toBe('sent'));
+  await finished(sessionId, `ollama-turn:${second}`);
+  expect(ollamaRequests.filter((row) => row.url.endsWith('/api/chat')).at(-1)?.body.think).toBe(true);
+  expect((await getSession(sessionId))?.provider).toMatchObject({ id: 'ollama', model: 'llama3.2', think: true });
+
+  await restartStore();
+  expect((await getSession(sessionId))?.provider).toMatchObject({ id: 'ollama', model: 'llama3.2', think: true });
+  const archived = await readEvents(sessionId, { kinds: ['user_message', 'assistant_message'] });
+  expect(archived.filter((event) => event.kind === 'assistant_message').map((event) => event.provider?.think)).toEqual([false, true]);
+});
+
+it('rejects a thinking override for non-Ollama providers', async () => {
+  const response = await send({ provider: 'llamacpp', model: LFM3, ollamaThink: false });
+  expect(response.ok).toBe(false);
+  expect(response.error).toMatch(/ollamaThink|Ollama chats/i);
+});
+
 it('keeps llama.cpp distinct from Ollama: local-only LFM3, OpenAI tool calls, no credentials or native Ollama APIs', async () => {
   const models = await handlers.get('llamacpp:models')!(rendererEvent, undefined);
   expect(models.data).toEqual([{ id: LFM3 }]);

@@ -4206,7 +4206,11 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   if (switching) markProviderSwitch(switchTrace, 'before-send', switchStartedAt);
   if (providerConsent === false) return false;
   if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
-  const providerIntent = provider ? { provider: provider.id, ...((provider.id === 'ollama' || provider.id === 'llamacpp') && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}) } : {};
+  const providerIntent = provider ? {
+    provider: provider.id,
+    ...((provider.id === 'ollama' || provider.id === 'llamacpp') && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}),
+    ...(provider.id === 'ollama' && provider.think !== undefined ? { ollamaThink: provider.think } : {})
+  } : {};
   const consentIntent = providerConsent ? { providerConsent } : {};
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
   const mode = chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;

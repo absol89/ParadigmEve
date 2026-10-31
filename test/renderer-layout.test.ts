@@ -636,6 +636,18 @@ describe('the session timeline', () => {
 });
 
 describe('provider adoption in the composer', () => {
+  it('exposes a per-chat Think toggle in the local Ollama model picker and sends its intent', async () => {
+    const toggle = document.getElementById('ollamaThink') as HTMLInputElement;
+    expect(toggle?.type).toBe('checkbox');
+    expect(toggle.closest('#ollamaModelPanel')).not.toBeNull();
+    const provider = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat-provider.ts'), 'utf8');
+    expect(provider).toContain("routeOfProvider(provider) !== 'ollama-local'");
+    expect(provider).toContain('thinkChoices.set(scope, think)');
+    expect(provider).toContain('const previewProvider = provider ? { id: provider.id, model: provider.model } : null');
+    const chat = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat.ts'), 'utf8');
+    expect(chat).toContain('{ ollamaThink: provider.think }');
+  });
+
   it('does not wait for existing-chat model discovery when an Ollama-born chat first switches to ChatGPT', async () => {
     const chat = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat.ts'), 'utf8');
     const start = chat.indexOf('async function sendComposer');

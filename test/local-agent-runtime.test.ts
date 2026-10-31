@@ -126,6 +126,28 @@ describe('local agent tool loop', () => {
 });
 
 describe('Ollama agent model transport', () => {
+  it('sends an explicit thinking flag only to native Ollama, preserving defaults otherwise', async () => {
+    resetOllamaNativeContextForTests();
+    const bodies: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      bodies.push({ url, body: JSON.parse(String(init.body)) });
+      if (url.endsWith('/api/show')) return Response.json({ model_info: { 'lfm3.context_length': 32768 } });
+      return nativeEvents({ message: { content: 'ok' }, done: false }, { done: true });
+    });
+    const request = { endpoint: 'http://127.0.0.1:11434/v1', model: 'eveal-lfm3:fast',
+      messages: [{ role: 'user' as const, content: 'Do the work' }], tools: [] };
+    await createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true, think: false }).complete(request);
+    await createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true, think: true }).complete(request);
+    await createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true }).complete(request);
+    const chats = bodies.filter((row) => row.url.endsWith('/api/chat')).map((row) => row.body);
+    expect(chats).toHaveLength(3);
+    expect(chats[0]?.think).toBe(false);
+    expect(chats[1]?.think).toBe(true);
+    expect(chats[2]).not.toHaveProperty('think');
+    await expect(createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { think: false }).complete(request))
+      .rejects.toThrow(/requires a local Ollama native/);
+  });
+
   it('sends a dedicated tool-capable request without Goal/OpenRouter vendor fields', async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

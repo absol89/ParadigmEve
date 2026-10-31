@@ -57,7 +57,8 @@ export async function recordDeliveredInput(entry: Readonly<InputEntry>): Promise
   // Only an explicit native picker request proves model selection. Finish tasks
   // inherit the page model, so their old queued settings cannot become evidence.
   const selection = browserInputModel(entry);
-  const provider: ChatProvider | null = (entry.provider === 'ollama' || entry.provider === 'llamacpp' || entry.provider === 'openrouter') && entry.model ? { id: entry.provider, model: entry.model } : null;
+  const provider: ChatProvider | null = (entry.provider === 'ollama' || entry.provider === 'llamacpp' || entry.provider === 'openrouter') && entry.model
+    ? { id: entry.provider, model: entry.model, ...(entry.provider === 'ollama' && entry.ollamaThink !== undefined ? { think: entry.ollamaThink } : {}) } : null;
   const ordinaryNativeBrowserSend = !provider && !messageId.startsWith('input:') && entry.mode !== 'finish' &&
     !entry.finishOwner && !entry.recoveryTurnId &&
     (entry.purpose === undefined || entry.purpose === 'user') && !entry.scheduleOccurrenceId && !!entry.conversationId;

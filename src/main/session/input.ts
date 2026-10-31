@@ -56,6 +56,8 @@ const inputArgsBase = z.object({
    * between turns; the session archive stays the single history both providers read.
    */
   provider: z.enum(['ollama', 'llamacpp', 'openrouter']).optional(),
+  /** Explicit Ollama native /api/chat thinking choice. Absent preserves Ollama's default. */
+  ollamaThink: z.boolean().optional(),
   /** A new Ollama chat that starts locked to this computer (Local only ticked before the first send). */
   localOnly: z.literal(true).optional(),
   /** The switch scope the user confirmed in the composer (see provider-history.ts). */
@@ -113,6 +115,9 @@ function validateOpeningContext(
     if (input.automation && input.automation !== 'off') refuse('automation', `Goal and Loop run in ChatGPT; turn them off to send to ${name}`);
     if (input.stages?.length || input.mode === 'finish') refuse('mode', 'Staged plans and finish tasks run in ChatGPT');
     if (input.contextQuiltId) refuse('contextQuiltId', 'Thread context openings run in ChatGPT');
+  }
+  if (input.ollamaThink !== undefined && input.provider !== 'ollama') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ollamaThink'], message: 'Thinking on/off applies only to Ollama chats' });
   }
   if (input.localOnly && (!['ollama', 'llamacpp'].includes(input.provider ?? '') || input.sessionId !== null)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['localOnly'], message: 'Local only can be chosen for a new local-model chat; an existing chat changes it in its options' });

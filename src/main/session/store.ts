@@ -2753,7 +2753,8 @@ export async function observeSessionBrowserModelIntent(
 export async function setSessionProvider(id: string, provider: ChatProvider | null): Promise<void> {
   const entry = await ensureOpen(id);
   await enqueueSessionOperation(entry, 'provider', async () => {
-    const same = provider ? entry.summary.provider?.id === provider.id && entry.summary.provider.model === provider.model : !entry.summary.provider;
+    const same = provider ? entry.summary.provider?.id === provider.id && entry.summary.provider.model === provider.model &&
+      entry.summary.provider.think === provider.think : !entry.summary.provider;
     if (same) return;
     if (provider) entry.summary.provider = { ...provider };
     else delete entry.summary.provider;
