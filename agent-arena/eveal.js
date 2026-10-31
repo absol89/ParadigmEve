@@ -19,18 +19,17 @@ async function getJson(url) {
 
 async function renderRubric() {
   try {
-    const rubric = await getJson('v0.2/rubric.json');
-    const box = $('tiers');
-    box.replaceChildren();
-    for (const [id, tier] of Object.entries(rubric.tiers)) {
-      const card = el('article', '', 'tier');
-      const max = tier.tasks.reduce((n, t) => n + t.points, 0);
-      card.append(el('small', id === 'quick' ? 'QUICK REVEAL · %eveal' : 'FULL SUITE'), el('h3', `${tier.title} · ${max} points`));
-      const list = el('ul');
-      for (const t of tier.tasks) list.append(el('li', `${t.area}: ${t.points}${t.na_allowed ? ' (n/a offline)' : ''}`));
-      card.append(list, el('p', tier.budget.note ?? `Target ${tier.budget.target_minutes} minutes.`, 'small'));
-      box.append(card);
-    }
+    // The v0.3 Quick reveal is v0.2's four Quick tasks plus v0.3's five; it is the only scale shown.
+    const [rubric, v03] = await Promise.all([getJson('v0.2/rubric.json'), getJson('v0.3/rubric.json')]);
+    const V03_AREAS = { swedish: 'Swedish (svenska)', instructions: 'exact instructions', general_fix: 'general bug fix', pushback: 'pushback vs. evidence', calibration: 'calibration' };
+    const tasks = [...rubric.tiers.quick.tasks.map(t => ({ area: t.area, points: t.points })), ...v03.tasks.map(t => ({ area: V03_AREAS[t.id] ?? t.id, points: t.points }))];
+    const max = tasks.reduce((n, t) => n + t.points, 0);
+    const card = el('article', '', 'tier');
+    card.append(el('small', 'QUICK REVEAL · %eveal · v0.3'), el('h3', `Quick reveal · ${max} points`));
+    const list = el('ul');
+    for (const t of tasks) list.append(el('li', `${t.area}: ${t.points}`));
+    card.append(list, el('p', `Aim for ${v03.budget.target_minutes} minutes, stop at ${v03.budget.hard_stop_minutes}. Offline-capable; the hygiene, general fix and pushback tasks need Node or must be declared unable.`, 'small'));
+    $('tiers').replaceChildren(card);
   } catch (e) { $('tiers').textContent = 'Rubric unavailable: ' + e.message; }
 }
 
