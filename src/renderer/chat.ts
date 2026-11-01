@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, currentSessionModelObservation, initChatModels, confirmedComposerModel, ensureComposerModel, firstModelChoiceNeeded, refreshSettingsModelsOnOpen } from './chat-models.js';
-import { applyComposerProvider, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
+import { applyComposerProvider, applyOllamaModelPreferences, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
@@ -3658,6 +3658,7 @@ const CHAT_INPUTS = [
 /** Writes app state into this panel's controls. Called from the renderer's apply(). */
 export function chatApply(state: AppState, previous?: Config): void {
   const { config, bridge } = state;
+  applyOllamaModelPreferences(config);
   paintContextMeter(sessions.find(session => session.id === selectedId) ?? null, config, confirmedComposerModel());
   applyChatModels(config, previous);
 
@@ -4209,7 +4210,8 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const providerIntent = provider ? {
     provider: provider.id,
     ...((provider.id === 'ollama' || provider.id === 'llamacpp') && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}),
-    ...(provider.id === 'ollama' && provider.think !== undefined ? { ollamaThink: provider.think } : {})
+    ...(provider.id === 'ollama' && provider.think !== undefined ? { ollamaThink: provider.think } : {}),
+    ...(provider.id === 'ollama' && provider.numCtx !== undefined ? { ollamaNumCtx: provider.numCtx } : {})
   } : {};
   const consentIntent = providerConsent ? { providerConsent } : {};
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;

@@ -266,6 +266,25 @@ it('keeps an explicit Ollama Think choice across turns and restart, changing the
   expect(archived.filter((event) => event.kind === 'assistant_message').map((event) => event.provider?.think)).toEqual([false, true]);
 });
 
+it('honors an explicit per-chat Ollama context override and persists it across restart', async () => {
+  const id = randomUUID();
+  expect((await send({ id, provider: 'ollama', model: 'llama3.2', ollamaNumCtx: 24_576, text: 'Bound my context' })).ok).toBe(true);
+  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  const sessionId = (await input.listInputs()).find((row) => row.id === id)!.deliveredSessionId!;
+  await finished(sessionId, `ollama-turn:${id}`);
+  expect(ollamaRequests.find((row) => row.url.endsWith('/api/chat'))?.body.options.num_ctx).toBe(24_576);
+  expect((await getSession(sessionId))?.provider).toMatchObject({ id: 'ollama', model: 'llama3.2', numCtx: 24_576 });
+  await restartStore();
+  expect((await getSession(sessionId))?.provider?.numCtx).toBe(24_576);
+  const archived = await readEvents(sessionId, { kinds: ['user_message', 'assistant_message'] });
+  expect(archived.filter((event) => event.kind === 'assistant_message').map((event) => event.provider?.numCtx)).toEqual([24_576]);
+});
+
+it('rejects a context override for non-Ollama providers or an invalid size', async () => {
+  expect((await send({ provider: 'llamacpp', model: LFM3, ollamaNumCtx: 24_576 })).error).toMatch(/ollamaNumCtx|Ollama chats/i);
+  expect((await send({ provider: 'ollama', model: 'llama3.2', ollamaNumCtx: 1024 })).error).toMatch(/ollamaNumCtx|2048|2048/i);
+});
+
 it('rejects a thinking override for non-Ollama providers', async () => {
   const response = await send({ provider: 'llamacpp', model: LFM3, ollamaThink: false });
   expect(response.ok).toBe(false);

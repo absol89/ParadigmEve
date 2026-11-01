@@ -1191,8 +1191,11 @@
                     </div>
                     <div id="ollamaModelPanel" hidden>
                       <div class="ollama-header"><div class="power-caption"><strong>Ollama model</strong><span id="ollamaModelStatus">Not loaded yet</span></div><button class="btn model-reload" id="refreshOllamaModels" data-keep-menu="true" type="button" title="Reload Ollama models" aria-label="Reload Ollama models"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-refresh" /></svg></button></div>
-                      <label class="ollama-local-only"><input type="checkbox" id="ollamaLocalOnly" data-keep-menu="true" /> <span>Show only local models</span></label>
-                      <label class="ollama-local-only" id="ollamaThinkRow" hidden title="Uncheck to send think: false. Check to send think: true. Before you change it, a checked box leaves the model's default unchanged. Local Ollama models only."><input type="checkbox" id="ollamaThink" data-keep-menu="true" checked /> <span>Think</span></label>
+                      <div class="ollama-controls-row">
+                        <label class="ollama-local-only" title="Show only models running on this computer"><input type="checkbox" id="ollamaLocalOnly" data-keep-menu="true" /> <span>Local</span></label>
+                        <label class="ollama-local-only" id="ollamaThinkRow" hidden title="Uncheck to send think: false. Check to send think: true. Before you change it, a checked box leaves the model's default unchanged. Local Ollama models only."><input type="checkbox" id="ollamaThink" data-keep-menu="true" checked /> <span>Think</span></label>
+                        <label class="ollama-context-control" id="ollamaContextRow" hidden title="Context tokens for local Ollama. Empty means automatic sizing; an explicit value is used for every turn until changed."><span>Context</span><input id="ollamaNumCtx" type="number" inputmode="numeric" min="2048" max="1048576" step="1" placeholder="Auto" aria-label="Ollama context tokens" data-keep-menu="true" /></label>
+                      </div>
                       <input type="search" id="ollamaModelSearch" data-keep-menu="true" placeholder="Search models" aria-label="Search Ollama models" spellcheck="false" hidden />
                       <div id="ollamaModelChoices" role="group" aria-label="Ollama model"></div>
                     </div>

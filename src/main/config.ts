@@ -386,6 +386,13 @@ const configSchema = z.object({
     chatBrowser: z.enum(CHAT_BROWSERS).optional().default('chrome'),
     chatModel: z.string().trim().min(1).max(80).nullable().optional(),
     chatReasoning: z.enum(REASONING_EFFORTS).nullable().optional(),
+    ollamaModelPreferences: z.record(
+      z.string().trim().min(1).max(160),
+      z.object({
+        think: z.boolean().optional(),
+        numCtx: z.number().int().min(2048).max(1_048_576).optional()
+      }).strict()
+    ).refine(value => Object.keys(value).length <= 256, 'Too many Ollama model preferences').optional().default({}),
     developerMode: z.boolean().optional(),
     /** Send each new Plan revision to the orchestrator without the user's Send. Off by default. */
     planAutoSend: z.boolean().optional(),
@@ -722,6 +729,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
       autoRefreshPlugins: true,
       backgroundChats: true,
       browserOnly: false,
+      ollamaModelPreferences: {},
       conceptQuiltRows: DEFAULT_CONCEPT_PREVIEW_SETTINGS.quiltRows,
       conceptPinPreviewDensity: DEFAULT_CONCEPT_PREVIEW_SETTINGS.pinPreviewDensity,
       conceptDescriptionTextSize: DEFAULT_CONCEPT_PREVIEW_SETTINGS.descriptionTextSize,

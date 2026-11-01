@@ -278,6 +278,13 @@ const settingsPatch = z.object({
     chatBrowser: z.enum(CHAT_BROWSERS).optional(),
     chatModel: z.string().trim().min(1).max(80).nullable().optional(),
     chatReasoning: z.enum(REASONING_EFFORTS).nullable().optional(),
+    ollamaModelPreferences: z.record(
+      z.string().trim().min(1).max(160),
+      z.object({
+        think: z.boolean().optional(),
+        numCtx: z.number().int().min(2048).max(1_048_576).optional()
+      }).strict()
+    ).refine(value => Object.keys(value).length <= 256, 'Too many Ollama model preferences').optional(),
     developerMode: z.boolean().optional(),
     finishTool: z.boolean().optional(),
     planAutoSend: z.boolean().optional(),
@@ -494,6 +501,7 @@ function mergeSettings(
       chatBrowser: pick(current.ui.chatBrowser, base.ui.chatBrowser, wanted.ui.chatBrowser),
       chatModel: pick(current.ui.chatModel, base.ui.chatModel, wanted.ui.chatModel),
       chatReasoning: pick(current.ui.chatReasoning, base.ui.chatReasoning, wanted.ui.chatReasoning),
+      ollamaModelPreferences: pick(current.ui.ollamaModelPreferences, base.ui.ollamaModelPreferences, wanted.ui.ollamaModelPreferences),
       developerMode: pick(current.ui.developerMode, base.ui.developerMode, wanted.ui.developerMode),
       finishTool: pick(current.ui.finishTool, base.ui.finishTool, wanted.ui.finishTool),
       planAutoSend: pick(current.ui.planAutoSend, base.ui.planAutoSend, wanted.ui.planAutoSend),
@@ -1015,6 +1023,27 @@ export function registerIpc(
         chatReasoning: request.reasoningEffort
       } }));
     }
+    return buildState();
+  });
+  handle('ollama:modelPreference', async (payload) => {
+    const request = z.object({
+      model: z.string().trim().min(1).max(160),
+      patch: z.object({
+        think: z.boolean().nullable().optional(),
+        numCtx: z.number().int().min(2048).max(1_048_576).nullable().optional()
+      }).strict()
+    }).strict().parse(payload);
+    await updateConfig(config => {
+      const preferences = { ...(config.ui.ollamaModelPreferences ?? {}) };
+      const preference = { ...(preferences[request.model] ?? {}) };
+      if (request.patch.think === null) delete preference.think;
+      else if (request.patch.think !== undefined) preference.think = request.patch.think;
+      if (request.patch.numCtx === null) delete preference.numCtx;
+      else if (request.patch.numCtx !== undefined) preference.numCtx = request.patch.numCtx;
+      if (Object.keys(preference).length) preferences[request.model] = preference;
+      else delete preferences[request.model];
+      return { ...config, ui: { ...config.ui, ollamaModelPreferences: preferences } };
+    });
     return buildState();
   });
 

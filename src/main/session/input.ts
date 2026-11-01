@@ -58,6 +58,8 @@ const inputArgsBase = z.object({
   provider: z.enum(['ollama', 'llamacpp', 'openrouter']).optional(),
   /** Explicit Ollama native /api/chat thinking choice. Absent preserves Ollama's default. */
   ollamaThink: z.boolean().optional(),
+  /** Explicit local Ollama context tokens; absent lets the runtime size the prompt automatically. */
+  ollamaNumCtx: z.number().int().min(2048).max(1_048_576).optional(),
   /** A new Ollama chat that starts locked to this computer (Local only ticked before the first send). */
   localOnly: z.literal(true).optional(),
   /** The switch scope the user confirmed in the composer (see provider-history.ts). */
@@ -118,6 +120,9 @@ function validateOpeningContext(
   }
   if (input.ollamaThink !== undefined && input.provider !== 'ollama') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ollamaThink'], message: 'Thinking on/off applies only to Ollama chats' });
+  }
+  if (input.ollamaNumCtx !== undefined && input.provider !== 'ollama') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ollamaNumCtx'], message: 'Context override applies only to Ollama chats' });
   }
   if (input.localOnly && (!['ollama', 'llamacpp'].includes(input.provider ?? '') || input.sessionId !== null)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['localOnly'], message: 'Local only can be chosen for a new local-model chat; an existing chat changes it in its options' });

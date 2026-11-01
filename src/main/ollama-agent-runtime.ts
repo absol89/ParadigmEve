@@ -324,6 +324,8 @@ export function createOllamaAgentModelRuntime(
     native?: boolean;
     /** Explicit per-chat native thinking override; omit to preserve Ollama's model default. */
     think?: boolean;
+    /** Explicit context tokens for native Ollama chats; omit for automatic request-sized tiers. */
+    numCtx?: number;
   } = {}
 ): LocalAgentModelRuntime {
   const headersFor = options.headers ?? ollamaHeaders;
@@ -333,6 +335,9 @@ export function createOllamaAgentModelRuntime(
       const trimmed = request.endpoint.replace(/\/+$/, '');
       if (options.think !== undefined && !(options.native && trimmed.endsWith('/v1'))) {
         throw new Error('OLLAMA_THINK_UNSUPPORTED: thinking on/off requires a local Ollama native /api/chat endpoint');
+      }
+      if (options.numCtx !== undefined && !(options.native && trimmed.endsWith('/v1'))) {
+        throw new Error('OLLAMA_CONTEXT_UNSUPPORTED: an explicit context requires a local Ollama native /api/chat endpoint');
       }
       if (options.native && trimmed.endsWith('/v1')) {
         const base = trimmed.slice(0, -'/v1'.length);
@@ -348,7 +353,7 @@ export function createOllamaAgentModelRuntime(
             }))
           } : {})
         };
-        const numCtx = await nativeContext(fetchImpl, base, request.model, headers, JSON.stringify(unsized));
+        const numCtx = options.numCtx ?? await nativeContext(fetchImpl, base, request.model, headers, JSON.stringify(unsized));
         const payload = await parsedNativeStream(await fetchImpl(`${base}/api/chat`, {
           method: 'POST',
           redirect: 'error',

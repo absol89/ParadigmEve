@@ -132,6 +132,13 @@ export interface TunnelSettings {
 export const CHAT_BROWSERS = ['chrome', 'edge', 'brave'] as const;
 export type ChatBrowser = (typeof CHAT_BROWSERS)[number];
 
+export interface OllamaModelPreference {
+  /** Explicit native Ollama thinking choice; absent keeps that model's own default. */
+  think?: boolean;
+  /** Explicit local Ollama context in tokens; absent keeps automatic prompt-sized tiers. */
+  numCtx?: number;
+}
+
 export interface UiPrefs {
   /** Opt-in high-volume desktop helper timings in Activity; warnings/errors are never muted. */
   desktopTimingLogs?: boolean;
@@ -160,6 +167,8 @@ export interface UiPrefs {
   chatModel?: string | null;
   /** Reasoning paired with chatModel; null when provider-native default is selected. */
   chatReasoning?: ReasoningEffort | null;
+  /** Exact-model local Ollama controls. These follow the model across chats and restarts. */
+  ollamaModelPreferences?: Record<string, OllamaModelPreference>;
   /** Send each new Plan revision to the orchestrator without the user's Send. Off by default. */
   planAutoSend?: boolean;
   /** Concepts overview: visible Quilt-filter rows before the filter area scrolls. */

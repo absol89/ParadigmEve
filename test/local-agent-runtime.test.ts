@@ -258,6 +258,21 @@ describe('Ollama agent model transport', () => {
     expect(chatRequests.at(-1)?.options.num_ctx).toBe(65_536);
   });
 
+  it('uses the exact context selected in the composer instead of an automatic larger tier', async () => {
+    resetOllamaNativeContextForTests();
+    const requests: Array<{ options: { num_ctx: number } }> = [];
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (url.endsWith('/api/show')) return Response.json({ model_info: { 'nanbeige.context_length': 262_144 } });
+      requests.push(body);
+      return nativeEvents({ message: { content: 'ok' }, done: false }, { done: true, prompt_eval_count: 100 });
+    });
+    const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true, numCtx: 24_576 });
+    await runtime.complete({ endpoint: 'http://127.0.0.1:11434/v1', model: 'eveal-nanbeige-original-q4_0:24k', messages: [{ role: 'user', content: 'x'.repeat(100_000) }], tools: [] });
+    expect(requests.at(-1)?.options.num_ctx).toBe(24_576);
+    expect(fetch.mock.calls.some(([url]) => String(url).endsWith('/api/show'))).toBe(false);
+  });
+
   it('assembles fragmented UTF-8, text, thinking and native tool calls without waiting for the socket to close', async () => {
     resetOllamaNativeContextForTests();
     let cancelled = false;

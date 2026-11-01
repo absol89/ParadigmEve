@@ -12,6 +12,7 @@ import { t, ui } from './i18n.js';
 import { $, el, run, toast } from './dom.js';
 import { repaintComposerLabel, setComposerLabelOverride } from './chat-models.js';
 import type { ChatProvider, ChatProviderRoute, SessionSummary } from '../shared/session.js';
+import type { Config, OllamaModelPreference } from '../shared/types.js';
 
 type Route = ChatProviderRoute;
 interface OllamaChoice { id: string; route: Route; cloud?: boolean; installed?: boolean; vision?: boolean }
@@ -32,8 +33,8 @@ let routerHasKey = false;
 let scope: string | null = null;
 /** Per chat (null = New chat): the provider picked for the next turn. */
 const choices = new Map<string | null, ChatProvider | null>();
-/** Explicit per-chat Ollama thinking choice. Missing means use the model's default. */
-const thinkChoices = new Map<string | null, boolean>();
+/** Durable exact-model Ollama controls. A missing field preserves that model's own default. */
+const modelPreferences = new Map<string, OllamaModelPreference>();
 /** Chats whose next send follows an explicit provider/model picker change. */
 const explicitSwitchIntent = new Set<string | null>();
 let lastOllamaModel: string | null = null;
@@ -46,6 +47,31 @@ let modelSearch = '';
 /** The OpenRouter catalog is long; render a bounded slice of the filtered list. */
 const ROUTER_VISIBLE = 150;
 const localOnlyNow = () => scope === null ? newChatLocalOnly : selectedLocalOnly;
+
+/** Keep the popover inside the window even when the model menu sits near its right edge. */
+function positionModelPopover(): void {
+  const menu = $<HTMLDetailsElement>('modelMenu');
+  if (!menu.open) return;
+  const popover = menu.querySelector<HTMLElement>('.composer-popover');
+  if (!popover) return;
+  const rect = menu.getBoundingClientRect();
+  const width = Math.min(600, Math.max(0, window.innerWidth - 24));
+  const left = Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
+  const above = rect.top - 12;
+  const below = window.innerHeight - rect.bottom - 12;
+  popover.style.width = `${width}px`;
+  popover.style.left = `${left}px`;
+  popover.style.right = 'auto';
+  if (above >= below) {
+    popover.style.top = 'auto';
+    popover.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+    popover.style.maxHeight = `${Math.max(0, above - 8)}px`;
+  } else {
+    popover.style.bottom = 'auto';
+    popover.style.top = `${rect.bottom + 8}px`;
+    popover.style.maxHeight = `${Math.max(0, below - 8)}px`;
+  }
+}
 
 /** For a new chat started on Ollama with Local only ticked: the lock goes with its first message. */
 export function composerLocalOnlyForNewChat(): boolean {
@@ -74,9 +100,6 @@ export function composerProvider(): ChatProvider | null {
 /** Called whenever the selected chat changes. Defaults to the provider of the chat's newest turn. */
 export function applyComposerProvider(nextScope: string | null, session: SessionSummary | null): void {
   scope = nextScope;
-  if (!thinkChoices.has(scope) && session?.provider?.id === 'ollama' && session.provider.think !== undefined) {
-    thinkChoices.set(scope, session.provider.think);
-  }
   if (!choices.has(scope)) choices.set(scope, session?.provider ? { ...session.provider } : null);
   const localOnly = session?.localOnly === true;
   selectedLocalOnly = localOnly;
@@ -86,9 +109,35 @@ export function applyComposerProvider(nextScope: string | null, session: Session
   paint();
 }
 
+function withModelPreference(provider: ChatProvider): ChatProvider {
+  if (provider.id !== 'ollama') return provider;
+  const preference = modelPreferences.get(provider.model);
+  const clean = { ...provider };
+  delete clean.think;
+  delete clean.numCtx;
+  return {
+    ...clean,
+    ...(preference?.think !== undefined ? { think: preference.think } : {}),
+    ...(preference?.numCtx !== undefined ? { numCtx: preference.numCtx } : {})
+  };
+}
+
+/** Main's durable config is the source of truth; renderer caches only make model switching instant. */
+export function applyOllamaModelPreferences(config: Config): void {
+  modelPreferences.clear();
+  for (const [model, preference] of Object.entries(config.ui.ollamaModelPreferences ?? {})) {
+    modelPreferences.set(model, { ...preference });
+  }
+  const provider = current();
+  if (provider?.id === 'ollama' && routeOfProvider(provider) === 'ollama-local') {
+    choices.set(scope, withModelPreference(provider));
+  }
+  paint();
+}
+
 function choose(provider: ChatProvider | null): void {
   const ollamaLocal = provider?.id === 'ollama' && models.find((choice) => choice.id === provider.model)?.route === 'ollama-local';
-  const chosen = ollamaLocal && thinkChoices.has(scope) ? { ...provider, think: thinkChoices.get(scope)! } : provider;
+  const chosen = ollamaLocal ? withModelPreference(provider) : provider;
   choices.set(scope, chosen);
   // `choose()` is only called by an explicit provider/model picker action. Do not infer whether
   // that action "really changed" the provider from the renderer's cached choice: while another
@@ -179,7 +228,7 @@ function paintLlamaCpp(provider: ChatProvider | null): HTMLElement[] {
     button.dataset.keepMenu = 'true';
     button.setAttribute('aria-pressed', provider?.id === 'llamacpp' && provider.model === choice.id ? 'true' : 'false');
     button.append(el('span', '', choice.id), el('span', 'route-badge is-local', () => t("On this computer")));
-    button.onclick = () => choose({ id: 'llamacpp', model: choice.id });
+    button.onclick = (event) => { event.preventDefault(); event.stopPropagation(); choose({ id: 'llamacpp', model: choice.id }); };
     return button;
   });
   if (!nodes.length && llamaCppState === 'ready') nodes.push(el('p', 'muted', () => 'No llama.cpp model is loaded. Start llama-server with a GGUF model.'));
@@ -190,7 +239,7 @@ function paintOllama(provider: ChatProvider | null): HTMLElement[] {
   const status = $('ollamaModelStatus');
   ui(status, 'textContent', () => modelsState === 'loading' ? t("Loading models…")
     : modelsState === 'error' ? modelsError || t("Ollama is not reachable")
-    : modelsState === 'ready' ? (models.length ? t("{0} models", [String(models.length)]) : t("No models installed"))
+    : modelsState === 'ready' ? (models.length ? '' : t("No models installed"))
     : t("Not loaded yet"));
   const localOnly = localOnlyNow();
   $<HTMLInputElement>('ollamaLocalOnly').checked = localOnly;
@@ -205,7 +254,7 @@ function paintOllama(provider: ChatProvider | null): HTMLElement[] {
     node.append(el('span', '', choice.id), el('span', `route-badge${choice.route === 'ollama-local' ? ' is-local' : ''}`,
       () => choice.installed === false ? t("Cloud · not added yet") : routeLabel(choice.route)));
     if (choice.vision) node.title = t("Can read images");
-    node.onclick = () => choose({ id: 'ollama', model: choice.id });
+    node.onclick = (event) => { event.preventDefault(); event.stopPropagation(); choose({ id: 'ollama', model: choice.id }); };
     return node;
   };
   const local = visible.filter((choice) => choice.route === 'ollama-local');
@@ -221,7 +270,7 @@ function paintRouter(provider: ChatProvider | null): HTMLElement[] {
   const status = $('ollamaModelStatus');
   ui(status, 'textContent', () => routerState === 'loading' ? t("Loading models…")
     : routerState === 'error' ? routerError || t("OpenRouter is not reachable")
-    : routerState === 'ready' ? t("{0} models", [String(routerModels.length)])
+    : routerState === 'ready' ? ''
     : t("Not loaded yet"));
   $<HTMLInputElement>('ollamaModelSearch').hidden = false;
   const query = modelSearch.trim().toLowerCase();
@@ -234,7 +283,7 @@ function paintRouter(provider: ChatProvider | null): HTMLElement[] {
     const badges = [choice.free ? t("Free") : '', choice.vision ? t("Images") : '', choice.tools ? '' : t("No tools")].filter(Boolean).join(' · ');
     node.append(el('span', '', choice.id), el('span', 'route-badge', () => badges || t("OpenRouter")));
     node.title = choice.name + (choice.contextLength ? ` · ${choice.contextLength.toLocaleString()} ${t("tokens context")}` : '');
-    node.onclick = () => choose({ id: 'openrouter', model: choice.id });
+    node.onclick = (event) => { event.preventDefault(); event.stopPropagation(); choose({ id: 'openrouter', model: choice.id }); };
     return node;
   };
   const groups: HTMLElement[] = [];
@@ -260,8 +309,15 @@ function paint(): void {
   $('chatgptModelPanel').hidden = !!provider;
   const router = provider?.id === 'openrouter';
   const llamaCpp = provider?.id === 'llamacpp';
+  const ollamaPreference = provider?.id === 'ollama' ? modelPreferences.get(provider.model) : undefined;
   $('ollamaThinkRow').hidden = provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local';
-  $<HTMLInputElement>('ollamaThink').checked = thinkChoices.get(scope) ?? provider?.think !== false;
+  $<HTMLInputElement>('ollamaThink').checked = ollamaPreference?.think ?? provider?.think !== false;
+  $('ollamaContextRow').hidden = provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local';
+  const contextInput = $<HTMLInputElement>('ollamaNumCtx');
+  if (document.activeElement !== contextInput) {
+    const value = ollamaPreference?.numCtx ?? provider?.numCtx;
+    contextInput.value = value ? String(value) : '';
+  }
   const title = $('ollamaModelPanel').querySelector('.power-caption strong');
   if (title) ui(title as HTMLElement, 'textContent', () => router ? t("OpenRouter model") : llamaCpp ? 'llama.cpp model' : t("Ollama model"));
   ($('ollamaLocalOnly').closest('label') as HTMLElement | null)?.toggleAttribute('hidden', router);
@@ -329,6 +385,8 @@ export async function confirmProviderSwitch(sessionId: string, provider: ChatPro
 }
 
 export function initChatProvider(): void {
+  $('modelMenu').addEventListener('toggle', positionModelPopover);
+  window.addEventListener('resize', positionModelPopover);
   setComposerLabelOverride(() => {
     const provider = current();
     if (!provider) return null;
@@ -370,9 +428,30 @@ export function initChatProvider(): void {
     const provider = current();
     if (provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local') return;
     const think = $<HTMLInputElement>('ollamaThink').checked;
-    thinkChoices.set(scope, think);
-    choices.set(scope, { ...provider, think });
+    modelPreferences.set(provider.model, { ...(modelPreferences.get(provider.model) ?? {}), think });
+    choices.set(scope, withModelPreference(provider));
+    void run(window.api.setOllamaModelPreference(provider.model, { think }));
     // Changing Ollama thinking does not switch providers or authorize a new privacy route.
+    paint();
+  });
+  $<HTMLInputElement>('ollamaNumCtx').addEventListener('change', () => {
+    const provider = current();
+    if (provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local') return;
+    const input = $<HTMLInputElement>('ollamaNumCtx');
+    const raw = input.value.trim();
+    const value = raw ? Number(raw) : null;
+    if (value !== null && (!Number.isSafeInteger(value) || value < 2048 || value > 1_048_576)) {
+      input.value = modelPreferences.get(provider.model)?.numCtx ? String(modelPreferences.get(provider.model)!.numCtx) : '';
+      toast(t("Context must be a whole number from 2,048 to 1,048,576 tokens."));
+      return;
+    }
+    const preference = { ...(modelPreferences.get(provider.model) ?? {}) };
+    if (value === null) delete preference.numCtx;
+    else preference.numCtx = value;
+    if (Object.keys(preference).length) modelPreferences.set(provider.model, preference);
+    else modelPreferences.delete(provider.model);
+    choices.set(scope, withModelPreference(provider));
+    void run(window.api.setOllamaModelPreference(provider.model, { numCtx: value }));
     paint();
   });
   $<HTMLInputElement>('ollamaLocalOnly').addEventListener('change', async () => {

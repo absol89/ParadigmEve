@@ -636,16 +636,46 @@ describe('the session timeline', () => {
 });
 
 describe('provider adoption in the composer', () => {
-  it('exposes a per-chat Think toggle in the local Ollama model picker and sends its intent', async () => {
+  it('keeps provider switching visible and Ollama Local, Think and Context on one row without horizontal scrolling', async () => {
+    const providerButtons = [...document.querySelectorAll<HTMLButtonElement>('#composerProvider [data-provider]')];
+    expect(providerButtons.map(button => button.dataset.provider)).toEqual(['chatgpt', 'ollama', 'llamacpp', 'openrouter']);
+    expect(document.querySelector('#composerProvider')?.parentElement?.classList.contains('composer-popover')).toBe(true);
+    const controls = document.querySelector('.ollama-controls-row')!;
+    expect([...controls.querySelectorAll('label')].map(label => label.textContent?.trim())).toEqual(['Local', 'Think', 'Context']);
+    const context = document.getElementById('ollamaNumCtx') as HTMLInputElement;
+    expect(context.type).toBe('number');
+    expect(context.placeholder).toBe('Auto');
+    expect(context.min).toBe('2048');
+    expect(context.max).toBe('1048576');
+    expect(rule('.model-menu .composer-popover')).toContain('width: min(600px, calc(100vw - 24px))');
+    expect(rule('.model-menu .composer-popover')).toContain('position: fixed');
+    expect(rule('.provider-switch')).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(rule('#ollamaModelChoices')).toContain('overflow-x: hidden');
+    expect(rule('#ollamaModelChoices')).toContain('overflow-y: auto');
+    const provider = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat-provider.ts'), 'utf8');
+    expect(provider).toContain('function positionModelPopover()');
+    expect(provider).toContain("$('modelMenu').addEventListener('toggle', positionModelPopover)");
+    expect(provider).toContain("$('ollamaContextRow').hidden = provider?.id !== 'ollama'");
+    expect(provider).not.toContain('t("{0} models", [String(models.length)])');
+  });
+
+  it('stores Think and Context by exact Ollama model and keeps the picker open while choosing models', async () => {
     const toggle = document.getElementById('ollamaThink') as HTMLInputElement;
     expect(toggle?.type).toBe('checkbox');
     expect(toggle.closest('#ollamaModelPanel')).not.toBeNull();
     const provider = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat-provider.ts'), 'utf8');
     expect(provider).toContain("routeOfProvider(provider) !== 'ollama-local'");
-    expect(provider).toContain('thinkChoices.set(scope, think)');
+    expect(provider).toContain('const modelPreferences = new Map<string, OllamaModelPreference>()');
+    expect(provider).toContain('modelPreferences.set(provider.model');
+    expect(provider).toContain('setOllamaModelPreference(provider.model, { think })');
+    expect(provider).toContain('setOllamaModelPreference(provider.model, { numCtx: value })');
+    expect(provider).toContain('event.stopPropagation(); choose({ id: \'ollama\', model: choice.id })');
+    expect(provider).not.toContain('const thinkChoices = new Map');
+    expect(provider).not.toContain('const contextChoices = new Map');
     expect(provider).toContain('const previewProvider = provider ? { id: provider.id, model: provider.model } : null');
     const chat = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat.ts'), 'utf8');
     expect(chat).toContain('{ ollamaThink: provider.think }');
+    expect(chat).toContain('{ ollamaNumCtx: provider.numCtx }');
   });
 
   it('does not wait for existing-chat model discovery when an Ollama-born chat first switches to ChatGPT', async () => {

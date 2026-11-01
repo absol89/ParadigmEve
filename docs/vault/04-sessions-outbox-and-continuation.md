@@ -42,6 +42,13 @@ local-only session may use either local Ollama or local llama.cpp; other destina
 remain blocked. The server is opt-in and must be running before discovery; no fallback
 chooses a different provider. See [llama.cpp LFM3 setup](../local-llamacpp-lfm3.md).
 
+The composer picker keeps all provider choices visible above the independently scrolling
+model list. Ollama's Local, Think and Context controls share one row. Context is an optional
+explicit token count (2,048–1,048,576); blank means native prompt-sized tiers. When set, the
+exact count follows the durable input and session provider into the local `/api/chat` request
+as `options.num_ctx`, overriding automatic tier growth without changing the chosen provider
+or an already-running turn. The override is not sent to Ollama Cloud, llama.cpp or ChatGPT.
+
 Session recording supplies evidence for:
 
 - exact tool attribution;

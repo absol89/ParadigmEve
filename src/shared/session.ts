@@ -542,6 +542,8 @@ export interface ChatProvider {
   model: string;
   /** Explicit native Ollama thinking choice; absent keeps the model's default behavior. */
   think?: boolean;
+  /** Explicit local Ollama context in tokens; absent keeps automatic prompt-sized tiers. */
+  numCtx?: number;
 }
 
 /** Privacy destination that may receive this chat's archived history after explicit user approval. */

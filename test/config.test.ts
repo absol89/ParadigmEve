@@ -52,6 +52,26 @@ describe('settings migration', () => {
     expect((await loadConfig()).ui.chatModel).toBeUndefined();
   });
 
+  it('persists independent Ollama Think and Context preferences by exact model id', async () => {
+    const config = defaultConfig();
+    await saveConfig({
+      ...config,
+      ui: {
+        ...config.ui,
+        ollamaModelPreferences: {
+          'eveal-nanbeige-original-q4_0:24k': { think: true, numCtx: 24_576 },
+          'qwen3:8b': { think: false, numCtx: 65_536 },
+          'llama3.2:latest': { think: false }
+        }
+      }
+    });
+    expect((await loadConfig()).ui.ollamaModelPreferences).toEqual({
+      'eveal-nanbeige-original-q4_0:24k': { think: true, numCtx: 24_576 },
+      'qwen3:8b': { think: false, numCtx: 65_536 },
+      'llama3.2:latest': { think: false }
+    });
+  });
+
   it('defaults fresh and legacy agent execution to GPT Chat for orchestrator and worker', async () => {
     expect(defaultConfig().execution).toEqual(DEFAULT_AGENT_EXECUTION_SETTINGS);
 

@@ -3249,7 +3249,6 @@ nav button:hover, nav button.is-sel { background: var(--hover); color: var(--ink
 #attachmentMenu > summary .ico { display: block; width: 20px; height: 20px; }
 .composer-menu > summary:hover, .composer-menu[open] > summary { color: var(--ink); background: var(--hover); }
 .composer-popover { position: absolute; z-index: 30; bottom: calc(100% + 12px); left: 0; width: 224px; padding: 7px; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; box-shadow: 0 8px 30px #0005; }
-.model-menu .composer-popover { left: 50%; right: auto; translate: -50% 0; width: 260px; }
 .model-menu { width: 164px; flex: 0 0 164px; }
 .model-menu > summary { width: 100%; min-width: 0; justify-content: center; }
 #composerModelLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3317,7 +3316,10 @@ select option { background: var(--card); color: var(--ink); }
 
 /* Four providers fit side by side. The menu sits at the composer's right, so the popover is
    anchored to the menu's right edge and grows leftward instead of past the window. */
-.model-menu .composer-popover { left: auto; right: 0; translate: none; width: min(380px, calc(100vw - 32px)); padding: 8px 12px 15px; }
+.model-menu .composer-popover { position: fixed; left: 12px; right: auto; bottom: 72px; translate: none; width: min(600px, calc(100vw - 24px)); max-height: calc(100vh - 56px); padding: 8px 12px 12px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.model-menu #chatgptModelPanel { overflow-y: auto; min-height: 0; }
+.model-menu #ollamaModelPanel { display: flex; flex-direction: column; min-height: 0; }
+.model-menu #ollamaModelPanel[hidden] { display: none; }
 .model-menu .model-reload { display: flex; width: 28px; height: 28px; min-height: 28px; padding: 5px; justify-content: center; }
 #composerModelStatus { font-size: 12px; padding: 4px 10px; line-height: 1.5; }
 .power-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 8px; margin-bottom: 17px; }
@@ -3465,15 +3467,20 @@ select option { background: var(--card); color: var(--ink); }
 .queue-delivery[aria-pressed="true"] { color: var(--text); border-color: var(--soft); }
 
 /* Provider per turn: the chat owns its history, the provider only answers. */
-.provider-switch { margin-bottom: 12px; }
+.provider-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 8px; flex: none; }
 .ollama-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 8px; margin-bottom: 10px; }
 .ollama-header .model-reload { grid-column: 3; }
-.provider-switch button { flex: 1 1 auto; min-width: 0; padding: 8px 10px; white-space: nowrap; }
-#ollamaModelChoices { display: grid; gap: 2px; max-height: 240px; overflow-y: auto; }
-#ollamaModelChoices .model-choice { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; text-align: left; font-size: 13px; }
+.provider-switch button { min-width: 0; padding: 7px 5px; white-space: nowrap; font-size: 12px; }
+.ollama-controls-row { display: flex; align-items: center; gap: 18px; min-width: 0; flex: none; margin-bottom: 6px; }
+.composer-popover .ollama-controls-row .ollama-local-only { padding: 4px 0; white-space: nowrap; }
+.composer-popover .ollama-controls-row .ollama-context-control { display: flex; align-items: center; justify-content: flex-start; gap: 7px; min-width: 0; padding: 4px 0; margin-left: auto; white-space: nowrap; }
+.composer-popover .ollama-controls-row [hidden] { display: none; }
+#ollamaNumCtx { width: 104px; min-width: 0; padding: 5px 7px; border: 1px solid var(--edge); border-radius: 7px; background: var(--card); color: var(--ink); font: inherit; font-size: 12px; }
+#ollamaModelChoices { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; max-height: min(300px, 40vh); min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+#ollamaModelChoices .model-choice { display: flex; justify-content: space-between; align-items: center; min-width: 0; gap: 8px; padding: 7px 10px; text-align: left; font-size: 13px; }
 #ollamaModelChoices .model-choice[aria-pressed='true'] { background: color-mix(in srgb, #78aaff 18%, var(--card)); }
 #composerModelChoices .model-choice.is-recommended { box-shadow: inset 0 0 0 1px #78aaff; }
-#ollamaModelChoices .model-choice span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ollamaModelChoices .model-choice span:first-child { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route-badge { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--sunk); color: var(--soft); }
 .route-badge.is-local { color: #3aa76d; }
 .provider-tag { margin-left: 6px; font-size: 11px; font-weight: 400; color: var(--soft); }

@@ -186,7 +186,8 @@ async function run(entry: InputEntry): Promise<void> {
   const provider: ChatProvider = {
     id: entry.provider === 'openrouter' ? 'openrouter' : entry.provider === 'llamacpp' ? 'llamacpp' : 'ollama',
     model: entry.model,
-    ...(entry.provider === 'ollama' && entry.ollamaThink !== undefined ? { think: entry.ollamaThink } : {})
+    ...(entry.provider === 'ollama' && entry.ollamaThink !== undefined ? { think: entry.ollamaThink } : {}),
+    ...(entry.provider === 'ollama' && entry.ollamaNumCtx !== undefined ? { numCtx: entry.ollamaNumCtx } : {})
   };
   if (!getConfig().sessions.record) {
     // Without the archive there is no history to give the model, and no place for its reply.
@@ -313,7 +314,8 @@ async function answer(sessionId: string, entry: InputEntry, provider: ChatProvid
           : routerKey ? createOpenRouterAgentModelRuntime(routerKey)
           : createOllamaAgentModelRuntime(localModelFetch, {
             native: providerRoute(provider, endpoint) === 'ollama-local',
-            think: provider.think
+            think: provider.think,
+            numCtx: provider.numCtx
           }),
         signal: controller.signal,
         allowNoTools: true
