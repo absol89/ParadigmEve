@@ -306,6 +306,16 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
   // (never a secret); the message is one of the fixed, translated automatic-setup texts.
   const auto = { active: false, message: '', reason: '', failed: false };
   const progress = (message: string) => { auto.message = message; auto.reason = ''; auto.failed = false; };
+  // Automatic failure hands authority back to the manual guide. Once a manual recovery action
+  // actually advances setup, the old red banner is stale and must not follow the user through the
+  // recovered steps. Keep `active` true so confirming sign-in again cannot start a second automatic
+  // run; clear only the failed presentation state.
+  const clearAutomaticFailure = () => {
+    if (!auto.failed) return;
+    auto.message = '';
+    auto.reason = '';
+    auto.failed = false;
+  };
   const runAutomatic = async () => {
     auto.active = true;
     try {
@@ -434,6 +444,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
               return;
             }
             companionVerified = true;
+            clearAutomaticFailure();
             update('openai-tunnel', `Companion connected. Create the ${options.coreConnectorName} tunnel in Eve Browser, then paste its Tunnel ID into the guide.`);
           } else if (action === 'tunnel-id') {
             if (!companionVerified) {
@@ -446,6 +457,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
               return;
             }
             tunnelId = candidate;
+            clearAutomaticFailure();
             update('openai-api-key', 'Create the restricted tunnel API key in Eve Browser and paste it into the guide immediately.');
           } else if (action === 'api-key') {
             if (!tunnelId) {
@@ -462,6 +474,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
             await options.onCredentials?.(candidateCompletion);
             requireActiveRun(run);
             completion = candidateCompletion;
+            clearAutomaticFailure();
             update('credentials', 'The connection is ready. Create the ChatGPT app in Eve Browser using the supplied details.');
           } else if (action === 'core-app-start') {
             if (!completion) {
@@ -469,6 +482,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
               return;
             }
             coreAppStarted = true;
+            clearAutomaticFailure();
             update('chatgpt-plugins', `Create the ${options.coreConnectorName} app in Eve Browser with the exact supplied name and description.`);
           } else if (action === 'core-app-done') {
             if (!completion) {
@@ -479,6 +493,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
               sendGuideJson(response, 409, { ok: false, error: 'Open ChatGPT Plugins before confirming the ChatGPT app is saved.' });
               return;
             }
+            clearAutomaticFailure();
             sendGuideJson(response, 200, { ok: true });
             run.cancelManualSignIn = null;
             resolveCompletion(completion);

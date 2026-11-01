@@ -92,7 +92,7 @@ describe('automatic setup request ownership', () => {
     const pickerWindow = { id: 19, app: 'chrome-folder-picker', process: 'chrome' };
     let pickerOpen = false;
 
-    computer.listWindows.mockResolvedValue({ windows: [browserWindow], screen });
+    computer.listWindows.mockImplementation(async () => ({ windows: pickerOpen ? [browserWindow, pickerWindow] : [browserWindow], screen }));
     computer.activeWindow.mockImplementation(async () => ({
       window: pickerOpen ? pickerWindow : browserWindow,
       screen,
@@ -135,12 +135,12 @@ describe('automatic setup request ownership', () => {
   });
 
   // The picker as the live Windows build exposes it: control 1152 is a pattern-less Pane.
-  function folderPicker(options: { focus?: 'fails'; type?: 'fails'; selectButton?: boolean } = {}) {
+  function folderPicker(options: { focus?: 'fails'; type?: 'fails'; selectButton?: boolean; selectCloses?: boolean } = {}) {
     const screen = { x: 0, y: 0, width: 1920, height: 1080 };
     const browserWindow = { id: 7, app: 'Chrome.setupbrowserprofile.Default', process: 'chrome' };
     const pickerWindow = { id: 19, app: 'chrome-folder-picker', process: 'chrome' };
     let pickerOpen = false;
-    computer.listWindows.mockResolvedValue({ windows: [browserWindow], screen });
+    computer.listWindows.mockImplementation(async () => ({ windows: pickerOpen ? [browserWindow, pickerWindow] : [browserWindow], screen }));
     computer.activeWindow.mockImplementation(async () => ({ window: pickerOpen ? pickerWindow : browserWindow, screen }));
     computer.findUi.mockImplementation(async ({ window, query }: { window?: number; query?: string }) => ({
       window: window ?? 7,
@@ -157,7 +157,7 @@ describe('automatic setup request ownership', () => {
       if (options.focus === 'fails' && steps.some(step => step.type === 'ui_action')) throw new Error('UI_ACTION_UNSUPPORTED');
       if (options.type === 'fails' && steps.some(step => step.type === 'type')) throw new Error('INPUT_REJECTED');
       if (steps.some(step => step.ref === 'load-ref')) pickerOpen = true;
-      if (steps.some(step => step.ref === 'select-ref' || step.keys?.[0] === 'enter')) pickerOpen = false;
+      if (options.selectCloses !== false && steps.some(step => step.ref === 'select-ref' || step.keys?.[0] === 'enter')) pickerOpen = false;
       return { cursor: null, clipboard: [], completedCount: steps.length, routes: [] };
     });
     return () => loadUnpackedCompanion({
@@ -186,5 +186,9 @@ describe('automatic setup request ownership', () => {
   it('accepts with Enter, the default button, when Select Folder is not exposed', async () => {
     await expect(folderPicker({ selectButton: false })()).resolves.toBe(true);
     expect(computer.act).toHaveBeenCalledWith([{ type: 'keypress', keys: ['enter'] }], { window: 19 });
+  });
+
+  it('does not report success when another window gains focus but the picker remains open', async () => {
+    await expect(folderPicker({ selectCloses: false })()).resolves.toBe(false);
   });
 });

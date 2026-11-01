@@ -7,6 +7,22 @@ verified source, local candidate evidence and the checks still needed before
 calling a feature installed or a downloadable release ready. A Git tag, a local
 installer and a live acceptance run are different evidence levels.
 
+Current 2.4.6 Guided setup evidence is split deliberately by level. Candidate **c10** passed full
+`verify:ci`, packaging, the real Windows `Load unpacked` picker (`1152` via focus → `Ctrl+A` → type,
+with actual picker disappearance as the receipt), and a real-Chrome deterministic provider smoke
+using production `setupPageStep()` with fixed synthetic tunnel/key data. The production guide HTML/JS
+and its loopback action/status server were then exercised in that disposable Chrome profile for the
+automatic happy path, Companion false→true gate, automatic-failure manual fallback, manual recovery,
+and Stop while an exact provider request remained pending. Evidence is stored under
+`ParadigmEve-experiments/guided-setup-smoke-c10/`. A later host smoke exposed one source bug: after an
+automatic provider failure, successful manual recovery left the stale red automatic-failure banner
+visible. Current source clears only that stale presentation state when a manual recovery action
+advances setup; the setup family, typecheck/diff-check, real-Chrome regression, and
+`accept:fresh-install` (**192/192**) pass after the fix. That banner fix is **source-after-c10** and is
+not claimed to exist in c10's packaged bytes. A truly pristine installed first run still requires a
+disposable Windows VM/account or another machine; do not manufacture that evidence by deleting the
+current user's AppData.
+
 ## Historical 2.4.1 product state (not current 2.4.6 installation evidence)
 
 - Current tagged source: **`v2.4.1`** on public `main` and `release/2.4.1` (2026-10-17; the

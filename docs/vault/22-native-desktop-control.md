@@ -76,6 +76,11 @@ Paste verifies target activation before replacing the clipboard and checks focus
 physical injection. Activation uses bounded actual foreground observation after one attempt;
 an immediate Windows return value alone cannot establish the result.
 UIA actions resolve exact snapshot refs without a physical fallback for unsupported patterns.
+Guided setup's Windows `Load unpacked` folder picker is a special native-dialog case: its path
+control (`1152`) may expose no `ValuePattern`, so setup uses focused keyboard input (`Ctrl+A`
+then type, with paste only as fallback) rather than `set_value`. Accepting the folder is proven
+by the picker window actually disappearing from the native window census; foreground focus moving
+elsewhere is not success because another window can steal focus while the picker remains open.
 App enumeration joins installed and running apps only by exact native AUMID or executable path,
 including their windows and observed running status. Launch accepts a Shell app ID or explicit
 `.exe` path/PATH application name without arguments. Launch acknowledgement requires later

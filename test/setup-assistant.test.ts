@@ -3,11 +3,12 @@ import { EventEmitter } from 'node:events';
 import { JSDOM } from 'jsdom';
 import { surfaceDefinition } from '../src/main/mcp/surfaces.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MOCK_API_KEY, MOCK_TUNNEL, apiKeysPage, pluginsPage, tunnelsPage } from './setup-provider-fixtures.js';
 
-const mocked = vi.hoisted(() => ({ spawn: vi.fn(), minimizedLaunch: vi.fn(), listWindows: vi.fn(), findUi: vi.fn(), act: vi.fn(), extensionDir: vi.fn() }));
+const mocked = vi.hoisted(() => ({ spawn: vi.fn(), minimizedLaunch: vi.fn(), listWindows: vi.fn(), activeWindow: vi.fn(), findUi: vi.fn(), act: vi.fn(), extensionDir: vi.fn() }));
 
 vi.mock('node:child_process', () => ({ spawn: mocked.spawn }));
-vi.mock('../src/main/computer/index.js', () => ({ listWindows: mocked.listWindows, findUi: mocked.findUi, act: mocked.act }));
+vi.mock('../src/main/computer/index.js', () => ({ listWindows: mocked.listWindows, activeWindow: mocked.activeWindow, findUi: mocked.findUi, act: mocked.act }));
 
 let chromePath: string | null = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const edgePath = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
@@ -132,6 +133,7 @@ beforeEach(async () => {
   mocked.listWindows.mockResolvedValue({
     windows: [{
       id: 77,
+      app: 'Chrome.setupbrowserprofile.Default',
       processId: 4242,
       title: 'ParadigmEve · Guided setup - Google Chrome',
       process: 'chrome',
@@ -145,6 +147,18 @@ beforeEach(async () => {
   });
   mocked.act.mockReset();
   mocked.act.mockResolvedValue({ cursor: null, clipboard: [], completedCount: 5, routes: [] });
+  mocked.activeWindow.mockReset();
+  mocked.activeWindow.mockResolvedValue({
+    window: {
+      id: 77,
+      app: 'Chrome.setupbrowserprofile.Default',
+      processId: 4242,
+      title: 'ParadigmEve · Guided setup - Google Chrome',
+      process: 'chrome',
+      state: 'foreground',
+    },
+    screen: { x: 0, y: 0, width: 1920, height: 1080 },
+  });
   mocked.findUi.mockReset();
   mocked.findUi.mockImplementation(async (options: { window?: number; query?: string }) => ({
     window: options.window ?? 77,
@@ -1909,7 +1923,7 @@ describe('ParadigmEve setup browser', () => {
     expect(automation.pendingCompanionSetupStep()).toBeNull();
     expect((await guideAction(guideUrl, { action: 'signed-in' })).status).toBe(200);
 
-    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('tunnel'));
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('tunnel'), { timeout: 2_500 });
     const tunnel = automation.pendingCompanionSetupStep()!;
     expect(automation.completeCompanionSetupStep({ id: tunnel.id, ok: true, result: { tunnelId: validTunnel } })).toBe(true);
 
@@ -1928,6 +1942,125 @@ describe('ParadigmEve setup browser', () => {
     await expect(pending).resolves.toEqual({ tunnelId: validTunnel, apiKey: validKey });
     expect(setup.setupAssistantSnapshot().stage).toBe('complete');
     expect(automation.pendingCompanionSetupStep()).toBeNull();
+  });
+
+  it('boots a missing Companion through the real automatic setup boundary before provider steps begin', async () => {
+    const setup = await modulePromise;
+    const automation = await import('../src/main/setup-automation.js');
+    const onCredentials = vi.fn().mockResolvedValue(undefined);
+    const browserWindow = {
+      id: 77,
+      app: 'Chrome.setupbrowserprofile.Default',
+      processId: 4242,
+      title: 'ParadigmEve · Guided setup - Google Chrome',
+      process: 'chrome',
+      state: 'foreground',
+    };
+    const pickerWindow = {
+      id: 91,
+      app: 'chrome-folder-picker',
+      processId: 4242,
+      title: 'Select the extension directory',
+      process: 'chrome',
+      state: 'foreground',
+    };
+    let pickerOpen = false;
+    let companionPresent = false;
+    let postInstallChatgptOpened = false;
+
+    mocked.listWindows.mockImplementation(async () => ({
+      windows: pickerOpen ? [browserWindow, pickerWindow] : [browserWindow],
+      screen: { x: 0, y: 0, width: 1920, height: 1080 },
+    }));
+    mocked.activeWindow.mockImplementation(async () => ({
+      window: pickerOpen ? pickerWindow : browserWindow,
+      screen: { x: 0, y: 0, width: 1920, height: 1080 },
+    }));
+    mocked.findUi.mockImplementation(async (options: { window?: number; query?: string }) => ({
+      window: options.window ?? 77,
+      snapshotId: 1,
+      elements: options.query === 'Address and search bar'
+        ? [{ ref: 'omnibox-ref', name: 'Address and search bar', role: 'Edit', automationId: '', enabled: true }]
+        : options.window === 77 && (options.query === 'loadUnpacked' || options.query === 'Load unpacked')
+          ? [{ ref: 'load-ref', name: 'Load unpacked', role: 'Button', automationId: 'loadUnpacked', enabled: true }]
+          : options.window === 91 && options.query === '1152'
+            ? [{ ref: 'path-ref', name: 'Folder:', role: 'Pane', automationId: '1152', enabled: true }]
+            : options.window === 91 && options.query === '1'
+              ? [{ ref: 'select-ref', name: 'Select Folder', role: 'Button', automationId: '1', enabled: true }]
+              : [],
+    }));
+    mocked.act.mockImplementation(async (steps: Array<{ type?: string; ref?: string }>) => {
+      expect(steps.some(step => step.type === 'set_value' && step.ref === 'path-ref')).toBe(false);
+      if (steps.some(step => step.ref === 'load-ref')) pickerOpen = true;
+      if (steps.some(step => step.ref === 'select-ref')) pickerOpen = false;
+      return { cursor: null, clipboard: [], completedCount: steps.length, routes: [] };
+    });
+    mocked.spawn.mockImplementation((_executable: string, args: string[]) => {
+      if (args.includes('https://chatgpt.com/')) {
+        postInstallChatgptOpened = true;
+      }
+      return newChromeProcess();
+    });
+
+    const pending = setup.startSetupAssistant({
+      ...baseOptions,
+      automatic: true,
+      companionPresent: () => companionPresent,
+      onCredentials,
+    });
+    const guideUrl = await waitForGuideUrl();
+    expect((await guideAction(guideUrl, { action: 'start' })).status).toBe(200);
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+    expect((await guideAction(guideUrl, { action: 'signed-in' })).status).toBe(200);
+
+    await vi.waitFor(() => expect(postInstallChatgptOpened).toBe(true));
+    expect(mocked.act).toHaveBeenCalledWith([
+      { type: 'ui_action', ref: 'path-ref', action: 'focus' },
+    ], { window: 91 });
+    expect(mocked.act).toHaveBeenCalledWith([
+      { type: 'keypress', keys: ['ctrl', 'a'] },
+      { type: 'type', text: extensionPath },
+    ], { window: 91 });
+    expect(mocked.act).toHaveBeenCalledWith([{ type: 'click_ref', ref: 'select-ref' }], { window: 91 });
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+
+    companionPresent = true;
+
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('tunnel'), { timeout: 2_500 });
+    const tunnel = automation.pendingCompanionSetupStep()!;
+    const tunnelPage = tunnelsPage();
+    const tunnelAnswer = await tunnelPage.run(tunnel.step, tunnel.params);
+    expect(tunnelAnswer.ok).toBe(true);
+    expect(tunnelAnswer.result?.tunnelId).toBe(MOCK_TUNNEL);
+    expect(automation.completeCompanionSetupStep({ id: 'stale-request-id', ok: true, result: tunnelAnswer.result })).toBe(false);
+    expect(automation.pendingCompanionSetupStep()?.id).toBe(tunnel.id);
+    expect(automation.completeCompanionSetupStep({ id: tunnel.id, ok: true, result: tunnelAnswer.result })).toBe(true);
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('api-key'));
+    const key = automation.pendingCompanionSetupStep()!;
+    const keyPage = apiKeysPage();
+    const keyAnswer = await keyPage.run(key.step, key.params);
+    expect(keyAnswer.ok).toBe(true);
+    expect(String(keyAnswer.result?.apiKey)).toBe(MOCK_API_KEY);
+    expect(keyPage.made.grants).toEqual(['Tunnels.Read', 'Tunnels.Use']);
+    expect(automation.completeCompanionSetupStep({ id: key.id, ok: true, result: keyAnswer.result })).toBe(true);
+    await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('chatgpt-app'));
+    const plugin = automation.pendingCompanionSetupStep()!;
+    const pluginPage = pluginsPage();
+    const pluginAnswer = await pluginPage.run(plugin.step, plugin.params);
+    expect(pluginAnswer.ok).toBe(true);
+    expect(pluginPage.persisted).toHaveLength(1);
+    expect(pluginPage.persisted[0]).toMatchObject({
+      name: 'ParadigmEve',
+      connection: 'Tunnel',
+      tunnelId: MOCK_TUNNEL,
+      auth: 'NONE',
+      consent: 'checked',
+    });
+    expect(automation.completeCompanionSetupStep({ id: plugin.id, ok: true, result: pluginAnswer.result })).toBe(true);
+
+    await expect(pending).resolves.toEqual({ tunnelId: MOCK_TUNNEL, apiKey: MOCK_API_KEY });
+    expect(onCredentials).toHaveBeenCalledWith({ tunnelId: MOCK_TUNNEL, apiKey: MOCK_API_KEY });
+    expect(setup.setupAssistantSnapshot().stage).toBe('complete');
   });
 
   it('keeps the manual guide available when an automatic step fails, and Stop retires its exact request', async () => {
@@ -1949,6 +2082,11 @@ describe('ParadigmEve setup browser', () => {
     expect(setup.setupAssistantSnapshot().running).toBe(true);
     expect((await guideAction(guideUrl, { action: 'companion-done' })).status).toBe(200);
     expect((await guideAction(guideUrl, { action: 'tunnel-id', tunnelId: validTunnel })).status).toBe(200);
+    const recovered = await (await fetch(status)).json();
+    expect(recovered.autoActive).toBe(true);
+    expect(recovered.autoFailed).toBe(false);
+    expect(recovered.autoMessage).toBe('');
+    expect(recovered.autoReason).toBe('');
     await guideAction(guideUrl, { action: 'stop' });
     await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);
     expect(automation.pendingCompanionSetupStep()).toBeNull();

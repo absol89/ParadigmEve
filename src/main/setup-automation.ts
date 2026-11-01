@@ -176,9 +176,10 @@ export async function loadUnpackedCompanion(options: {
   // button itself is not exposed.
   const select = await elementById(dialog.window, '1', 'button');
   await act([select ? { type: 'click_ref', ref: select.ref } : { type: 'keypress', keys: ['enter'] }], { window: dialog.window });
-  // The picker closes once the folder was accepted.
+  // The picker closes once the folder was accepted. Foreground ownership is not enough evidence:
+  // another window can steal focus while the picker is still open, which must not count as success.
   return !!(await waitFor(async () => {
-    const { window } = await activeWindow();
-    return window?.id === dialog.window ? null : true;
-  }, 8_000));
+    const { windows } = await listWindows();
+    return windows.some(window => window.id === dialog.window) ? null : true;
+  }, Math.min(timeoutMs, 8_000)));
 }
