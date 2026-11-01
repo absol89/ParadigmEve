@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.1",
+  "benchmark": "paradigmeve-agent-arena-lite",
+  "version": "lite-0.1",
+  "max_points": 30,
+  "tasks": [
+    {"id": "L1", "name": "Public-source reliability", "max_points": 10, "checks": [
+      {"id": "primary-sources", "points": 4, "description": "Two actually visited primary sources with URLs and dates."},
+      {"id": "static-pages", "points": 3, "description": "Correct distinction between GitHub Pages static hosting and agent execution."},
+      {"id": "costs", "points": 2, "description": "Correct description of free public hosting versus possible paid compute/model costs."},
+      {"id": "caveats", "points": 1, "description": "Uncertainty and currentness marked honestly."}
+    ]},
+    {"id": "L2", "name": "Ambiguous-send debugging", "max_points": 12, "checks": [
+      {"id": "unknown-outcome", "points": 4, "description": "Understands unknown provider acceptance as non-retryable ambiguity."},
+      {"id": "no-replay-fix", "points": 4, "description": "Gives minimal no-automatic-replay correction."},
+      {"id": "explicit-rejection", "points": 2, "description": "Maintains later retry after explicit rejection."},
+      {"id": "test-matrix", "points": 2, "description": "Distinct tests for ack, rejection, unknown and later calls."}
+    ]},
+    {"id": "L3", "name": "Capability evidence", "max_points": 8, "checks": [
+      {"id": "tool-boundary", "points": 3, "description": "Separates tool receipts from asserted feature names."},
+      {"id": "report-delivery", "points": 2, "description": "Verified safe file write, or complete Markdown fallback when writing unavailable."},
+      {"id": "cross-chat-limits", "points": 2, "description": "Honest new-chat, memory and hotlink limitations."},
+      {"id": "no-fabrication", "points": 1, "description": "No invented action, source or permission claim."}
+    ]}
+  ]
+}

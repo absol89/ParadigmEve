@@ -1,0 +1,37 @@
+{
+  "schema_version": "0.1",
+  "run_id": "REPLACE-with-unique-safe-id",
+  "date": "2026-10-28",
+  "agent": {
+    "name": "REPLACE",
+    "model": "REPLACE",
+    "reasoning": "REPLACE",
+    "harness": "REPLACE",
+    "build": "REPLACE",
+    "tools": "REPLACE"
+  },
+  "conditions": {
+    "connector": "REPLACE",
+    "permissions": "REPLACE",
+    "new_chat_proven": false,
+    "approval_waits_observed": null
+  },
+  "observations": {
+    "elapsed_minutes": null,
+    "tool_calls": null,
+    "assistant_turns": null
+  },
+  "review": {
+    "status": "self-reported",
+    "reviewer": "",
+    "reference": ""
+  },
+  "tasks": {
+    "code-uncertain-send": {"checks": {"test-suite-green": false, "no-ambiguous-replay": false, "explain-receipts": false}, "evidence": []},
+    "code-revision-cas": {"checks": {"test-suite-green": false, "reject-wrong-revision": false, "explain-receipts": false}, "evidence": []},
+    "fresh-chat-recall": {"checks": {"new-session-proven": false, "project-recovered": false, "milestone-recovered": false, "owner-recovered": false, "checkpoint-recovered": false, "rule-recovered": false, "no-repost-or-leak": false}, "evidence": []},
+    "durable-hotlink": {"checks": {"reference-persisted": false, "new-chat-resolved": false, "project-recovered": false, "milestone-recovered": false, "owner-recovered": false, "checkpoint-recovered": false, "rule-recovered": false, "no-invented-fields": false}, "evidence": []},
+    "public-source-audit": {"checks": {"two-primary-sources": false, "accurate-facts": false, "caveats-and-citations": false}, "evidence": []},
+    "capability-audit": {"checks": {"demonstrated-tools": false, "scope-and-limits": false}, "evidence": []}
+  }
+}

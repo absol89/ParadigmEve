@@ -296,3 +296,29 @@ test('general fix: a copy that changes line endings or drops the final newline i
     assert.equal(fix.points, 12, JSON.stringify(fix.diagnostics));
   } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('pitfalls and sources are refused against the retired public keys, and scored with the rotated ones', needsV02, async () => {
+  // Nanbeige, 2026-10-31: the judge found only agent-arena/v0.2/reviewer/keys, the set retired when the
+  // questions were rotated, and had to notice by itself that it described different questions.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v03-retired-'));
+  const cwd = process.cwd();
+  try {
+    fs.writeFileSync(path.join(dir, 'pitfalls.json'), JSON.stringify({ answers: { P1: { defect: true, line: 2 } } }));
+    const run = {
+      schema: 'eveal-run/0.3', run_id: 'retired', tier: 'quick', date: '2027-01-01', challenge: practice.id,
+      agent: { name: 'test', model: 'test', reasoning: 'n/a', harness: 'node:test', persona: 'default', tools: 'files' },
+      conditions: {}, review: { status: 'self-reported' }, artifacts: { pitfalls: { answer: 'pitfalls.json' } }
+    };
+    process.chdir(dir);
+    await assert.rejects(scoreRunV03(run, {}), /pitfalls: .*retired.*--hidden-root/s);
+    // A run with no pitfalls or sources answers needs no fixed key at all.
+    await assert.doesNotReject(scoreRunV03({ ...run, artifacts: {} }, {}));
+    // A hidden root with the current keys scores as usual (a stand-in key here).
+    const hidden = path.join(dir, 'hidden');
+    fs.cpSync(path.join(v02, 'fixtures'), path.join(hidden, 'fixtures'), { recursive: true });
+    fs.mkdirSync(path.join(hidden, 'reviewer', 'keys'), { recursive: true });
+    fs.writeFileSync(path.join(hidden, 'reviewer', 'keys', 'pitfalls.json'), JSON.stringify({ task: 'pitfalls', items: [{ q: 'P1', defect: true, lines: [2] }] }));
+    const scored = await scoreRunV03(run, { hiddenRoot: hidden });
+    assert.equal(scored.tasks.pitfalls.points, 1);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});

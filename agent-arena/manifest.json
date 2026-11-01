@@ -1,0 +1,75 @@
+{
+  "schema_version": "0.1",
+  "benchmark": "paradigmeve-agent-arena",
+  "version": "0.1.0",
+  "kind": "public-open-book",
+  "disclaimer": "Public fixtures and rubric; no hosted executor, no automated trust. Scores require independent evidence review.",
+  "total_points": 100,
+  "tracks": [
+    {"id": "code", "title": "Code and debugging", "max_points": 30},
+    {"id": "memory", "title": "Cross-chat context recall", "max_points": 25},
+    {"id": "hotlink", "title": "Durable context hotlink", "max_points": 20},
+    {"id": "research", "title": "Public-resource research", "max_points": 15},
+    {"id": "capability", "title": "Demonstrated capabilities", "max_points": 10}
+  ],
+  "tasks": [
+    {
+      "id": "code-uncertain-send", "track": "code", "prompt": "tasks/code-uncertain-send.md",
+      "fixture": "fixtures/code-uncertain-send", "fixture_archive": "downloads/code-uncertain-send.zip", "max_points": 15,
+      "checks": [
+        {"id": "test-suite-green", "points": 7, "description": "Re-run complete fixture tests on submitted files; all pass."},
+        {"id": "no-ambiguous-replay", "points": 5, "description": "Inspect fix: an uncertain send cannot be automatically retried on a later call."},
+        {"id": "explain-receipts", "points": 3, "description": "Final response gives precise cause, what changed and test evidence."}
+      ]
+    },
+    {
+      "id": "code-revision-cas", "track": "code", "prompt": "tasks/code-revision-cas.md",
+      "fixture": "fixtures/code-revision-cas", "fixture_archive": "downloads/code-revision-cas.zip", "max_points": 15,
+      "checks": [
+        {"id": "test-suite-green", "points": 7, "description": "Re-run complete fixture tests on submitted files; all pass."},
+        {"id": "reject-wrong-revision", "points": 5, "description": "Reject both stale and future revisions, preserve state on rejection."},
+        {"id": "explain-receipts", "points": 3, "description": "Final response gives exact precondition, mutation boundary and test evidence."}
+      ]
+    },
+    {
+      "id": "fresh-chat-recall", "track": "memory", "prompt": "tasks/fresh-chat-recall.md", "max_points": 25,
+      "checks": [
+        {"id": "new-session-proven", "points": 5, "description": "Reviewer sees evidence of two independent chats with no transcript carryover."},
+        {"id": "project-recovered", "points": 3, "description": "Correctly retrieves the synthetic project."},
+        {"id": "milestone-recovered", "points": 3, "description": "Correctly retrieves the synthetic milestone."},
+        {"id": "owner-recovered", "points": 3, "description": "Correctly retrieves the synthetic owner."},
+        {"id": "checkpoint-recovered", "points": 3, "description": "Correctly retrieves the synthetic checkpoint."},
+        {"id": "rule-recovered", "points": 3, "description": "Correctly retrieves the synthetic rule."},
+        {"id": "no-repost-or-leak", "points": 5, "description": "New-chat question did not contain the answer and the agent used only disclosed recall tools/context."}
+      ]
+    },
+    {
+      "id": "durable-hotlink", "track": "hotlink", "prompt": "tasks/durable-hotlink.md", "max_points": 20,
+      "checks": [
+        {"id": "reference-persisted", "points": 6, "description": "Reference created in a durable, named store with evidence."},
+        {"id": "new-chat-resolved", "points": 8, "description": "New chat resolves handle, and reviewer verifies exact lookup provenance."},
+        {"id": "project-recovered", "points": 1, "description": "Correctly retrieves the project."},
+        {"id": "milestone-recovered", "points": 1, "description": "Correctly retrieves the milestone."},
+        {"id": "owner-recovered", "points": 1, "description": "Correctly retrieves the owner."},
+        {"id": "checkpoint-recovered", "points": 1, "description": "Correctly retrieves the checkpoint."},
+        {"id": "rule-recovered", "points": 1, "description": "Correctly retrieves the rule."},
+        {"id": "no-invented-fields", "points": 1, "description": "No fabricated fields or false confidence about unavailable facts."}
+      ]
+    },
+    {
+      "id": "public-source-audit", "track": "research", "prompt": "tasks/public-source-audit.md", "max_points": 15,
+      "checks": [
+        {"id": "two-primary-sources", "points": 5, "description": "At least two actually consulted official dated or revisioned sources."},
+        {"id": "accurate-facts", "points": 5, "description": "Reviewer confirms specific claims against the cited sources."},
+        {"id": "caveats-and-citations", "points": 5, "description": "Correctly distinguishes immutable/current facts, and never invents access or capabilities."}
+      ]
+    },
+    {
+      "id": "capability-audit", "track": "capability", "prompt": "tasks/capability-audit.md", "max_points": 10,
+      "checks": [
+        {"id": "demonstrated-tools", "points": 6, "description": "Reviewer verifies a real read, test or provenance action, not an asserted feature list."},
+        {"id": "scope-and-limits", "points": 4, "description": "Accurate model, tool, permission and cross-chat limitations disclosed."}
+      ]
+    }
+  ]
+}

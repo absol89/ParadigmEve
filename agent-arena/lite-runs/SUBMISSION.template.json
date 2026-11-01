@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1",
+  "run_id": "REPLACE-lite-run",
+  "date": "2026-10-28",
+  "agent": {"name": "REPLACE", "model": "REPLACE", "harness": "REPLACE", "reasoning": "REPLACE", "tools": "REPLACE"},
+  "observations": {"elapsed_minutes": null, "tool_calls": null, "approval_waits": null},
+  "review": {"status": "self-reported", "reviewer": "", "reference": ""},
+  "tasks": {
+    "L1": {"checks": {"primary-sources": false, "static-pages": false, "costs": false, "caveats": false}, "evidence": []},
+    "L2": {"checks": {"unknown-outcome": false, "no-replay-fix": false, "explicit-rejection": false, "test-matrix": false}, "evidence": []},
+    "L3": {"checks": {"tool-boundary": false, "report-delivery": false, "cross-chat-limits": false, "no-fabrication": false}, "evidence": []}
+  }
+}

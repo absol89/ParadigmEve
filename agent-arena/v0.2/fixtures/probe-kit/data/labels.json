@@ -1,0 +1,6 @@
+{
+  "status.new": "New",
+  "status.received": "Recieved",
+  "status.shipped": "Shipped",
+  "status.returned": "Returned"
+}

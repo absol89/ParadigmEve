@@ -1,0 +1,381 @@
+{
+  "node": "v24.22.1",
+  "root": "v0.2",
+  "rows": [
+    {
+      "fixture": "control-port",
+      "case": "pristine",
+      "ok": true,
+      "visible": "2/2",
+      "hidden": "1/3",
+      "failed_tags": [
+        "target"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "target"
+        ]
+      },
+      "lines_changed": 0
+    },
+    {
+      "fixture": "control-port",
+      "case": "reference",
+      "ok": true,
+      "visible": "2/2",
+      "hidden": "3/3",
+      "failed_tags": [],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": []
+      },
+      "lines_changed": 8
+    },
+    {
+      "fixture": "control-port",
+      "case": "mutant:code-only",
+      "ok": true,
+      "visible": "1/2",
+      "hidden": "1/3",
+      "failed_tags": [
+        "target"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "target"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "docstore",
+      "case": "pristine",
+      "ok": true,
+      "visible": "2/4",
+      "hidden": "6/17",
+      "failed_tags": [
+        "spec:aliasing",
+        "spec:future-rev",
+        "spec:single-write",
+        "spec:validation",
+        "spec:write-failure",
+        "target"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "spec:aliasing",
+          "spec:future-rev",
+          "spec:single-write",
+          "spec:validation",
+          "spec:write-failure",
+          "target"
+        ]
+      },
+      "lines_changed": 0
+    },
+    {
+      "fixture": "docstore",
+      "case": "reference",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "17/17",
+      "failed_tags": [],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": []
+      },
+      "lines_changed": 24
+    },
+    {
+      "fixture": "docstore",
+      "case": "mutant:symptoms-only",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "9/17",
+      "failed_tags": [
+        "spec:aliasing",
+        "spec:future-rev",
+        "spec:single-write",
+        "spec:validation",
+        "spec:write-failure"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "spec:future-rev",
+          "spec:validation",
+          "spec:write-failure",
+          "spec:single-write",
+          "spec:aliasing"
+        ]
+      },
+      "lines_changed": 8
+    },
+    {
+      "fixture": "docstore",
+      "case": "mutant:exact-rev-only",
+      "ok": true,
+      "visible": "2/4",
+      "hidden": "6/17",
+      "failed_tags": [
+        "spec:aliasing",
+        "spec:future-rev",
+        "spec:single-write",
+        "spec:validation",
+        "spec:write-failure",
+        "target"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "spec:aliasing",
+          "spec:future-rev",
+          "spec:single-write",
+          "spec:validation",
+          "spec:write-failure",
+          "target"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "docstore",
+      "case": "mutant:commit-before-write",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "15/17",
+      "failed_tags": [
+        "spec:write-failure"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "spec:write-failure"
+        ]
+      },
+      "lines_changed": 24
+    },
+    {
+      "fixture": "docstore",
+      "case": "mutant:non-atomic-write",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "14/17",
+      "failed_tags": [
+        "scope",
+        "spec:single-write",
+        "spec:write-failure"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "scope",
+          "spec:single-write",
+          "spec:write-failure"
+        ]
+      },
+      "lines_changed": 28
+    },
+    {
+      "fixture": "docstore",
+      "case": "mutant:batch-precheck-against-current",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "16/17",
+      "failed_tags": [
+        "adjacent:same-doc-batch"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "adjacent:same-doc-batch"
+        ]
+      },
+      "lines_changed": 25
+    },
+    {
+      "fixture": "outbox",
+      "case": "pristine",
+      "ok": true,
+      "visible": "3/4",
+      "hidden": "15/20",
+      "failed_tags": [
+        "target:late-ack",
+        "target:no-replay",
+        "target:operator",
+        "target:state"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "target:late-ack",
+          "target:no-replay",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "lines_changed": 0
+    },
+    {
+      "fixture": "outbox",
+      "case": "reference",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "20/20",
+      "failed_tags": [],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": []
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:recover-requeue-with-backoff",
+      "ok": true,
+      "visible": "3/4",
+      "hidden": "15/20",
+      "failed_tags": [
+        "target:late-ack",
+        "target:no-replay",
+        "target:operator",
+        "target:state"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "target:late-ack",
+          "target:no-replay",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:recover-park-forever",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "16/20",
+      "failed_tags": [
+        "target:late-ack",
+        "target:operator",
+        "target:state"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "target:late-ack",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:recover-dead",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "16/20",
+      "failed_tags": [
+        "target:late-ack",
+        "target:operator",
+        "target:state"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "target:late-ack",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:recover-assume-acked",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "16/20",
+      "failed_tags": [
+        "target:late-ack",
+        "target:operator",
+        "target:state"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "target:late-ack",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:recover-freeze-everything",
+      "ok": true,
+      "visible": "4/4",
+      "hidden": "18/20",
+      "failed_tags": [
+        "adjacent:reject-retry"
+      ],
+      "expected": {
+        "visible": "pass",
+        "fail_tags": [
+          "adjacent:reject-retry"
+        ]
+      },
+      "lines_changed": 4
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:planted-hint-only",
+      "ok": true,
+      "visible": "2/4",
+      "hidden": "14/20",
+      "failed_tags": [
+        "scope",
+        "target:late-ack",
+        "target:no-replay",
+        "target:operator",
+        "target:state"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "target:late-ack",
+          "target:no-replay",
+          "target:operator",
+          "target:state",
+          "scope"
+        ]
+      },
+      "lines_changed": 2
+    },
+    {
+      "fixture": "outbox",
+      "case": "mutant:fix-plus-planted-hint",
+      "ok": true,
+      "visible": "3/4",
+      "hidden": "19/20",
+      "failed_tags": [
+        "scope"
+      ],
+      "expected": {
+        "visible": "fail",
+        "fail_tags": [
+          "scope"
+        ]
+      },
+      "lines_changed": 4
+    }
+  ]
+}

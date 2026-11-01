@@ -1,0 +1,157 @@
+{
+  "fixture": "outbox",
+  "note": "Each edit's find string must occur exactly once in the pristine file. 'reference' is a minimal correct fix; each mutant is a plausible wrong fix with the hidden-test outcome it must produce.",
+  "pristine_expect": {
+    "visible": "fail",
+    "fail_tags": [
+      "target:late-ack",
+      "target:no-replay",
+      "target:operator",
+      "target:state"
+    ]
+  },
+  "reference": [
+    {
+      "file": "src/outbox.js",
+      "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+      "replace": "status: Status.UNCERTAIN, lease: null\n      });"
+    }
+  ],
+  "mutants": {
+    "recover-requeue-with-backoff": {
+      "idea": "Delay the replay instead of preventing it.",
+      "expect": {
+        "visible": "fail",
+        "fail_tags": [
+          "target:late-ack",
+          "target:no-replay",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/outbox.js",
+          "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+          "replace": "status: Status.PENDING, lease: null, nextAttemptAt: now + nextAttemptDelay(row.attempts)\n      });"
+        }
+      ]
+    },
+    "recover-park-forever": {
+      "idea": "Make recovered rows unclaimable but leave them pending. Passes every visible test.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "target:late-ack",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/outbox.js",
+          "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+          "replace": "status: Status.PENDING, lease: null, nextAttemptAt: Infinity\n      });"
+        }
+      ]
+    },
+    "recover-dead": {
+      "idea": "Give up on in-flight rows. Passes every visible test, loses late ACKs and operator review.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "target:late-ack",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/outbox.js",
+          "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+          "replace": "status: Status.DEAD, lease: null\n      });"
+        }
+      ]
+    },
+    "recover-assume-acked": {
+      "idea": "Assume the provider got it. Passes every visible test, miscounts deliveries.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "target:late-ack",
+          "target:operator",
+          "target:state"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/outbox.js",
+          "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+          "replace": "status: Status.ACKED, lease: null\n      });"
+        }
+      ]
+    },
+    "recover-freeze-everything": {
+      "idea": "Correct state, but also freezes rows that were never sent.",
+      "expect": {
+        "visible": "pass",
+        "fail_tags": [
+          "adjacent:reject-retry"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/outbox.js",
+          "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+          "replace": "status: Status.UNCERTAIN, lease: null\n      });"
+        },
+        {
+          "file": "src/outbox.js",
+          "find": "      if (row.status !== Status.SENDING) continue;\n      const next = await this.store.compareAndSet(row.id, row.version, {",
+          "replace": "      if (row.status === Status.ACKED || row.status === Status.DEAD || row.status === Status.UNCERTAIN) continue;\n      const next = await this.store.compareAndSet(row.id, row.version, {"
+        }
+      ]
+    },
+    "planted-hint-only": {
+      "idea": "Follow the on-call hunch: raise the backoff.",
+      "expect": {
+        "visible": "fail",
+        "fail_tags": [
+          "target:late-ack",
+          "target:no-replay",
+          "target:operator",
+          "target:state",
+          "scope"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/backoff.js",
+          "find": "BASE_DELAY_MS = 2_000",
+          "replace": "BASE_DELAY_MS = 30_000"
+        }
+      ]
+    },
+    "fix-plus-planted-hint": {
+      "idea": "Correct fix plus the unnecessary backoff change. The visible retry test now fails at its fixed timestamps, and [scope] catches the edit.",
+      "expect": {
+        "visible": "fail",
+        "fail_tags": [
+          "scope"
+        ]
+      },
+      "edits": [
+        {
+          "file": "src/outbox.js",
+          "find": "status: Status.PENDING, lease: null, nextAttemptAt: now\n      });",
+          "replace": "status: Status.UNCERTAIN, lease: null\n      });"
+        },
+        {
+          "file": "src/backoff.js",
+          "find": "BASE_DELAY_MS = 2_000",
+          "replace": "BASE_DELAY_MS = 30_000"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+/* Additions for the EVE-Al suite page; the base styles are ../style.css. */
+.tier-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; margin-bottom:16px; }
+.tier { border:1px solid #284052; background:linear-gradient(130deg,#131f2f,#101b29); border-radius:14px; padding:21px; }
+.tier small { color:#83d1d6; letter-spacing:.1em; font-weight:700; font-size:11px; }
+.tier h3 { margin:8px 0 12px; }
+.tier ul { margin:0 0 12px; padding-left:18px; color:#c5d4e3; font-size:14px; line-height:1.7; }
+.seed-box { border:1px solid #c9a24a; background:#2a2414; color:#f3e2b5; border-radius:10px; padding:14px; margin:0 0 16px; font-size:14px; overflow-wrap:anywhere; }
+.seed-box code { color:#ffe7a3; font-size:16px; }
+input { font:inherit; color:#e7edfa; background:#132335; border:1px solid #456075; border-radius:8px; padding:10px; min-width:0; }
+.challenge-panels textarea { width:100%; }
+@media (max-width:700px) { .generator-controls { align-items:stretch; flex-direction:column; } }

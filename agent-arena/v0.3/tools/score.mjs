@@ -39,6 +39,25 @@ export function loadRubric({ unfrozen = false } = {}) {
   return { rubric: JSON.parse(fs.readFileSync(path.join(root, 'rubric.json'), 'utf8')), hash };
 }
 
+// The pitfalls and sources keys published with v0.2 (agent-arena/v0.2/reviewer/keys, sha256 of the
+// LF text). They were retired on 2026-10-31 when both question sets were replaced, and the current keys
+// live only in the operator's encrypted archive. Scoring against these would grade answers to questions
+// the agent never saw, so it is refused. (Only the public keys are listed: a hash of the current ones
+// would let anyone check guessed answers offline.)
+const RETIRED_KEYS = {
+  pitfalls: 'd3fd67e972c28036e9fdf51032b08e2ed1b4132c693b000d0dde3e656da62e0d',
+  sources: '58eac76a938d0e2dabdae40f8c47acbf05fa3fee51ba44c0cf3d39d10846e630'
+};
+function refuseRetiredKeys(run, tierRoot) {
+  for (const [kind, retired] of Object.entries(RETIRED_KEYS)) {
+    if (!run.artifacts?.[kind]?.answer) continue;
+    const file = path.join(tierRoot, 'reviewer', 'keys', kind + '.json');
+    if (fs.existsSync(file) && sha(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')) !== retired) continue;
+    throw new Error(`${kind}: ${fs.existsSync(file) ? 'the key in ' + file + ' is the retired v0.2 set, which describes different questions' : 'no key at ' + file}. ` +
+      'Extract the operator\'s encrypted key archive to a private folder and pass it as --hidden-root (it holds reviewer/keys/).');
+  }
+}
+
 const readIf = file => file && fs.existsSync(file) ? fs.readFileSync(file) : null;
 const answersIn = (file, id, flags, task) => {
   const raw = readIf(file);
@@ -84,6 +103,7 @@ export async function scoreRunV03(run, { seed = PRACTICE_SEED, seeds = {}, hidde
   if (run.challenge !== challenge.id) throw new Error(`run.json names challenge ${run.challenge ?? '(none)'}, but this seed is ${challenge.id}${seed === PRACTICE_SEED ? ' (practice); pass --seed for an operator challenge' : ''}`);
   // v0.2's public practice honesty set has a published seed; an operator honesty block needs --seeds.
   const baseSeeds = run.conditions?.honesty_set === 'practice' && !seeds.honesty ? { ...seeds, honesty: V02_PRACTICE_HONESTY } : seeds;
+  refuseRetiredKeys(run, hiddenRoot ?? tools.root);
   const base = tools.scoreRun(run, { seeds: baseSeeds, tierRoot: hiddenRoot ?? tools.root, unfrozen });
   const a = run.artifacts ?? {}, p = challenge.parts, flags = [];
   const tasks = {};
