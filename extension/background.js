@@ -293,6 +293,12 @@ async function loadOnce() {
   stored.inputOpenings = { ...(stored.desktopInputTabs || {}), ...(stored.inputOpenings || {}) };
   inputOpenings = stored.inputOpenings && typeof stored.inputOpenings === 'object' && !Array.isArray(stored.inputOpenings)
     ? Object.fromEntries(Object.entries(stored.inputOpenings).filter(([id, row]) => /^[a-f0-9-]{36}$/i.test(id) && row && (row.tab === null || Number.isInteger(row.tab))).slice(-1000)) : {};
+  if (stored.desktopInputTabs !== undefined) {
+    try {
+      await chrome.storage.local.set({ inputOpenings });
+      await chrome.storage.local.remove('desktopInputTabs');
+    } catch { /* next start merges the old key again; custody is never lost */ }
+  }
   stopOpenings = stored.stopOpenings && typeof stored.stopOpenings === 'object' && !Array.isArray(stored.stopOpenings)
     ? Object.fromEntries(Object.entries(stored.stopOpenings).filter(([id, row]) => commandMarkerId(id) && row &&
       (row.tab === null || Number.isInteger(row.tab)) && cleanConversationId(row.conversationId) &&
@@ -2425,7 +2431,21 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
     if (!tab) {
       // Handout is opening authority, not a missing delivery receipt. A closed or
       // unresponsive elected document never grants another opening attempt.
-      if (elections[input.id] && !recoveredReuse) continue;
+      if (elections[input.id] && !recoveredReuse) {
+        if (!target && !input.lifetime && Number.isInteger(elected?.tab) && ['ready', 'preparing'].includes(elected.stage)) {
+          const currentTabs = await chrome.tabs.query({}).catch(() => null);
+          if (Array.isArray(currentTabs) && !currentTabs.some(row => row.id === elected.tab || matchesInput(input, row))) {
+            void call('/input/opening-unavailable', { method: 'POST', body: JSON.stringify({ id: input.id, tab: elected.tab, stage: elected.stage }) })
+              .then(async reply => {
+                if (reply?.ok && reply.data?.reopen === true && inputOpenings[input.id]?.tab === elected.tab) {
+                  delete inputOpenings[input.id];
+                  await persistLive();
+                }
+              }).catch(() => undefined);
+          }
+        }
+        continue;
+      }
       if (Object.keys(elections).length >= 1000) continue;
       const projectEntry = projectEntryOf(input);
       const url = target ? `https://chatgpt.com/c/${encodeURIComponent(target)}`

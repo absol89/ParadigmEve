@@ -11,7 +11,7 @@ import {
   reconcileHeartbeatFindingQueue, retireLegacyChatReviewAttention, chatReviewTransportStage,
   failBrowserInput, listInputs, ownUnsentTexts, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
-  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, turnRotationHistory, forceSendRefusal
+  markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, turnRotationHistory, forceSendRefusal, lostBrowserOpening, OPENING_REOPENS
 } from '../src/main/session/input.js';
 import { onLog } from '../src/main/logger.js';
 import type { ChatReviewPlanSnapshot, InputArgs, InputEntry } from '../src/main/session/input.js';
@@ -1247,6 +1247,22 @@ describe('durable user input ownership', () => {
     expect(await authorizeBrowserInput(row.id, 'owner', null)).toBe(false);
     expect(await pendingBrowserInputs()).toEqual([]);
     await expect(enqueueInput(input({ sessionId: null }))).resolves.toMatchObject({ state: 'queued' });
+  });
+  it('reopens a pristine lost fresh-chat tab twice, then reports Not sent without replaying an ambiguous claim', async () => {
+    expect(OPENING_REOPENS).toBe(2);
+    const fresh = await enqueueInput(input({ sessionId: null, text: 'Fresh opening' }));
+    expect(await lostBrowserOpening(fresh.id, 'chrome:7')).toBe('reopen');
+    expect(await lostBrowserOpening(fresh.id, 'chrome:7')).toBe('reopen'); // same lost tab, same grant
+    expect(await lostBrowserOpening(fresh.id, 'chrome:8')).toBe('reopen');
+    expect(await lostBrowserOpening(fresh.id, 'chrome:9')).toBe('failed');
+    expect((await listInputs()).find(row => row.id === fresh.id)).toMatchObject({
+      state: 'failed', openingReopens: 2, error: expect.stringContaining('Not sent:')
+    });
+
+    const ambiguous = await enqueueInput(input({ sessionId: null, text: 'Claimed opening' }));
+    expect(await claimBrowserInput(ambiguous.id, 'page', null, true)).not.toBeNull();
+    expect(await lostBrowserOpening(ambiguous.id, 'chrome:10')).toBe('kept');
+    expect((await listInputs()).find(row => row.id === ambiguous.id)?.state).toBe('browser');
   });
   it('cancels an ambiguous browser claim across restart and retains a late receipt without automation or stages', async () => {
     const row = await enqueueInput(input({ sessionId: null, automation: 'goal', stages: ['Later task'] }));

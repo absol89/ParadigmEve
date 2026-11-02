@@ -23,7 +23,7 @@ export { setBrowserWorkArea } from './browser-window-layout.js';
 import { pendingBrowserPreferenceRequest, acknowledgeBrowserPreferences } from './browser-preferences.js';
 import { sessionFinishHeld, releaseSessionFinish, getSessionFinishDraft, sessionFinishWaiting } from './session/finish.js';
 import { observeUsage } from './session/usage.js';
-import { fileRotationInput, turnRotationHistory, pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, failMissingNativeProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting, ownUnsentTexts } from './session/input.js';
+import { fileRotationInput, turnRotationHistory, pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, failMissingNativeProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting, ownUnsentTexts, lostBrowserOpening } from './session/input.js';
 import { syncEvecronOccurrenceStart } from './evecron-runner.js';
 /**
  * The local bridge between the Chrome extension and this app.
@@ -2551,6 +2551,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const id = typeof body?.id === 'string' && /^[a-f0-9-]{36}$/i.test(body.id) ? body.id : null;
     if (!target || !id) return json(res, 400, { error: 'invalid_input_lookup' }, origin);
     return json(res, 200, { texts: await ownUnsentTexts(target, id) }, origin);
+  }
+
+  if (route === '/input/opening-unavailable' && req.method === 'POST') {
+    const body = await readBody(req) as Record<string, unknown>;
+    const id = typeof body?.id === 'string' && /^[a-f0-9-]{36}$/i.test(body.id) ? body.id : null;
+    const tab = Number.isSafeInteger(body?.tab) && (body.tab as number) >= 0 ? String(body.tab) : null;
+    const stage = String(body?.stage ?? '');
+    if (!id || !tab || !['ready', 'preparing'].includes(stage)) return json(res, 400, { error: 'invalid_opening_report' }, origin);
+    const outcome = await lostBrowserOpening(id, tab);
+    return json(res, 200, { ok: outcome !== 'kept', ...(outcome === 'reopen' ? { reopen: true } : {}) }, origin);
   }
 
   if (route === '/correlations' && req.method === 'POST') {

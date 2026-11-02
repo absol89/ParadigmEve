@@ -300,7 +300,9 @@ const entrySchema = inputArgsBase.extend({
   stagesApplied: z.boolean().optional(),
   historyRecorded: z.boolean().optional(),
   completedTurnId: z.string().max(256).optional(),
-  queueOrder: z.number().int().nonnegative().optional()
+  queueOrder: z.number().int().nonnegative().optional(),
+  openingReopens: z.number().int().min(1).max(2).optional().catch(2),
+  openingReopenedTab: z.string().min(1).max(220).optional().catch(undefined)
 }).superRefine((input, ctx) => {
   validateOpeningContext(input, ctx);
   if (input.purpose === 'schedule') {
@@ -2560,6 +2562,32 @@ export function failMissingNativeProjectInput(id: string, projectId: string): Pr
     await commit(current.map(row => row === entry ? { ...row, state: 'failed',
       error: 'ChatGPT no longer lists the linked Project. Check the Project link and Retry; nothing was sent.' } : row));
     return true;
+  });
+}
+
+/** A pristine fresh-chat opening whose elected browser tab disappeared may get two fresh tabs. */
+export const OPENING_REOPENS = 2;
+export function lostBrowserOpening(id: string, tab?: string): Promise<'reopen' | 'failed' | 'kept'> {
+  return serial(async () => {
+    const current = await load();
+    const row = current.find(entry => entry.id === id);
+    // Null session + null conversation is ParadigmEve's fresh authored opening. Anything that
+    // reached claim/offer/Send, or any helper/schedule/temporary lane, is ambiguous and never reopens.
+    if (!row || row.sessionId !== null || row.conversationId !== null || row.state !== 'queued' || row.owner !== null ||
+        row.offeredAt !== undefined || row.sendAuthorizedAt !== undefined || row.deliveredAt !== undefined || row.messageId ||
+        row.lifetime || (row.purpose !== undefined && row.purpose !== 'user')) return 'kept';
+    const used = row.openingReopens ?? 0;
+    if (tab && used > 0 && row.openingReopenedTab === tab) return 'reopen';
+    if (used < OPENING_REOPENS) {
+      await commit(current.map(entry => entry === row ? { ...entry, openingReopens: used + 1,
+        ...(tab ? { openingReopenedTab: tab } : {}) } : entry));
+      logInfo(`input ${id}: fresh chat tab vanished before claim; reopening (${used + 1} of ${OPENING_REOPENS})`);
+      return 'reopen';
+    }
+    await commit(current.map(entry => entry === row ? { ...entry, state: 'failed',
+      error: 'Not sent: the browser tab for this new chat was closed or lost. Review the message and send again.' } : entry));
+    logWarn(`input ${id}: fresh chat opening lost after ${OPENING_REOPENS} safe reopen(s); message not sent`);
+    return 'failed';
   });
 }
 /** Only a pre-send failure can be declared failed. An ambiguous click stays claimed. */

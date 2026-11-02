@@ -678,6 +678,24 @@ describe('one browser maintenance flight per desktop outbox publication', () => 
     await restarted.maintain();
     expect(restarted.create).not.toHaveBeenCalled();
   });
+  it('reopens a proven-lost fresh-chat election only after the app grants a safe unopened retry', async () => {
+    const input = { id: firstId, conversationId: null };
+    const h = await worker([input], undefined, { inputOpenings: { [firstId]: { tab: 7, stage: 'ready', conversationId: null } } });
+    const original = h.fetch.getMockImplementation()!;
+    h.fetch.mockImplementation(async (url, init) => {
+      if (new URL(url).pathname === '/input/opening-unavailable') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ id: firstId, tab: 7, stage: 'ready' });
+        return { ok: true, status: 200, json: async () => ({ ok: true, reopen: true }) };
+      }
+      return original(url, init);
+    });
+    await h.maintain();
+    await vi.waitFor(() => expect((h.localSaved.inputOpenings as any)[firstId]).toBeUndefined());
+    expect(h.create).not.toHaveBeenCalled();
+    await h.maintain();
+    expect(h.create).toHaveBeenCalledTimes(1);
+    expect(h.remove).not.toHaveBeenCalled();
+  });
   it('spends input opening authority before creation and permits a new explicit operation', async () => {
     const inputs = [{ id: firstId, conversationId: null }];
     const h = await worker(inputs);
