@@ -1611,8 +1611,16 @@ describe('desktop input delivery and helper ownership', () => {
     live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', sent);
 
     expect(await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA })).toEqual({ ok: false });
-    expect(desktopInput).not.toHaveBeenCalled();
-    expect(live.sent.filter(message => message.type === 'desktop_input')).toEqual([]);
+    if (kind === 'text') {
+      expect(desktopInput).toHaveBeenCalledOnce();
+      expect(desktopInput).toHaveBeenCalledWith(expect.objectContaining({ inspectUnsent: true }));
+      expect(live.sent.filter(message => message.type === 'desktop_input')).toEqual([
+        expect.objectContaining({ inspectUnsent: true })
+      ]);
+    } else {
+      expect(desktopInput).not.toHaveBeenCalled();
+      expect(live.sent.filter(message => message.type === 'desktop_input')).toEqual([]);
+    }
     expect(sent).not.toHaveBeenCalled();
     expect(composer.textContent).toBe(kind === 'text' ? 'Keep my unsent draft' : '');
     if (kind === 'attachment') {
