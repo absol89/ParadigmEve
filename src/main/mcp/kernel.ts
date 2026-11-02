@@ -567,8 +567,12 @@ async function dispatchTracked(
   // touch state. If the page is one tick late this stays null; only handlers that actually
   // require identity wait for their own exact mate. Ordinary absolute reads/execs never wait.
   if (!nested) setCallerConversation(context, callerConversation(name, startedAt, requestId));
-  // Opt-in assigns missing identity to the durable Prime, without inventing page proof.
-  if (!context.caller.conversationId && !nested) {
+  // Opt-in assigns missing identity to the durable Prime for installation-scoped/shared Eve
+  // operations, without inventing page proof. Per-chat durable state such as update_plan must
+  // still wait for the exact page/request join: installation ownership is not conversation
+  // ownership, and must never make an unresolved Plan look current in Prime.
+  const installationPrimeEligible = name !== 'update_plan';
+  if (!context.caller.conversationId && !nested && installationPrimeEligible) {
     const owner = unattributedPrimeForCurrentCall(context.caller);
     if (owner) {
       const session = await findSessionByConversation(owner, { requireUnique: true });

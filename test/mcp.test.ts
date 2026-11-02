@@ -31,7 +31,6 @@ import {
   initSessionStore,
   rebindSession,
   readSessionPlan,
-  readEvents,
   upsertMessageEvent,
   writeOverflowText
 } from '../src/main/session/store.js';
@@ -4264,7 +4263,7 @@ describe('exec_command and write_stdin', () => {
 });
 
 describe('agent-maintained plans over MCP', () => {
-  it('assigns a remote call to the opted-in Prime without fabricating request proof or moving it after late evidence', async () => {
+  it('never turns opted-in installation Prime into exact Plan ownership', async () => {
     ctx.sessionTools = true;
     const previous = getConfig();
     const owner = 'prime-fallback-plan-owner';
@@ -4277,16 +4276,13 @@ describe('agent-maintained plans over MCP', () => {
       const reply = await modern('tools/call', { name: 'update_plan', arguments: {
         plan: [{ step: 'Work assigned to Prime', status: 'in_progress' }]
       } }, { 'x-request-id': requestId });
-      expect(failed(reply), textOf(reply)).toBe(false);
-      expect((await readSessionPlan(source.id))?.plan[0]?.step).toBe('Work assigned to Prime');
+      expect(failed(reply), textOf(reply)).toBe(true);
+      expect(textOf(reply)).toContain('Exact chat identity');
+      expect(await readSessionPlan(source.id)).toBeNull();
       expect(requestCorrelation(requestId)).toBeNull();
-      const records = (await readEvents(source.id)).filter(event => event.kind === 'tool_call');
-      expect(records.at(-1)).toMatchObject({ call: { requestId, conversationId: owner,
-        attribution: 'installation_prime', attributionMethod: 'installation_prime' } });
-      expect(records.at(-1)?.turnId).toBeUndefined();
       observeRequestCorrelation({ requestId, conversationId: other.conversationId!, sessionId: other.id,
         messageId: 'late-fallback-proof', tool: 'update_plan', observedAt: Date.now() });
-      expect((await readEvents(source.id)).filter(event => event.kind === 'tool_call')).toEqual(records);
+      expect(await readSessionPlan(source.id)).toBeNull();
       expect(await readSessionPlan(other.id)).toBeNull();
     } finally {
       resetAgentIdentityForTests();
