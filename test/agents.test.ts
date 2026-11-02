@@ -15,6 +15,7 @@ import * as chatModels from '../src/main/chat-models.js';
 import * as logger from '../src/main/logger.js';
 
 vi.mock('electron', () => ({
+  app: { getPath: () => '', getVersion: () => '0.0.0', getAppPath: () => process.cwd(), isPackaged: false },
   safeStorage: {
     isAsyncEncryptionAvailable: async () => true,
     getSelectedStorageBackend: () => 'gnome_libsecret',
