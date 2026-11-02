@@ -2253,6 +2253,22 @@ export function pendingBrowserInputs(): Promise<Array<{ id: string; conversation
     return result;
   });
 }
+/** Recent exact texts Eve claimed into this chat but never received Send authorization for. */
+const OWN_UNSENT_MS = 24 * 60 * 60_000;
+const OWN_UNSENT_MAX = 5;
+export async function ownUnsentTexts(conversationId: string, exceptId: string, now = Date.now()): Promise<string[]> {
+  const rows = await listInputs();
+  return rows
+    .filter(row => row.id !== exceptId && row.conversationId === conversationId &&
+      (row.state === 'failed' || row.state === 'cancelled') && row.requiresAuthorization === true &&
+      row.offeredAt !== undefined && row.sendAuthorizedAt === undefined && row.deliveredAt === undefined &&
+      !row.images?.length && !row.attachments?.length &&
+      now - row.createdAt < OWN_UNSENT_MS)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, OWN_UNSENT_MAX)
+    .map(row => row.deliveryText ?? row.text);
+}
+
 export function claimBrowserInput(id: string, owner: string, conversationId: string | null, requiresAuthorization = false): Promise<(InputEntry & { nativeProject?: string }) | null> {
   return serial(async () => {
     const current = await load();

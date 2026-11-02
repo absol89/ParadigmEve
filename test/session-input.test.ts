@@ -9,7 +9,7 @@ import { flushDurable, initDurableStore, readDurable, resetDurableForTests, writ
 import {
   CHAT_REVIEW_PLAN_ITEM_DISPLAY_CHARS, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, dispatchChatReviewWorker, dispatchChatReviewNativeParent, enqueueChatReviewAttention, enqueueChatReviewFinding, enqueueInput, legacyChatReviewActivityAt, enqueueLanPeerKnowledge, enqueueWorkerAttention,
   reconcileHeartbeatFindingQueue, retireLegacyChatReviewAttention, chatReviewTransportStage,
-  failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
+  failBrowserInput, listInputs, ownUnsentTexts, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy,
   markRestartRecoveryInput, cancelDeletedSessionInputs, noteBrowserReady, noteBrowserInputsOffered, forceBrowserInput, recoverUnclaimedRestartWakes, BROWSER_COLD_START_MS, sameModelFamily, fileRotationInput, turnRotationHistory, forceSendRefusal
 } from '../src/main/session/input.js';
@@ -1209,6 +1209,20 @@ describe('durable user input ownership', () => {
     expect(await failBrowserInput(row.id, 'other', 'failure')).toBe(false);
     expect(await failBrowserInput(row.id, 'owner', 'x'.repeat(500))).toBe(true);
     expect((await listInputs())[0]?.error).toHaveLength(200);
+  });
+  it('recognizes only this chat\'s recent claimed-but-never-authorized text as Eve-owned residue', async () => {
+    const residue = await enqueueInput(input({ text: 'Eve leftover draft' }));
+    const claimedResidue = await claimBrowserInput(residue.id, 'old-page', binding.conversationId, true);
+    expect(await failBrowserInput(residue.id, 'old-page', 'composer changed')).toBe(true);
+    const nextId = randomUUID();
+    expect(await ownUnsentTexts(binding.conversationId, nextId)).toContain(claimedResidue!.deliveryText ?? claimedResidue!.text);
+
+    const authorized = await enqueueInput(input({ text: 'May have been sent' }));
+    await claimBrowserInput(authorized.id, 'sent-page', binding.conversationId, true);
+    expect(await authorizeBrowserInput(authorized.id, 'sent-page', binding.conversationId)).toBe(true);
+    expect(await failBrowserInput(authorized.id, 'sent-page', 'receipt lost')).toBe(true);
+    expect(await ownUnsentTexts(binding.conversationId, nextId)).not.toContain('May have been sent');
+    expect(await ownUnsentTexts('conversation-other', nextId)).toEqual([]);
   });
   it('legacy queue: releases all three orphan browser claims on explicit cancellation without replay after restart', async () => {
     const rows = [];

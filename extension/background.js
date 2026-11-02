@@ -4134,6 +4134,10 @@ const HANDLERS = {
     if (!/^[a-f0-9-]{36}$/i.test(id)) return { ok: false };
     const tab = await chrome.tabs.get(source.tab);
     const conversationId = conversationFromUrl(tab.url);
+    if (message.inspectUnsent === true) {
+      if (!conversationId || message.conversationId !== conversationId || !ownsDocument(source)) return { ok: false };
+      return call('/input/own-unsent', { method: 'POST', body: JSON.stringify({ id, conversationId }) });
+    }
     const prefix = `${source.tab}:${sender.documentId}:`;
     const completed = message.ack === true || message.fail === true || typeof message.response === 'string' || typeof message.partial === 'string';
     const owner = completed ? String(message.owner || '') : `${prefix}${source.navigationEpoch}`;

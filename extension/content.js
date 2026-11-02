@@ -11708,7 +11708,15 @@
       // first used to turn a harmless local draft into a terminal failed Eve message, which made
       // an otherwise healthy Prime chat look non-responsive in the desktop app.
       const freshDraftReplaceable = () => ownsFreshPage() && !trustedComposerTakenOver;
-      if ((!freshDraftReplaceable() && (composer.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return false;
+      let ownLeftovers = [];
+      const composerHasText = () => Boolean((CLF_DOM.composer()?.textContent || '').trim());
+      if (!freshDraftReplaceable() && composerHasText() && target && !CLF_DOM.hasComposerAttachments()) {
+        const inspected = await ask({ type: 'desktop_input', id: message.id, conversationId: target, inspectUnsent: true });
+        ownLeftovers = (Array.isArray(inspected?.data?.texts) ? inspected.data.texts : [])
+          .filter(value => typeof value === 'string' && value.trim()).slice(0, 5).map(sendText);
+      }
+      const ownLeftover = () => ownLeftovers.includes(sendText(CLF_DOM.composer()?.textContent || ''));
+      if ((!freshDraftReplaceable() && composerHasText() && !ownLeftover()) || CLF_DOM.hasComposerAttachments()) return false;
       // Re-prove the Voice pause after the composer wait: the user or the reply may have started.
       if (!voicePause()) return false;
       if (message.restartWake === true && !restartWakeReadiness(target, recoveryTurnId, true).ready) return false;
@@ -11737,7 +11745,7 @@
       // This exact claimed bootstrap owns replacement text; existing chats and
       // attachment drafts remain protected. Re-evaluate after model selection,
       // since React can hydrate that autosaved text while the picker is open.
-      if ((!freshDraftReplaceable() && (composer.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return fail('ChatGPT already contains an unsent draft. Send or clear that draft in Chrome before trying again.');
+      if ((!freshDraftReplaceable() && (composer.textContent || '').trim() && !ownLeftover()) || CLF_DOM.hasComposerAttachments()) return fail('ChatGPT already contains an unsent draft. Send or clear that draft in Chrome before trying again.');
       if (message.directTurn) {
         // The offer only wakes this document. The just-committed outbox claim
         // authorizes interrupting this exact tool-free turn, like handoff's Stop
@@ -11780,8 +11788,8 @@
         if (outOfTime()) return fail("ChatGPT's Think mode did not settle in time. The message was not sent.", 'native-mode-deadline');
         return fail(providerLimitation() || 'Requested ChatGPT Think mode could not be confirmed', 'native-mode-unconfirmed');
       }
-      if (!onTarget() || CLF_DOM.generating() || (!freshDraftReplaceable() && (CLF_DOM.composer()?.textContent || '').trim()) || CLF_DOM.hasComposerAttachments()) return fail('The ChatGPT composer changed before sending');
-      if (!CLF_DOM.insertPrompt(input.text, freshDraftReplaceable())) return fail('ChatGPT did not accept the text');
+      if (!onTarget() || CLF_DOM.generating() || (!freshDraftReplaceable() && (CLF_DOM.composer()?.textContent || '').trim() && !ownLeftover()) || CLF_DOM.hasComposerAttachments()) return fail('The ChatGPT composer changed before sending');
+      if (!CLF_DOM.insertPrompt(input.text, freshDraftReplaceable() || ownLeftover())) return fail('ChatGPT did not accept the text');
       const sendingTarget = submittedSendLifetime(target, forEpoch);
       draft = CLF_DOM.captureComposerDraft(input.text, () => sendAttempted ? sendingTarget() : onTarget());
       // A restart recovery's own text survives a composer remount before Send is authorized. The

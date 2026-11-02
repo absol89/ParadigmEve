@@ -764,6 +764,38 @@ describe('desktop input delivery and helper ownership', () => {
   const chatB = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
   const text = 'Inspect the exact requested task';
   const claimed = (extra: Record<string, unknown> = {}) => ({ id: inputId, owner: 'input-owner', text, model: null, reasoningEffort: null, purpose: 'user', images: [], ...extra });
+
+  it.each(['listed', 'edited'] as const)('replaces Eve\'s own never-sent composer residue only when it is %s', async kind => {
+    const leftover = 'Continue with the next step of the task (step 2).';
+    live = await harness(`https://chatgpt.com/c/${chatA}`, {
+      desktop_input: message => ({ ok: true, data: message.inspectUnsent
+        ? { texts: [leftover] }
+        : message.authorize || message.ack || message.fail || message.response
+          ? { ok: true }
+          : { input: claimed() } })
+    }, () => undefined, false, true);
+    live.document.querySelector('#prompt-textarea')!.textContent = kind === 'edited' ? `${leftover} And also this.` : leftover;
+    await settle();
+    const sends = watchSend(live.document);
+    let sentText = '';
+    live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+      sentText = live!.document.querySelector('#prompt-textarea')!.textContent ?? '';
+      userTurn(live!.document, 'leftover-question', text, { sent: false });
+      live!.document.querySelector('#prompt-textarea')!.textContent = '';
+    });
+
+    const result = await live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA });
+    await settle();
+    if (kind === 'listed') {
+      expect(sends()).toBe(1);
+      expect(sentText.replace(/\s+/g, ' ').trim()).toBe(text);
+      expect(result).toEqual({ ok: true });
+    } else {
+      expect(sends()).toBe(0);
+      expect(live.document.querySelector('#prompt-textarea')!.textContent).toContain('And also this.');
+      expect(live.sent.some(message => message.type === 'desktop_input' && !message.inspectUnsent && !message.fail)).toBe(false);
+    }
+  });
   it('reports frontend hydration as pending without claiming, then accepts the same wake only with a native composer', async () => {
     const claim = vi.fn((message: any) => ({ ok: true, data: message.authorize || message.ack || message.fail
       ? { ok: true } : { input: claimed() } }));

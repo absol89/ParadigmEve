@@ -23,7 +23,7 @@ export { setBrowserWorkArea } from './browser-window-layout.js';
 import { pendingBrowserPreferenceRequest, acknowledgeBrowserPreferences } from './browser-preferences.js';
 import { sessionFinishHeld, releaseSessionFinish, getSessionFinishDraft, sessionFinishWaiting } from './session/finish.js';
 import { observeUsage } from './session/usage.js';
-import { fileRotationInput, turnRotationHistory, pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, failMissingNativeProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting } from './session/input.js';
+import { fileRotationInput, turnRotationHistory, pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, failUnreachableProjectInput, failMissingNativeProjectInput, completeBrowserDecision, enqueueVoicePlanCheckpoint, enqueueWorkerAttention, listInputs, restartRecoveryWaiting, ownUnsentTexts } from './session/input.js';
 import { syncEvecronOccurrenceStart } from './evecron-runner.js';
 /**
  * The local bridge between the Chrome extension and this app.
@@ -2543,6 +2543,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const input = await claimBrowserInput(body.id, body.owner, target, body.requiresAuthorization === true);
     if (input && target) noteRouteExistingChatSend(target);
     return json(res, 200, { input }, origin);
+  }
+
+  if (route === '/input/own-unsent' && req.method === 'POST') {
+    const body = await readBody(req) as Record<string, unknown>;
+    const target = conversationId(body?.conversationId);
+    const id = typeof body?.id === 'string' && /^[a-f0-9-]{36}$/i.test(body.id) ? body.id : null;
+    if (!target || !id) return json(res, 400, { error: 'invalid_input_lookup' }, origin);
+    return json(res, 200, { texts: await ownUnsentTexts(target, id) }, origin);
   }
 
   if (route === '/correlations' && req.method === 'POST') {
