@@ -195,6 +195,23 @@ describe('reopening from a saved summary (#1215)', () => {
     expect(await reopenWithHandoffNow(sessionId, handoffId)).toBeNull();
     expect(await attachedChat(sessionId)).toBe(CHAT_B);
   });
+
+  it('continues from the latest summary of an earlier chat in the same session', async () => {
+    const { sessionId, handoffId } = await abandonedAfterCapture();
+    const reopened = await reopenWithHandoffNow(sessionId, handoffId);
+    expect(await claimContinuationNow(reopened!.token, 'page-b')).not.toBeNull();
+    expect(await commitContinuation(reopened!.token, CHAT_B)).toBe(true);
+
+    const latest = (await getSession(sessionId))!.lastHandoffId!;
+    const again = await reopenWithHandoffNow(sessionId, latest);
+    expect(again).toMatchObject({ sessionId, state: 'awaiting-chat' });
+    const claim = await claimContinuationNow(again!.token, 'page-c');
+    expect(claim?.summary).toMatch(/^This summary was written in an earlier chat of this conversation \(\d{4}-\d\d-\d\d \d\d:\d\d UTC\)\./);
+    expect(claim?.summary).toContain('Work may have continued after it in later chats.');
+    expect(claim?.summary).toContain(SAMPLE_BRIEF.trim().slice(0, 60));
+    expect(await commitContinuation(again!.token, CHAT_C)).toBe(true);
+    expect(await attachedChat(sessionId)).toBe(CHAT_C);
+  });
 });
 
 describe('capturing the brief', () => {

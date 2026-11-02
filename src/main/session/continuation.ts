@@ -1159,6 +1159,26 @@ export async function attachSummary(token: string, text: string): Promise<Handof
   );
 }
 
+/** Leads a summary written in an earlier chat of the same durable session. */
+export function earlierSummaryNote(createdAt: number): string {
+  return `This summary was written in an earlier chat of this conversation (${new Date(createdAt).toISOString().slice(0, 16).replace('T', ' ')} UTC). ` +
+    'Work may have continued after it in later chats. Before redoing anything, check the current state of the files, version history, deployments and running services, and continue from what is actually there.';
+}
+
+async function usableSavedSummary(sessionId: string, handoffId: string): Promise<{ saved: Handoff; brief: string } | null> {
+  const session = await getSession(sessionId);
+  if (!session?.conversationId || session.lastHandoffId !== handoffId) return null;
+  const saved = await readHandoff(sessionId, handoffId).catch(() => null);
+  if (!saved || saved.id !== handoffId) return null;
+  const source = saved.provenance?.sourceConversationId;
+  const earlier = Boolean(source && source !== session.conversationId);
+  if (earlier && (!source || !session.chatIds.includes(source))) return null;
+  const notice = handoffPlanNotice(sessionId);
+  const written = (saved.text.endsWith(notice) ? saved.text.slice(0, -notice.length) : saved.text).trim();
+  if (!written) return null;
+  return { saved, brief: earlier ? `${earlierSummaryNote(saved.createdAt)}\n\n${written}` : written };
+}
+
 /**
  * Opens a new Compact & Resume from the summary an abandoned one already captured. Ported from
  * Chat On Steroids #1215 (d6fa758e).
@@ -1173,14 +1193,11 @@ export async function attachSummary(token: string, text: string): Promise<Handof
 export async function reopenWithHandoffNow(sessionId: string, handoffId: string): Promise<ContinuationView | null> {
   sweep();
   const session = await getSession(sessionId);
-  if (!session?.conversationId || session.lastHandoffId !== handoffId) return null;
+  if (!session?.conversationId) return null;
   if ([...byToken.values()].some((entry) => entry.sessionId === sessionId && isOpen(entry))) return null;
-  const saved = await readHandoff(sessionId, handoffId).catch(() => null);
-  if (!saved || (saved.provenance && saved.provenance.sourceConversationId !== session.conversationId)) return null;
-  // prepareHandoff appends the current plan notice; strip the stored one so it is not doubled.
-  const notice = handoffPlanNotice(sessionId);
-  const brief = (saved.text.endsWith(notice) ? saved.text.slice(0, -notice.length) : saved.text).trim();
-  if (!brief) return null;
+  const usable = await usableSavedSummary(sessionId, handoffId);
+  if (!usable) return null;
+  const { saved, brief } = usable;
   // Chat B belongs beside chat A: reuse the Project the abandoned run carried, when it is still known.
   const prior = saved.provenance?.continuationId
     ? [...byToken.values()].find((entry) => handoffContinuationId(entry.token) === saved.provenance?.continuationId)
