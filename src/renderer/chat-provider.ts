@@ -12,7 +12,7 @@ import { t, ui } from './i18n.js';
 import { $, el, run, toast } from './dom.js';
 import { repaintComposerLabel, setComposerLabelOverride } from './chat-models.js';
 import type { ChatProvider, ChatProviderRoute, SessionSummary } from '../shared/session.js';
-import type { Config, OllamaModelPreference } from '../shared/types.js';
+import type { AppState, Config, OllamaModelPreference } from '../shared/types.js';
 
 type Route = ChatProviderRoute;
 interface OllamaChoice { id: string; route: Route; cloud?: boolean; installed?: boolean; vision?: boolean }
@@ -26,6 +26,8 @@ let llamaCppState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 let llamaCppError = '';
 let modelsState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 let modelsError = '';
+let modelDiscovery: Promise<void> | null = null;
+let preferenceSave: Promise<void> = Promise.resolve();
 let routerModels: RouterChoice[] = [];
 let routerState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 let routerError = '';
@@ -79,7 +81,8 @@ export function composerLocalOnlyForNewChat(): boolean {
 }
 
 function current(): ChatProvider | null {
-  return choices.has(scope) ? choices.get(scope)! : null;
+  const provider = choices.get(scope) ?? null;
+  return provider?.id === 'ollama' ? withModelPreference(provider) : provider;
 }
 
 function routeOfProvider(provider: ChatProvider | null | undefined): Route | null {
@@ -97,6 +100,19 @@ export function composerProvider(): ChatProvider | null {
   return current();
 }
 
+/** A cold/restored picker must resolve the route and pending preference writes before Send. */
+export async function prepareComposerProvider(): Promise<ChatProvider | null | false> {
+  const selectedScope = scope, selected = choices.get(scope);
+  await preferenceSave;
+  if (selected?.id === 'ollama' && routeOfProvider(selected) === null) await loadModels();
+  if (scope !== selectedScope || choices.get(scope) !== selected) return false;
+  if (selected?.id === 'ollama' && routeOfProvider(selected) === null) {
+    toast(modelsError || t("Choose a provider model, then send again."));
+    return false;
+  }
+  return current();
+}
+
 /** Called whenever the selected chat changes. Defaults to the provider of the chat's newest turn. */
 export function applyComposerProvider(nextScope: string | null, session: SessionSummary | null): void {
   scope = nextScope;
@@ -111,7 +127,7 @@ export function applyComposerProvider(nextScope: string | null, session: Session
 
 function withModelPreference(provider: ChatProvider): ChatProvider {
   if (provider.id !== 'ollama') return provider;
-  const preference = modelPreferences.get(provider.model);
+  const preference = routeOfProvider(provider) === 'ollama-local' ? modelPreferences.get(provider.model) : undefined;
   const clean = { ...provider };
   delete clean.think;
   delete clean.numCtx;
@@ -127,10 +143,6 @@ export function applyOllamaModelPreferences(config: Config): void {
   modelPreferences.clear();
   for (const [model, preference] of Object.entries(config.ui.ollamaModelPreferences ?? {})) {
     modelPreferences.set(model, { ...preference });
-  }
-  const provider = current();
-  if (provider?.id === 'ollama' && routeOfProvider(provider) === 'ollama-local') {
-    choices.set(scope, withModelPreference(provider));
   }
   paint();
 }
@@ -163,20 +175,23 @@ export function markProviderSwitchAccepted(sessionId: string | null): void {
   explicitSwitchIntent.delete(sessionId);
 }
 
-async function loadModels(): Promise<void> {
-  if (modelsState === 'loading') return;
-  modelsState = 'loading';
-  paint();
-  const reply = await window.api.listOllamaModels().catch((error: Error) => ({ ok: false as const, error: error.message }));
-  if (reply.ok) {
-    models = reply.data;
-    modelsState = 'ready';
-    modelsError = '';
-  } else {
-    modelsState = 'error';
-    modelsError = reply.error;
-  }
-  paint();
+function loadModels(): Promise<void> {
+  if (modelDiscovery) return modelDiscovery;
+  modelDiscovery = (async () => {
+    modelsState = 'loading';
+    paint();
+    const reply = await window.api.listOllamaModels().catch((error: Error) => ({ ok: false as const, error: error.message }));
+    if (reply.ok) {
+      models = reply.data;
+      modelsState = 'ready';
+      modelsError = '';
+    } else {
+      modelsState = 'error';
+      modelsError = reply.error;
+    }
+    paint();
+  })().finally(() => { modelDiscovery = null; });
+  return modelDiscovery;
 }
 
 async function loadRouterModels(): Promise<void> {
@@ -309,13 +324,12 @@ function paint(): void {
   $('chatgptModelPanel').hidden = !!provider;
   const router = provider?.id === 'openrouter';
   const llamaCpp = provider?.id === 'llamacpp';
-  const ollamaPreference = provider?.id === 'ollama' ? modelPreferences.get(provider.model) : undefined;
   $('ollamaThinkRow').hidden = provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local';
-  $<HTMLInputElement>('ollamaThink').checked = ollamaPreference?.think ?? provider?.think !== false;
+  $<HTMLInputElement>('ollamaThink').checked = provider?.think !== false;
   $('ollamaContextRow').hidden = provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local';
   const contextInput = $<HTMLInputElement>('ollamaNumCtx');
   if (document.activeElement !== contextInput) {
-    const value = ollamaPreference?.numCtx ?? provider?.numCtx;
+    const value = provider?.numCtx;
     contextInput.value = value ? String(value) : '';
   }
   const title = $('ollamaModelPanel').querySelector('.power-caption strong');
@@ -384,7 +398,23 @@ export async function confirmProviderSwitch(sessionId: string, provider: ChatPro
   });
 }
 
-export function initChatProvider(): void {
+export function initChatProvider(applyState?: (state: AppState) => void): void {
+  const saved = (state: AppState | null) => {
+    if (state) {
+      applyOllamaModelPreferences(state.config);
+      applyState?.(state);
+    } else paint();
+  };
+  const persist = (write: () => Promise<{ ok: true; data: AppState } | { ok: false; error: string }>, failed?: () => void) => {
+    preferenceSave = preferenceSave.then(async () => {
+      try {
+        const state = await run(write());
+        saved(state);
+        if (!state) failed?.();
+      } catch (error) { toast((error as Error).message); failed?.(); }
+      paint();
+    });
+  };
   $('modelMenu').addEventListener('toggle', positionModelPopover);
   window.addEventListener('resize', positionModelPopover);
   setComposerLabelOverride(() => {
@@ -428,9 +458,7 @@ export function initChatProvider(): void {
     const provider = current();
     if (provider?.id !== 'ollama' || routeOfProvider(provider) !== 'ollama-local') return;
     const think = $<HTMLInputElement>('ollamaThink').checked;
-    modelPreferences.set(provider.model, { ...(modelPreferences.get(provider.model) ?? {}), think });
-    choices.set(scope, withModelPreference(provider));
-    void run(window.api.setOllamaModelPreference(provider.model, { think }));
+    persist(() => window.api.setOllamaModelPreference(provider.model, { think }));
     // Changing Ollama thinking does not switch providers or authorize a new privacy route.
     paint();
   });
@@ -445,13 +473,12 @@ export function initChatProvider(): void {
       toast(t("Context must be a whole number from 2,048 to 1,048,576 tokens."));
       return;
     }
-    const preference = { ...(modelPreferences.get(provider.model) ?? {}) };
-    if (value === null) delete preference.numCtx;
-    else preference.numCtx = value;
-    if (Object.keys(preference).length) modelPreferences.set(provider.model, preference);
-    else modelPreferences.delete(provider.model);
-    choices.set(scope, withModelPreference(provider));
-    void run(window.api.setOllamaModelPreference(provider.model, { numCtx: value }));
+    persist(() => window.api.setOllamaModelPreference(provider.model, { numCtx: value }), () => {
+      // Restore a rejected value even while focused, but never overwrite a newer draft/model.
+      if (current()?.model === provider.model && input.value.trim() === raw) {
+        input.value = current()?.numCtx ? String(current()!.numCtx) : '';
+      }
+    });
     paint();
   });
   $<HTMLInputElement>('ollamaLocalOnly').addEventListener('change', async () => {

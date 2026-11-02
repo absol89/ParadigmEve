@@ -948,6 +948,66 @@ it('keeps an EVE-Al run bound to its session and resolves suite-relative reads i
   expect(system).toMatch(/'probe[\\/]work'/);
 });
 
+it('re-expands EVE-Al context for each provider route and tool capability without leaking local paths', async () => {
+  const { initializeDefaultThreads } = await import('../src/main/pins.js');
+  await initializeDefaultThreads();
+  resetOpenRouterCatalogForTests();
+  await setSecret('openRouterApiKey', 'or-test-key');
+  try {
+    const sessionId = await sendAndFinish({ provider: 'ollama', model: 'llama3.2', text: '%eveal' });
+    const localSystem = ollamaRequests.filter(r => isChat(r.url)).at(-1)!.body.messages[0].content;
+    expect(localSystem).toContain(path.join(process.cwd(), 'eveal'));
+    const remote = { id: 'openrouter' as const, model: 'plain/no-tools' };
+    const preview = await history.providerSwitchPreview(sessionId, remote);
+    await sendAndFinish({ sessionId, provider: remote.id, model: remote.model, text: 'Continue remotely',
+      providerConsent: { to: preview.to, messages: preview.messages, images: preview.images, files: preview.files } });
+    const remoteSystem = routerRequests.filter(r => r.url.endsWith('/chat/completions')).at(-1)!.body.messages[0].content;
+    expect(remoteSystem).toContain('This chat has no tool that reads files');
+    expect(remoteSystem).not.toContain(path.join(process.cwd(), 'eveal'));
+    expect(remoteSystem).not.toContain(directory);
+    expect(remoteSystem).not.toContain('# This EVE-Al run output');
+
+    // Switch capabilities without changing the remote route: the stale no-files notice must go.
+    await sendAndFinish({ sessionId, provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'Use the available tools' });
+    const withTools = routerRequests.filter(r => r.url.endsWith('/chat/completions')).at(-1)!.body.messages[0].content;
+    expect(withTools).not.toContain('This chat has no tool that reads files');
+    expect(withTools).not.toContain(path.join(process.cwd(), 'eveal'));
+
+    // An originally remote opening also gains the local run root when moved onto this computer.
+    const remoteSession = await sendAndFinish({ provider: remote.id, model: remote.model, text: '%eveal' });
+    const local = { id: 'ollama' as const, model: 'llama3.2' };
+    const back = await history.providerSwitchPreview(remoteSession, local);
+    await sendAndFinish({ sessionId: remoteSession, provider: local.id, model: local.model, text: 'Continue locally',
+      providerConsent: { to: back.to, messages: back.messages, images: back.images, files: back.files } });
+    const backSystem = ollamaRequests.filter(r => isChat(r.url)).at(-1)!.body.messages[0].content;
+    expect(backSystem).not.toContain('This chat has no tool that reads files');
+    expect(backSystem).toContain('# This EVE-Al run output');
+    expect((await fs.stat(backSystem.match(/Native path: ([^\n]+)/)![1])).isDirectory()).toBe(true);
+  } finally { await clearSecret('openRouterApiKey'); }
+});
+
+it.each(['ollama', 'llamacpp'] as const)('keeps a selected Thread with edited opening text across restore on %s', async provider => {
+  const { initializeDefaultThreads, starterThreadEntry } = await import('../src/main/pins.js');
+  await initializeDefaultThreads();
+  const thread = await starterThreadEntry('eveal');
+  expect(thread).toBeTruthy();
+  const contextQuiltId = thread!.threadId;
+  const model = provider === 'ollama' ? 'llama3.2' : LFM3;
+  const sessionId = await sendAndFinish({ provider, model, contextQuiltId, text: 'Run the checks now' });
+  const requests = provider === 'ollama' ? ollamaRequests : llamaCppRequests;
+  expect(requests.filter(r => isChat(r.url)).at(-1)!.body.messages[0].content).toContain('# This EVE-Al run output');
+  // Simulate process cache loss and outbox pruning: the explicit Thread belongs to the archive.
+  resetOllamaChatForTests();
+  await writeDurableNow('session-input', []);
+  input.resetInputForTests();
+  await restartStore();
+  await sendAndFinish({ sessionId, provider, model, text: 'Continue' });
+  expect(requests.filter(r => isChat(r.url)).at(-1)!.body.messages[0].content).toContain('# This EVE-Al run output');
+  expect((await history.archivedTurns(sessionId))[0]).toMatchObject({ text: 'Run the checks now', contextQuiltId });
+  const rejected = await send({ sessionId, provider, model, contextQuiltId, text: 'Not a fresh opening' });
+  expect(rejected.ok).toBe(false);
+});
+
 it('tells a remote model without file tools that %eveal needs one, without naming the user\'s disk', async () => {
   const { initializeDefaultThreads } = await import('../src/main/pins.js');
   await initializeDefaultThreads();

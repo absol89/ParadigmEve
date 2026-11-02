@@ -31,12 +31,22 @@ for 40 minutes with a hard stop at 55. `%eve-al` routes to the same Thread.
   the pushback kit. Remote models never get a
   disk path. A chat without a file-reading tool (delegate mode, or a model without tool support) is told
   so, shows the user the steps and the suite location, and stops instead of guessing.
+- Explicit Start chat from the Thread works with local providers even after the suggested draft is
+  replaced. Thread identity survives archive restore. Route-specific expansion is rebuilt each turn:
+  switching to a remote model removes app-added native paths, while switching back prepares the local
+  run root and updates the available-tools notice.
 - Chats with the Ollama daemon on this computer use its native `/api/chat` with a `num_ctx` sized to the
   request (and never shrunk within a run, so the model is not reloaded every turn). Ollama's
   OpenAI-compatible endpoint ignores `num_ctx` and its default window is often 4k tokens, so a local chat
   with tools (7–9k tokens) used to lose its front, system prompt and Thread context included, without any
   error. `app.log` records each local turn's activated Threads and context size, and the prompt tokens
   against `num_ctx`; a count at the window's edge is logged as a warning.
+- Automatic context sizing counts text/tool schemas, not base64 image bytes. It reserves an estimated
+  2,048 tokens per image (not a model-specific tokenizer guarantee); explicit Context still wins.
+  The high-water context tier is isolated by endpoint and exact model id.
+- The default local loop can execute 32 sequential tool-bearing rounds and then generate a final
+  answer. The final-only completion cannot execute another tool call; batched calls also obey the
+  independent 64-call budget. Reaching a limit is reported as a limit, not successful completion.
 - The native Ollama chat response is read as bounded newline-delimited JSON with `stream: true`,
   accumulating content and tool-call entries before the agent loop can execute anything. A complete
   `done` event is required; truncated/error streams fail closed. Streaming alone did not lift the

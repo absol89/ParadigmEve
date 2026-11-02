@@ -147,13 +147,14 @@ async function modelMaxContext(fetchImpl: typeof fetch, base: string, model: str
  * longer prompt, which drops the system prompt, any activated Thread and most tool schemas.
  * Tokens are estimated at three characters each, which overestimates for English and JSON.
  */
-async function nativeContext(fetchImpl: typeof fetch, base: string, model: string, headers: Record<string, string>, body: string): Promise<number> {
-  const wanted = Math.ceil(body.length / 3) + NATIVE_REPLY_TOKENS;
+async function nativeContext(fetchImpl: typeof fetch, base: string, model: string, headers: Record<string, string>, promptTokens: number): Promise<number> {
+  const wanted = promptTokens + NATIVE_REPLY_TOKENS;
   const max = await modelMaxContext(fetchImpl, base, model, headers);
   const steps = /^nanbeige-3b-fable(?::|$)/i.test(model) ? NANBEIGE_CONTEXT_STEPS : NATIVE_CONTEXT_STEPS;
   const step = steps.find((size) => size >= wanted) ?? steps.at(-1)!;
-  const chosen = Math.max(nativeContextByModel.get(model) ?? 0, max ? Math.min(step, max) : step);
-  nativeContextByModel.set(model, chosen);
+  const key = `${base}\n${model}`;
+  const chosen = Math.max(nativeContextByModel.get(key) ?? 0, max ? Math.min(step, max) : step);
+  nativeContextByModel.set(key, chosen);
   return chosen;
 }
 
@@ -353,7 +354,12 @@ export function createOllamaAgentModelRuntime(
             }))
           } : {})
         };
-        const numCtx = options.numCtx ?? await nativeContext(fetchImpl, base, request.model, headers, JSON.stringify(unsized));
+        // Image bytes are transport, not text tokens. Reserve a bounded estimate per image;
+        // base64 length must never force a huge, sticky KV-cache allocation.
+        const imageCount = unsized.messages.reduce((sum, message) => sum + (Array.isArray(message.images) ? message.images.length : 0), 0);
+        const promptText = JSON.stringify({ ...unsized, messages: unsized.messages.map(({ images: _images, ...message }) => message) });
+        const numCtx = options.numCtx ?? await nativeContext(fetchImpl, base, request.model, headers,
+          Math.ceil(promptText.length / 3) + imageCount * 2048);
         const payload = await parsedNativeStream(await fetchImpl(`${base}/api/chat`, {
           method: 'POST',
           redirect: 'error',

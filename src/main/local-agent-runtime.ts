@@ -219,6 +219,7 @@ export interface RunLocalAgentOptions {
   tools: readonly LocalAgentTool[];
   runtime: LocalAgentModelRuntime;
   signal?: AbortSignal;
+  /** Maximum tool-bearing rounds; one final-answer completion is reserved beyond this budget. */
   maxTurns?: number;
   maxToolCalls?: number;
   allowNoTools?: boolean;
@@ -266,13 +267,14 @@ export async function runLocalAgent(options: RunLocalAgentOptions): Promise<Loca
   const tools = new Map(options.tools.map((tool) => [tool.name, tool] as const));
   let toolCalls = 0;
 
-  for (let turn = 1; turn <= maxTurns; turn += 1) {
+  for (let turn = 1; turn <= maxTurns + 1; turn += 1) {
     options.signal?.throwIfAborted();
     const completion = await options.runtime.complete({
       endpoint: prerequisites.endpoint,
       model: prerequisites.model,
       messages,
-      tools: options.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+      tools: turn > maxTurns || toolCalls >= maxToolCalls ? []
+        : options.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
       signal: options.signal
     });
     options.signal?.throwIfAborted();
@@ -281,6 +283,9 @@ export async function runLocalAgent(options: RunLocalAgentOptions): Promise<Loca
       const final = completion.content.trim();
       if (!final) throw new Error('LOCAL_AGENT_PROTOCOL_ERROR: model returned an empty final answer');
       return { final, turns: turn, toolCalls };
+    }
+    if (turn > maxTurns) {
+      throw new Error(`LOCAL_AGENT_TURN_LIMIT: model did not finish after ${maxTurns} tool rounds`);
     }
     if (!completion.calls.length) {
       throw new Error('LOCAL_AGENT_PROTOCOL_ERROR: tool-call completion contained no calls');

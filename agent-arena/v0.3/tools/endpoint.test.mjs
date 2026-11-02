@@ -14,6 +14,53 @@ try { v02 = v02Root(); } catch { /* skipped */ }
 const opts = { skip: v02 ? false : 'EVEAL_V02 not set' };
 const b64 = buf => Buffer.from(buf).toString('base64');
 
+test('endpoint: rejects unissued tickets and invalid methods before touching secrets or generating challenges', async () => {
+  // Missing secrets make any attempt to derive a seed fail: these responses prove early admission.
+  const handle = createHandler({}, {}, memoryStore());
+  const ticket = 'a'.repeat(22);
+  for (const [method, action] of [['GET', 'files'], ['POST', 'pushback'], ['POST', 'score']]) {
+    const response = await handle(new Request(`https://eveal.example/v1/tickets/${ticket}/${action}`, { method }));
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: 'not found' });
+  }
+  const invalid = await handle(new Request(`https://eveal.example/v1/tickets/${ticket}/files`, { method: 'POST' }));
+  assert.equal(invalid.status, 405);
+});
+
+test('endpoint: file, pushback and score limits run before ticket lookup and expensive generation', async () => {
+  const backing = memoryStore();
+  let lookups = 0;
+  const store = { ...backing, async get(key) { lookups++; return backing.get(key); } };
+  const handle = createHandler({}, {}, store);
+  const ticket = 'b'.repeat(22);
+  for (const [method, action, limit] of [['GET', 'files', 60], ['POST', 'pushback', 30], ['POST', 'score', 30]]) {
+    for (let n = 0; n < limit; n++) {
+      assert.equal((await handle(new Request(`https://eveal.example/v1/tickets/${ticket}/${action}`, { method }))).status, 404);
+    }
+    const before = lookups;
+    assert.equal((await handle(new Request(`https://eveal.example/v1/tickets/${ticket}/${action}`, { method }))).status, 429);
+    assert.equal(lookups, before, 'over-budget requests never look up or derive tickets');
+  }
+});
+
+test('endpoint: issued tickets can fetch files, but repeated file retrieval is bounded', async () => {
+  const env = { SEED_SECRET: b64(crypto.getRandomValues(new Uint8Array(32))) };
+  const store = memoryStore();
+  const handle = createHandler(env, { honestyChallenge: () => ({ final: 'honesty task' }) }, store);
+  const issued = await handle(new Request('https://eveal.example/v1/tickets', { method: 'POST' }));
+  assert.equal(issued.status, 201);
+  const { ticket, challenge } = await issued.json();
+  assert.equal(await store.get('issued:' + ticket), challenge);
+  const request = () => new Request(`https://eveal.example/v1/tickets/${ticket}/files`);
+  const files = await handle(request());
+  assert.equal(files.status, 200);
+  assert.equal((await files.json()).challenge, challenge);
+  // Consume the remaining allowance without needlessly generating 59 challenges.
+  for (let n = 1; n < 60; n++) await store.hit('rate:files:unknown', 3600, 60);
+  env.SEED_SECRET = 'invalid secret';
+  assert.equal((await handle(request())).status, 429);
+});
+
 async function setup() {
   const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const keys = Object.fromEntries(['pitfalls', 'sources'].map(k => [k, JSON.parse(fs.readFileSync(path.join(v02, 'reviewer', 'keys', k + '.json'), 'utf8'))]));

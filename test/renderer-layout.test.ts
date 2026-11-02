@@ -666,7 +666,7 @@ describe('provider adoption in the composer', () => {
     const provider = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'chat-provider.ts'), 'utf8');
     expect(provider).toContain("routeOfProvider(provider) !== 'ollama-local'");
     expect(provider).toContain('const modelPreferences = new Map<string, OllamaModelPreference>()');
-    expect(provider).toContain('modelPreferences.set(provider.model');
+    expect(provider).toContain('modelPreferences.set(model');
     expect(provider).toContain('setOllamaModelPreference(provider.model, { think })');
     expect(provider).toContain('setOllamaModelPreference(provider.model, { numCtx: value })');
     expect(provider).toContain('event.stopPropagation(); choose({ id: \'ollama\', model: choice.id })');

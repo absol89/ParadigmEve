@@ -49,6 +49,23 @@ exact count follows the durable input and session provider into the local `/api/
 as `options.num_ctx`, overriding automatic tier growth without changing the chosen provider
 or an already-running turn. The override is not sent to Ollama Cloud, llama.cpp or ChatGPT.
 
+Think and Context are durable preferences keyed by exact Ollama model id. The picker and next-send
+payload derive them from the same current preference, never a cached chat's historical turn settings.
+Clearing Context removes the override for that model across chats. Preference-save responses update
+the renderer's shared state as well as the picker. Already accepted turns keep their frozen settings.
+Send waits for pending preference saves and, on a cold picker, model-route discovery; an unresolved
+route or navigation during discovery cannot silently send stale settings.
+
+Starting a fresh chat from a Thread carries its explicit `contextQuiltId` for every provider, even if
+the user replaces the suggested draft. The user-message archive retains that identity after outbox
+pruning and restart. Local drivers cache only route-neutral activation; on every turn they expand it
+for the current route and available file tools. Native suite paths and the session's EVE-Al run root
+are added only for on-computer inference, not inherited when switching to a remote provider.
+
+The bounded local-agent loop permits 32 tool-bearing rounds by default, followed by one reserved
+final-answer completion with no tools advertised. It refuses any extra tool calls at that boundary
+before executing them. The separate 64-call default budget also applies to batches.
+
 Session recording supplies evidence for:
 
 - exact tool attribution;

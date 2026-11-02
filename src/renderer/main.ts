@@ -2718,7 +2718,7 @@ $('viewPets').addEventListener('click', () => pets.toggle());
 api.onPetOverlayOpenOwner(screen => showTab(screen === 'pets' ? 'pets' : 'chat'));
 initBrowserPreferences();
 initWorkspaceNavigation({ screen: 'chat' });
-initChat({ save: () => save(), state: () => state });
+initChat({ save: () => save(), state: () => state, applyState: apply });
 
 void (async () => {
   await refresh();

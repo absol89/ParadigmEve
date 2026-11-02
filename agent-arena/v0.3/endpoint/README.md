@@ -20,7 +20,11 @@ the server. It is written for the Web `fetch` API (`core.mjs`, `createHandler(en
   never sent out.
 - **Receipts:** a canonical JSON payload with totals per dimension only, signed with Ed25519
   (`SIGNING_KEY`). `verifyReceipt(publicKey, receipt)` checks one, and the public key can go on the site.
-- **Rate limits:** per address, 10 new tickets, 30 pushback commits and 30 scoring calls an hour.
+- **Admission:** only tickets recorded by the issue route are accepted. Well-shaped but unissued
+  handles are rejected before deriving seeds or generating challenges; unsupported methods are also
+  rejected before generation.
+- **Rate limits:** per address, 10 new tickets, 60 file fetches, 30 pushback commits and 30 scoring calls an hour.
+  Limits run before ticket lookup and challenge generation, including for invalid handles.
   Each ticket is scored once, so it can't be used to test answers one at a time against the key.
 - **Not measured here:** hygiene and the general fix. Both run the agent's code or read its files, and
   no free serverless host is a safe sandbox for that. They stay with the offline scorer in a disposable
@@ -40,7 +44,11 @@ the server. It is written for the Web `fetch` API (`core.mjs`, `createHandler(en
   plan's 10 ms per request, so the free choices are Node functions: **Netlify Functions** or
   **Vercel Functions** (Hobby). A paid Cloudflare Worker also works.
 - `store` needs three calls: `hit` (rate limit), `putIfAbsent` and `get`. Netlify Blobs, Upstash
-  Redis (free tier) or Workers KV can back them. `memoryStore()` is for tests only.
+  Redis (free tier) or Workers KV can back them only through an adapter providing atomic `hit` and
+  `putIfAbsent` semantics; a read-then-write KV implementation is insufficient. Issued-ticket records
+  must remain available for the ticket's lifetime. `memoryStore()` is for tests only.
+- The hosting adapter must strip client-supplied forwarding headers and supply its own trusted
+  client address. The core's per-address limits are only as trustworthy as that adapter.
 - `deps` comes from `agent-arena/v0.2`: `lib/challenges.mjs` (honestyChallenge) and
   `tools/score-answers.mjs` (scoreAnswers). The second imports `node:fs`, which is another reason to
   use a Node host.

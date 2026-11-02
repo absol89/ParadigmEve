@@ -69,6 +69,7 @@ export interface ArchivedTurn {
   images: ArchivedImage[];
   files: ArchivedFile[];
   inputId?: string;
+  contextQuiltId?: string;
 }
 
 async function readFullText(sessionId: string, message: { text: string; truncated: boolean; assetId?: string }, onOverflow?: () => void): Promise<string> {
@@ -114,7 +115,8 @@ export async function archivedTurns(sessionId: string, options: { fullText?: boo
         text: event.authoredText ?? (fullText ? await readFullText(sessionId, event.message, () => { overflowReads++; }) : event.message.text),
         images,
         files,
-        ...(event.inputId ? { inputId: event.inputId } : {})
+        ...(event.inputId ? { inputId: event.inputId } : {}),
+        ...(event.contextQuiltId ? { contextQuiltId: event.contextQuiltId } : {})
       });
     } else if (event.kind === 'assistant_message') {
       if (!(event.final === true || event.state === 'final')) continue;

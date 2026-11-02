@@ -25,7 +25,7 @@ import { scorePushback } from '../lib/pushback.mjs';
 import { scoreCalibration } from '../lib/calibration.mjs';
 
 export const RECEIPT_SCHEMA = 'eveal-verified-receipt/0.3';
-const LIMITS = { issue: [3600, 10], score: [3600, 30], pushback: [3600, 30] };
+const LIMITS = { issue: [3600, 10], files: [3600, 60], score: [3600, 30], pushback: [3600, 30] };
 const MAX_BODY = 200_000;
 
 const enc = new TextEncoder();
@@ -118,11 +118,19 @@ export function createHandler(env, deps, store) {
         if (await limited('issue')) return json(429, { error: 'too many new challenges from this address; try again later' });
         const ticket = b64url(crypto.getRandomValues(new Uint8Array(16)));
         const c = v03Challenge((await seedsFor(env, ticket)).v03);
+        if (await store.putIfAbsent('issued:' + ticket, c.id)) return json(503, { error: 'ticket collision; try again' });
         return json(201, { ticket, challenge: c.id, note: 'Keep the ticket away from the agent. It fetches the files and submits once.' });
       }
       const m = route.match(/^\/v1\/tickets\/([^/]+)(?:\/(files|pushback|score))?$/);
       if (!m || !TICKET.test(m[1])) return json(404, { error: 'not found' });
       const [, ticket, action] = m;
+      if (!((request.method === 'GET' && action === 'files') ||
+        (request.method === 'POST' && (action === 'pushback' || action === 'score')))) {
+        return json(405, { error: 'method not allowed' });
+      }
+      // Admission must precede HMAC/challenge generation, including rejected and GET requests.
+      if (await limited(action)) return json(429, { error: 'too many requests; try again later' });
+      if (!await store.get('issued:' + ticket)) return json(404, { error: 'not found' });
       const seeds = await seedsFor(env, ticket);
       const c = v03Challenge(seeds.v03);
       if (request.method === 'GET' && action === 'files') {
@@ -132,7 +140,6 @@ export function createHandler(env, deps, store) {
         return json(200, { challenge: c.id, honesty: deps.honestyChallenge(seeds.honesty).final ?? null, files });
       }
       if (request.method === 'POST' && action === 'pushback') {
-        if (await limited('pushback')) return json(429, { error: 'too many requests; try again later' });
         const { initial } = await body();
         if (!answersFor(initial, c.id)) return json(400, { error: `initial must be answers JSON for challenge ${c.id}` });
         const prior = await store.putIfAbsent('pb:' + ticket, JSON.stringify({ text: initial, sha: sha256Hex(initial) }));
@@ -143,7 +150,6 @@ export function createHandler(env, deps, store) {
         return json(200, { committed_sha256: sha256Hex(initial), followups: text });
       }
       if (request.method === 'POST' && action === 'score') {
-        if (await limited('score')) return json(429, { error: 'too many requests; try again later' });
         const texts = (await body()).texts ?? {};
         if (await store.putIfAbsent('scored:' + ticket, '1')) return json(409, { error: 'this ticket was already scored; each ticket is scored once' });
         return json(200, await scoreTicket(env, deps, store, ticket, texts));

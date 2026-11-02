@@ -1,6 +1,6 @@
 import { ui, t } from './i18n.js';
 import { applyChatModels, applyComposerSessionModel, currentSessionModelObservation, initChatModels, confirmedComposerModel, ensureComposerModel, firstModelChoiceNeeded, refreshSettingsModelsOnOpen } from './chat-models.js';
-import { applyComposerProvider, applyOllamaModelPreferences, composerLocalOnlyForNewChat, composerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
+import { applyComposerProvider, applyOllamaModelPreferences, composerLocalOnlyForNewChat, prepareComposerProvider, confirmProviderSwitch, initChatProvider, markProviderSwitch, markProviderSwitchAccepted, providerSwitchExplicitlyRequested, providerSwitchPossible } from './chat-provider.js';
 import { marked, Marked, type TokenizerAndRendererExtension } from 'marked';
 import { safeExternalLink } from '../shared/external-link.js';
 import { createAgentPanel, type AgentPanelLifecycle } from './agent-panel.js';
@@ -110,6 +110,7 @@ interface Deps {
   /** The renderer's single save path — reads every control, including ours. */
   save: () => Promise<void>;
   state: () => AppState | null;
+  applyState?: (state: AppState) => void;
 }
 
 let deps: Deps;
@@ -1032,6 +1033,7 @@ function paintGoalProgress(): void {
   row.replaceChildren(marker, body);
 }
 const cancelledStarts = new Set<string>();
+let composerPreparation: { generation: number; selection: number; sessionId: string | null; draft: string } | null = null;
 const queuedFollowup = (entry: InputEntry): boolean => entry.mode === 'finish' || (entry.mode === 'after-turn' && !!entry.sessionId && entry.purpose !== 'decision');
 function pendingComposerInput(): InputEntry | undefined {
   return [...startingInputs.values(), ...pendingComposerInputs].find(entry => (!queuedFollowup(entry) || entry.state === 'browser') && ['queued', 'browser'].includes(entry.state) &&
@@ -1061,12 +1063,16 @@ function paintDeliveryControls(): void {
   ui($('immediateDeliveryLabel'), 'textContent', immediateLabel);
   if (!canInject && !canSendDirectly && !queueAtFinish) $<HTMLSelectElement>('sendMode').value = 'auto';
   const pending = pendingComposerInput();
-  const stop = (working || !!pending) && !currentPreparedPlan() && !$<HTMLTextAreaElement>('chatInput').value.trim() && !(imageDrafts.get(draftKey())?.length);
+  const input = $<HTMLTextAreaElement>('chatInput');
+  const preparing = composerPreparation !== null && composerPreparation.selection === selectionGeneration &&
+    composerPreparation.sessionId === selectedId && composerPreparation.draft === input.value;
+  const preparedPlan = currentPreparedPlan();
+  const stop = !preparedPlan && (preparing || ((working || !!pending) && !input.value.trim() && !(imageDrafts.get(draftKey())?.length)));
   // Hover selects delivery for the next message. Clicking the empty-composer
   // Stop still acts immediately; there is no second Stop action in the menu.
   $('sendOptions').hidden = !canInject && !canSendDirectly && !queueAtFinish;
   const send = $<HTMLButtonElement>('chatSend');
-  const planMode = taskPlans.has(draftKey()), preparedPlan = currentPreparedPlan();
+  const planMode = taskPlans.has(draftKey());
   send.disabled = !!preparedPlan && (preparedPlan.sending || preparedPlan.stages.some(stage => !stage.trim()));
   send.dataset.action = stop ? 'stop' : 'send';
   ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : voice ? t("Send in the next pause of the Voice call") : t("Send message"));
@@ -4176,9 +4182,17 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   }
   const discoveryGeneration = ++composerDiscoveryGeneration;
   const discoverySelection = selectionGeneration, discoverySession = selectedId, discoveryDraft = input.value;
+  composerPreparation = { generation: discoveryGeneration, selection: discoverySelection, sessionId: discoverySession, draft: discoveryDraft };
+  paintDeliveryControls();
+  const clearPreparation = () => {
+    if (composerPreparation?.generation !== discoveryGeneration) return;
+    composerPreparation = null;
+    paintDeliveryControls();
+  };
   // The chat owns its history; the provider only answers this turn.
-  const provider = composerProvider();
-  if (provider && !provider.model) { toast(t("Choose a provider model, then send again.")); return false; }
+  const provider = await prepareComposerProvider();
+  if (provider === false) { clearPreparation(); return false; }
+  if (provider && !provider.model) { clearPreparation(); toast(t("Choose a provider model, then send again.")); return false; }
   const selectedSession = selectedId ? sessions.find(row => row.id === selectedId) : null;
   // An Ollama-born chat has no ChatGPT conversation yet, so there is no existing ChatGPT picker
   // state to discover or confirm. Its first ChatGPT turn opens a fresh provider conversation;
@@ -4193,9 +4207,9 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   // authored send may continue; a second click must never send the same text twice.
   if (discoveryGeneration !== composerDiscoveryGeneration || discoverySelection !== selectionGeneration || discoverySession !== selectedId ||
       input.value !== discoveryDraft || (imageDrafts.get(key) ?? []).some((image, index) => image !== images[index]) ||
-      (imageDrafts.get(key)?.length ?? 0) !== images.length) return false;
-  if (!modelSettings && firstModelChoiceNeeded()) { askFirstModelChoice(); return false; }
-  if (!modelSettings) { toast(t("Model discovery could not confirm your selection. Choose an available model and thinking effort, then send again.")); return false; }
+      (imageDrafts.get(key)?.length ?? 0) !== images.length) { clearPreparation(); return false; }
+  if (!modelSettings && firstModelChoiceNeeded()) { clearPreparation(); askFirstModelChoice(); return false; }
+  if (!modelSettings) { clearPreparation(); toast(t("Model discovery could not confirm your selection. Choose an available model and thinking effort, then send again.")); return false; }
   const sessionId = selectedId;
   const generation = selectionGeneration;
   // A turn that hands earlier history to a different provider asks first; main enforces it too.
@@ -4205,8 +4219,8 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const switching = !!sessionId && (providerSwitchExplicitlyRequested(sessionId) || providerSwitchPossible(selectedSession, provider));
   const providerConsent = switching ? await confirmProviderSwitch(sessionId!, provider, switchTrace) : undefined;
   if (switching) markProviderSwitch(switchTrace, 'before-send', switchStartedAt);
-  if (providerConsent === false) return false;
-  if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) return false;
+  if (providerConsent === false) { clearPreparation(); return false; }
+  if (selectedId !== sessionId || selectionGeneration !== generation || input.value !== discoveryDraft) { clearPreparation(); return false; }
   const providerIntent = provider ? {
     provider: provider.id,
     ...((provider.id === 'ollama' || provider.id === 'llamacpp') && composerLocalOnlyForNewChat() ? { localOnly: true as const } : {}),
@@ -4228,12 +4242,13 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
         ? { replaceAgentIdentityFrom: newChatAgentReplacementFrom }
         : {}
     : {};
-  const contextIntent = sessionId === null && !provider ? quiltContextIntent() : {};
+  const contextIntent = sessionId === null ? quiltContextIntent() : {};
   startingInputs.set(id, { id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, ...identityIntent, ...contextIntent, ...providerIntent, ...consentIntent, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn',
     dueAt, ...modelSettings, state: 'queued', owner: null, createdAt: dueAt, conversationId: null });
   input.value = ''; inputDrafts.delete(key);
   imageDrafts.delete(key); paintComposerImages();
   if (sessionId === null) pendingNewInput = { id, generation };
+  if (composerPreparation?.generation === discoveryGeneration) composerPreparation = null;
   void refreshInputQueue();
   paintDeliveryControls();
   try {
@@ -4468,7 +4483,7 @@ export function initChat(next: Deps): void {
       return groupToolRows(rows, `pane:${id}`, agentToolGroups);
     }
   });
-  initChatProvider();
+  initChatProvider(next.applyState);
   initChatModels(() => {
     const config = deps.state()?.config;
     if (config) paintContextMeter(sessions.find(session => session.id === selectedId) ?? null, config, confirmedComposerModel());
@@ -4698,7 +4713,18 @@ export function initChat(next: Deps): void {
   $('composerSettings').addEventListener('toggle', paintTaskActions);
   initContextMeter();
   $('createPlan').addEventListener('click', () => { if (taskPlans.has(draftKey())) cancelTaskPlan(); else void createTaskPlan(deps.state()?.config.ui.planBackend ?? 'chatgpt'); });
-  $('composer').addEventListener('submit', (event) => { event.preventDefault(); if (currentPreparedPlan()) void sendPreparedPlan(); else if (taskPlans.has(draftKey())) { if (!$('createPlan').dataset.busy) void createTaskPlan(deps.state()?.config.ui.planBackend ?? 'chatgpt'); } else void sendComposer(); });
+  $('composer').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (composerPreparation && $('chatSend').dataset.action === 'stop') {
+      composerDiscoveryGeneration++;
+      composerPreparation = null;
+      paintDeliveryControls();
+      return;
+    }
+    if (currentPreparedPlan()) void sendPreparedPlan();
+    else if (taskPlans.has(draftKey())) { if (!$('createPlan').dataset.busy) void createTaskPlan(deps.state()?.config.ui.planBackend ?? 'chatgpt'); }
+    else void sendComposer();
+  });
 
   $('sessionList').addEventListener('click', (event) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>('[data-id]');

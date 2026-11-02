@@ -15,10 +15,9 @@ operation.
 
 ## [2.4.6] — Twinning model integrity and EVE-Al local-agent reliability
 
-**Candidate preparation (2026-10-30):** c1 starts from the published 2.4.5
-release checkpoint and keeps Prime/Twin model intent session-local. It also
-restores persistent %Thread context and tool schemas to local Ollama chats by
-using Ollama's native chat API with an explicitly sized context window.
+**Released source (2026-11-02):** 2.4.6 keeps model/provider intent session-local,
+hardens cold-start Send and recovery paths, and makes local-model execution and
+EVE-Al evaluation more reliable without silently changing the selected backend.
 
 - Established chats persist their explicit composer model/reasoning choice;
   New Chat alone owns the global default. Compact & Resume accepts provider
@@ -31,15 +30,37 @@ using Ollama's native chat API with an explicitly sized context window.
 - Local model servers (Ollama, llama.cpp) are reached over Node's own HTTP
   client, so a long prompt is no longer cut off after five minutes waiting for
   the first token (the global fetch's header limit).
+- An explicitly selected **llama.cpp** route is available alongside Ollama, with
+  independent discovery, consent, local-only handling, and no fallback to another
+  provider when it is unavailable.
+- Ollama's strict tool parser receives compatible projections of union-heavy tool
+  schemas while Eve's original validators still enforce the full arguments.
 - A local %eveal chat writes and runs commands in its own run folder after
   reading the suite; its %APPDATA% path counts as that folder, and /eveal-run in
   command text means it too. The rest of Eve's AppData stays protected.
+- EVE-Al v0.3 expands the read-only local-agent suite to 80 points while keeping
+  answer keys and protected scoring material outside the packaged contestant suite.
+- Provider switches rebuild route-specific Thread/tool context rather than carrying
+  local-only suite paths into remote prompts.
+- Ollama Think and Context are stored per exact model. Picker controls and Send
+  read the same saved values, and Send waits for pending saves/model-route discovery
+  before enqueueing.
+- The shared Send/Stop control enters an exact transient preparation state while
+  that discovery is pending, so Stop remains immediately available without sending
+  twice or weakening prepared-plan exactly-once behavior.
+- Local agent runs reserve a final-answer step after the bounded tool-round budget;
+  that completion step cannot perform additional tool side effects.
+- Guided setup keeps manual recovery available after automatic failure and prevents
+  automatic/manual setup mutations from racing each other.
 - Electron 43.8.6 (Node 24.22.1, Chrome 150) replaces 43.8.4. Commands on a
   computer without Node get Eve's own Node 24 as `node`; a plugin that needs
   npm offers the official Node.js 24.22.2 LTS installer, checked against its
   published SHA-256, and installs nothing without the user's yes.
-- Candidate/source verification is separate from installed acceptance and
-  public release.
+- Final source verification passes the complete `verify:ci` gate, including
+  privacy/history checks, notices/native-source inventory, TypeScript, Electron
+  loading, the main suite, Computer Use tests, and MCP shutdown tests.
+- Source/tag publication remains separate from installer publication and live
+  installed acceptance on each supported platform.
 
 ## [2.4.5] — Heartbeat, worker choice and Compact & Resume safety
 

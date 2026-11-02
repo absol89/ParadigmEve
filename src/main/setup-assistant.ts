@@ -304,12 +304,11 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
   let actionInFlight: string | null = null;
   // Automatic setup progress for the guide's banner. The reason is the failing step's own message
   // (never a secret); the message is one of the fixed, translated automatic-setup texts.
-  const auto = { active: false, message: '', reason: '', failed: false };
+  const auto = { active: false, started: false, message: '', reason: '', failed: false };
   const progress = (message: string) => { auto.message = message; auto.reason = ''; auto.failed = false; };
   // Automatic failure hands authority back to the manual guide. Once a manual recovery action
   // actually advances setup, the old red banner is stale and must not follow the user through the
-  // recovered steps. Keep `active` true so confirming sign-in again cannot start a second automatic
-  // run; clear only the failed presentation state.
+  // recovered steps. `started` prevents sign-in confirmation from starting a second automatic run.
   const clearAutomaticFailure = () => {
     if (!auto.failed) return;
     auto.message = '';
@@ -317,6 +316,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
     auto.failed = false;
   };
   const runAutomatic = async () => {
+    auto.started = true;
     auto.active = true;
     try {
       if (!(await options.companionPresent())) {
@@ -371,6 +371,8 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
       auto.message = "Eve could not finish this step automatically. Continue with the steps below.";
       auto.reason = setupErrorMessage(error, [tunnelId]);
       auto.failed = true;
+    } finally {
+      auto.active = false;
     }
   };
 
@@ -398,6 +400,10 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
             cancelCompanionSetupStep();
           } else {
             requireActiveRun(run);
+            if (auto.active) {
+              sendGuideJson(response, 409, { ok: false, error: 'Automatic setup is still finishing. Stop it or wait for manual recovery before changing setup steps.' });
+              return;
+            }
             if (actionInFlight) {
               sendGuideJson(response, 409, { ok: false, error: 'Another Guided setup step is still finishing. Wait for it to complete, then try again.' });
               return;
@@ -415,7 +421,7 @@ async function startManualProviderGuide(run: Run, options: SetupAssistantStartOp
             }
             signedIn = true;
             update('extension', 'Load the ParadigmEve Companion in this dedicated Eve Browser profile before creating the connector.');
-            if (options.automatic && !auto.active) void runAutomatic();
+            if (options.automatic && !auto.started) void runAutomatic();
           } else if (action === 'open-extensions') {
             if (!signedIn) {
               sendGuideJson(response, 409, { ok: false, error: 'Sign in to ChatGPT before opening the Companion setup.' });

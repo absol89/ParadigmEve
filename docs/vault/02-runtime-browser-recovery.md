@@ -340,6 +340,12 @@ checked in to this app process.
 
 ## 5. Startup, configuration and shutdown
 
+Guided setup has one mutation owner at a time. While the automatic run is active, manual setup
+actions are refused; Stop still cancels that exact run. A failed automatic run hands ownership back
+to the manual guide. Clearing its failure banner does not lock manual recovery, and confirming sign-in
+again does not launch a second automatic run. Credentials and connector creation retain the tunnel
+identity established by that owner.
+
 **Intent:** open a usable local workspace, restore accepted work consistently, and exit without
 leaving an invisible process, tool, writer or installer competing with the next launch.
 

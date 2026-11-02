@@ -10,7 +10,7 @@ Eve connects a ChatGPT conversation to real files, local tools, durable Plans, a
 <p align="center">
   <a href="https://github.com/absol89/ParadigmEve/releases"><strong>Downloads</strong></a>
   &nbsp;·&nbsp;
-  <a href="docs/release-notes/v2.4.5.md">2.4.5 release notes</a>
+  <a href="docs/release-notes/v2.4.6.md">2.4.6 release notes</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
@@ -42,7 +42,7 @@ In our hands-on use, **GPT-5.6 Sol Medium and GPT-6 High workflows have seemed m
 - **Finish software and file work:** inspect and edit approved project files, run terminal commands and tests, coordinate steps through Plans, and audit the actual results.
 - **Keep complicated tasks moving:** delegate separate pieces to reusable helper chats, preserve the main Eve conversation as coordinator, and pick up after a restart or a long-chat handoff.
 - **Choose how helpers work:** **ChatGPT workers** keep individually reviewable helper chats; **Native subagents** work inside an active ChatGPT Work conversation and return to its parent without a separate Eve worker chat; **OpenRouter** and **Ollama** use an explicitly configured provider/model. Native subagents have not yet been proven as an unattended Eve worker/heartbeat executor, so Eve must hold such work for a verified parent instead of silently switching modes or claiming it finished.
-- **Notice when ChatGPT itself needs you:** the 2.4.5 Companion can detect a current-turn tool approval card even when ChatGPT has collapsed it under **Previous activity**, record the wait, and surface a native notification. Eve does not click or auto-approve the provider card, and disappearance alone is not proof of approval.
+- **Notice when ChatGPT itself needs you:** the Companion can detect a current-turn tool approval card even when ChatGPT has collapsed it under **Previous activity**, record the wait, and surface a native notification. Eve does not click or auto-approve the provider card, and disappearance alone is not proof of approval.
 - **Remember useful context on purpose:** save Pins in Threads, create reusable prompts in the `%instructions` category (invoke an individual one by its exact `%name`), group Threads into Quilts (`#name`), and review locally recorded conversation evidence.
 - **Run local and scheduled workflows:** set up routines, use a bounded read-only heartbeat to review recorded requests and Plans, and optionally enable Goal/Loop continuation. The heartbeat reviews; it does **not** autonomously execute discoveries.
 - **Transcribe and work with documents:** supported Windows x64 builds can use local Whisper transcription and speaker diarization, with optional explicitly selected cloud speech recognition. DOCX, XLSX, PDF, and PPTX inspection uses the built-in file broker; editing depends on an available provider and consent. WordCraft and GridCraft are separate developing apps, not bundled full-fidelity editors.
@@ -58,7 +58,7 @@ None of these capabilities require you to enable *every* permission.
 4. At [chatgpt.com/plugins](https://chatgpt.com/plugins), choose **Add → Add custom MCP server** and connect Eve; review its ChatGPT action permissions. Your account must support custom MCP apps.
 5. Give Eve a concrete job. Select your preferred model when offered; Eve must not silently switch it.
 
-See the [setup reference](docs/setup.md) for detailed connection and platform instructions, or [2.4.5 notes](docs/release-notes/v2.4.5.md) for the latest source and acceptance limitations.
+See the [setup reference](docs/setup.md) for detailed connection and platform instructions, or [2.4.6 notes](docs/release-notes/v2.4.6.md) for the latest source and acceptance limitations.
 
 ## Privacy, permissions, and limits
 
@@ -70,7 +70,7 @@ ParadigmEve requires an eligible ChatGPT account and Chrome/Chromium, Edge, or B
 
 ## Release status
 
-**2.4.5 source (October 28, 2026):** Windows x64 c26 passed 6,232 local tests and was silently installed with a matching packaged/installed application hash. Cumulative fixes protect active Compact & Resume turns, worker ownership, archive continuity and Native heartbeat transport. One Native in-band heartbeat was completed after four exact Plan acknowledgements and a durable receipt without another browser Send; a later review was truthfully blocked on unresolved historical worker evidence. Manual hosted-child review succeeded, but idle background cognition, automatic app-owned child dispatch and repeated mode-switch queue retirement are not yet proven. c26 still embeds Electron 43.8.3 / Node 24.22.0; the security update to Electron 43.8.4 / Node 24.22.1 needs a separately verified candidate. ChatGPT tool approvals remain user-controlled. See [2.4.5 release notes](docs/release-notes/v2.4.5.md) for evidence and limits. A source tag or branch push does not publish installers or promote Latest; consult [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) for downloads.
+**2.4.6 source (November 2, 2026):** the release line strengthens provider/model integrity, local Ollama and llama.cpp execution, EVE-Al evaluation support, Guided setup recovery, and the renderer's send/Stop state during cold model-route discovery. The final source tree passes the complete `verify:ci` release gate, including privacy/history checks, notices/native-source inventory, TypeScript, Electron loading, the full main test suite, Computer Use tests, and MCP shutdown tests. Model and provider choices remain explicit: Eve waits for route discovery and pending per-model settings instead of silently substituting another backend or stale preference. ChatGPT tool approvals remain user-controlled. See [2.4.6 release notes](docs/release-notes/v2.4.6.md) for details and acceptance boundaries. A source tag or branch push still does not publish installers or promote Latest; consult [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) for downloads.
 
 ## Build and contribute
 

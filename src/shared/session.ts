@@ -299,6 +299,8 @@ export type SessionEvent =
       inputDelivery?: 'offered' | 'confirmed';
       /** Original app-authored text, excluding transport-only control instructions. */
       authoredText?: string;
+      /** Explicit opening Thread, retained independently of authored text and outbox retention. */
+      contextQuiltId?: string;
       /**
        * Product-shaped syntax proven on this exact fresh authored row. This is inert reference
        * metadata only; exact Quilt/Thread lookup and any user-approved creation remain separate.

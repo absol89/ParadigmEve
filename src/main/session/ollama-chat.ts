@@ -85,20 +85,25 @@ const openings = new Map<string, string>();
  * from the oldest message, so the context rides in the system prompt instead of the first turn.
  */
 async function openingContext(sessionId: string, entry: InputEntry, route: ReturnType<typeof providerRoute>, toolNames: readonly string[]): Promise<string> {
-  const cached = openings.get(sessionId);
-  if (cached !== undefined) return cached;
-  const opening = (await archivedTurns(sessionId)).find((turn) => turn.role === 'user');
-  if (!opening?.text.trim()) return '';
-  const isOpening = opening.inputId === entry.id;
-  let activated: string;
-  try {
-    activated = await injectPinsContext(opening.text, { maxChars: MAX_CHATGPT_MESSAGE_CHARS, maxBytes: Infinity },
-      isOpening && entry.contextQuiltId ? { quiltId: entry.contextQuiltId } : {});
-  } catch (error) {
-    logWarn(`session ${sessionId}: opening Thread context unavailable: ${(error as Error).message}`);
-    return '';
+  // Cache only activation, never route-specific expansion (which may contain native paths).
+  let activated = openings.get(sessionId);
+  if (activated === undefined) {
+    const opening = (await archivedTurns(sessionId)).find((turn) => turn.role === 'user');
+    if (!opening?.text.trim()) return '';
+    const quiltId = opening.contextQuiltId ?? (opening.inputId === entry.id ? entry.contextQuiltId : undefined);
+    try {
+      const injected = await injectPinsContext(opening.text, { maxChars: MAX_CHATGPT_MESSAGE_CHARS, maxBytes: Infinity },
+        quiltId ? { quiltId } : {});
+      activated = injected === opening.text ? '' : injected;
+      openings.set(sessionId, activated);
+    } catch (error) {
+      logWarn(`session ${sessionId}: opening Thread context unavailable: ${(error as Error).message}`);
+      return '';
+    }
   }
-  let expanded = activated === opening.text ? '' : await expandLocalOpeningContext(activated, {
+  // A remote turn must not inherit the previous local turn's extra filesystem root either.
+  evealRunRoots.delete(sessionId);
+  let expanded = !activated ? '' : await expandLocalOpeningContext(activated, {
     inline: true,
     fileTools: toolNames.includes('read'),
     nativePath: route === 'ollama-local' || route === 'llamacpp-local'
@@ -120,14 +125,11 @@ async function openingContext(sessionId: string, entry: InputEntry, route: Retur
       ].join('\n');
     }
   }
-  const context = activated === opening.text ? '' : [
+  return !activated ? '' : [
     '# Context ParadigmEve activated when this chat opened',
     'The opening message referenced a Thread or Quilt. ParadigmEve\'s context for it follows and ends with that opening message. Follow it for this chat; the newest user message stays authoritative.',
     expanded
   ].join('\n\n');
-  // A chat started from a Thread in the app carries that Thread only on its first input; keep what it activated.
-  if (isOpening || !entry.contextQuiltId) openings.set(sessionId, context);
-  return context;
 }
 
 interface LocalTurn { turnId: string; controller: AbortController }

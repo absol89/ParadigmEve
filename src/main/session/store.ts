@@ -1269,6 +1269,7 @@ export function upsertMessageEvent(
           : previous?.kind === 'user_message' && event.kind === 'user_message'
             ? { ...event, inputId: event.inputId ?? previous.inputId,
                 authoredText: event.authoredText ?? previous.authoredText,
+                contextQuiltId: event.contextQuiltId ?? previous.contextQuiltId,
                 pinsReferences: event.pinsReferences ?? previous.pinsReferences,
                 // App-owned originals/previews retain their outbox identity when the
                 // provider later observes different native attachment ids for that send.
@@ -1321,7 +1322,7 @@ export function upsertMessageEvent(
             previous.goalEligible === nextEvent.goalEligible &&
             previous.providerMessageId === nextEvent.providerMessageId)) &&
         (nextEvent.kind !== 'user_message' || previous.kind !== 'user_message' ||
-          (nextEvent.inputId === previous.inputId && JSON.stringify(nextEvent.archivedAttachments) === JSON.stringify(previous.archivedAttachments) && nextEvent.authoredText === previous.authoredText && nextEvent.inputDelivery === previous.inputDelivery && JSON.stringify(nextEvent.pinsReferences) === JSON.stringify(previous.pinsReferences) && JSON.stringify(nextEvent.assets) === JSON.stringify(previous.assets) && JSON.stringify(nextEvent.attachments) === JSON.stringify(previous.attachments))) &&
+          (nextEvent.inputId === previous.inputId && nextEvent.contextQuiltId === previous.contextQuiltId && JSON.stringify(nextEvent.archivedAttachments) === JSON.stringify(previous.archivedAttachments) && nextEvent.authoredText === previous.authoredText && nextEvent.inputDelivery === previous.inputDelivery && JSON.stringify(nextEvent.pinsReferences) === JSON.stringify(previous.pinsReferences) && JSON.stringify(nextEvent.assets) === JSON.stringify(previous.assets) && JSON.stringify(nextEvent.attachments) === JSON.stringify(previous.attachments))) &&
         (previous.turnId ?? undefined) === settledTurnId &&
         (nextEvent.agent === undefined || previous.agent === nextEvent.agent) &&
         (!preferTime || previous.time === nextEvent.time)

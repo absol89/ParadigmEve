@@ -3,17 +3,17 @@
 > Not in an engineering mood? Start with the local [Eve HTML tour](../readme/index.html):
 > human problems first, tiny interactive demos, technical details only when you ask for them.
 
-> **Current source/manual line:** 2.4.4 development candidate on `release/2.4.4`; this is not a public `v2.4.4` release tag.
+> **Current source/manual line:** 2.4.6 release source on `main` / `v2.4.6`.
 > **Bridge protocol:** 15
-> **Release evidence:** private Windows 2.4.4 c2 was hash-verified in the installed app and incremental archive reuse was observed; this does not establish full acceptance or installation of the new c3 delivery controls. Only assets actually listed on [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) are public downloads.
+> **Release evidence:** the 2.4.6 source passes the complete release CI gate, including the full main suite, Computer Use tests and MCP shutdown tests. Source/tag publication and downloadable installer publication remain separate evidence. Only assets actually listed on [GitHub Releases](https://github.com/absol89/ParadigmEve/releases) are public downloads.
 
 This folder is the fast, linked operational manual for how the current ParadigmEve source fits together. It is
 the current manual, not a changelog or nomenclature history. Rewrite it when the product changes so
 the Vault always teaches the behavior, names and operating model that are true now.
 
-The [2.4.4 candidate notes](../release-notes/v2.4.4.md) distinguish the
-c1 transcription/updater changes, c2 archive/`%how` improvements, and c3
-failed-message action rail. The current pre-Send pickup timeout recovery is
+The [2.4.6 release notes](../release-notes/v2.4.6.md) summarize the current
+provider/model, local-agent, setup-recovery and release-verification behavior.
+The current pre-Send pickup timeout recovery is
 **Force Send only when the original user outbox row is provably untouched**;
 an ambiguous browser claim offers manual composer restoration instead.
 Neither path permits automatic duplicate Send. Startup full archive indexing
@@ -26,7 +26,7 @@ state lives, and what to check when something breaks**. See [Self-reliant AI and
 
 ## Historical 2.4.1 / 2.4.0 acceptance snapshot — not the current release
 
-The entries below describe earlier tagged source and Windows self-testing. Do not present them as evidence that a current 2.4.4 installation has passed live acceptance. Check the running app version and current release notes instead.
+The entries below describe earlier tagged source and Windows self-testing. Do not present them as evidence that a current 2.4.6 installation has passed live acceptance. Check the running app version and current release notes instead.
 
 - **2.4.1 source:** `package.json` and the Companion manifest declare `2.4.1` on `release/2.4.1`: onboarding fixes on top of 2.4.0 (see [2.4.1 notes](../release-notes/v2.4.1.md)). Tagged `v2.4.1` on `main` after Windows x64 self-testing.
 - **Tagged source:** tag `v2.4.0` marks the final 2.4.0 commit. This identifies source, **not** the state of a user's installed application or a published installer.

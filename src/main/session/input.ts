@@ -116,7 +116,6 @@ function validateOpeningContext(
     if (input.claimAgentIdentity || input.replaceAgentIdentityFrom) refuse('provider', "Eve's own agent conversation stays in ChatGPT");
     if (input.automation && input.automation !== 'off') refuse('automation', `Goal and Loop run in ChatGPT; turn them off to send to ${name}`);
     if (input.stages?.length || input.mode === 'finish') refuse('mode', 'Staged plans and finish tasks run in ChatGPT');
-    if (input.contextQuiltId) refuse('contextQuiltId', 'Thread context openings run in ChatGPT');
   }
   if (input.ollamaThink !== undefined && input.provider !== 'ollama') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ollamaThink'], message: 'Thinking on/off applies only to Ollama chats' });

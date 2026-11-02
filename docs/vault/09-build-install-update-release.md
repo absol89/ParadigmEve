@@ -12,15 +12,15 @@ For a build to be coherent, these declarations must agree:
 
 Tests enforce agreement.
 
-The current **2.4.6 local candidate preparation line** is `release/2.4.6`,
-branched directly from published `v2.4.5`. Source, numbered candidates,
-installed bytes and live acceptance have separate receipts; no 2.4.6 tag, push
-or public release is claimed. The earlier
+The current release source is **2.4.6**, developed on `release/2.4.6` from
+published `v2.4.5` and promoted to public `main` at tag `v2.4.6`. Source/tag,
+installed bytes, downloadable artifacts and live acceptance have separate receipts.
+The earlier
 **App + Companion 2.2.2** Angel checkpoint remains part of release history,
 and the current bridge protocol is **15**. A package is not coherent
 until all three version declarations above agree. App version and bridge protocol are separate
-authorities and must not be inferred from each other. This tagged *source* checkpoint is not
-itself a published installer or proof of live operation on every target platform.
+authorities and must not be inferred from each other. Tagged *source* is not itself a published
+installer or proof of live operation on every target platform.
 
 Historically, the 2.4.4 c2 Windows x64 debug candidate was installed locally and its
 installed app bundle hash matched the packaged c2 source. Its incremental

@@ -1930,6 +1930,10 @@ describe('ParadigmEve setup browser', () => {
     await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('api-key'));
     const key = automation.pendingCompanionSetupStep()!;
     expect(onCredentials).not.toHaveBeenCalled();
+    // Manual actions cannot change the automatic run's tunnel while its key request is pending.
+    for (const action of ['start', 'signed-in', 'companion-done', 'tunnel-id', 'api-key', 'core-app-done']) {
+      expect((await guideAction(guideUrl, { action, tunnelId: `tunnel_${'c'.repeat(32)}`, apiKey: validKey })).status).toBe(409);
+    }
     expect(automation.completeCompanionSetupStep({ id: key.id, ok: true, result: { apiKey: validKey } })).toBe(true);
 
     await vi.waitFor(() => expect(automation.pendingCompanionSetupStep()?.step).toBe('chatgpt-app'));
@@ -2083,10 +2087,14 @@ describe('ParadigmEve setup browser', () => {
     expect((await guideAction(guideUrl, { action: 'companion-done' })).status).toBe(200);
     expect((await guideAction(guideUrl, { action: 'tunnel-id', tunnelId: validTunnel })).status).toBe(200);
     const recovered = await (await fetch(status)).json();
-    expect(recovered.autoActive).toBe(true);
+    expect(recovered.autoActive).toBe(false);
     expect(recovered.autoFailed).toBe(false);
     expect(recovered.autoMessage).toBe('');
     expect(recovered.autoReason).toBe('');
+    // Clearing the failure banner does not re-lock manual actions or restart automatic setup.
+    expect((await guideAction(guideUrl, { action: 'signed-in' })).status).toBe(200);
+    expect(automation.pendingCompanionSetupStep()).toBeNull();
+    expect((await guideAction(guideUrl, { action: 'tunnel-id', tunnelId: validTunnel })).status).toBe(200);
     await guideAction(guideUrl, { action: 'stop' });
     await expect(pending).rejects.toBeInstanceOf(setup.SetupAssistantStoppedError);
     expect(automation.pendingCompanionSetupStep()).toBeNull();

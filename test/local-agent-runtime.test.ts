@@ -66,6 +66,41 @@ describe('local agent execution principal', () => {
 });
 
 describe('local agent tool loop', () => {
+  it.each([false, true])('reserves a final completion after 32 tool rounds and refuses extra side effects (overrun=%s)', async (overrun) => {
+    const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: 'chain', agentId: 'worker' });
+    const invoke = vi.fn(async () => ({ content: 'read result' }));
+    let calls = 0;
+    const complete = vi.fn<LocalAgentModelRuntime['complete']>(async request => {
+      calls++;
+      if (calls === 33) {
+        expect(request.tools).toEqual([]);
+        expect(request.messages.at(-1)).toMatchObject({ role: 'tool', content: 'read result' });
+        if (!overrun) return { type: 'final', content: 'Finished all 32 reads.' };
+      }
+      return { type: 'tool_calls', calls: [{ id: `call-${calls}`, name: 'read', arguments: {} }] };
+    });
+    const result = runLocalAgent({ backend: 'ollama', principal, endpoint: 'http://localhost:11434/v1', model: 'test',
+      system: 'bounded', task: 'work', tools: [tool(invoke)], runtime: { complete } });
+    if (overrun) await expect(result).rejects.toThrow('LOCAL_AGENT_TURN_LIMIT');
+    else await expect(result).resolves.toEqual({ final: 'Finished all 32 reads.', turns: 33, toolCalls: 32 });
+    expect(invoke).toHaveBeenCalledTimes(32);
+    expect(complete).toHaveBeenCalledTimes(33);
+  });
+
+  it('bounds batched tool calls independently and permits a final at the exact call budget', async () => {
+    const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: 'batch', agentId: 'worker' });
+    const invoke = vi.fn(async () => ({ content: 'ok' }));
+    const complete = vi.fn<LocalAgentModelRuntime['complete']>()
+      .mockResolvedValueOnce({ type: 'tool_calls', calls: [1, 2].map(n => ({ id: String(n), name: 'read', arguments: {} })) })
+      .mockResolvedValueOnce({ type: 'final', content: 'done' });
+    const options = { backend: 'ollama' as const, principal, endpoint: 'http://localhost:11434/v1', model: 'test', system: 'bounded',
+      task: 'work', tools: [tool(invoke)], runtime: { complete }, maxToolCalls: 2 };
+    await expect(runLocalAgent(options)).resolves.toMatchObject({ toolCalls: 2 });
+    expect(complete.mock.calls[1]![0].tools).toEqual([]);
+    complete.mockResolvedValueOnce({ type: 'tool_calls', calls: [1, 2, 3].map(n => ({ id: String(n), name: 'read', arguments: {} })) });
+    await expect(runLocalAgent(options)).rejects.toThrow('LOCAL_AGENT_TOOL_LIMIT');
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
   it('stops at an explicit approval requirement without model retry or inferred human denial', async () => {
     const principal = issueLocalAgentExecutionPrincipal({ backend: 'ollama', runId: 'run-a', agentId: 'worker-1' });
     const invoke = vi.fn(async () => ({ content: 'APPROVAL_REQUIRED: approval must come from Prime', isError: true }));
@@ -126,6 +161,27 @@ describe('local agent tool loop', () => {
 });
 
 describe('Ollama agent model transport', () => {
+  it('sizes image prompts without counting base64 bytes and isolates context high-water by endpoint', async () => {
+    resetOllamaNativeContextForTests();
+    const chats: any[] = [];
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/api/show')) return Response.json({ model_info: { 'vision.context_length': 131072 } });
+      chats.push(JSON.parse(String(init.body)));
+      return nativeEvents({ message: { content: 'ok' }, done: true });
+    });
+    const runtime = createOllamaAgentModelRuntime(fetch as unknown as typeof globalThis.fetch, { native: true });
+    const base = { endpoint: 'http://localhost:11434/v1', model: 'vision', tools: [] };
+    const pixels = 'A'.repeat(500_000);
+    await runtime.complete({ ...base, messages: [{ role: 'user', content: [
+      { type: 'text', text: 'What is shown?' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${pixels}` } }
+    ] }] });
+    expect(chats.at(-1).options.num_ctx).toBe(8192);
+    expect(chats.at(-1).messages[0].images).toEqual([pixels]);
+    await runtime.complete({ ...base, messages: [{ role: 'user', content: 'x'.repeat(70000) }] });
+    expect(chats.at(-1).options.num_ctx).toBe(32768);
+    await runtime.complete({ ...base, endpoint: 'http://localhost:11435/v1', messages: [{ role: 'user', content: 'short' }] });
+    expect(chats.at(-1).options.num_ctx).toBe(8192);
+  });
   it('sends an explicit thinking flag only to native Ollama, preserving defaults otherwise', async () => {
     resetOllamaNativeContextForTests();
     const bodies: Array<{ url: string; body: Record<string, unknown> }> = [];
