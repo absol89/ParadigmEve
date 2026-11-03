@@ -50,7 +50,7 @@ vi.mock('../src/main/browser.js', () => ({ openInPreferredBrowser: async () => '
 const { defaultConfig, initConfigPath, saveConfig } = await import('../src/main/config.js');
 const { initSecretsPath, setSecret, clearSecret } = await import('../src/main/secrets.js');
 const { initDurableStore, flushDurable, resetDurableForTests, writeDurableNow } = await import('../src/main/durable.js');
-const { createSession, flushSessions, getSession, indexedSessions, initSessionStore, readAsset, readEvents, resetSessionStoreForTests,
+const { createSession, flushSessions, getSession, initSessionStore, readAsset, readEvents, resetSessionStoreForTests,
   upsertMessageEvent, writeAsset } = await import('../src/main/session/store.js');
 const { ArchiveRuntime } = await import('../src/main/archive/archive-runtime.js');
 const { registerIpc } = await import('../src/main/ipc.js');
@@ -177,8 +177,19 @@ async function finished(sessionId: string, turnId: string) {
   await vi.waitFor(async () => {
     const events = await readEvents(sessionId, { kinds: ['turn_end'] });
     expect(events.some((event) => event.turnId === turnId)).toBe(true);
-  }, { timeout: 5000 });
+  }, { timeout: 15_000 });
   return readEvents(sessionId, { kinds: ['user_message', 'assistant_message', 'chat_error', 'turn_end'] });
+}
+
+/** IPC accepts a local send before its durable outbox state transitions from browser to sent. */
+async function inputSent(id: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const row = (await input.listInputs()).find((entry) => entry.id === id);
+    if (row?.state === 'failed' || row?.state === 'cancelled') {
+      throw new Error(`Input ${id} ended as ${row.state}: ${row.error ?? 'no error detail'}`);
+    }
+    expect(row?.state).toBe('sent');
+  }, { timeout: 15_000, interval: 100 });
 }
 
 beforeAll(async () => {
@@ -219,7 +230,7 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
   const accepted = await send({ id, provider: 'ollama', model: 'llama3.2', text: 'What is 2+2?' });
   expect(accepted.ok, accepted.error).toBe(true);
 
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const row = (await input.listInputs()).find((entry) => entry.id === id)!;
   expect(row.conversationId).toMatch(/^ollama-/);
   const session = (await getSession(row.deliveredSessionId!))!;
@@ -247,7 +258,7 @@ it('answers a fresh Ollama chat in-process and archives both turns with provider
 it('keeps an explicit Ollama Think choice across turns and restart, changing the native payload', async () => {
   const first = randomUUID();
   expect((await send({ id: first, provider: 'ollama', model: 'llama3.2', ollamaThink: false, text: 'Quick answer' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === first)?.state).toBe('sent'));
+  await inputSent(first);
   const sessionId = (await input.listInputs()).find((row) => row.id === first)!.deliveredSessionId!;
   await finished(sessionId, `ollama-turn:${first}`);
   expect(ollamaRequests.find((row) => row.url.endsWith('/api/chat'))?.body.think).toBe(false);
@@ -255,7 +266,7 @@ it('keeps an explicit Ollama Think choice across turns and restart, changing the
 
   const second = randomUUID();
   expect((await send({ id: second, sessionId, provider: 'ollama', model: 'llama3.2', ollamaThink: true, text: 'Think again' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === second)?.state).toBe('sent'));
+  await inputSent(second);
   await finished(sessionId, `ollama-turn:${second}`);
   expect(ollamaRequests.filter((row) => row.url.endsWith('/api/chat')).at(-1)?.body.think).toBe(true);
   expect((await getSession(sessionId))?.provider).toMatchObject({ id: 'ollama', model: 'llama3.2', think: true });
@@ -269,7 +280,7 @@ it('keeps an explicit Ollama Think choice across turns and restart, changing the
 it('honors an explicit per-chat Ollama context override and persists it across restart', async () => {
   const id = randomUUID();
   expect((await send({ id, provider: 'ollama', model: 'llama3.2', ollamaNumCtx: 24_576, text: 'Bound my context' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const sessionId = (await input.listInputs()).find((row) => row.id === id)!.deliveredSessionId!;
   await finished(sessionId, `ollama-turn:${id}`);
   expect(ollamaRequests.find((row) => row.url.endsWith('/api/chat'))?.body.options.num_ctx).toBe(24_576);
@@ -302,7 +313,7 @@ it('keeps llama.cpp distinct from Ollama: local-only LFM3, OpenAI tool calls, no
   ];
   const accepted = await send({ id, provider: 'llamacpp', model: LFM3, localOnly: true, text: 'Test tool use' });
   expect(accepted.ok, accepted.error).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const sessionId = (await input.listInputs()).find(row => row.id === id)!.deliveredSessionId!;
   const events = await finished(sessionId, `ollama-turn:${id}`);
   expect(events.find(e => e.kind === 'assistant_message')).toMatchObject({
@@ -336,7 +347,7 @@ it('lets a direct Ollama chat use an approved local read tool and feeds the resu
 
   const id = randomUUID();
   expect((await send({ id, provider: 'ollama', model: 'llama3.2', text: 'Read the Vault note.' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const row = (await input.listInputs()).find(entry => entry.id === id)!;
   const session = (await getSession(row.deliveredSessionId!))!;
   const events = await finished(session.id, `ollama-turn:${id}`);
@@ -360,7 +371,7 @@ it('keeps natural-language skills available in conversational local chat without
 
   const id = randomUUID();
   expect((await send({ id, provider: 'ollama', model: 'llama3.2', text: 'Why is this chat compacting so often?' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
 
   // 'sent' means the turn was accepted; its chat payload (skills included) is built afterwards.
   await vi.waitFor(() => expect(ollamaRequests.some(request => isChat(request.url))).toBe(true), { timeout: 5000 });
@@ -441,7 +452,7 @@ it('gives Ollama the ChatGPT history and its images, and refuses an image the mo
 it('catches ChatGPT up on Ollama turns once, and binds a ChatGPT conversation to an Ollama-started chat', async () => {
   const first = randomUUID();
   expect((await send({ id: first, provider: 'ollama', model: 'llama3.2', text: 'Remember the codeword: tangerine.' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === first)?.state).toBe('sent'));
+  await inputSent(first);
   const row = (await input.listInputs()).find((entry) => entry.id === first)!;
   const sessionId = row.deliveredSessionId!;
   await finished(sessionId, `ollama-turn:${first}`);
@@ -521,7 +532,7 @@ it('keeps a delayed Ollama response on its original model after the user switche
     const local = randomUUID();
     expect((await send({ id: local, sessionId: session.id, provider: 'ollama', model: 'llama3.2', text: 'Take your time',
       providerConsent: { to: preview.to, messages: preview.messages, images: preview.images, files: preview.files } })).ok).toBe(true);
-    await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === local)?.state).toBe('sent'));
+    await inputSent(local);
 
     // A real app-authored GPT turn may be admitted while the old local request is still in
     // flight. The browser owns that new turn; the delayed local reply keeps its original model.
@@ -600,7 +611,7 @@ it('pulls a cloud model picked from the catalog before its first turn, never a l
   await handlers.get('ollama:models')!(rendererEvent, undefined);
   const id = randomUUID();
   expect((await send({ id, provider: 'ollama', model: 'kimi-k3:cloud', text: 'Hello cloud' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const row = (await input.listInputs()).find(entry => entry.id === id)!;
   await finished(row.deliveredSessionId!, `ollama-turn:${id}`);
   expect(pulled).toEqual(['kimi-k3:cloud']);
@@ -608,7 +619,7 @@ it('pulls a cloud model picked from the catalog before its first turn, never a l
 
   const local = randomUUID();
   expect((await send({ id: local, provider: 'ollama', model: 'llama3.2', text: 'Hello local' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(entry => entry.id === local)?.state).toBe('sent'));
+  await inputSent(local);
   expect(pulled).toEqual(['kimi-k3:cloud']);
 });
 
@@ -616,7 +627,7 @@ it('starts a new chat locked to this computer when Local only is ticked before t
   expect((await send({ provider: 'ollama', model: 'gemma4:cloud', localOnly: true })).error).toMatch(/model on this computer/);
   const id = randomUUID();
   expect((await send({ id, provider: 'ollama', model: 'llama3.2', localOnly: true, text: 'Private start' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const session = (await getSession((await input.listInputs()).find(row => row.id === id)!.deliveredSessionId!))!;
   expect(session.localOnly).toBe(true);
   // An existing chat changes the lock in its options, not on a send.
@@ -698,12 +709,12 @@ async function restartStore() {
   initSessionStore(directory);
 }
 
-/** The archive exactly as the app wires it, rebuilt from the canonical store. */
-async function rebuildArchive(name: string) {
+/** Rebuild the acceptance chat from the canonical store, without unrelated test sessions. */
+async function rebuildArchive(name: string, sessionId: string) {
   const runtime = new ArchiveRuntime({
     archiveRoot: `${directory}/${name}`, writerVersion: 'acceptance', providerRoute: history.providerRoute,
     source: {
-      listSessionIds: async () => (await indexedSessions()).map((summary) => summary.id),
+      listSessionIds: async () => [sessionId],
       readSession: async (sessionId) => {
         const summary = await getSession(sessionId);
         return summary ? { summary, events: await readEvents(sessionId) } : null;
@@ -721,7 +732,7 @@ async function sendAndFinish(fields: Record<string, unknown>) {
   const id = randomUUID();
   const accepted = await send({ id, ...fields });
   expect(accepted.ok, accepted.error).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const sessionId = (await input.listInputs()).find((row) => row.id === id)!.deliveredSessionId!;
   await finished(sessionId, `ollama-turn:${id}`);
   return sessionId;
@@ -754,7 +765,7 @@ it('acceptance A: a local Ollama chat stays complete and readable with Eve offli
     expect(history.providerRoute({ id: 'ollama', model: 'llama3.2' })).toBe('ollama-local');
 
     // The archive rebuilds from the local store alone and holds the words, not ids.
-    const runtime = await rebuildArchive('archive-offline-local');
+    const runtime = await rebuildArchive('archive-offline-local', sessionId);
     try {
       const archived = await runtime.store.readSession(sessionId);
       const texts = archived.events.filter((event) => event.kind === 'user_message' || event.kind === 'assistant_message')
@@ -789,7 +800,7 @@ it('acceptance C: an Ollama Cloud chat is archived locally as cloud and stays re
   offlineAttempts.length = 0;
   try {
     await restartStore();
-    const runtime = await rebuildArchive('archive-offline-cloud');
+    const runtime = await rebuildArchive('archive-offline-cloud', sessionId);
     try {
       const archived = await runtime.store.readSession(sessionId);
       const assistant = archived.events.find((event) => event.kind === 'assistant_message')!;
@@ -827,7 +838,7 @@ it('answers an OpenRouter chat with the stored key and archives it as OpenRouter
     // The key goes to OpenRouter only, never to Ollama.
     expect(ollamaRequests.every((request) => !JSON.stringify(request.headers).includes('or-test-key'))).toBe(true);
 
-    const runtime = await rebuildArchive('archive-openrouter');
+    const runtime = await rebuildArchive('archive-openrouter', sessionId);
     try {
       const assistant = (await runtime.store.readSession(sessionId)).events.find((event) => event.kind === 'assistant_message')!;
       expect(assistant.provider).toMatchObject({ provider: 'openrouter', model: 'stepfun/step-5-preview' });
@@ -852,7 +863,7 @@ it('asks a model without tool support plainly, and says clearly when the OpenRou
   routerRequests.length = 0;
   const id = randomUUID();
   expect((await send({ id, provider: 'openrouter', model: 'stepfun/step-5-preview', text: 'No key yet' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find((row) => row.id === id)?.state).toBe('sent'));
+  await inputSent(id);
   const sessionId = (await input.listInputs()).find((row) => row.id === id)!.deliveredSessionId!;
   const events = await finished(sessionId, `ollama-turn:${id}`);
   expect(events.find((event) => event.kind === 'chat_error')).toMatchObject({ message: { text: expect.stringContaining('OpenRouter needs an API key') } });
@@ -926,7 +937,7 @@ it('keeps an EVE-Al run bound to its session and resolves suite-relative reads i
 
   const firstId = randomUUID();
   expect((await send({ id: firstId, provider: 'ollama', model: 'llama3.2', text: '%eveal' })).ok).toBe(true);
-  await vi.waitFor(async () => expect((await input.listInputs()).find(row => row.id === firstId)?.state).toBe('sent'));
+  await inputSent(firstId);
   const row = (await input.listInputs()).find(entry => entry.id === firstId)!;
   const sessionId = row.deliveredSessionId!;
   await finished(sessionId, `ollama-turn:${firstId}`);

@@ -582,7 +582,7 @@ describe('ArchiveRuntime', () => {
       await vi.waitFor(async () => expect(second.runtime.staticSiteStale()).toBe(false), { timeout: 15_000 });
       expect((await siteText(second.runtime)).split('PRIME REPLY AFTER PUBLISH')).toHaveLength(2);
       await second.runtime.dispose();
-    });
+    }, 60_000); // Real Windows filesystem work and a 15s background refresh wait.
 
     it('keeps the previous valid site when a background refresh fails, and retries it', async () => {
       const archiveRoot = await tempArchiveRoot();

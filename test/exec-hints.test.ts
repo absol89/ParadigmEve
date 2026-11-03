@@ -1016,10 +1016,13 @@ describe('repairing a bash-style escaped quote', () => {
     const probe = join(tmpdir(), 'exec-hints-argv-probe.cjs');
     writeFileSync(probe, 'for (const a of process.argv.slice(2)) console.log(`<${a}>`);\n', 'utf8');
 
-    const argv = (commandLine: string): string[] => {
+    const argv = (commandLines: string[]): string[] => {
       return execFileSync('powershell.exe', ['-NoProfile', '-Command', '-'], {
         encoding: 'utf8',
-        input: `${commandLine}\n`
+        // Check all variants in one real shell: spawning PowerShell three times was
+        // disproportionately expensive when Windows CI had four busy test workers.
+        input: `${commandLines.join('\n')}\n`,
+        timeout: 30_000
       })
         .split(/\r?\n/)
         // Only the probe's own lines. Without a real console PowerShell can print host warnings
@@ -1037,14 +1040,18 @@ describe('repairing a bash-style escaped quote', () => {
     const call = `${exe} "state === \\"starting" second`;
     const repaired = repairPowerShellQuoting(call, 'powershell');
     expect(repaired.cmd).toBe(`${exe} 'state === \\"starting' second`);
-    expect(argv(repaired.cmd)).toEqual(['<state === "starting>', '<second>']);
-
     // Why the repair is not one of the two escapes PowerShell itself accepts. Both of these
     // parse, and both then reach the program with the quote gone and the next argument
     // swallowed into the first — a wrong answer reported as a successful one.
-    expect(argv(`${exe} "state === ""starting" second`)).toEqual(['<state === starting second>']);
-    expect(argv(`${exe} "state === \`"starting" second`)).toEqual(['<state === starting second>']);
-  });
+    expect(argv([
+      repaired.cmd,
+      `${exe} "state === ""starting" second`,
+      `${exe} "state === \`"starting" second`
+    ])).toEqual([
+      '<state === "starting>', '<second>',
+      '<state === starting second>', '<state === starting second>'
+    ]);
+  }, 60_000);
 });
 
 describe('saying that a benign exit was benign', () => {
